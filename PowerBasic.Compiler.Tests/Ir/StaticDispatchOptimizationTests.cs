@@ -40,51 +40,6 @@ public sealed class StaticDispatchOptimizationTests {
   }
 
   [Test]
-  public void SortedConstantSearch_GivenPromotedResultPhi_ThenDecisionTreePreservesStoredResultAndFailure() {
-    var module = new IrModule("test");
-    var (fn, result) = BuildPhiSearch(module, "stored", [1, 3, 5, 7, 9, 11, 13, 15], -7);
-
-    Assert.That(StaticSearchRecognition.Run(module), Is.EqualTo(1));
-    var incoming = result.Operands.Cast<IrConstantInt>().Select(value => value.Value).ToArray();
-    Assert.Multiple(() => {
-      Assert.That(incoming, Is.EquivalentTo(new long[] { -7, 0, 1, 2, 3, 4, 5, 6, 7 }));
-      Assert.That(result.IncomingBlocks.Any(block => block.Label is "header" or "found"), Is.False,
-        "the result phi must no longer name predecessors deleted with the linear loop");
-      Assert.That(result.IncomingBlocks.Any(block => block.Label.StartsWith("search.fail.", StringComparison.Ordinal)), Is.True);
-      Assert.That(fn.Blocks.Any(block => block.Label.StartsWith("bsearch.", StringComparison.Ordinal)), Is.True);
-      Assert.That(fn.AllInstructions.OfType<IrLoad>(), Is.Empty);
-      Assert.That(HasCycle(fn), Is.False);
-      Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    });
-  }
-
-  [Test]
-  public void SortedConstantSearch_GivenInvertedNotEqualContinuation_ThenItIsRecognized() {
-    var module = new IrModule("test");
-    var fn = BuildSearch(module, "inverted", IrType.U8, IrType.U8, [1, 3, 5, 7, 9, 11, 13, 15], invertedEquality: true);
-
-    Assert.That(StaticSearchRecognition.Run(module), Is.EqualTo(1));
-    Assert.Multiple(() => {
-      Assert.That(fn.Blocks.Any(block => block.Label.StartsWith("bsearch.", StringComparison.Ordinal)), Is.True);
-      Assert.That(HasCycle(fn), Is.False);
-      Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    });
-  }
-
-  [Test]
-  public void StaticSearch_GivenLoopVariantSearchKey_ThenUnsafeHoistIsDeclined() {
-    var module = new IrModule("test");
-    var fn = BuildLoopVariantKeySearch(module, "variant-key", [1, 3, 5, 7, 9, 11, 13, 15]);
-
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(StaticSearchRecognition.Run(module), Is.Zero);
-    Assert.Multiple(() => {
-      Assert.That(HasCycle(fn), Is.True);
-      Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    });
-  }
-
-  [Test]
   public void UnsortedConstantSearch_GivenAUniqueStaticSet_ThenItBecomesVerifiedSwitchDispatch() {
     var module = new IrModule("test");
     var fn = BuildSearch(module, "set", [17, 2, 91, 4, 33]);
@@ -140,8 +95,7 @@ public sealed class StaticDispatchOptimizationTests {
   private static IrFunction BuildSearch(IrModule module, string name, byte[] keys)
     => BuildSearch(module, name, IrType.U8, IrType.U8, keys);
 
-  private static IrFunction BuildSearch(IrModule module, string name, IrType tableType, IrType keyType, byte[] keys,
-      bool invertedEquality = false) {
+  private static IrFunction BuildSearch(IrModule module, string name, IrType tableType, IrType keyType, byte[] keys) {
     var table = module.AddGlobal(new IrGlobalVariable($"{name}.keys", tableType) {
       Bytes = keys,
       Count = keys.Length,
@@ -162,81 +116,14 @@ public sealed class StaticDispatchOptimizationTests {
     header.Append(new IrCondBr(inRange, body, exit));
     var at = body.Append(new IrGep(table, counter, tableType));
     var current = body.Append(new IrLoad(tableType, at));
-    var comparison = body.Append(new IrCmp(invertedEquality ? IrCmpPred.Ne : IrCmpPred.Eq, current, key));
-    body.Append(invertedEquality ? new IrCondBr(comparison, latch, found) : new IrCondBr(comparison, found, latch));
+    var equal = body.Append(new IrCmp(IrCmpPred.Eq, current, key));
+    body.Append(new IrCondBr(equal, found, latch));
     found.Append(new IrRet(counter));
     var next = latch.Append(new IrBinary(IrBinaryOp.Add, counter, new IrConstantInt(IrType.I16, 1)));
     latch.Append(new IrBr(header));
     counter.AddIncoming(new IrConstantInt(IrType.I16, 0), pre);
     counter.AddIncoming(next, latch);
     exit.Append(new IrRet(new IrConstantInt(IrType.I16, -1)));
-    return fn;
-  }
-
-  private static (IrFunction Function, IrPhi Result) BuildPhiSearch(IrModule module, string name, byte[] keys,
-      long failure) {
-    var table = module.AddGlobal(new IrGlobalVariable($"{name}.keys", IrType.U8) {
-      Bytes = keys,
-      Count = keys.Length,
-      IsZeroInitialized = false,
-    });
-    var key = new IrArgument(IrType.U8, 0, "key");
-    var fn = module.AddFunction(new IrFunction(name, IrType.I16, [key]));
-    var pre = fn.AddBlock(new IrBasicBlock("pre"));
-    var header = fn.AddBlock(new IrBasicBlock("header"));
-    var body = fn.AddBlock(new IrBasicBlock("body"));
-    var found = fn.AddBlock(new IrBasicBlock("found"));
-    var latch = fn.AddBlock(new IrBasicBlock("latch"));
-    var exit = fn.AddBlock(new IrBasicBlock("exit"));
-
-    pre.Append(new IrBr(header));
-    var counter = header.AppendPhi(new IrPhi(IrType.I16));
-    var inRange = header.Append(new IrCmp(IrCmpPred.Slt, counter, new IrConstantInt(IrType.I16, keys.Length)));
-    header.Append(new IrCondBr(inRange, body, exit));
-    var at = body.Append(new IrGep(table, counter, IrType.U8));
-    var current = body.Append(new IrLoad(IrType.U8, at));
-    var equal = body.Append(new IrCmp(IrCmpPred.Eq, current, key));
-    body.Append(new IrCondBr(equal, found, latch));
-    found.Append(new IrBr(exit));
-    var next = latch.Append(new IrBinary(IrBinaryOp.Add, counter, new IrConstantInt(IrType.I16, 1)));
-    latch.Append(new IrBr(header));
-    counter.AddIncoming(new IrConstantInt(IrType.I16, 0), pre);
-    counter.AddIncoming(next, latch);
-    var result = exit.AppendPhi(new IrPhi(IrType.I16));
-    result.AddIncoming(new IrConstantInt(IrType.I16, failure), header);
-    result.AddIncoming(counter, found);
-    exit.Append(new IrRet(result));
-    return (fn, result);
-  }
-
-  private static IrFunction BuildLoopVariantKeySearch(IrModule module, string name, byte[] keys) {
-    var table = module.AddGlobal(new IrGlobalVariable($"{name}.keys", IrType.U8) {
-      Bytes = keys,
-      Count = keys.Length,
-      IsZeroInitialized = false,
-    });
-    var fn = module.AddFunction(new IrFunction(name, IrType.U8, []));
-    var pre = fn.AddBlock(new IrBasicBlock("pre"));
-    var header = fn.AddBlock(new IrBasicBlock("header"));
-    var body = fn.AddBlock(new IrBasicBlock("body"));
-    var found = fn.AddBlock(new IrBasicBlock("found"));
-    var latch = fn.AddBlock(new IrBasicBlock("latch"));
-    var exit = fn.AddBlock(new IrBasicBlock("exit"));
-
-    pre.Append(new IrBr(header));
-    var counter = header.AppendPhi(new IrPhi(IrType.U8));
-    var inRange = header.Append(new IrCmp(IrCmpPred.Slt, counter, new IrConstantInt(IrType.U8, keys.Length)));
-    header.Append(new IrCondBr(inRange, body, exit));
-    var at = body.Append(new IrGep(table, counter, IrType.U8));
-    var current = body.Append(new IrLoad(IrType.U8, at));
-    var equal = body.Append(new IrCmp(IrCmpPred.Eq, current, counter));
-    body.Append(new IrCondBr(equal, found, latch));
-    found.Append(new IrRet(counter));
-    var next = latch.Append(new IrBinary(IrBinaryOp.Add, counter, new IrConstantInt(IrType.U8, 1)));
-    latch.Append(new IrBr(header));
-    counter.AddIncoming(new IrConstantInt(IrType.U8, 0), pre);
-    counter.AddIncoming(next, latch);
-    exit.Append(new IrRet(new IrConstantInt(IrType.U8, 0xff)));
     return fn;
   }
 

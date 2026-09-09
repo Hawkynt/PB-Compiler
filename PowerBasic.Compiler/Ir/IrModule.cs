@@ -27,12 +27,6 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   /// </summary>
   public Dialect EffectiveDialect { get; } = compatDialect ?? dialect;
 
-  /// <summary>
-  /// The optimization objective most recently applied to this module. Late passes outside
-  /// <see cref="Passes.IrPassManager.Standard"/> use it to keep size-growing rewrites SPEED-only.
-  /// </summary>
-  public bool OptimizeForSpeed { get; internal set; }
-
   public IReadOnlyList<IrFunction> Functions => this._functions;
   public IReadOnlyList<IrGlobalVariable> Globals => this._globals;
 
@@ -51,24 +45,17 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
     => this._procedureLoweringDeclines[name] = reason;
 
   public IrFunction AddFunction(IrFunction function) {
-    function.Module = this;
     this._functions.Add(function);
     return function;
   }
 
   public IrGlobalVariable AddGlobal(IrGlobalVariable global) {
     this._globals.Add(global);
-    this.ReserveStringOrdinal(global.Name);
     return global;
   }
 
   /// <summary>Removes a function from the module (global dead-code elimination); returns whether it was present.</summary>
-  public bool RemoveFunction(IrFunction function) {
-    if (!this._functions.Remove(function))
-      return false;
-    function.Module = null;
-    return true;
-  }
+  public bool RemoveFunction(IrFunction function) => this._functions.Remove(function);
 
   /// <summary>Removes a global variable from the module (global dead-code elimination); returns whether it was present.</summary>
   public bool RemoveGlobal(IrGlobalVariable global) => this._globals.Remove(global);
@@ -79,7 +66,7 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
     if (this._internedStrings.TryGetValue(key, out var existing))
       return existing;
     var global = new IrGlobalVariable($".str{this._stringOrdinal++}", IrType.I8) { Bytes = bytes, IsZeroInitialized = false };
-    this.AddGlobal(global);
+    this._globals.Add(global);
     this._internedStrings[key] = global;
     return global;
   }
@@ -89,20 +76,4 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
 
   /// <summary>Finds a global variable by name, or null.</summary>
   public IrGlobalVariable? FindGlobal(string name) => this._globals.FirstOrDefault(g => g.Name == name);
-
-  /// <summary>
-  /// Imported/cloned IR may already contain generated <c>.strN</c> globals. Keep the allocator beyond
-  /// the largest imported ordinal so a later string pass cannot mint a duplicate symbol name.
-  /// Deliberately do not add imported bytes to <see cref="_internedStrings"/>: an arbitrary global
-  /// named like a literal is not proof that its storage is immutable and safe to coalesce.
-  /// </summary>
-  private void ReserveStringOrdinal(string globalName) {
-    const string prefix = ".str";
-    if (!globalName.StartsWith(prefix, StringComparison.Ordinal)
-        || !int.TryParse(globalName.AsSpan(prefix.Length), out var ordinal)
-        || ordinal < 0
-        || ordinal == int.MaxValue)
-      return;
-    this._stringOrdinal = Math.Max(this._stringOrdinal, ordinal + 1);
-  }
 }

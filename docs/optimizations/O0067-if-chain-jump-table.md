@@ -3,10 +3,7 @@
 | | |
 |---|---|
 | **Status** | ✅ Done |
-| **Stage** | Emitter + IR middle end |
-| **Source** | `CodeGen/CodeGenerator.cs` — `TryEmitIfChainJumpTable`; `Ir/Passes/SwitchFormation.cs` |
-| **Gate** | optimizer enabled |
-| **Verified by** | `OptimizerTests`, `SwitchFormationTests` |
+| **Stage** | Emitter |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0032](O0032-short-circuit-conditions.md) |
 
 ## The idea
@@ -36,8 +33,7 @@ END IF
 
 ## Today
 
-Without dispatch recovery there can be up to four compares and four branches
-before the last arm runs:
+Up to four compares and four branches before the last arm runs:
 
 ```asm
     mov     ax, [k]
@@ -52,10 +48,10 @@ before the last arm runs:
     jmp     Default
 ```
 
-## Optimized
+## Now
 
-The direct emitter reuses the same jump-table machinery as
-[O0029](O0029-select-jump-table.md):
+The same jump table [O0029](O0029-select-jump-table.md) emits — in fact the
+*identical* code:
 
 ```asm
     mov     ax, [k]
@@ -72,39 +68,23 @@ condition is `<same integer variable> = <foldable constant>` (either operand
 order), synthesizes the equivalent `SelectStmt` — **reusing the original subject
 and constant expression nodes**, so the model's type and constant-fold queries
 still resolve — and hands it to `TryEmitSelectJumpTable`. The two forms then
-share every rule and emit byte-for-byte identical code.
-
-The IR path performs the same recovery one level earlier. `SwitchFormation` is
-now part of `IrPassManager.Standard`, after the ordinary value/CFG transforms and
-tail-recursion lowering. It reads the surviving compare chain as a set of values
-and replaces it with one target-neutral `IrSwitch`. The pass manager then runs
-another fixpoint sweep, so DCE removes comparisons made dead by the new
-terminator. This applies to `--emit-c`, `--emit-llvm`, and the routed x86-16 path
-instead of depending on a downstream compiler to rediscover the source-level
-construct.
-
-`IrSwitch` deliberately does **not** mean "always emit a jump table". It records
-the dispatch semantics once; the target chooses the profitable representation.
-The x86-16 selector can choose a dense table, compressed table, membership mask,
-perfect hash, or compare tree, while LLVM remains free to perform its own
-target-specific switch lowering.
+share every rule and emit byte-for-byte identical code (a regression test
+compiles an equality `IF`-chain and the matching `SELECT CASE` and asserts the
+images are equal).
 
 ### Why it is sound
 
 - **Same dispatch semantics.** First-match-wins: a value appearing in two arms
-  keeps the earlier one, exactly as the top-to-bottom chain would.
-- **One subject.** Every comparison leaf must use the same integer SSA value;
-  mixed-variable conditions decline rather than being guessed into a switch.
-- **Pure absorbed blocks only.** An intermediate test block must be reached only
-  from the chain, contain no phis/address-taken entry, and contain only pure
-  compare/cast/binary work whose values do not escape that block.
-- **Fixed-width equality.** Case constants are normalized to the subject width,
-  so signed and unsigned spellings of the same bit pattern agree.
-- **Conservative size bounds.** Fewer than three distinct values or more than
-  256 enumerated values remain as compares; unsupported strings, floats,
-  unsigned ordering predicates, and unsafe CFG shapes also remain untouched.
-- **Optimizer gate.** `IrPassManager.Legalize()` does not run switch formation,
-  so `--no-optimize` preserves the faithful compare-chain representation.
+  keeps the earlier one (`byValue.TryAdd`), exactly as the top-to-bottom chain
+  would. Verified byte-identical against the genuine oracle, including a
+  reversed-operand test (`5 = i`) and a duplicate-constant arm.
+- **Subject read once.** The recognizer requires a bare variable (a pure read),
+  so evaluating it a single time in the table dispatch matches the chain, which
+  re-reads the same unchanging value at each `ELSEIF`.
+- **Conservative decline.** Any non-equality condition, a range/comparison
+  selector, a different variable, or a set too small or sparse (`< 4` values, or
+  not dense enough for `TryEmitSelectJumpTable`) makes the helper return with
+  nothing emitted, and `EmitIf` falls back to the ordinary compare chain.
 
 ## Equivalent BASIC
 
@@ -118,9 +98,7 @@ SELECT CASE k%
 END SELECT
 ```
 
-The focused middle-end regression compiles an actual `IF`/`ELSEIF` equality
-chain, including reversed operand order (`11 = k`), through
-`IrPassManager.Standard` and asserts that it contains one `IrSwitch` with the
-four expected cases. Existing switch-formation tests cover duplicate values,
-ranges, exclusions, mixed variables, strings, enumeration limits, and cleanup of
-the original comparison chain.
+Native-only, in `CodeGenerator.EmitIf`. The IR back ends lower an `IF`-chain to a
+sequence of compares-and-branches that LLVM's own `simplifycfg`/switch-formation
+(and the C compiler's) turn into a jump table, so the C/LLVM output tabulates
+without a dedicated IR pass.

@@ -1,27 +1,25 @@
 using System.Globalization;
-using PowerBasic.Compiler.Ir.Analysis;
 
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
 /// Global value numbering by dominator-tree scoped hashing: two pure instructions
 /// that compute the same function of the same operands are congruent, and the one
-/// dominated by the other is replaced by it. Loads participate when Memory SSA proves
-/// that both reads see the same clobbering memory version. Because the value table is
-/// scoped to the dominator tree, a leader is only reused where it provably dominates
-/// the use - so the result is always valid SSA. Commutative operands are ordered so
-/// <c>a+b</c> and <c>b+a</c> are recognised as equal. This supersedes block-local CSE:
-/// it eliminates redundancy across blocks, not just within one.
+/// dominated by the other is replaced by it. Because the value table is scoped to the
+/// dominator tree, a leader is only reused where it provably dominates the use - so
+/// the result is always valid SSA. Commutative operands are ordered so <c>a+b</c> and
+/// <c>b+a</c> are recognised as equal. This supersedes block-local CSE: it eliminates
+/// redundancy across blocks, not just within one.
 /// </summary>
 public static class Gvn {
 
-  /// <summary>Eliminates redundant computations and unchanged loads; returns how many instructions were removed.</summary>
+  /// <summary>Eliminates redundant pure computations; returns how many instructions were removed.</summary>
   public static int Run(IrFunction fn) {
     if (fn.Entry is null)
       return 0;
     var dom = IrDominators.Build(fn)!;
     var children = DomChildren(fn, dom);
-    var ctx = new Context(IrMemorySsa.Build(fn));
+    var ctx = new Context();
     ctx.Visit(fn.Entry, children);
     return ctx.Removed;
   }
@@ -37,19 +35,16 @@ public static class Gvn {
     return children;
   }
 
-  private sealed class Context(IrMemorySsa memorySsa) {
+  private sealed class Context {
     private readonly Dictionary<string, IrInstruction> _table = [];
     private readonly Dictionary<IrValue, int> _ids = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<IrMemoryAccess, int> _memoryIds = new(ReferenceEqualityComparer.Instance);
-    private readonly IrMemorySsa _memorySsa = memorySsa;
     private int _nextId;
-    private int _nextMemoryId;
     public int Removed { get; private set; }
 
     public void Visit(IrBasicBlock block, Dictionary<IrBasicBlock, List<IrBasicBlock>> children) {
       var added = new List<string>();
       foreach (var inst in block.Instructions.ToList()) {
-        var key = this.KeyOf(inst);
+        var key = KeyOf(inst);
         if (key is null)
           continue;
         if (this._table.TryGetValue(key, out var leader)) {
@@ -75,24 +70,14 @@ public static class Gvn {
       IrCmp c => $"c{c.Pred}({this.Pair(c.Lhs, c.Rhs, IsCommutative(c.Pred))})",
       IrCast x => $"x{x.Op}:{x.Type}({this.Operand(x.Value)})",
       IrGep g => $"g({this.Operand(g.BasePtr)},{this.Operand(g.ByteOffset)})",
-      IrLoad load => $"l{load.Type}({this.Operand(load.Pointer)})@{this.MemoryVersion(load)}",
       // A call is numbered only when the callee is on the checked purity list - an entry that answers
       // the same for the same arguments and leaves nothing behind, so the second one is redundant.
       // FunctionSummaries.IsPureExternal carries the argument for each row; everything else, including
       // every string entry that consumes or allocates a handle, stays unnumbered.
       IrCall { Callee: IrFunction callee } call when FunctionSummaries.IsPureExternal(callee.Name)
         => $"r{callee.Name}({string.Join(',', call.Args.Select(this.Operand))})",
-      _ => null,                                       // stores/other calls/allocas/phis/terminators are not numbered
+      _ => null,                                       // loads/stores/other calls/allocas/phis/terminators are not numbered
     };
-
-    private string MemoryVersion(IrLoad load) {
-      var clobber = this._memorySsa.GetClobberingAccess(load);
-      if (clobber is IrMemoryLiveOnEntry)
-        return "entry";
-      if (!this._memoryIds.TryGetValue(clobber, out var id))
-        this._memoryIds[clobber] = id = this._nextMemoryId++;
-      return "m" + id.ToString(CultureInfo.InvariantCulture);
-    }
 
     private string Pair(IrValue a, IrValue b, bool commutative) {
       var ka = this.Operand(a);

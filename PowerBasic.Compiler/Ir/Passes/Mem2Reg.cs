@@ -17,19 +17,11 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// such a byte backing slot as though it were an i8 scalar changes storage semantics, so every access
 /// must have the allocation's storage shape before this pass owns it.
 /// </para>
-/// <para>
-/// The optimizing entry point runs <see cref="StringMove"/> first. O0296 needs the explicit string
-/// slots to prove privacy and lifetime end; promotion would deliberately erase exactly that memory
-/// graph. Faithful-selection promotion skips the ownership optimization.
-/// </para>
 /// </summary>
 public static class Mem2Reg {
 
-  /// <summary>Runs pre-promotion ownership rewrites, then promotes every promotable alloca.</summary>
-  public static int Run(IrFunction fn) {
-    _ = StringMove.Run(fn);
-    return Run(fn, preserveWriteOnlySourceVariables: false);
-  }
+  /// <summary>Promotes every promotable alloca in the function; returns how many were promoted.</summary>
+  public static int Run(IrFunction fn) => Run(fn, preserveWriteOnlySourceVariables: false);
 
   /// <summary>Retains a BASIC variable that is written but never read, as faithful emission requires.</summary>
   public static int RunForFaithfulSelection(IrFunction fn)

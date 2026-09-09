@@ -47,23 +47,6 @@ public sealed class IrDominators {
     return false;
   }
 
-  /// <summary>
-  /// True if the unique CFG edge <paramref name="from"/> → <paramref name="to"/> dominates
-  /// <paramref name="block"/>. Parallel edges and self-edges do not establish a branch fact.
-  /// </summary>
-  public bool EdgeDominates(IrBasicBlock from, IrBasicBlock to, IrBasicBlock block) {
-    if (!this.IsReachable(from)
-        || ReferenceEquals(from, to)
-        || from.Successors.Count(successor => ReferenceEquals(successor, to)) != 1
-        || !this.Dominates(to, block))
-      return false;
-
-    foreach (var predecessor in to.Predecessors.Where(this.IsReachable))
-      if (!ReferenceEquals(predecessor, from) && !this.Dominates(to, predecessor))
-        return false;
-    return true;
-  }
-
   /// <summary>True if the given block is reachable from entry.</summary>
   public bool IsReachable(IrBasicBlock block) => this._rpoIndex.ContainsKey(block);
 

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented — proof-driven ordered comparisons fold from NaN/sign/finiteness and finite range facts |
+| **Status** | 🟨 Partial — proven NaN/sign/finiteness facts and integer-derived ranges are implemented |
 | **Stage** | IR middle end |
 | **Gate** | Ordinary optimizer; SPEED may add its explicit relaxed-FP assumptions |
 | **IR** | `FpSimplify` + `FpDomainAnalysis` consuming `IrRangeAnalysis` |
@@ -10,46 +10,28 @@
 
 ## What is implemented
 
-`FpSimplify` decides every ordered comparison form (`=`, `<>`, `<`, `<=`, `>`,
-`>=`) when the answer follows from proven floating-point facts. That includes:
-
-- ordered self-comparisons once NaN is excluded;
-- comparisons with zero from positive, negative, non-negative, non-positive and
-  non-zero facts;
-- comparisons with `NaN` and, for values proven finite, with either infinity;
-- comparisons between finite F32/F64 domains when their intervals prove an
-  ordering, disjointness, or the same singleton value; and
-- branch-refined integer ranges carried through integer-to-float conversion and
-  supported affine/binary floating expressions.
-
-Exact facts come from constants, integer-to-float conversions, widening casts,
+`FpSimplify` decides ordered self-comparisons and comparisons with zero when the
+result follows from proven value facts. Sources include finite integer-to-float
+conversions, branch-refined integer ranges, exact constants, widening casts,
 conservative narrowing-cast facts, squares, and square roots whose arguments are
-known to be inside the defined non-negative domain. Signed integer constants are
-interpreted from their declared bit width rather than from the host `long` that
-stores the IR bit pattern.
+known to be inside the defined non-negative domain.
 
 The branch/value facts come from the existing `IrRangeAnalysis`. The small
 `FpDomainAnalysis` layer adapts those facts through integer-to-float conversion
-and supported F32/F64 arithmetic; it does not introduce a competing CFG range
-lattice.
+and supported affine FP expressions; it does not duplicate CFG range analysis.
 
 ## Strictness
 
-Strict optimization acts only on classifications it can prove. A square of an
-arbitrary float, for example, is not folded to non-negative because the input may
-be NaN. Under SPEED, the explicit `NoNaNs`/`NoInfs` assumptions can strengthen
-the same queries.
+Strict optimization does not let algebraically collapsed endpoints prove that
+all intermediate operations remained finite or nonzero. The domain evaluator
+walks supported F32/F64 expressions node-by-node and preserves each declared
+rounding point. Extended x87 precision is declined rather than approximated with
+a host `double`.
 
-The domain evaluator walks supported F32/F64 expressions node-by-node and
-preserves each declared rounding point. It refuses extended x87 arithmetic
-rather than approximating an 80-bit intermediate with host `double`; F80 still
-benefits from representation-independent facts such as the sign and finiteness
-of an integer conversion.
+Under SPEED, explicit relaxed-FP assumptions can strengthen the same queries.
 
-## Conservative boundary
+## Remaining scope
 
-This is deliberately not a full IEEE abstract interpreter. Arbitrary float
-inputs, float CFG joins, subnormal categories and exponent bounds remain unknown
-unless another proof supplies the needed fact. Signed zero is handled correctly
-by ordered comparison semantics but is not tracked as a separate lattice class.
-Unknown classifications remain in the IR unchanged.
+A full IEEE abstract domain for arbitrary float inputs, CFG joins, signed zero,
+subnormal categories and exponent bounds remains future work. The current pass
+folds only classifications it can prove with the implemented facts.

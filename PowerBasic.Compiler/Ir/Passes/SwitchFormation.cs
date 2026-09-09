@@ -73,7 +73,7 @@ public static class SwitchFormation {
   /// </summary>
   private const int _MIN_VALUES = 3;
 
-  /// <summary>Recovers dispatches in <paramref name="fn"/> and compiles profitable byte classifiers; returns the number changed.</summary>
+  /// <summary>Forms switches in <paramref name="fn"/>; the number formed.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
     if (fn.Entry is null)
@@ -84,9 +84,7 @@ public static class SwitchFormation {
     foreach (var block in fn.Blocks.ToList())
       if (block.Parent is not null && TryFormAt(fn, block, addressed))
         ++formed;
-
-    var compiled = fn.Module is { } module ? FsmCompilation.Run(module, fn) : 0;
-    return formed + compiled;
+    return formed;
   }
 
   /// <summary>Forms one switch out of the dispatch chain starting at <paramref name="head"/>, if there is one.</summary>

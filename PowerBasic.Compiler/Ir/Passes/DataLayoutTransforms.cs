@@ -7,8 +7,7 @@ public sealed record IrDataLayoutTarget(
   int PointerBits,
   int VectorBytes = 1,
   int CacheSizeBytes = 0,
-  int CacheLineBytes = 0,
-  int CacheAssociativity = 1);
+  int CacheLineBytes = 0);
 
 /// <summary>O0320 — converts private arrays of packed scalar records into one scalar array per used field.</summary>
 public static class ArrayOfStructsToStructOfArrays {
@@ -25,12 +24,12 @@ public static class HotColdFieldSplitting {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.RewriteRecordArrays(fn, DataLayoutTransformCore.RecordMode.HotCold);
 }
 
-/// <summary>O0323 — packs private integer record fields to the smallest proven byte or sub-byte representation.</summary>
+/// <summary>O0323 — narrows private integer record fields when every stored value fits a smaller integer storage type.</summary>
 public static class StructurePackingByRange {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.PackRecordFields(fn);
 }
 
-/// <summary>O0324 — stores same-region pointers as 16-bit encoded element indices when the target pointer is wider.</summary>
+/// <summary>O0324 — stores same-region pointers as 16-bit element indices when the target pointer is wider.</summary>
 public static class PointerCompression {
   public static int Run(IrFunction fn, int pointerBits) => DataLayoutTransformCore.CompressPointerArrays(fn, pointerBits);
 }
@@ -40,10 +39,10 @@ public static class ArrayPaddingAlignment {
   public static int Run(IrFunction fn, int vectorBytes) => DataLayoutTransformCore.PadScalarArrays(fn, vectorBytes);
 }
 
-/// <summary>O0326 — pads two-dimensional row strides that alias one cache set across all ways.</summary>
+/// <summary>O0326 — pads two-dimensional row strides that are exact cache-size multiples.</summary>
 public static class CacheConflictPadding {
-  public static int Run(IrFunction fn, int cacheSizeBytes, int cacheLineBytes = 0, int cacheAssociativity = 1)
-    => DataLayoutTransformCore.PadConflictingRows(fn, cacheSizeBytes, cacheLineBytes, cacheAssociativity);
+  public static int Run(IrFunction fn, int cacheSizeBytes, int cacheLineBytes = 0)
+    => DataLayoutTransformCore.PadConflictingRows(fn, cacheSizeBytes, cacheLineBytes);
 }
 
 /// <summary>O0327 — transposes private two-dimensional arrays when the innermost loop walks the strided dimension.</summary>
@@ -56,7 +55,7 @@ public static class TemporaryArrayFusion {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.EliminateTemporaryArrays(fn);
 }
 
-/// <summary>O0329 — contracts a fixed-width sliding-window array recurrence to loop-carried SSA values.</summary>
+/// <summary>O0329 — contracts a one-element sliding-window array recurrence to a loop-carried SSA value.</summary>
 public static class ArrayContraction {
   public static int Run(IrFunction fn) => DataLayoutTransformCore.ContractSlidingWindows(fn);
 }
@@ -136,7 +135,6 @@ internal static class DataLayoutTransformCore {
   }
 
   private sealed record RecordShape(IrAlloca Root, long Stride, int Elements, List<Field> Fields);
-  private readonly record struct BitField(int Width, bool Signed);
 
   internal static int RewriteRecordArrays(IrFunction fn, RecordMode mode) {
     if (fn.Entry is null)
@@ -163,9 +161,8 @@ internal static class DataLayoutTransformCore {
       if (!TryRecordShape(fn, root, out var shape) || !ExactFields(shape!))
         continue;
       var packedTypes = new Dictionary<Field, IrType>();
-      var bitFields = new Dictionary<Field, BitField>();
       foreach (var field in shape!.Fields) {
-        if (!field.Type.IsInteger || field.Accesses.All(a => !a.IsStore)) {
+        if (!field.Type.IsInteger || field.Type.Bits <= 8 || field.Accesses.All(a => !a.IsStore)) {
           packedTypes[field] = field.Type;
           continue;
         }
@@ -178,16 +175,11 @@ internal static class DataLayoutTransformCore {
           }
           range = range.Join(ranges.RangeAt(store.Value, store.Parent));
         }
-        var subByteWidth = SubByteWidth(range);
-        if (subByteWidth > 0) {
-          packedTypes[field] = IrType.I8;
-          bitFields[field] = new BitField(subByteWidth, range.Lo < 0);
-        } else
-          packedTypes[field] = Narrowest(field.Type, range);
+        packedTypes[field] = Narrowest(field.Type, range);
       }
-      if (bitFields.Count == 0 && packedTypes.All(pair => pair.Key.Type.SameStorage(pair.Value)))
+      if (packedTypes.All(pair => pair.Key.Type.SameStorage(pair.Value)))
         continue;
-      if (Pack(shape, packedTypes, bitFields))
+      if (Pack(shape, packedTypes))
         ++changed;
     }
     return changed;
@@ -201,8 +193,7 @@ internal static class DataLayoutTransformCore {
       if (!PrivatePointerTree(root))
         continue;
       var geps = root.Users.OfType<IrGep>().ToList();
-      if (geps.Count == 0 || root.Users.Any(user => user is not IrGep)
-          || geps.Any(g => g.ElementType is not { IsPointer: true }))
+      if (geps.Count == 0 || geps.Any(g => g.ElementType is not { IsPointer: true }))
         continue;
       IrValue? region = null;
       IrType? regionElement = null;
@@ -243,15 +234,12 @@ internal static class DataLayoutTransformCore {
             case IrStore store: {
               IrValue compressed;
               if (store.Value is IrNullPtr)
-                compressed = new IrConstantInt(IrType.U16, 0);
+                compressed = new IrConstantInt(IrType.U16, ushort.MaxValue);
               else {
                 var target = (IrGep)store.Value;
-                IrValue index = target.ByteOffset;
-                if (!index.Type.SameStorage(IrType.U16))
-                  index = store.Parent!.InsertBefore(new IrCast(
-                    index.Type.Bits > 16 ? IrCastOp.Trunc : IrCastOp.ZExt, index, IrType.U16), store);
-                compressed = store.Parent!.InsertBefore(new IrBinary(
-                  IrBinaryOp.Add, index, new IrConstantInt(IrType.U16, 1)), store);
+                compressed = target.ByteOffset.Type.Bits > 16
+                  ? store.Parent!.InsertBefore(new IrCast(IrCastOp.Trunc, target.ByteOffset, IrType.U16), store)
+                  : target.ByteOffset;
               }
               store.Parent!.InsertBefore(new IrStore(compressed, narrowPtr), store);
               store.EraseFromParent();
@@ -260,10 +248,8 @@ internal static class DataLayoutTransformCore {
             case IrLoad load: {
               var block = load.Parent!;
               var encoded = block.InsertBefore(new IrLoad(IrType.U16, narrowPtr), load);
-              var isNull = block.InsertBefore(new IrCmp(IrCmpPred.Eq, encoded, new IrConstantInt(IrType.U16, 0)), load);
-              var decoded = block.InsertBefore(new IrBinary(IrBinaryOp.Sub, encoded, new IrConstantInt(IrType.U16, 1)), load);
-              var safeIndex = block.InsertBefore(new IrSelect(isNull, new IrConstantInt(IrType.U16, 0), decoded), load);
-              var index = block.InsertBefore(new IrCast(IrCastOp.ZExt, safeIndex, IrType.I32), load);
+              var isNull = block.InsertBefore(new IrCmp(IrCmpPred.Eq, encoded, new IrConstantInt(IrType.U16, ushort.MaxValue)), load);
+              var index = block.InsertBefore(new IrCast(IrCastOp.ZExt, encoded, IrType.I32), load);
               var target = block.InsertBefore(new IrGep(region, index, regionElement), load);
               var value = block.InsertBefore(new IrSelect(isNull, new IrNullPtr(target.Type), target), load);
               load.ReplaceAllUsesWith(value);
@@ -303,10 +289,9 @@ internal static class DataLayoutTransformCore {
     return changed;
   }
 
-  internal static int PadConflictingRows(IrFunction fn, int cacheSizeBytes, int cacheLineBytes, int cacheAssociativity) {
-    if (cacheSizeBytes <= 0 || cacheAssociativity <= 0 || cacheSizeBytes % cacheAssociativity != 0 || fn.Entry is null)
+  internal static int PadConflictingRows(IrFunction fn, int cacheSizeBytes, int cacheLineBytes) {
+    if (cacheSizeBytes <= 0 || fn.Entry is null)
       return 0;
-    var conflictSpanBytes = cacheSizeBytes / cacheAssociativity;
     var changed = 0;
     foreach (var root in fn.Entry.Instructions.OfType<IrAlloca>().ToList()) {
       if (root.Name?.Contains(".cachepad", StringComparison.Ordinal) == true)
@@ -319,40 +304,26 @@ internal static class DataLayoutTransformCore {
       if (!TryCommonTwoDimensionalShape(accesses, elementBytes, root.Count, out var rowElements, out var rows, out var rowTerm))
         continue;
       var rowBytes = checked(rowElements * elementBytes);
-      if (rowBytes % conflictSpanBytes != 0)
+      if (rowBytes % cacheSizeBytes != 0)
         continue;
-      var padElements = cacheLineBytes > 0
-        ? Math.Max(1L, ((long)cacheLineBytes + elementBytes - 1) / elementBytes)
-        : 1L;
-      var physicalRow = checked(rowElements + padElements);
-      var rewrites = new Dictionary<Access, Linear>();
+      var padBytes = Math.Max(elementBytes, cacheLineBytes > 0 ? Gcd(cacheLineBytes, elementBytes) : elementBytes);
+      var padElements = Math.Max(1L, padBytes / elementBytes);
+      var physicalRow = rowElements + padElements;
+      var replacement = InsertAllocaAfter(root, root.Allocated, checked((int)(rows * physicalRow)), (root.Name ?? "array") + ".cachepad");
+      var ok = true;
       foreach (var access in accesses) {
         var logical = access.Bytes.Clone();
         if (!logical.DivideExact(elementBytes)
             || !logical.Terms.TryGetValue(rowTerm!, out var rowCoefficient)
-            || Math.Abs(rowCoefficient) != rowElements) {
-          rewrites.Clear();
-          break;
-        }
+            || Math.Abs(rowCoefficient) != rowElements) { ok = false; break; }
         logical.Terms[rowTerm!] = Math.Sign(rowCoefficient) * physicalRow;
         var scaled = TryScaleCopy(logical, elementBytes);
-        if (scaled is null || !CanBuildLinear(scaled) || access.Instruction.Parent is null) {
-          rewrites.Clear();
-          break;
-        }
-        rewrites[access] = scaled;
+        if (scaled is null || !RewriteAccess(access, replacement, scaled)) { ok = false; break; }
       }
-      if (rewrites.Count != accesses.Count)
-        continue;
-      int paddedElements;
-      try {
-        paddedElements = checked((int)(rows * physicalRow));
-      } catch (OverflowException) {
+      if (!ok) {
+        replacement.EraseFromParent();
         continue;
       }
-      var replacement = InsertAllocaAfter(root, root.Allocated, paddedElements, (root.Name ?? "array") + ".cachepad");
-      foreach (var (access, bytes) in rewrites)
-        _ = RewriteAccess(access, replacement, bytes); // preflight above makes this non-failing.
       CleanupDeadGeps(root);
       if (root.HasNoUsers)
         root.EraseFromParent();
@@ -378,8 +349,9 @@ internal static class DataLayoutTransformCore {
         continue;
       if (!TryCommonTwoDimensionalShape(accesses, elementBytes, root.Count, out var columns, out var rows, out var rowTerm))
         continue;
-      if (!loops.Any(loop => ReferenceEquals(loop.Counter, rowTerm)
-          && IsInnermostTraversal(loop, loops, accesses)))
+      var inner = loops.FirstOrDefault(loop => accesses.Any(a => a.Instruction.Parent is { } b && loop.Region.Contains(b))
+        && ReferenceEquals(loop.Counter, rowTerm));
+      if (inner is null)
         continue;
 
       var replacement = InsertAllocaAfter(root, root.Allocated, root.Count, (root.Name ?? "array") + ".transpose");
@@ -462,142 +434,62 @@ internal static class DataLayoutTransformCore {
     if (fn.Entry is null)
       return 0;
     var loops = fn.Blocks.Select(h => CountedLoop.Match(fn, h)).Where(l => l is not null).Cast<CountedLoop>().ToList();
-    if (loops.Count == 0 || IrDominators.Build(fn) is not { } dom)
+    if (loops.Count == 0)
+      return 0;
+    var dom = IrDominators.Build(fn);
+    if (dom is null)
       return 0;
     var changed = 0;
     foreach (var root in fn.Entry.Instructions.OfType<IrAlloca>().ToList()) {
       if (root.Count < 2 || IrAliasAnalysis.StorageBytes(root.Allocated) is not { } elementBytes || !PrivatePointerTree(root))
         continue;
       var accesses = CollectAccesses(fn, root);
-      if (accesses is null
-          || accesses.Any(a => a.BytesWide != elementBytes || !a.ValueType.SameStorage(root.Allocated)))
+      if (accesses is null)
         continue;
       foreach (var loop in loops) {
-        if (IrLoopDependenceAnalysis.Analyze(fn, loop.Header) is not { IsComplete: true })
-          continue;
-
         var insideStores = accesses.Where(a => a.Instruction is IrStore && a.Instruction.Parent is { } b && loop.Region.Contains(b)).ToList();
         var insideLoads = accesses.Where(a => a.Instruction is IrLoad && a.Instruction.Parent is { } b && loop.Region.Contains(b)).ToList();
         var outsideStores = accesses.Where(a => a.Instruction is IrStore && (a.Instruction.Parent is not { } b || !loop.Region.Contains(b))).ToList();
         var outsideLoads = accesses.Where(a => a.Instruction is IrLoad && (a.Instruction.Parent is not { } b || !loop.Region.Contains(b))).ToList();
-        if (insideStores.Count != 1 || insideLoads.Count == 0 || outsideLoads.Count == 0)
+        if (insideStores.Count != 1 || insideLoads.Count != 1 || outsideStores.Count != 1 || outsideLoads.Count != 1)
           continue;
         if (!TryCounterProgression(loop, out var firstCounter, out var step) || step != 1)
-          continue; // the scalar shift below models an advancing fixed-width window.
-
+          continue; // distance-one contraction currently models an advancing one-element window only.
         var current = IndexOf(insideStores[0], loop.Counter, elementBytes);
-        if (current is null)
+        var previous = IndexOf(insideLoads[0], loop.Counter, elementBytes);
+        if (current is null || previous is null || current.Value - previous.Value != 1)
           continue;
-        var historyLoads = new List<(IrLoad Load, int Distance)>(insideLoads.Count);
-        var width = 0;
-        var valid = true;
-        foreach (var access in insideLoads) {
-          var previous = IndexOf(access, loop.Counter, elementBytes);
-          long distance;
-          try {
-            distance = previous is null ? 0 : checked(current.Value - previous.Value);
-          } catch (OverflowException) {
-            valid = false;
-            break;
-          }
-          if (previous is null || distance <= 0 || distance > root.Count) {
-            valid = false;
-            break;
-          }
-          var slot = checked((int)distance);
-          width = Math.Max(width, slot);
-          historyLoads.Add(((IrLoad)access.Instruction, slot));
-        }
-        if (!valid || width == 0 || outsideStores.Count != width)
+        if (!ConstantElement(outsideStores[0], elementBytes, out var initialIndex)
+            || !ConstantElement(outsideLoads[0], elementBytes, out var finalIndex))
           continue;
-
-        long firstCurrent;
-        long lastCurrent;
+        long expectedInitial;
+        long expectedFinal;
         try {
-          firstCurrent = checked(firstCounter + current.Value);
-          lastCurrent = checked(firstCurrent + checked((loop.Trips - 1) * step));
+          expectedInitial = checked(firstCounter + previous.Value);
+          expectedFinal = checked(firstCounter + current.Value + checked((loop.Trips - 1) * step));
         } catch (OverflowException) {
           continue;
         }
-        if (firstCurrent < width || lastCurrent < firstCurrent || lastCurrent >= root.Count)
+        if (initialIndex != expectedInitial || finalIndex != expectedFinal)
           continue;
-
-        var seeds = new IrStore?[width];
-        foreach (var access in outsideStores) {
-          if (!ConstantElement(access, elementBytes, out var seedIndex)) {
-            valid = false;
-            break;
-          }
-          long distance;
-          try {
-            distance = checked(firstCurrent - seedIndex);
-          } catch (OverflowException) {
-            valid = false;
-            break;
-          }
-          if (distance is < 1 || distance > width) {
-            valid = false;
-            break;
-          }
-          var store = (IrStore)access.Instruction;
-          var slot = checked((int)distance) - 1;
-          if (seeds[slot] is not null || store.Parent is null || !dom.Dominates(store.Parent, loop.Preheader)) {
-            valid = false;
-            break;
-          }
-          seeds[slot] = store;
-        }
-        if (!valid || seeds.Any(seed => seed is null))
-          continue;
-
-        var finalLoads = new List<(IrLoad Load, int Distance)>(outsideLoads.Count);
-        foreach (var access in outsideLoads) {
-          if (!ConstantElement(access, elementBytes, out var finalIndex)) {
-            valid = false;
-            break;
-          }
-          long distance;
-          try {
-            distance = checked(checked(lastCurrent - finalIndex) + 1);
-          } catch (OverflowException) {
-            valid = false;
-            break;
-          }
-          var load = (IrLoad)access.Instruction;
-          if (distance is < 1 || distance > width || load.Parent is null || !dom.Dominates(loop.Exit, load.Parent)) {
-            valid = false;
-            break;
-          }
-          finalLoads.Add((load, checked((int)distance)));
-        }
-        if (!valid)
-          continue;
-
+        var seedStore = (IrStore)outsideStores[0].Instruction;
         var recurrenceStore = (IrStore)insideStores[0].Instruction;
-        if (recurrenceStore.Parent is null || !dom.Dominates(recurrenceStore.Parent, loop.Latch))
-          continue; // every current element must be produced on every iteration.
+        var previousLoad = (IrLoad)insideLoads[0].Instruction;
+        var finalLoad = (IrLoad)outsideLoads[0].Instruction;
+        if (seedStore.Parent is null || recurrenceStore.Parent is null || finalLoad.Parent is null
+            || !dom.Dominates(seedStore.Parent, loop.Preheader)
+            || !dom.Dominates(recurrenceStore.Parent, loop.Latch)
+            || !dom.Dominates(loop.Exit, finalLoad.Parent))
+          continue;
 
-        var history = new IrPhi[width];
-        for (var slot = 0; slot < history.Length; ++slot) {
-          var suffix = width == 1 ? ".window" : $".window.{slot + 1}";
-          var phi = loop.Header.AppendPhi(new IrPhi(root.Allocated) { Name = (root.Name ?? "array") + suffix });
-          phi.AddIncoming(seeds[slot]!.Value, loop.Preheader);
-          history[slot] = phi;
-        }
-
-        foreach (var (load, distance) in historyLoads)
-          load.ReplaceAllUsesWith(history[distance - 1]);
-        for (var slot = 0; slot < history.Length; ++slot)
-          history[slot].AddIncoming(slot == 0 ? recurrenceStore.Value : history[slot - 1], loop.Latch);
-        foreach (var (load, distance) in finalLoads)
-          load.ReplaceAllUsesWith(history[distance - 1]);
-
-        foreach (var (load, _) in historyLoads)
-          load.EraseFromParent();
-        foreach (var (load, _) in finalLoads)
-          load.EraseFromParent();
-        foreach (var seed in seeds)
-          seed!.EraseFromParent();
+        var phi = loop.Header.AppendPhi(new IrPhi(root.Allocated) { Name = (root.Name ?? "array") + ".window" });
+        phi.AddIncoming(seedStore.Value, loop.Preheader);
+        previousLoad.ReplaceAllUsesWith(phi);
+        phi.AddIncoming(recurrenceStore.Value, loop.Latch);
+        finalLoad.ReplaceAllUsesWith(phi);
+        previousLoad.EraseFromParent();
+        finalLoad.EraseFromParent();
+        seedStore.EraseFromParent();
         recurrenceStore.EraseFromParent();
         CleanupDeadGeps(root);
         Dce.Run(fn);
@@ -611,8 +503,6 @@ internal static class DataLayoutTransformCore {
   }
 
   private static int ToSoa(RecordShape shape) {
-    if (shape.Root.Name?.EndsWith(".hot", StringComparison.Ordinal) == true)
-      return 0; // O0322 selected this grouping; the following O0320 pass must not immediately undo it.
     if (shape.Elements < 16 || shape.Fields.Count < 2)
       return 0;
     var entry = shape.Root.Parent!;
@@ -677,7 +567,7 @@ internal static class DataLayoutTransformCore {
     var max = shape.Fields.Max(f => f.Weight);
     if (max <= 0)
       return 0;
-    var cold = shape.Fields.Where(f => (long)f.Weight * 4 <= max).ToHashSet();
+    var cold = shape.Fields.Where(f => f.Weight * 4 <= max).ToHashSet();
     var hot = shape.Fields.Where(f => !cold.Contains(f)).ToList();
     if (cold.Count == 0 || hot.Count == 0)
       return 0;
@@ -725,30 +615,16 @@ internal static class DataLayoutTransformCore {
     return 1;
   }
 
-  private static bool Pack(RecordShape shape, IReadOnlyDictionary<Field, IrType> packedTypes,
-      IReadOnlyDictionary<Field, BitField> bitFields) {
+  private static bool Pack(RecordShape shape, IReadOnlyDictionary<Field, IrType> packedTypes) {
     var packedOffset = new Dictionary<Field, long>();
-    var bitOffset = new Dictionary<Field, int>();
-    long bitCursor = 0;
+    long stride = 0;
     foreach (var field in shape.Fields.OrderBy(f => f.Offset)) {
-      if (bitFields.TryGetValue(field, out var bitField)) {
-        var withinByte = (int)(bitCursor & 7);
-        if (withinByte + bitField.Width > 8)
-          bitCursor = (bitCursor + 7) & ~7L;
-        packedOffset[field] = bitCursor >> 3;
-        bitOffset[field] = (int)(bitCursor & 7);
-        bitCursor += bitField.Width;
-        continue;
-      }
-
-      bitCursor = (bitCursor + 7) & ~7L;
       var size = IrAliasAnalysis.StorageBytes(packedTypes[field]);
       if (size is null)
         return false;
-      packedOffset[field] = bitCursor >> 3;
-      bitCursor += checked(size.Value * 8L);
+      packedOffset[field] = stride;
+      stride += size.Value;
     }
-    var stride = (bitCursor + 7) >> 3;
     if (stride <= 0 || stride >= shape.Stride)
       return false;
     var rewrittenOffsets = new Dictionary<Access, Linear>();
@@ -768,11 +644,6 @@ internal static class DataLayoutTransformCore {
         if (BuildLinear(access.Instruction.Parent!, access.Instruction, rewrittenOffsets[access]) is not { } byteOffset)
           return false;
         var pointer = access.Instruction.Parent!.InsertBefore(new IrGep(root, byteOffset), access.Instruction);
-        if (bitFields.TryGetValue(field, out var bitField)) {
-          RewriteBitFieldAccess(access, pointer, bitOffset[field], bitField);
-          continue;
-        }
-
         var storedType = packedTypes[field];
         if (access.Instruction is IrLoad load) {
           if (storedType.SameStorage(load.Type)) {
@@ -800,63 +671,6 @@ internal static class DataLayoutTransformCore {
     if (shape.Root.HasNoUsers)
       shape.Root.EraseFromParent();
     return true;
-  }
-
-  private static void RewriteBitFieldAccess(Access access, IrValue pointer, int bitOffset, BitField bitField) {
-    var mask = (1 << bitField.Width) - 1;
-    switch (access.Instruction) {
-      case IrLoad load: {
-        var block = load.Parent!;
-        IrValue value = block.InsertBefore(new IrLoad(IrType.I8, pointer), load);
-        if (bitOffset != 0)
-          value = block.InsertBefore(new IrBinary(IrBinaryOp.LShr, value, new IrConstantInt(IrType.I8, bitOffset)), load);
-        value = block.InsertBefore(new IrBinary(IrBinaryOp.And, value, new IrConstantInt(IrType.I8, mask)), load);
-        if (bitField.Signed) {
-          var signShift = 8 - bitField.Width;
-          value = block.InsertBefore(new IrBinary(IrBinaryOp.Shl, value, new IrConstantInt(IrType.I8, signShift)), load);
-          value = block.InsertBefore(new IrBinary(IrBinaryOp.AShr, value, new IrConstantInt(IrType.I8, signShift)), load);
-        }
-        if (load.Type.Bits > 8)
-          value = block.InsertBefore(new IrCast(bitField.Signed ? IrCastOp.SExt : IrCastOp.ZExt, value, load.Type), load);
-        else if (load.Type.Bits < 8)
-          value = block.InsertBefore(new IrCast(IrCastOp.Trunc, value, load.Type), load);
-        load.ReplaceAllUsesWith(value);
-        load.EraseFromParent();
-        break;
-      }
-      case IrStore store: {
-        var block = store.Parent!;
-        IrValue value = store.Value;
-        if (value.Type.Bits > 8)
-          value = block.InsertBefore(new IrCast(IrCastOp.Trunc, value, IrType.I8), store);
-        else if (value.Type.Bits < 8)
-          value = block.InsertBefore(new IrCast(IrCastOp.ZExt, value, IrType.I8), store);
-        value = block.InsertBefore(new IrBinary(IrBinaryOp.And, value, new IrConstantInt(IrType.I8, mask)), store);
-        if (bitOffset != 0)
-          value = block.InsertBefore(new IrBinary(IrBinaryOp.Shl, value, new IrConstantInt(IrType.I8, bitOffset)), store);
-        var old = block.InsertBefore(new IrLoad(IrType.I8, pointer), store);
-        var fieldMask = mask << bitOffset;
-        var preserved = block.InsertBefore(new IrBinary(IrBinaryOp.And, old,
-          new IrConstantInt(IrType.I8, 0xff ^ fieldMask)), store);
-        var merged = block.InsertBefore(new IrBinary(IrBinaryOp.Or, preserved, value), store);
-        block.InsertBefore(new IrStore(merged, pointer), store);
-        store.EraseFromParent();
-        break;
-      }
-    }
-  }
-
-  private static int SubByteWidth(ValueRange range) {
-    if (range.IsTop || range.IsEmpty)
-      return 0;
-    for (var bits = 1; bits < 8; ++bits)
-      if (range.Lo < 0) {
-        var limit = 1L << (bits - 1);
-        if (range.Lo >= -limit && range.Hi < limit)
-          return bits;
-      } else if (range.Hi < 1L << bits)
-        return bits;
-    return 0;
   }
 
   private static IrType Narrowest(IrType original, ValueRange range) {
@@ -1134,12 +948,6 @@ internal static class DataLayoutTransformCore {
     return rows >= 2;
   }
 
-  private static bool IsInnermostTraversal(CountedLoop loop, IReadOnlyList<CountedLoop> loops, IReadOnlyList<Access> accesses)
-    => accesses.Any(a => a.Instruction.Parent is { } block && loop.Region.Contains(block))
-       && !loops.Any(nested => !ReferenceEquals(nested, loop)
-         && loop.Region.Contains(nested.Header)
-         && accesses.Any(a => a.Instruction.Parent is { } block && nested.Region.Contains(block)));
-
   private static bool SameCounterSequence(CountedLoop first, CountedLoop second)
     => first.Counter.Type.SameStorage(second.Counter.Type)
        && TryCounterProgression(first, out var firstStart, out var firstStep)
@@ -1195,15 +1003,8 @@ internal static class DataLayoutTransformCore {
 
   private static bool TryClonePureValue(IrValue value, CountedLoop producer, CountedLoop consumer, IrInstruction before, out IrValue? clone) {
     var cache = new Dictionary<IrValue, IrValue>(ReferenceEqualityComparer.Instance) { [producer.Counter] = consumer.Counter };
-    var regionInstructions = producer.Region.Concat(consumer.Region)
-      .SelectMany(b => b.Instructions).ToList();
-    var writes = regionInstructions.OfType<IrStore>().ToList();
-    var hasOpaqueWrites = regionInstructions.Any(i => i switch {
-      IrInlineAsm => true,
-      IrCall { Callee: IrFunction callee } when callee.IsDeclaration && FunctionSummaries.IsPureExternal(callee.Name) => false,
-      IrCall => true,
-      _ => false,
-    });
+    var writes = producer.Region.Concat(consumer.Region)
+      .SelectMany(b => b.Instructions).OfType<IrStore>().ToList();
     return Clone(value, out clone, 0);
 
     bool Clone(IrValue current, out IrValue? result, int depth) {
@@ -1230,7 +1031,7 @@ internal static class DataLayoutTransformCore {
           break;
         case IrLoad load:
           if (!ClonePointer(load.Pointer, out var pointer, depth + 1)) return false;
-          if (hasOpaqueWrites || writes.Any(w => IrAliasAnalysis.MayAlias(pointer!, load.Type, w.Pointer, w.Value.Type))) return false;
+          if (writes.Any(w => IrAliasAnalysis.MayAlias(pointer!, load.Type, w.Pointer, w.Value.Type))) return false;
           result = block.InsertBefore(new IrLoad(load.Type, pointer!), before);
           break;
         default:

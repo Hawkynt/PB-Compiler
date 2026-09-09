@@ -43,10 +43,3 @@ The current IR tier implements the scalar fixed-size case and uses a conservativ
 static threshold (`coldWeight * 4 <= hottestWeight`). Fixed strings and other
 opaque field representations remain outside the transform until their accesses
 carry equivalent scalar layout provenance.
-
-In the standard pipeline O0320 runs immediately after O0322. The generated
-`*.hot` allocation is therefore treated as an already-selected field grouping:
-O0320 leaves it packed instead of immediately exploding it into full SoA again.
-Records that O0322 declines remain eligible for O0320. Without that composition
-rule, the pipeline would erase O0322's hot-record locality decision on the same
-sweep.

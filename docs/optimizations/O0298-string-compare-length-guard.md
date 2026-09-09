@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | 🟡 Partial (equality `=` / `<>` short-circuit on length **and** widened content compare; the ordering forms `<` / `>` still compare byte-wise) |
 | **Stage** | Runtime + emitter |
-| **IR** | ✅ `Ir/Passes/StringCompareEquality.cs` — registered as `strcmpeq` in `IrPassManager.Standard()`, covering the same equality half as the emitter. `rt_str_compare` walks bytes to the first difference so it can say which string sorts first; `=` and `<>` never need that ordering, and unequal lengths settle it without reading a byte. The rewrite is a callee swap - same handles, same registers, same consumption - so it is sound when every result user only tests against zero, or when simplification has left the consuming call with no result users at all |
+| **IR** | ✅ `Ir/Passes/StringCompareEquality.cs` — registered as `strcmpeq` in `IrPassManager.Standard()`, covering the same equality half as the emitter. `rt_str_compare` walks bytes to the first difference so it can say which string sorts first; `=` and `<>` never need that ordering, and unequal lengths settle it without reading a byte. The rewrite is a callee swap - same handles, same registers, same consumption - so the whole soundness condition is that the answer is only ever tested against zero |
 | **Related** | [O0181](O0181-empty-string-comparison.md), [O0180](O0180-string-length-caching.md), [R0003](R0003-string-engine.md) |
 
 ## Now
@@ -19,13 +19,6 @@ emitter routes a `=` / `<>` string comparison to it under `--optimize`
 string subject (`CASE "quit"`, in `EmitSelectorString`); it returns 0 (equal) /
 1 (unequal), which the same `je`/`jne` test reads, and consumes (frees) both operands
 exactly like `rt_strcmp`. Ordering arms (`CASE IS < …`) keep the full compare.
-
-The IR pass also handles a comparison whose numeric answer became dead after
-CFG/value simplification. String-runtime calls are consuming operations, so such a
-call cannot simply be discarded: it still owns the two operand handles. Since
-`rt_str_compare_eq` consumes those same handles in the same way, routing the dead
-result is safe and avoids computing lexicographic ordering that nobody observes.
-Any live ordering user still keeps `rt_str_compare`.
 
 Once the lengths are known equal the content scan runs a **word at a time**: `SHR CX,1`
 words through `REPE CMPSW`, then the single trailing byte when the length is odd. That is

@@ -97,8 +97,8 @@ public sealed class MachineEmitterTests {
   }
 
   [Test]
-  public void EmitFunction_GivenFrameFreeStackParameters_ThenUsesBpOnlyToStageArguments() {
-    // F(a, b) = a + b : the 8086 needs BP to read [BP+4]/[BP+6], but only until both values live in regs.
+  public void EmitFunction_GivenLeafFunction_ThenWrapsBodyInTheStandardStackAbi() {
+    // F(a, b) = a + b : the full function with prologue, argument loads and a RET that cleans 4 bytes
     var a = new IrArgument(IrType.I16, 0);
     var b = new IrArgument(IrType.I16, 1);
     var fn = new IrFunction("F", IrType.I16, [a, b]);
@@ -111,25 +111,13 @@ public sealed class MachineEmitterTests {
     Assert.That(alloc, Is.Not.Null);
 
     var asm = new Assembler();
+    // the two BYVAL word parameters sit at [BP+4] and [BP+6]; 8086 cannot address them as [SP+disp],
+    // so even an IR frame-elision request must retain BP and clean 4 bytes on return
     MachineEmitter.EmitFunction(asm, m!, alloc!, [4, 6], 4, allowFrameElision: true);
     var bytes = asm.ToArray();
 
-    var entryFrame = new Assembler();
-    entryFrame.Push(Reg.BP);
-    entryFrame.Mov(Reg.BP, Reg.SP);
-    var fullTeardown = new Assembler();
-    fullTeardown.Mov(Reg.SP, Reg.BP);
-    fullTeardown.Pop(Reg.BP);
-
-    Assert.Multiple(() => {
-      Assert.That(IndexOf(bytes, entryFrame.ToArray()), Is.EqualTo(0), "BP is established for incoming argument loads");
-      Assert.That(IndexOf(bytes, [0x5D]), Is.GreaterThan(entryFrame.ToArray().Length - 1),
-        "POP BP restores the caller frame before the body runs");
-      Assert.That(IndexOf(bytes, fullTeardown.ToArray()), Is.EqualTo(-1),
-        "there is no persistent-frame epilogue once arguments are staged");
-      Assert.That(IndexOf(bytes, [0xC2, 0x04, 0x00]), Is.GreaterThanOrEqualTo(0),
-        "RET 4 still cleans the two word arguments");
-    });
+    Assert.That(bytes[0], Is.EqualTo((byte)0x55), "PUSH BP opens the frame");
+    Assert.That(IndexOf(bytes, [0xC2, 0x04, 0x00]), Is.GreaterThanOrEqualTo(0), "RET 4 cleans the two word arguments");
   }
 
   [Test]
@@ -163,35 +151,6 @@ public sealed class MachineEmitterTests {
     MachineEmitter.EmitFunction(asm, machine, allocation!, [], 0, allowFrameElision: true);
 
     Assert.That(asm.ToArray()[0], Is.EqualTo((byte)0x55), "PUSH BP remains because a frame slot survived");
-  }
-
-  [Test]
-  public void EmitFunction_GivenBodyParameterCell_ThenKeepsThePersistentFrame() {
-    var argument = new IrArgument(IrType.F32, 0);
-    var fn = new IrFunction("F", IrType.F32, [argument]);
-    fn.CreateBlock("entry").Append(new IrRet(argument));
-    var machine = InstructionSelector.TrySelect(fn);
-    Assert.That(machine, Is.Not.Null);
-    Assert.That(machine!.AllInstructions.SelectMany(instruction => instruction.Operands),
-      Has.Some.TypeOf<MOperand.ParamCell>());
-    var allocation = LinearScanAllocator.Allocate(machine);
-    Assert.That(allocation, Is.Not.Null);
-
-    var asm = new Assembler();
-    MachineEmitter.EmitFunction(asm, machine, allocation!, [4], 4, allowFrameElision: true);
-    var bytes = asm.ToArray();
-
-    var fullTeardown = new Assembler();
-    fullTeardown.Mov(Reg.SP, Reg.BP);
-    fullTeardown.Pop(Reg.BP);
-
-    Assert.Multiple(() => {
-      Assert.That(bytes[0], Is.EqualTo((byte)0x55), "PUSH BP remains because the body reads a ParamCell");
-      Assert.That(IndexOf(bytes, fullTeardown.ToArray()), Is.GreaterThanOrEqualTo(0),
-        "the persistent frame is torn down only at return");
-      Assert.That(IndexOf(bytes, [0xC2, 0x04, 0x00]), Is.GreaterThanOrEqualTo(0),
-        "RET 4 still cleans the SINGLE parameter");
-    });
   }
 
   [Test]

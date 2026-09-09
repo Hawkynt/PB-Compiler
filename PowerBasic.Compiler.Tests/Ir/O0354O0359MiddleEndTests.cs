@@ -51,46 +51,6 @@ public sealed class O0354O0359MiddleEndTests {
   }
 
   [Test]
-  public void EqualitySaturation_GivenRepeatedTermAcrossAssociation_WhenRun_ThenItEliminatesTheDuplicate() {
-    var a = new IrArgument(IrType.I16, 0, "a");
-    var b = new IrArgument(IrType.I16, 1, "b");
-    var fn = new IrFunction("f", IrType.I16, [a, b]);
-    var builder = new IrBuilder(fn.CreateBlock("entry"));
-    builder.Ret(builder.Or(builder.Or(a, b), a));
-
-    Assert.That(EqualitySaturation.Run(fn), Is.EqualTo(1));
-    Dce.Run(fn);
-
-    var result = (IrBinary)fn.AllInstructions.OfType<IrRet>().Single().Value!;
-    Assert.That(result.Op, Is.EqualTo(IrBinaryOp.Or));
-    Assert.That(result.Operands, Is.EquivalentTo(new IrValue[] { a, b }));
-    Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(), Is.EqualTo(1));
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-  }
-
-  [Test]
-  public void EqualitySaturation_GivenFactoringThatExposesARepeatedTerm_WhenRun_ThenItFinishesTheRewriteChain() {
-    var a = new IrArgument(IrType.I16, 0, "a");
-    var b = new IrArgument(IrType.I16, 1, "b");
-    var c = new IrArgument(IrType.I16, 2, "c");
-    var fn = new IrFunction("f", IrType.I16, [a, b, c]);
-    var builder = new IrBuilder(fn.CreateBlock("entry"));
-    builder.Ret(builder.Or(builder.And(a, builder.Or(b, c)), builder.And(a, b)));
-
-    Assert.That(EqualitySaturation.Run(fn), Is.EqualTo(1));
-    Dce.Run(fn);
-
-    var result = (IrBinary)fn.AllInstructions.OfType<IrRet>().Single().Value!;
-    Assert.That(result.Op, Is.EqualTo(IrBinaryOp.And));
-    Assert.That(result.Operands, Does.Contain(a));
-    var varying = result.Operands.OfType<IrBinary>().Single();
-    Assert.That(varying.Op, Is.EqualTo(IrBinaryOp.Or));
-    Assert.That(varying.Operands, Is.EquivalentTo(new IrValue[] { b, c }));
-    Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(), Is.EqualTo(2));
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-  }
-
-  [Test]
   public void EqualitySaturation_GivenSharedInnerExpression_WhenRun_ThenItDoesNotPriceTheSharedValueAsDisposable() {
     var a = new IrArgument(IrType.I16, 0, "a");
     var b = new IrArgument(IrType.I16, 1, "b");

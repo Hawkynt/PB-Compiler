@@ -61,14 +61,11 @@ public sealed class MachineEmitter {
   /// are valid), incoming argument loads, the body, and the matching epilogue.
   ///
   /// <para>
-  /// O0070 may omit the persistent BP frame when the middle end has requested it and the FINAL machine
-  /// function proves the request survived selection and allocation: no alloca/spill slots, no body
-  /// operand that still needs BP, and no inline assembly. Stack parameters do not by themselves force
-  /// a persistent frame. On 8086, used register-resident parameters are staged through a short
-  /// <c>PUSH BP; MOV BP,SP</c> entry window and BP is restored immediately after the loads. If spilling
-  /// turns a parameter back into a <see cref="MOperand.ParamCell"/>, the final proof rejects elision and
-  /// the ordinary frame remains. The final check is load-bearing: an IR function can be frame-free and
-  /// still acquire target-specific frame state after selection or allocation.
+  /// O0070 may omit the BP frame when the middle end has requested it and the FINAL machine function
+  /// proves the request survived selection and allocation: no stack parameters, no alloca/spill slots,
+  /// no frame operands and no inline assembly. The final check is load-bearing. An IR function can be
+  /// frame-free and still acquire a spill during register allocation, which immediately makes the
+  /// frame necessary again.
   /// </para>
   /// </summary>
   /// <param name="resolveCallee">
@@ -98,17 +95,11 @@ public sealed class MachineEmitter {
       bool allowFrameElision = false) {
     var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets);
     var loopHeaders = alignLoops ? FindLoopHeaders(function) : null;
-    var elideFrame = CanElideFrame(function, allowFrameElision);
-    var loadArgumentsThroughFrame = elideFrame && (function.HasArgumentPlan
-      ? function.ArgumentLoads.Any(load => allocation.ContainsKey(load.VirtualId))
-      : paramOffsets.Length != 0);
-
-    if (!elideFrame || loadArgumentsThroughFrame) {
-      asm.Push(Asm.Reg.BP);
-      asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
-    }
+    var elideFrame = CanElideFrame(function, paramOffsets, paramBytes, allowFrameElision);
 
     if (!elideFrame) {
+      asm.Push(Asm.Reg.BP);
+      asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
       var frame = 0;
       foreach (var size in function.StackSlots)
         frame += (size + 1) & ~1;                      // word-aligned space for allocas / spills
@@ -145,9 +136,6 @@ public sealed class MachineEmitter {
       for (var i = 0; i < paramOffsets.Length; ++i)
         asm.Mov(allocation[i], Asm.Mem.Word(Asm.Reg.BP, paramOffsets[i]));
 
-    if (loadArgumentsThroughFrame)
-      asm.Pop(Asm.Reg.BP);                           // parameter staging is done; the body owns no frame state
-
     foreach (var block in function.Blocks) {
       if (loopHeaders?.Contains(block.Label) == true)
         asm.AlignCode(16);
@@ -167,13 +155,14 @@ public sealed class MachineEmitter {
 
   /// <summary>
   /// Whether the machine function still satisfies the middle-end frame-free proof after instruction
-  /// selection and register allocation. Incoming stack parameters are not persistent frame state:
-  /// register-resident values can be copied through BP at entry and BP restored before the body starts.
-  /// A parameter that remains a <see cref="MOperand.ParamCell"/> in the body still needs BP throughout,
-  /// as does any alloca/spill slot or inline assembly.
+  /// selection and register allocation. The current 8086 stack ABI cannot address ordinary incoming
+  /// parameters through SP, so any stack parameter keeps BP even though the SSA parameter itself is
+  /// frame-free. A later register ABI or explicit SP-copy plan can relax that condition here without
+  /// teaching the target-neutral analysis about 8086 addressing modes.
   /// </summary>
-  private static bool CanElideFrame(MFunction function, bool requested) {
-    if (!requested || function.StackSlots.Count != 0)
+  private static bool CanElideFrame(MFunction function, int[] paramOffsets, int paramBytes, bool requested) {
+    if (!requested || paramOffsets.Length != 0 || paramBytes != 0 || function.StackSlots.Count != 0
+        || function.ArgumentLoads.Count != 0)
       return false;
     foreach (var instruction in function.AllInstructions) {
       if (instruction.Opcode == MOpcode.InlineAsm)
@@ -290,14 +279,7 @@ public sealed class MachineEmitter {
         else
           asm.Imul(this.Reg(ops[0]), this.Reg(ops[1]));
         break;
-      case MOpcode.Lea: {
-        var address = this.Mem(ops[1]);
-        if (address.Uses32BitAddressing)
-          asm.Lea386(this.Reg(ops[0]), address);
-        else
-          asm.Lea(this.Reg(ops[0]), address);
-        break;
-      }
+      case MOpcode.Lea: asm.Lea(this.Reg(ops[0]), this.Mem(ops[1])); break;
       // the read-modify-write pair the peephole folds a load/add/store trio into - one instruction
       // against the cell, and no register spent on a value nobody reads
       case MOpcode.Inc:
@@ -354,22 +336,17 @@ public sealed class MachineEmitter {
         break;
       case MOpcode.Jcc: asm.J(instr.Condition!.Value, this._labels[((MOperand.LabelRef)ops[0]).Name]); break;
       case MOpcode.JmpIndexed: this.EmitIndexedJump(instr); break;
-      case MOpcode.Call:
-        switch (ops[0]) {
-          case MOperand.LabelRef direct:
-            asm.Call(this.ResolveCallee(direct.Name));
-            break;
-          case MOperand.Register indirect:
-            asm.Call(this.Resolve(indirect.Reg));
-            break;
-          case MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell:
-            asm.Call(this.Mem(ops[0]));
-            break;
-          default:
-            throw new BackendInvariantException("MachineEmitter.EmitInstruction",
-              $"CALL target {ops[0]} is neither a direct code label nor a word register/memory operand");
-        }
+      case MOpcode.Call: {
+        // with a resolver (the whole-program routing) the callee MUST be one it bound - anything else
+        // is a routing bug; without one, the name is an external/runtime symbol resolved by name
+        var callee = ((MOperand.LabelRef)ops[0]).Name;
+        asm.Call(this._resolveCallee is { } resolve
+          ? resolve(callee) ?? throw new BackendInvariantException("MachineEmitter.EmitInstruction",
+              $"no label for callee '{callee}' - CodeGenerator.ExternalCalleesResolve and the routing "
+                + "fixpoint admit a function only when every callee it names already has one")
+          : asm.Lbl(callee));
         break;
+      }
       case MOpcode.Push:
         switch (this.ToSource(ops[0])) {
           case Reg r: asm.Push(r); break;
@@ -530,7 +507,7 @@ public sealed class MachineEmitter {
         case Imm i: mi(m, i); break;
         default: throw new BackendInvariantException("MachineEmitter.Emit2",
           $"{dest} <- {src} is memory to memory - InstructionSelector.TryOperand yields only "
-            + "Immediate/DataOffset/LabelRef/Register, and Spiller.CanSpill refuses an instruction that "
+            + "Immediate/DataOffset/Register, and Spiller.CanSpill refuses an instruction that "
             + "already carries a cell");
       }
     }
@@ -543,12 +520,11 @@ public sealed class MachineEmitter {
     MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell => this.Mem(operand),
     MOperand.DataOffset o => Imm.OffsetOf(this.DataLabel(o.Name), o.Disp),
     MOperand.BlockOffset b => Imm.OffsetOf(this._labels[b.Block]),
-    MOperand.LabelRef label => Imm.OffsetOf(this.ResolveCallee(label.Name)),
-    // InlineAsmText and BlockAddressTable are the unhandled kinds, and each occupies a fixed position
-    // of an opcode EmitInstruction dispatches before it reaches here.
+    // LabelRef, InlineAsmText and BlockAddressTable are the unhandled kinds, and each occupies a
+    // fixed position of an opcode EmitInstruction dispatches before it reaches here
     _ => throw new BackendInvariantException("MachineEmitter.ToSource",
       $"operand {operand} is in a source position, where the selector emits only "
-        + "Register/Immediate/Memory/StackSlot/DataCell/ParamCell/DataOffset/BlockOffset/LabelRef"),
+        + "Register/Immediate/Memory/StackSlot/DataCell/ParamCell/DataOffset/BlockOffset"),
   };
 
   private Reg Reg(MOperand operand) => this.Resolve(((MOperand.Register)operand).Reg);
@@ -571,17 +547,6 @@ public sealed class MachineEmitter {
           + "an OFFSET has nowhere to carry that - every arm of CodeGenerator.ResolveDataCell answers "
           + "with displacement zero");
   }
-
-  /// <summary>
-  /// Resolves a direct callee or function address through the same whole-program label map. With no
-  /// resolver this is the standalone/test path, where a named assembler label is sufficient.
-  /// </summary>
-  private Label ResolveCallee(string name)
-    => this._resolveCallee is { } resolve
-      ? resolve(name) ?? throw new BackendInvariantException("MachineEmitter.ResolveCallee",
-          $"no label for callee '{name}' - CodeGenerator routing admits a function address or direct "
-            + "call only when that procedure has a code label")
-      : this._asm.Lbl(name);
 
   private Mem ResolveData(string name)
     => this._resolveData?.Invoke(name)
@@ -669,10 +634,6 @@ public sealed class MachineEmitter {
     MOperand.ParamCell p => Sized(Asm.Mem.At(Asm.Reg.BP,
       this._paramOffsets[p.ArgumentIndex] + p.ByteDelta), p.Size),
     MOperand.DataCell cell => this.DataCell(cell),
-    MOperand.Memory m when m.Index is { } x
-        && (m.Scale != 1 || m.Base?.Size == MRegSize.Dword || x.Size == MRegSize.Dword)
-      => Segmented(Sized(Asm.Mem.AtScaled(m.Base is { } b ? this.Resolve(b) : null,
-        this.Resolve(x), m.Scale, m.Disp), m.Size), m),
     MOperand.Memory m when m.Index is { } x => Segmented(Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size), m),
     MOperand.Memory m when m.Base is { } b => Segmented(Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size), m),
     MOperand.Memory m => Segmented(Sized(Asm.Mem.At(m.Disp), m.Size), m),

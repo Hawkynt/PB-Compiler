@@ -3,10 +3,8 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <summary>
 /// Bounded equality saturation for pure integer expression trees. Instead of committing to the first
 /// matching rewrite, the pass explores the whole local equivalence class (up to a hard budget), then
-/// extracts the expression with the fewest IR operations. Associative/commutative regions are kept in
-/// a deterministic canonical form so equivalent parenthesizations do not consume the search budget.
-/// Shared subexpressions are leaves, so the cost model never assumes an instruction can disappear when
-/// another user still needs it.
+/// extracts the expression with the fewest IR operations. Shared subexpressions are leaves, so the cost
+/// model never assumes an instruction can disappear when another user still needs it.
 /// </summary>
 public static class EqualitySaturation {
 
@@ -139,6 +137,15 @@ public static class EqualitySaturation {
         if (IsZero(b.Right)) yield return b.Left;
         break;
     }
+
+    if (IsAssociativeCommutative(b.Op)) {
+      // Both associativity directions are admitted. The bounded equality class keeps this from turning
+      // a long chain into an unbounded rewrite loop, while extraction chooses the cheapest endpoint.
+      if (b.Left is Binary left && left.Op == b.Op)
+        yield return new Binary(b.Op, type, left.Left, new Binary(b.Op, type, left.Right, b.Right));
+      if (b.Right is Binary right && right.Op == b.Op)
+        yield return new Binary(b.Op, type, new Binary(b.Op, type, b.Left, right.Left), right.Right);
+    }
   }
 
   private static Expr? TryFactor(Binary outer, IrBinaryOp innerOp, Context context) {
@@ -164,30 +171,11 @@ public static class EqualitySaturation {
   private static Expr Normalize(Expr expression, Context context) {
     if (expression is not Binary binary)
       return expression;
-
     var left = Normalize(binary.Left, context);
     var right = Normalize(binary.Right, context);
-    if (!IsAssociativeCommutative(binary.Op))
-      return binary with { Left = left, Right = right };
-
-    var operands = new List<Expr>();
-    CollectAssociativeOperands(binary.Op, left, operands);
-    CollectAssociativeOperands(binary.Op, right, operands);
-    operands.Sort((a, b) => StringComparer.Ordinal.Compare(context.Key(a), context.Key(b)));
-
-    var result = operands[0];
-    for (var i = 1; i < operands.Count; ++i)
-      result = new Binary(binary.Op, binary.Type, result, operands[i]);
-    return result;
-  }
-
-  private static void CollectAssociativeOperands(IrBinaryOp op, Expr expression, List<Expr> operands) {
-    if (expression is Binary binary && binary.Op == op) {
-      CollectAssociativeOperands(op, binary.Left, operands);
-      CollectAssociativeOperands(op, binary.Right, operands);
-      return;
-    }
-    operands.Add(expression);
+    if (IsCommutative(binary.Op) && StringComparer.Ordinal.Compare(context.Key(left), context.Key(right)) > 0)
+      (left, right) = (right, left);
+    return binary with { Left = left, Right = right };
   }
 
   private static bool Better(Expr candidate, Expr current, Context context) {
@@ -210,6 +198,7 @@ public static class EqualitySaturation {
   private static bool IsAssociativeCommutative(IrBinaryOp op)
     => op is IrBinaryOp.Add or IrBinaryOp.Mul or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor;
 
+  private static bool IsCommutative(IrBinaryOp op) => IsAssociativeCommutative(op);
   private static bool IsZero(Expr expression) => expression is Constant { Value: 0 };
   private static bool IsOne(Expr expression) => expression is Constant { Value: 1 };
   private static bool IsAllOnes(Expr expression) => expression is Constant c && c.Value == IrConstFold.Wrap(-1, c.Type);

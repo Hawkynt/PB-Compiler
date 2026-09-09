@@ -54,16 +54,8 @@ public sealed class DataLayoutTransformsTests {
 
     Assert.That(HotColdFieldSplitting.Run(fn), Is.EqualTo(1));
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    var hot = entry.Instructions.OfType<IrAlloca>().Single(a => a.Name == "entity.hot");
-    Assert.That(hot.Allocated, Is.EqualTo(IrType.I8));
-    Assert.That(hot.Count, Is.EqualTo(64 * 4));
-    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a =>
-      a.Name == "entity.4.cold" && a.Allocated == IrType.I16 && a.Count == 64), Is.True);
-
-    Assert.That(ArrayOfStructsToStructOfArrays.Run(fn), Is.Zero,
-      "O0320 must not dissolve the hot record selected by O0322");
-    Assert.That(entry.Instructions.Contains(hot), Is.True);
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "entity.hot"), Is.True);
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name?.EndsWith(".cold", StringComparison.Ordinal) == true), Is.True);
   }
 
   [Test]
@@ -118,7 +110,7 @@ public sealed class DataLayoutTransformsTests {
   }
 
   [Test]
-  public void O0326_ConflictingRowStride_GetsOneCacheLinePad() {
+  public void O0326_PowerOfTwoRowStride_GetsOneElementPad() {
     var row = new IrArgument(IrType.I32, 0, "row");
     var col = new IrArgument(IrType.I32, 1, "col");
     var fn = new IrFunction("f", IrType.I16, [row, col]);
@@ -132,71 +124,7 @@ public sealed class DataLayoutTransformsTests {
 
     Assert.That(CacheConflictPadding.Run(fn, cacheSizeBytes: 64, cacheLineBytes: 16), Is.EqualTo(1));
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "m.cachepad" && a.Count == 8 * 40), Is.True);
-  }
-
-  [Test]
-  public void O0326_SetAssociativeConflictPeriod_IsCacheSizeDividedByWays() {
-    var row = new IrArgument(IrType.I32, 0, "row");
-    var col = new IrArgument(IrType.I32, 1, "col");
-    var fn = new IrFunction("f", IrType.I16, [row, col]);
-    var entry = fn.CreateBlock("entry");
-    var array = entry.Append(new IrAlloca(IrType.I16) { Count = 8 * 8, Name = "m" });
-    var index = entry.Append(new IrBinary(IrBinaryOp.Add,
-      entry.Append(new IrBinary(IrBinaryOp.Mul, row, new IrConstantInt(IrType.I32, 8))), col));
-    var ptr = entry.Append(new IrGep(array, index, IrType.I16));
-    var value = entry.Append(new IrLoad(IrType.I16, ptr));
-    entry.Append(new IrRet(value));
-
-    Assert.That(CacheConflictPadding.Run(fn, cacheSizeBytes: 64, cacheLineBytes: 16), Is.Zero,
-      "a 16-byte row does not conflict in a direct-mapped 64-byte cache");
-    Assert.That(CacheConflictPadding.Run(fn, cacheSizeBytes: 64, cacheLineBytes: 16, cacheAssociativity: 4), Is.EqualTo(1),
-      "a four-way cache repeats its set mapping every 16 bytes");
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "m.cachepad" && a.Count == 8 * 16), Is.True);
-  }
-
-  [Test]
-  public void O0326_StandardPipeline_ForwardsTargetAssociativity() {
-    var row = new IrArgument(IrType.I32, 0, "row");
-    var col = new IrArgument(IrType.I32, 1, "col");
-    var fn = new IrFunction("f", IrType.I16, [row, col]);
-    var entry = fn.CreateBlock("entry");
-    var array = entry.Append(new IrAlloca(IrType.I16) { Count = 8 * 8, Name = "m" });
-    var index = entry.Append(new IrBinary(IrBinaryOp.Add,
-      entry.Append(new IrBinary(IrBinaryOp.Mul, row, new IrConstantInt(IrType.I32, 8))), col));
-    var ptr = entry.Append(new IrGep(array, index, IrType.I16));
-    var value = entry.Append(new IrLoad(IrType.I16, ptr));
-    entry.Append(new IrRet(value));
-
-    var pipeline = IrPassManager.Standard(includeModulePasses: false,
-      dataLayoutTarget: new(PointerBits: 16, CacheSizeBytes: 64, CacheLineBytes: 16, CacheAssociativity: 4));
-    _ = pipeline.Run(fn);
-
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "m.cachepad"), Is.True);
-  }
-
-  [Test]
-  public void O0326_UnrebuildableAffineAccess_DeclinesWithoutPartialRewrite() {
-    var row = new IrArgument(IrType.I32, 0, "row");
-    var col32 = new IrArgument(IrType.I32, 1, "col32");
-    var col16 = new IrArgument(IrType.I16, 2, "col16");
-    var fn = new IrFunction("f", IrType.Void, [row, col32, col16]);
-    var entry = fn.CreateBlock("entry");
-    var array = entry.Append(new IrAlloca(IrType.I16) { Count = 8 * 32, Name = "m" });
-    var rowOffset = entry.Append(new IrBinary(IrBinaryOp.Mul, row, new IrConstantInt(IrType.I32, 32)));
-    var firstIndex = entry.Append(new IrBinary(IrBinaryOp.Add, rowOffset, col32));
-    _ = entry.Append(new IrLoad(IrType.I16, entry.Append(new IrGep(array, firstIndex, IrType.I16))));
-    var widenedCol = entry.Append(new IrCast(IrCastOp.ZExt, col16, IrType.I32));
-    var secondIndex = entry.Append(new IrBinary(IrBinaryOp.Add, rowOffset, widenedCol));
-    _ = entry.Append(new IrLoad(IrType.I16, entry.Append(new IrGep(array, secondIndex, IrType.I16))));
-    entry.Append(new IrRet());
-
-    Assert.That(CacheConflictPadding.Run(fn, cacheSizeBytes: 64, cacheLineBytes: 16), Is.Zero);
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name?.Contains(".cachepad", StringComparison.Ordinal) == true), Is.False);
-    Assert.That(entry.Instructions.Contains(array), Is.True);
+    Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "m.cachepad" && a.Count == 8 * 33), Is.True);
   }
 
   [Test]
@@ -313,106 +241,6 @@ public sealed class DataLayoutTransformsTests {
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     Assert.That(fn.AllInstructions.OfType<IrAlloca>().Any(a => a.Name == "t"), Is.False);
     Assert.That(header.Phis.Count(), Is.EqualTo(2));
-  }
-
-  [Test]
-  public void O0329_TwoElementWindow_BecomesShiftRegisterPhis() {
-    var fn = new IrFunction("f", IrType.I16);
-    var entry = fn.CreateBlock("entry");
-    var header = fn.CreateBlock("loop.header");
-    var body = fn.CreateBlock("loop.body");
-    var latch = fn.CreateBlock("loop.latch");
-    var exit = fn.CreateBlock("exit");
-    var temp = entry.Append(new IrAlloca(IrType.I16) { Count = 8, Name = "fib" });
-    entry.Append(new IrStore(new IrConstantInt(IrType.I16, 1), entry.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 0), IrType.I16))));
-    entry.Append(new IrStore(new IrConstantInt(IrType.I16, 1), entry.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 1), IrType.I16))));
-    entry.Append(new IrBr(header));
-
-    var i = header.AppendPhi(new IrPhi(IrType.I32));
-    i.AddIncoming(new IrConstantInt(IrType.I32, 2), entry);
-    header.Append(new IrCondBr(header.Append(new IrCmp(IrCmpPred.Sle, i, new IrConstantInt(IrType.I32, 7))), body, exit));
-    var previousIndex = body.Append(new IrBinary(IrBinaryOp.Sub, i, new IrConstantInt(IrType.I32, 1)));
-    var olderIndex = body.Append(new IrBinary(IrBinaryOp.Sub, i, new IrConstantInt(IrType.I32, 2)));
-    var previous = body.Append(new IrLoad(IrType.I16, body.Append(new IrGep(temp, previousIndex, IrType.I16))));
-    var older = body.Append(new IrLoad(IrType.I16, body.Append(new IrGep(temp, olderIndex, IrType.I16))));
-    var nextValue = body.Append(new IrBinary(IrBinaryOp.Add, previous, older));
-    body.Append(new IrStore(nextValue, body.Append(new IrGep(temp, i, IrType.I16))));
-    body.Append(new IrBr(latch));
-    var next = latch.Append(new IrBinary(IrBinaryOp.Add, i, new IrConstantInt(IrType.I32, 1)));
-    latch.Append(new IrBr(header));
-    i.AddIncoming(next, latch);
-    var last = exit.Append(new IrLoad(IrType.I16, exit.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 7), IrType.I16))));
-    var penultimate = exit.Append(new IrLoad(IrType.I16, exit.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 6), IrType.I16))));
-    exit.Append(new IrRet(exit.Append(new IrBinary(IrBinaryOp.Add, last, penultimate))));
-
-    Assert.That(ArrayContraction.Run(fn), Is.EqualTo(1));
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(fn.AllInstructions.OfType<IrAlloca>().Any(a => a.Name == "fib"), Is.False);
-    Assert.That(header.Phis.Count(), Is.EqualTo(3));
-  }
-
-  [Test]
-  public void O0329_MixedWidthWindowAccess_Declines() {
-    var fn = new IrFunction("f", IrType.I16);
-    var entry = fn.CreateBlock("entry");
-    var header = fn.CreateBlock("loop.header");
-    var body = fn.CreateBlock("loop.body");
-    var latch = fn.CreateBlock("loop.latch");
-    var exit = fn.CreateBlock("exit");
-    var temp = entry.Append(new IrAlloca(IrType.I16) { Count = 8, Name = "t" });
-    entry.Append(new IrStore(new IrConstantInt(IrType.I16, 1), entry.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 0), IrType.I16))));
-    entry.Append(new IrBr(header));
-
-    var i = header.AppendPhi(new IrPhi(IrType.I32));
-    i.AddIncoming(new IrConstantInt(IrType.I32, 1), entry);
-    header.Append(new IrCondBr(header.Append(new IrCmp(IrCmpPred.Sle, i, new IrConstantInt(IrType.I32, 7))), body, exit));
-    var previousIndex = body.Append(new IrBinary(IrBinaryOp.Sub, i, new IrConstantInt(IrType.I32, 1)));
-    var previousByte = body.Append(new IrLoad(IrType.I8, body.Append(new IrGep(temp, previousIndex, IrType.I16))));
-    var previous = body.Append(new IrCast(IrCastOp.ZExt, previousByte, IrType.I16));
-    body.Append(new IrStore(previous, body.Append(new IrGep(temp, i, IrType.I16))));
-    body.Append(new IrBr(latch));
-    var next = latch.Append(new IrBinary(IrBinaryOp.Add, i, new IrConstantInt(IrType.I32, 1)));
-    latch.Append(new IrBr(header));
-    i.AddIncoming(next, latch);
-    var answer = exit.Append(new IrLoad(IrType.I16, exit.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 7), IrType.I16))));
-    exit.Append(new IrRet(answer));
-
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(ArrayContraction.Run(fn), Is.Zero);
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(fn.AllInstructions.OfType<IrAlloca>().Any(a => a.Name == "t"), Is.True);
-  }
-
-  [Test]
-  public void O0329_NonFinalOutsideRead_Declines() {
-    var fn = new IrFunction("f", IrType.I16);
-    var entry = fn.CreateBlock("entry");
-    var header = fn.CreateBlock("loop.header");
-    var body = fn.CreateBlock("loop.body");
-    var latch = fn.CreateBlock("loop.latch");
-    var exit = fn.CreateBlock("exit");
-    var temp = entry.Append(new IrAlloca(IrType.I16) { Count = 8, Name = "t" });
-    var seedPointer = entry.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 0), IrType.I16));
-    entry.Append(new IrStore(new IrConstantInt(IrType.I16, 1), seedPointer));
-    var observedSeed = entry.Append(new IrLoad(IrType.I16, seedPointer));
-    entry.Append(new IrBr(header));
-
-    var i = header.AppendPhi(new IrPhi(IrType.I32));
-    i.AddIncoming(new IrConstantInt(IrType.I32, 1), entry);
-    header.Append(new IrCondBr(header.Append(new IrCmp(IrCmpPred.Sle, i, new IrConstantInt(IrType.I32, 7))), body, exit));
-    var previousIndex = body.Append(new IrBinary(IrBinaryOp.Sub, i, new IrConstantInt(IrType.I32, 1)));
-    var previous = body.Append(new IrLoad(IrType.I16, body.Append(new IrGep(temp, previousIndex, IrType.I16))));
-    body.Append(new IrStore(previous, body.Append(new IrGep(temp, i, IrType.I16))));
-    body.Append(new IrBr(latch));
-    var next = latch.Append(new IrBinary(IrBinaryOp.Add, i, new IrConstantInt(IrType.I32, 1)));
-    latch.Append(new IrBr(header));
-    i.AddIncoming(next, latch);
-    var final = exit.Append(new IrLoad(IrType.I16, exit.Append(new IrGep(temp, new IrConstantInt(IrType.I32, 7), IrType.I16))));
-    exit.Append(new IrRet(exit.Append(new IrBinary(IrBinaryOp.Add, final, observedSeed))));
-
-    Assert.That(ArrayContraction.Run(fn), Is.Zero);
-    Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    Assert.That(fn.AllInstructions.OfType<IrAlloca>().Any(a => a.Name == "t"), Is.True);
   }
 
   [Test]

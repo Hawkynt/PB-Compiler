@@ -22,9 +22,6 @@ public sealed class IrPassManager {
   /// <summary>When true, verifies the function after each pass and throws on any error.</summary>
   public bool VerifyEachPass { get; set; }
 
-  /// <summary>The optimization objective this pipeline applies; propagated to the module for late passes.</summary>
-  public bool OptimizeForSpeed { get; init; }
-
   public IrPassManager Add(string name, Func<IrFunction, int> pass) {
     this._passes.Add((name, pass));
     return this;
@@ -85,7 +82,6 @@ public sealed class IrPassManager {
   /// and the second interprocedural sweep is followed by another function sweep for what it exposed.
   /// </summary>
   public void RunOnModule(IrModule module) {
-    module.OptimizeForSpeed = this.OptimizeForSpeed;
     RunFunctions();
     foreach (var (_, run) in this._modulePasses)
       if (run(module) > 0)
@@ -112,19 +108,13 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// prefix-scan formation, unrolling, sccp, correlate, pointer checks, integer/float range folds,
-  /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery,
-  /// equality saturation, verified arithmetic lowering, demote, phicong, gvn, memopt, dse,
-  /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
-  /// string/global module passes. So are the steps the caller runs around the pipeline -
-  /// <c>Inliner</c>, <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is
-  /// not in <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
-  /// unrolling, sccp, correlate, block versioning, pointer checks, integer/float range folds, overflow
-  /// coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
+  /// unrolling, sccp, correlate, pointer checks, integer/float range folds, overflow coalescing,
+  /// sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
   /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
-  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec, switch formation and the
-  /// string/global module passes. Caller-only late specialization such as
-  /// <c>MemoryRoutineSpecialization</c> is off as well (see CodeGenerator.Backend).
+  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the string/global
+  /// module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
+  /// <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is not in
+  /// <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -140,11 +130,11 @@ public sealed class IrPassManager {
   ///
   /// <para>
   /// <paramref name="optimizeForSpeed"/> reflects <c>$OPTIMIZE SPEED</c>. SPEED may spend code size to
-  /// erase abstraction overhead: it runs demanded-bit cleanup, admits larger callees to the inliner,
-  /// recognizes library loops, generates lookup tables, compiles static searches, removes semantically
-  /// dead loops, and grants the relaxed floating-point contract used by O0340-O0345/O0343. The ordinary
-  /// optimization objective keeps strict FP semantics, the conservative size budget, and preserves
-  /// empty loops because they may be intentional delay loops.
+  /// erase abstraction overhead: it runs demanded-bit cleanup, speculative devirtualization, admits
+  /// larger callees to the inliner, recognizes library loops, generates lookup tables, compiles static
+  /// searches, removes semantically dead loops, and grants the relaxed floating-point contract used by
+  /// O0340-O0345/O0343. The ordinary optimization objective keeps strict FP semantics, the conservative
+  /// size budget, and preserves empty loops because they may be intentional delay loops.
   /// </para>
   /// <para>
   /// <paramref name="dataLayoutTarget"/> supplies facts that are not properties of target-neutral IR:
@@ -160,12 +150,11 @@ public sealed class IrPassManager {
   /// </summary>
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
       IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false)
-    => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
+    => new IrPassManager()
     .Add("mem2reg", Mem2Reg.Run)
-    // O0320-O0329 and O0313 have to see the explicit memory graph and the original counted-loop shape.
-    // Run the aggregate transforms before AoS->SoA destroys record identity, then the loop/data
-    // transforms, form scan recurrences, and only then unroll. Every one declines escaped/opaque
-    // storage rather than speculating aliasing.
+    // O0320-O0329 have to see the explicit memory graph and the original counted-loop shape. Run the
+    // aggregate transforms before AoS->SoA destroys record identity, then the loop/data transforms,
+    // and only then unroll. Every one declines escaped/opaque storage rather than speculating aliasing.
     .Add("structpack", StructurePackingByRange.Run)
     .Add("fieldreorder", FieldReordering.Run)
     .Add("hotcold", HotColdFieldSplitting.Run)
@@ -173,11 +162,10 @@ public sealed class IrPassManager {
     .Add("transpose", DataTransposition.Run)
     .Add("arrayfusion", TemporaryArrayFusion.Run)
     .Add("arraycontract", ArrayContraction.Run)
-    .Add("prefixscan", ParallelPrefixScan.Run)
     .AddWhen(dataLayoutTarget?.PointerBits > 16, "ptrcompress",
       fn => PointerCompression.Run(fn, dataLayoutTarget!.PointerBits))
     .AddWhen(dataLayoutTarget?.CacheSizeBytes > 0, "cachepad",
-      fn => CacheConflictPadding.Run(fn, dataLayoutTarget!.CacheSizeBytes, dataLayoutTarget.CacheLineBytes, dataLayoutTarget.CacheAssociativity))
+      fn => CacheConflictPadding.Run(fn, dataLayoutTarget!.CacheSizeBytes, dataLayoutTarget.CacheLineBytes))
     .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arraypad",
       fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
     // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter
@@ -190,10 +178,6 @@ public sealed class IrPassManager {
     .AddWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
     .Add("sccp", Sccp.Run)
     .Add("correlate", CorrelatedValueProp.Run)
-    // O0305 is the materialized counterpart to correlation: after edge-local facts have propagated as
-    // far as dominance permits, duplicate a small reconverged block when doing so removes a repeated
-    // guard. The following proof/value passes consume the constants exposed inside each version.
-    .Add("bbversion", BasicBlockVersioning.Run)
     // O0351 shares the dominator-scoped edge facts with correlation, but only explicit pointer-null
     // tests count: dereferencing address zero is not a fault on PB's DOS memory model.
     .Add("ptrcheck", PointerCheckElim.Run)
@@ -278,11 +262,6 @@ public sealed class IrPassManager {
     // the pipeline rather than beside it so that the sweep FOLLOWING the inliner sees it: mutual
     // recursion is inlined into self-recursion first, and this is what then turns it into a loop.
     .Add("tailrec", TailRecursion.Run)
-    // O0067/O0336 recover the final dispatch only after the value and CFG transforms have had their
-    // first chance at the compare chain. This is target-neutral: it creates IrSwitch; selection still
-    // decides whether that becomes a jump table, hash, mask or compare tree. The fixpoint's next sweep
-    // collects comparisons made dead by replacing the chain terminator.
-    .Add("switchform", SwitchFormation.Run)
     // FunctionSummaries.RemoveDeadPureCalls deliberately does NOT run here. The analysis is right and
     // the removal is sound - a call to a body that writes nothing, whose result nothing reads, is not
     // observable - but DIFF113 declares `SUB Opaque(v&)` with an EMPTY body precisely to be an
@@ -290,10 +269,10 @@ public sealed class IrPassManager {
     // could not previously see through. What it then does with it differs from the original, which is
     // a finding about that optimizer and not about this pass. Until that is chased down, the summaries
     // are available to callers and this consumer is off.
-    // O0271 must run before either inliner. It consumes source-site profile metadata and creates a
-    // genuine direct call on the hot arm; the fallback keeps the original indirect call and has its
-    // profile cleared, so a later module sweep cannot build an unbounded chain of guards.
-    .AddModulePassWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
+    // O0307 deliberately spends one compare/branch and duplicates the call site, so keep it under the
+    // SPEED objective. Run it immediately before SPEED inlining so the guarded direct path can expose
+    // an inlinable callee while the mismatch path retains the original indirect call.
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
     // SPEED inlining is a module pass so it can see the call graph after the first function fixpoint;
     // every successful inline immediately triggers another function sweep over the exposed body.
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
@@ -311,9 +290,6 @@ public sealed class IrPassManager {
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "fpdomain",
       module => FpDomainSpecialization.Run(module, enableFpLookupTables))
     .AddModulePassWhen(includeModulePasses, "lutelim", LookupTableElimination.Run)
-    // O0285 sees the finalized byte-table population here. Literal globals stay with O0011 and every
-    // other candidate must prove its complete pointer-use tree read-only and non-escaping.
-    .AddModulePassWhen(includeModulePasses, "const-data-merge", ConstantDataMerging.Run)
     // The string passes are module passes because they mint module-level things - a runtime
     // declaration, a pooled literal - which a function pass has no handle on. They run last, after
     // the value passes have folded whatever the arguments were going to fold into.
@@ -328,7 +304,5 @@ public sealed class IrPassManager {
     .AddModulePassWhen(includeModulePasses, "strempty", StringEmptinessTest.Run)
     .AddModulePassWhen(includeModulePasses, "readonly-globals", ReadOnlyGlobals.Run)
     .AddModulePassWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
-    // O0279 wants the SSA/global cleanup above, and IPCP wants the direct edges O0279 exposes.
-    .AddModulePassWhen(includeModulePasses, "devirt", WholeProgramDevirtualization.Run)
     .AddModulePassWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run);
 }

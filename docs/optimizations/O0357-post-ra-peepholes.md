@@ -24,12 +24,6 @@ currently removes:
 - overwritten register/immediate staging moves when the first value is never
   observable.
 
-Byte-sized virtual registers are compared in the same view the emitter uses:
-an allocator entry of `AX`, `CX`, `DX` or `BX` becomes `AL`, `CL`, `DL` or `BL`
-for a byte operand. This is correctness-critical for the overwritten-copy rule:
-a pinned low-byte source must be recognized as reading the destination rather
-than as an unrelated register.
-
 The pass deliberately refuses to delete an overwritten **memory load**. PB can
 address absolute/far hardware memory, so O0357 does not silently turn a
 register-allocation cleanup into a dead-I/O-read optimization.
@@ -47,8 +41,6 @@ which disappears after allocation.
 - Only adjacent local windows are rewritten.
 - Conditional instructions and instructions carrying explicit clobbers are
   excluded.
-- Byte-register equality follows the final emitted register (`AX`→`AL`, etc.),
-  not merely the allocator's containing word register.
 - Memory reads are not deleted by the overwritten-copy rule.
 - The pass is optimizer-gated through the same selection marker as the existing
   machine peepholes; `$OPTIMIZE OFF` therefore keeps the faithful stream.

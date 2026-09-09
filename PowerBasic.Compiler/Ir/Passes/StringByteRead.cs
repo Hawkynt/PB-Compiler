@@ -33,14 +33,10 @@ public static class StringByteRead {
   private const string _LEFT = "rt_str_left";
   private const string _CHAR_AT = "rt_str_char_at";
 
-  /// <summary>Runs materialization-free substring rewrites, including O0286 length-only slices.</summary>
+  /// <summary>Rewrites single-character reads across the module; the number rewritten.</summary>
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
-
-    // The string module pass is already the pipeline point that turns a freshly allocated substring
-    // into a scalar observation. O0286's LEN-only case belongs at the same point: run it first so the
-    // ordinary function fixpoint can simplify the scalar clamp arithmetic after this module pass.
-    var rewritten = StringAllocationElimination.Run(module);
+    var rewritten = 0;
     foreach (var function in module.Functions.ToList()) {
       if (function.IsDeclaration || function.HasErrorHandler || function.HasInlineAsm)
         continue;

@@ -18,9 +18,6 @@ public sealed class IrFunction : IrGlobalValue {
         this.AddParameter(p);
   }
 
-  /// <summary>The module that owns this function, or null while it is standalone.</summary>
-  public IrModule? Module { get; internal set; }
-
   /// <summary>The declared return type (<see cref="IrType.Void"/> for a SUB).</summary>
   public IrType ReturnType { get; }
 
@@ -110,35 +107,6 @@ public sealed class IrFunction : IrGlobalValue {
     var block = new IrBasicBlock(label) { Parent = this };
     this._blocks.Insert(0, block);
     return block;
-  }
-
-  /// <summary>
-  /// Replaces only the physical order of this function's blocks. CFG edges, instructions and block
-  /// ownership are untouched; the original entry must remain first.
-  /// </summary>
-  /// <remarks>
-  /// This deliberately is not public mutation of <see cref="Blocks"/>. Layout passes are allowed to
-  /// rearrange an already-built body, but every caller still gets the invariant that index zero is
-  /// the entry and that the list contains each owned block exactly once.
-  /// </remarks>
-  internal void ReorderBlocks(IReadOnlyList<IrBasicBlock> blocks) {
-    ArgumentNullException.ThrowIfNull(blocks);
-    if (blocks.Count != this._blocks.Count)
-      throw new ArgumentException("block order must contain every function block exactly once", nameof(blocks));
-
-    var entry = this.Entry;
-    if (entry is not null && !ReferenceEquals(blocks[0], entry))
-      throw new ArgumentException("block order must keep the function entry first", nameof(blocks));
-
-    var seen = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
-    foreach (var block in blocks)
-      if (!ReferenceEquals(block.Parent, this) || !seen.Add(block))
-        throw new ArgumentException("block order contains a foreign or duplicate block", nameof(blocks));
-    if (this._blocks.Any(block => !seen.Contains(block)))
-      throw new ArgumentException("block order omits a function block", nameof(blocks));
-
-    this._blocks.Clear();
-    this._blocks.AddRange(blocks);
   }
 
   /// <summary>

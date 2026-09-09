@@ -11,8 +11,7 @@ public static class StaticSearchRecognition {
   private const int _MIN_BINARY_KEYS = 8;
   private const int _MIN_STATIC_KEYS = 4;
 
-  private sealed record SearchResult(IrBasicBlock Exit, IrType Type, IrPhi? Phi, IrValue? FailureValue);
-  private sealed record Search(IrValue Key, long[] Keys, bool Unsigned, SearchResult Result);
+  private sealed record Search(IrValue Key, long[] Keys, bool Unsigned);
 
   /// <summary>Rewrites recognized searches; returns the number replaced.</summary>
   public static int Run(IrModule module) {
@@ -38,91 +37,40 @@ public static class StaticSearchRecognition {
         || loop.Counter.IncomingFrom(loop.Preheader) is not IrConstantInt { IsZero: true }
         || loop.Counter.IncomingFrom(loop.Latch) is not IrBinary { Op: IrBinaryOp.Add } next
         || !ReferenceEquals(next.Lhs, loop.Counter) || next.Rhs is not IrConstantInt { Value: 1 }
-        || !HasSingleEntry(loop))
+        || loop.Exit.Phis.Any() || loop.Exit.Terminator is not IrRet { HasValue: true }
+        || !function.ReturnType.SameStorage(loop.Counter.Type))
       return false;
 
     foreach (var block in loop.Region) {
       if (block.Terminator is not IrCondBr branch || ReferenceEquals(branch, loop.Header.Terminator)
-          || branch.Condition is not IrCmp { Pred: IrCmpPred.Eq or IrCmpPred.Ne } comparison)
+          || branch.Condition is not IrCmp { Pred: IrCmpPred.Eq } comparison)
         continue;
       if (!TryLoadAndKey(comparison, loop.Counter, out var table, out var gep, out var load, out var key)
-          || key is IrInstruction { Parent: { } keyBlock } && loop.Region.Contains(keyBlock)
           || table.Bytes is null || table.Count != loop.Trips || !ReadOnly(table)
           || !TryKeys(table, out var keys) || keys.Length < _MIN_STATIC_KEYS || keys.Distinct().Count() != keys.Length)
         continue;
 
-      var equalMeansFound = comparison.Pred == IrCmpPred.Eq;
-      var found = equalMeansFound ? branch.IfTrue : branch.IfFalse;
-      var miss = equalMeansFound ? branch.IfFalse : branch.IfTrue;
-      if (!ReferenceEquals(miss, loop.Latch)
-          || !TryResultShape(function, loop, found, out var result)
-          || !HasCanonicalExits(loop, found, result.Phi))
+      var found = branch.IfTrue;
+      if (!ReferenceEquals(branch.IfFalse, loop.Latch)
+          || found.Terminator is not IrRet { HasValue: true, Value: { } returned }
+          || !ReferenceEquals(returned, loop.Counter))
         continue;
 
       var allowed = new HashSet<IrInstruction>(ReferenceEqualityComparer.Instance) {
-        loop.Counter, loop.Test, next, gep, load, comparison, branch, found.Terminator!,
+        loop.Counter, loop.Test, next, gep, load, comparison, branch, found.Terminator,
       };
       foreach (var regionBlock in loop.Region)
         if (regionBlock.Terminator is { } terminator)
           allowed.Add(terminator);
       if (loop.Region.SelectMany(regionBlock => regionBlock.Instructions).Any(instruction => !allowed.Contains(instruction)))
         continue;
-      if (loop.Counter.Users.Any(user => user.Parent is not null && !loop.Region.Contains(user.Parent)
-          && !ReferenceEquals(user, result.Phi)))
+      if (loop.Counter.Users.Any(user => user.Parent is not null && !loop.Region.Contains(user.Parent)))
         continue;
 
-      search = new(key, keys, table.ValueType.IsUnsigned, result);
+      search = new(key, keys, table.ValueType.IsUnsigned);
       return true;
     }
     return false;
-  }
-
-  private static bool TryResultShape(IrFunction function, CountedLoop loop, IrBasicBlock found, out SearchResult result) {
-    if (found.Terminator is IrRet { HasValue: true, Value: { } returned }
-        && ReferenceEquals(returned, loop.Counter)
-        && !loop.Exit.Phis.Any() && loop.Exit.Terminator is IrRet { HasValue: true }
-        && function.ReturnType.SameStorage(loop.Counter.Type)) {
-      result = new(loop.Exit, loop.Counter.Type, null, null);
-      return true;
-    }
-
-    var phis = loop.Exit.Phis.ToList();
-    if (found.Terminator is not IrBr foundBranch || !ReferenceEquals(foundBranch.Target, loop.Exit)
-        || phis is not [var resultPhi] || !resultPhi.Type.SameStorage(loop.Counter.Type)
-        || !ReferenceEquals(resultPhi.IncomingFrom(found), loop.Counter)
-        || resultPhi.IncomingFrom(loop.Header) is not { } failure
-        || failure is IrInstruction { Parent: { } failureBlock } && loop.Region.Contains(failureBlock)) {
-      result = null!;
-      return false;
-    }
-
-    result = new(loop.Exit, resultPhi.Type, resultPhi, failure);
-    return true;
-  }
-
-  private static bool HasSingleEntry(CountedLoop loop) {
-    foreach (var block in loop.Region) {
-      if (ReferenceEquals(block, loop.Header))
-        continue;
-      if (block.Predecessors.Any(predecessor => !loop.Region.Contains(predecessor)))
-        return false;
-    }
-    return true;
-  }
-
-  private static bool HasCanonicalExits(CountedLoop loop, IrBasicBlock found, IrPhi? resultPhi) {
-    foreach (var block in loop.Region)
-      foreach (var successor in block.Successors) {
-        if (ReferenceEquals(successor, loop.Exit)) {
-          if (!ReferenceEquals(block, loop.Header)
-              && !(resultPhi is not null && ReferenceEquals(block, found)))
-            return false;
-          continue;
-        }
-        if (!ReferenceEquals(successor, loop.Header) && !loop.Region.Contains(successor))
-          return false;
-      }
-    return true;
   }
 
   private static bool TryLoadAndKey(IrCmp comparison, IrPhi counter, out IrGlobalVariable table,
@@ -188,58 +136,42 @@ public static class StaticSearchRecognition {
   }
 
   private static void Rewrite(IrFunction function, CountedLoop loop, Search search) {
-    var failure = Failure(function, search.Result);
     if (StrictlySorted(search.Keys) && search.Keys.Length >= _MIN_BINARY_KEYS) {
-      var root = BuildBinary(function, failure, search, 0, search.Keys.Length - 1);
+      var root = BuildBinary(function, loop.Exit, search.Key, search.Keys, search.Unsigned,
+        loop.Counter.Type, 0, search.Keys.Length - 1);
       ((IrBr)loop.Preheader.Terminator!).Target = root;
     } else {
-      var dispatch = new IrSwitch(search.Key, failure);
+      var dispatch = new IrSwitch(search.Key, loop.Exit);
       for (var i = 0; i < search.Keys.Length; ++i)
-        dispatch.AddCase(search.Keys[i], Hit(function, search.Result, i));
+        dispatch.AddCase(search.Keys[i], Hit(function, loop.Counter.Type, i));
       loop.Preheader.Terminator!.EraseFromParent();
       loop.Preheader.Append(dispatch);
     }
 
-    if (search.Result.Phi is { } resultPhi)
-      foreach (var block in loop.Region)
-        resultPhi.RemoveIncoming(block);
     foreach (var block in loop.Region.ToList())
       function.RemoveBlock(block);
   }
 
-  private static IrBasicBlock Failure(IrFunction function, SearchResult result) {
-    if (result.Phi is null)
-      return result.Exit;
-    var block = function.CreateBlock($"search.fail.{function.Blocks.Count}");
-    block.Append(new IrBr(result.Exit));
-    result.Phi.AddIncoming(result.FailureValue!, block);
-    return block;
-  }
-
-  private static IrBasicBlock BuildBinary(IrFunction function, IrBasicBlock failure, Search search, int lo, int hi) {
+  private static IrBasicBlock BuildBinary(IrFunction function, IrBasicBlock failure, IrValue key, long[] keys,
+      bool unsigned, IrType resultType, int lo, int hi) {
     if (lo > hi)
       return failure;
     var mid = lo + ((hi - lo) >> 1);
     var node = function.CreateBlock($"bsearch.{mid}");
     var order = function.CreateBlock($"bsearch.order.{mid}");
-    var constant = new IrConstantInt(search.Key.Type, search.Keys[mid]);
-    var equal = node.Append(new IrCmp(IrCmpPred.Eq, search.Key, constant));
-    node.Append(new IrCondBr(equal, Hit(function, search.Result, mid), order));
-    var less = order.Append(new IrCmp(search.Unsigned ? IrCmpPred.Ult : IrCmpPred.Slt, search.Key, constant));
+    var constant = new IrConstantInt(key.Type, keys[mid]);
+    var equal = node.Append(new IrCmp(IrCmpPred.Eq, key, constant));
+    node.Append(new IrCondBr(equal, Hit(function, resultType, mid), order));
+    var less = order.Append(new IrCmp(unsigned ? IrCmpPred.Ult : IrCmpPred.Slt, key, constant));
     order.Append(new IrCondBr(less,
-      BuildBinary(function, failure, search, lo, mid - 1),
-      BuildBinary(function, failure, search, mid + 1, hi)));
+      BuildBinary(function, failure, key, keys, unsigned, resultType, lo, mid - 1),
+      BuildBinary(function, failure, key, keys, unsigned, resultType, mid + 1, hi)));
     return node;
   }
 
-  private static IrBasicBlock Hit(IrFunction function, SearchResult result, int index) {
+  private static IrBasicBlock Hit(IrFunction function, IrType resultType, int index) {
     var block = function.CreateBlock($"search.hit.{index}.{function.Blocks.Count}");
-    var value = new IrConstantInt(result.Type, index);
-    if (result.Phi is { } resultPhi) {
-      block.Append(new IrBr(result.Exit));
-      resultPhi.AddIncoming(value, block);
-    } else
-      block.Append(new IrRet(value));
+    block.Append(new IrRet(new IrConstantInt(resultType, index)));
     return block;
   }
 

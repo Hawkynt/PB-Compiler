@@ -20,7 +20,7 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class SwitchFormationTests {
 
-  /// <summary>The optimized <c>main</c> of a pb36 program, after the standard middle-end reaches its fixpoint.</summary>
+  /// <summary>The optimized <c>main</c> of a pb36 program, at the point the routing runs this pass.</summary>
   private static IrFunction Optimized(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -34,7 +34,11 @@ public sealed class SwitchFormationTests {
 
   private static IrSwitch? FormAndFind(string source, out IrFunction fn) {
     fn = Optimized(source);
-    Assert.That(IrVerifier.Verify(fn), Is.Empty, "the standard middle end must leave valid SSA");
+    if (SwitchFormation.Run(fn) > 0) {
+      SimplifyCfg.Run(fn);
+      Dce.Run(fn);
+    }
+    Assert.That(IrVerifier.Verify(fn), Is.Empty, "the pass must leave valid SSA");
     return fn.AllInstructions.OfType<IrSwitch>().FirstOrDefault();
   }
 
@@ -166,33 +170,6 @@ public sealed class SwitchFormationTests {
 
     Assert.That(formed, Is.Not.Null);
     Assert.That(formed!.Cases.Select(c => c.Value), Is.EquivalentTo(new long[] { 1, 8, 15 }));
-  }
-
-  [Test]
-  public void O0067_GivenEqualityElseIfChain_ThenStandardMiddleEndFormsOneSwitch() {
-    var formed = FormAndFind("""
-      DIM k AS INTEGER
-      INPUT k
-      IF k = 10 THEN
-        PRINT "a"
-      ELSEIF 11 = k THEN
-        PRINT "b"
-      ELSEIF k = 12 THEN
-        PRINT "c"
-      ELSEIF k = 13 THEN
-        PRINT "d"
-      ELSE
-        PRINT "z"
-      END IF
-      END
-      """, out var fn);
-
-    Assert.That(formed, Is.Not.Null);
-    Assert.Multiple(() => {
-      Assert.That(formed!.Cases.Select(c => c.Value), Is.EquivalentTo(new long[] { 10, 11, 12, 13 }));
-      Assert.That(formed.Cases.Select(c => c.Target).Distinct().Count(), Is.EqualTo(4), "one target per ELSEIF arm");
-      Assert.That(fn.AllInstructions.OfType<IrSwitch>().Count(), Is.EqualTo(1), "the chain is one IR dispatch");
-    });
   }
 
   [Test]

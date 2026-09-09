@@ -53,7 +53,7 @@ public static class IpConstantProp {
   /// a call — a use in any other position is the address escaping into a variable, a table or an
   /// argument, after which the call sites are no longer enumerable.
   /// </summary>
-  internal static bool IsFullyVisible(IrModule module, IrFunction function) {
+  private static bool IsFullyVisible(IrModule module, IrFunction function) {
     if (function.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
       return false;
     foreach (var user in function.Users)

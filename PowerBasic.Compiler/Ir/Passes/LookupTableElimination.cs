@@ -3,11 +3,11 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <summary>
 /// O0333 — removes 256-byte read-only tables when every possible byte index follows a cheaper exact
 /// formula. The target-neutral v1 only takes formulas that are never more expensive than an indexed
-/// load: constant, identity, AND-mask, OR-mask, XOR-mask, or add-constant.
+/// load: constant, identity, XOR-mask, or add-constant.
 /// </summary>
 public static class LookupTableElimination {
 
-  private enum FormulaKind { Constant, Identity, And, Or, Xor, Add }
+  private enum FormulaKind { Constant, Identity, Xor, Add }
   private readonly record struct Formula(FormulaKind Kind, byte Constant);
   private sealed record Access(IrLoad Load, IrGep Gep, IrValue Index);
 
@@ -82,13 +82,7 @@ public static class LookupTableElimination {
       return index;
 
     var block = load.Parent!;
-    var op = formula.Kind switch {
-      FormulaKind.And => IrBinaryOp.And,
-      FormulaKind.Or => IrBinaryOp.Or,
-      FormulaKind.Xor => IrBinaryOp.Xor,
-      FormulaKind.Add => IrBinaryOp.Add,
-      _ => throw new InvalidOperationException($"Unexpected lookup-table formula {formula.Kind}"),
-    };
+    var op = formula.Kind == FormulaKind.Xor ? IrBinaryOp.Xor : IrBinaryOp.Add;
     return block.InsertBefore(new IrBinary(op, index, new IrConstantInt(index.Type, formula.Constant)), load);
   }
 
@@ -99,18 +93,6 @@ public static class LookupTableElimination {
     }
     if (bytes.Where((value, index) => value != (byte)index).Any() is false) {
       formula = new(FormulaKind.Identity, 0);
-      return true;
-    }
-
-    var and = bytes[^1];
-    if (!bytes.Where((value, index) => value != (byte)(index & and)).Any()) {
-      formula = new(FormulaKind.And, and);
-      return true;
-    }
-
-    var or = bytes[0];
-    if (!bytes.Where((value, index) => value != (byte)(index | or)).Any()) {
-      formula = new(FormulaKind.Or, or);
       return true;
     }
 

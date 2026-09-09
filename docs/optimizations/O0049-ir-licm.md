@@ -58,20 +58,12 @@ FOR i% = 0 TO 99 : a%(i%) = t% : NEXT
 
 The preheader executes even when the loop body does not, so only **non-trapping**
 instructions are hoisted: integer and float division are left in place (they can
-fault), and so are loads. That makes speculative execution in the preheader
-incapable of introducing a fault the original program would not have hit — the
-same zero-trip-safety argument as the AST-tier pass
+fault), and so are loads (they can fault and may alias). That makes speculative
+execution in the preheader incapable of introducing a fault the original program
+would not have hit — the same zero-trip-safety argument as the AST-tier pass
 ([O0028](O0028-loop-invariant-code-motion.md)).
-
-[O0060 Memory SSA](O0060-memory-ssa.md) now supplies the missing memory-mutation
-proof for loads: it can tell whether any loop-carried definition may clobber a
-particular read. That is necessary but not sufficient for hoisting. A load also
-needs proof that moving it to the preheader cannot newly execute or fault on a
-zero-trip path.
 
 ## Limits
 
-Load hoisting remains deliberately disabled until LICM has a non-trapping or
-must-execute proof for the candidate load. Memory SSA is available for the alias
-side of that decision; the remaining blocker is speculation safety, not memory
-dependence. Sinking rarely-executed computations into their branch is roadmap.
+Hoisting **loads** needs memory SSA — [O0060](O0060-memory-ssa.md). Sinking
+rarely-executed computations into their branch is roadmap.

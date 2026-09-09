@@ -21,11 +21,11 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </para>
 ///
 /// <para>
-/// Equality remains byte equality. Integer field equality already is bit equality. IEEE floating
-/// regions are reinterpreted as same-width integers before comparison, so signed zero and NaN payload
-/// bits remain observable exactly as they were to <c>rt_mem_compare</c>; no numeric <c>fcmp</c> enters
-/// this path. The current target-neutral scalar set covers binary32 and binary64. Wider floating
-/// storage remains on the byte comparison until every back end has a same-width integer carrier.
+/// Equality remains byte equality. Integer field equality is bit equality, so a complete integer-only
+/// partition can replace <c>rt_mem_compare(...) == 0</c> with the conjunction of per-region equality
+/// tests. Floating regions are intentionally left to <c>rt_mem_compare</c>: IEEE equality does not
+/// preserve raw-bit semantics for signed zero or NaNs, and inventing a numeric comparison there would
+/// be a miscompile disguised as scalarization.
 /// </para>
 /// </summary>
 public static class AggregateBlockScalarization {
@@ -124,8 +124,8 @@ public static class AggregateBlockScalarization {
       return false;                                  // no local observations from which to recover a layout
     if (!TryCompleteLayout(bytes, leftAlloca, rightAlloca, out var layout))
       return false;
-    if (layout.Any(region => RawEqualityType(region.Type) is null))
-      return false;                                  // no target-neutral raw scalar carrier for this region
+    if (layout.Any(region => region.Type.Kind != IrTypeKind.Int))
+      return false;                                  // float equality is not raw-bit equality
 
     var block = call.Parent;
     if (block is null)
@@ -140,10 +140,7 @@ public static class AggregateBlockScalarization {
       var leftValue = block.InsertAt(at++, new IrLoad(region.Type, leftAddress));
       var rightAddress = InsertAddress(block, ref at, right, region.Offset);
       var rightValue = block.InsertAt(at++, new IrLoad(region.Type, rightAddress));
-      var rawType = RawEqualityType(region.Type)!;
-      var leftBits = ToRawEqualityValue(block, ref at, leftValue, rawType);
-      var rightBits = ToRawEqualityValue(block, ref at, rightValue, rawType);
-      var equal = block.InsertAt(at++, new IrCmp(IrCmpPred.Eq, leftBits, rightBits));
+      var equal = block.InsertAt(at++, new IrCmp(IrCmpPred.Eq, leftValue, rightValue));
       allEqual = allEqual is null
         ? equal
         : block.InsertAt(at++, new IrBinary(IrBinaryOp.And, allEqual, equal));
@@ -164,17 +161,6 @@ public static class AggregateBlockScalarization {
     call.EraseFromParent();
     return true;
   }
-
-  private static IrType? RawEqualityType(IrType type) => type.Kind switch {
-    IrTypeKind.Int => type,
-    IrTypeKind.Float when type.IsIeeeFloat && type.Bits is 32 or 64 => IrType.Integer(type.Bits, signed: false),
-    _ => null,
-  };
-
-  private static IrValue ToRawEqualityValue(IrBasicBlock block, ref int at, IrValue value, IrType rawType)
-    => value.Type.Kind == IrTypeKind.Int
-      ? value
-      : block.InsertAt(at++, new IrCast(IrCastOp.BitCast, value, rawType));
 
   private static bool IsComparablePointer(IrValue pointer, int bytes) => pointer switch {
     IrAlloca { Allocated: var allocated, Count: var count } => allocated == IrType.I8 && count == bytes,

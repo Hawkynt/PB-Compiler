@@ -315,10 +315,6 @@ public sealed class CEmitter {
         sb.Append("  ").Append(lhs).Append(this.Compare(c)).Append(";\n");
         break;
 
-      case IrCast { Op: IrCastOp.BitCast } c:
-        this.EmitBitCast(sb, c);
-        break;
-
       case IrCast c:
         sb.Append("  ").Append(lhs).Append(this.Cast(c)).Append(";\n");
         break;
@@ -415,25 +411,6 @@ public sealed class CEmitter {
       default:
         throw EmitDeclinedException.For("C emission", inst);
     }
-  }
-
-  /// <summary>
-  /// Emits a bit-preserving scalar reinterpretation. A C cast between float and integer performs a
-  /// numeric conversion, so it cannot implement IR BitCast. C99 compound literals give the source
-  /// expression addressable storage and memcpy transfers its object representation without violating
-  /// strict aliasing; the destination has the same width by the IR bitcast contract.
-  /// </summary>
-  private void EmitBitCast(StringBuilder sb, IrCast cast) {
-    var from = cast.Value.Type;
-    var to = cast.Type;
-    if (from.Kind is not (IrTypeKind.Int or IrTypeKind.Float)
-        || to.Kind is not (IrTypeKind.Int or IrTypeKind.Float)
-        || from.Bits != to.Bits)
-      throw new EmitDeclinedException($"C emission: invalid raw bitcast from {from} to {to}");
-
-    var destination = this.Name(cast);
-    sb.Append("  memcpy(&").Append(destination).Append(", &(").Append(Ty(from)).Append("){ ")
-      .Append(this.Ref(cast.Value)).Append(" }, sizeof(").Append(destination).Append("));\n");
   }
 
   /// <summary>
@@ -559,7 +536,7 @@ public sealed class CEmitter {
       IrCastOp.FPToUI => $"({Ty(c.Type)})({UTy(c.Type)}){v}",
       IrCastOp.IntToPtr => $"(void *)(intptr_t){v}",
       IrCastOp.PtrToInt => $"({Ty(c.Type)})(intptr_t){v}",
-      _ => throw EmitDeclinedException.For("C emission", c),
+      _ => $"({Ty(c.Type)}){v}",                                 // BitCast between same-width ints
     };
   }
 

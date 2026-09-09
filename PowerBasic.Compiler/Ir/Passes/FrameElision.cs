@@ -10,11 +10,10 @@ namespace PowerBasic.Compiler.Ir.Passes;
 ///
 /// <para>
 /// This is deliberately only an eligibility analysis. Register allocation may still introduce spill
-/// slots, and a target ABI may need a frame pointer either persistently or briefly while staging
-/// incoming stack parameters. The machine emitter must therefore re-check its final stack slots and
-/// parameter operands before deciding whether BP has to survive into the function body. Keeping the
-/// two proofs separate is what makes the analysis target-neutral instead of baking an x86 addressing
-/// mode into SSA IR.
+/// slots, and a target ABI may need a frame pointer to address incoming stack parameters. The machine
+/// emitter must therefore re-check its final stack slots and parameter plan before omitting a frame.
+/// Keeping the two proofs separate is what makes the analysis target-neutral instead of baking an
+/// x86 addressing mode into SSA IR.
 /// </para>
 /// </summary>
 public static class FrameElision {

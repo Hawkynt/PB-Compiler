@@ -1,19 +1,13 @@
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// O0337 — rewrites profitable one-variable integer polynomials into Horner or Estrin form. Integer
-/// arithmetic is exact modulo the IR bit width, so reassociation is always legal; floating-point
-/// reassociation remains owned by O0344 and its explicit fast-math contract.
+/// O0337 — rewrites integer polynomials in one value into Horner form when doing so removes
+/// multiplications. Floating point is deliberately excluded: reassociation changes rounding and the
+/// IR has no fast-math contract yet.
 /// </summary>
 public static class PolynomialEvaluation {
 
   private const int _MAX_DEGREE = 8;
-
-  private abstract record Plan;
-  private sealed record ConstantPlan(long Value) : Plan;
-  private sealed record ValuePlan(IrValue Value) : Plan;
-  private sealed record BinaryPlan(IrBinaryOp Op, Plan Lhs, Plan Rhs) : Plan;
-  private readonly record struct PlanCost(int Multiplies, int Operations, int MultiplyDepth);
 
   /// <summary>Rewrites profitable integer polynomial roots; returns the number rewritten.</summary>
   public static int Run(IrFunction fn) {
@@ -38,152 +32,31 @@ public static class PolynomialEvaluation {
 
   private static bool TryRewrite(IrBinary root) {
     IrValue? variable = null;
-    var region = new HashSet<IrInstruction>(ReferenceEqualityComparer.Instance);
-    if (!TryRead(root, root.Type, ref variable, region, out var coefficients) || variable is null)
+    if (!TryRead(root, root.Type, ref variable, out var coefficients) || variable is null)
       return false;
 
     var degree = Degree(coefficients, root.Type);
-    if (degree < 2)
-      return false;
-
-    var removable = RemovableRegion(root, region);
-    var removableMultiplies = removable.Count(instruction => instruction is IrBinary { Op: IrBinaryOp.Mul });
-    if (removableMultiplies == 0)
-      return false;
-
-    var variablePlan = new ValuePlan(variable);
-    var coefficientPlans = coefficients.Take(degree + 1)
-      .Select(value => (Plan)new ConstantPlan(Wrap(root.Type, value)))
-      .ToList();
-    var horner = BuildHorner(root.Type, variablePlan, coefficientPlans);
-    var hornerCost = Cost(horner);
-    var estrin = BuildEstrin(root.Type, variablePlan, coefficientPlans);
-    var estrinCost = Cost(estrin);
-
-    var selected = estrinCost.Multiplies <= hornerCost.Multiplies
-                   && estrinCost.Operations <= hornerCost.Operations
-                   && estrinCost.MultiplyDepth < hornerCost.MultiplyDepth
-      ? estrin
-      : horner;
-    if (Cost(selected).Multiplies >= removableMultiplies)
+    if (degree < 2 || CountMultiplies(root, new HashSet<IrValue>(ReferenceEqualityComparer.Instance)) <= degree)
       return false;
 
     var block = root.Parent;
     if (block is null)
       return false;
 
-    var replacement = Emit(selected, root.Type, block, root,
-      new Dictionary<Plan, IrValue>(ReferenceEqualityComparer.Instance));
-    root.ReplaceAllUsesWith(replacement);
+    IrValue accumulator = new IrConstantInt(root.Type, Wrap(root.Type, coefficients[degree]));
+    for (var power = degree - 1; power >= 0; --power) {
+      accumulator = block.InsertBefore(new IrBinary(IrBinaryOp.Mul, accumulator, variable), root);
+      if (!IsZero(coefficients[power], root.Type))
+        accumulator = block.InsertBefore(new IrBinary(IrBinaryOp.Add, accumulator,
+          new IrConstantInt(root.Type, Wrap(root.Type, coefficients[power]))), root);
+    }
+
+    root.ReplaceAllUsesWith(accumulator);
     root.EraseFromParent();
     return true;
   }
 
-  private static HashSet<IrInstruction> RemovableRegion(IrBinary root, HashSet<IrInstruction> region) {
-    var removable = new HashSet<IrInstruction>(ReferenceEqualityComparer.Instance) { root };
-    bool changed;
-    do {
-      changed = false;
-      foreach (var instruction in region)
-        if (!removable.Contains(instruction) && instruction.Users.All(removable.Contains))
-          changed |= removable.Add(instruction);
-    } while (changed);
-    return removable;
-  }
-
-  private static Plan BuildHorner(IrType type, Plan variable, IReadOnlyList<Plan> coefficients) {
-    Plan result = coefficients[^1];
-    for (var power = coefficients.Count - 2; power >= 0; --power)
-      result = Add(type, Multiply(type, result, variable), coefficients[power]);
-    return result;
-  }
-
-  private static Plan BuildEstrin(IrType type, Plan variable, IReadOnlyList<Plan> coefficients) {
-    if (coefficients.Count == 1)
-      return coefficients[0];
-
-    var paired = new List<Plan>((coefficients.Count + 1) / 2);
-    for (var i = 0; i < coefficients.Count; i += 2) {
-      var pair = coefficients[i];
-      if (i + 1 < coefficients.Count)
-        pair = Add(type, pair, Multiply(type, coefficients[i + 1], variable));
-      paired.Add(pair);
-    }
-
-    if (paired.Count == 1)
-      return paired[0];
-    return BuildEstrin(type, Multiply(type, variable, variable), paired);
-  }
-
-  private static Plan Add(IrType type, Plan lhs, Plan rhs) {
-    if (lhs is ConstantPlan { Value: var left } && rhs is ConstantPlan { Value: var right })
-      return new ConstantPlan(Wrap(type, unchecked(left + right)));
-    if (IsPlanZero(lhs, type))
-      return rhs;
-    if (IsPlanZero(rhs, type))
-      return lhs;
-    return new BinaryPlan(IrBinaryOp.Add, lhs, rhs);
-  }
-
-  private static Plan Multiply(IrType type, Plan lhs, Plan rhs) {
-    if (lhs is ConstantPlan { Value: var left } && rhs is ConstantPlan { Value: var right })
-      return new ConstantPlan(Wrap(type, unchecked(left * right)));
-    if (IsPlanZero(lhs, type) || IsPlanZero(rhs, type))
-      return new ConstantPlan(0);
-    if (IsPlanOne(lhs, type))
-      return rhs;
-    if (IsPlanOne(rhs, type))
-      return lhs;
-    return new BinaryPlan(IrBinaryOp.Mul, lhs, rhs);
-  }
-
-  private static PlanCost Cost(Plan root) {
-    var seen = new HashSet<Plan>(ReferenceEqualityComparer.Instance);
-    var multiplies = 0;
-    var operations = 0;
-    Visit(root);
-    return new PlanCost(multiplies, operations,
-      MultiplyDepth(root, new Dictionary<Plan, int>(ReferenceEqualityComparer.Instance)));
-
-    void Visit(Plan plan) {
-      if (!seen.Add(plan) || plan is not BinaryPlan binary)
-        return;
-      ++operations;
-      if (binary.Op == IrBinaryOp.Mul)
-        ++multiplies;
-      Visit(binary.Lhs);
-      Visit(binary.Rhs);
-    }
-  }
-
-  private static int MultiplyDepth(Plan plan, Dictionary<Plan, int> cache) {
-    if (cache.TryGetValue(plan, out var known))
-      return known;
-    if (plan is not BinaryPlan binary)
-      return cache[plan] = 0;
-    var childDepth = Math.Max(MultiplyDepth(binary.Lhs, cache), MultiplyDepth(binary.Rhs, cache));
-    return cache[plan] = childDepth + (binary.Op == IrBinaryOp.Mul ? 1 : 0);
-  }
-
-  private static IrValue Emit(Plan plan, IrType type, IrBasicBlock block, IrInstruction anchor,
-      Dictionary<Plan, IrValue> emitted) {
-    if (emitted.TryGetValue(plan, out var existing))
-      return existing;
-
-    IrValue result = plan switch {
-      ConstantPlan constant => new IrConstantInt(type, Wrap(type, constant.Value)),
-      ValuePlan value => value.Value,
-      BinaryPlan binary => block.InsertBefore(new IrBinary(binary.Op,
-        Emit(binary.Lhs, type, block, anchor, emitted),
-        Emit(binary.Rhs, type, block, anchor, emitted)), anchor),
-      _ => throw new InvalidOperationException($"Unknown polynomial plan {plan.GetType().Name}"),
-    };
-    emitted[plan] = result;
-    return result;
-  }
-
-  private static bool TryRead(IrValue value, IrType type, ref IrValue? variable,
-      HashSet<IrInstruction> region, out long[] coefficients) {
+  private static bool TryRead(IrValue value, IrType type, ref IrValue? variable, out long[] coefficients) {
     coefficients = new long[_MAX_DEGREE + 1];
     switch (value) {
       case IrConstantInt constant when constant.Type.SameStorage(type):
@@ -191,9 +64,8 @@ public static class PolynomialEvaluation {
         return true;
       case IrBinary binary when binary.Type.SameStorage(type)
                                 && binary.Op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.Mul:
-        region.Add(binary);
-        if (!TryRead(binary.Lhs, type, ref variable, region, out var left)
-            || !TryRead(binary.Rhs, type, ref variable, region, out var right))
+        if (!TryRead(binary.Lhs, type, ref variable, out var left)
+            || !TryRead(binary.Rhs, type, ref variable, out var right))
           return false;
         coefficients = binary.Op switch {
           IrBinaryOp.Add => Add(type, left, right, subtract: false),
@@ -243,11 +115,13 @@ public static class PolynomialEvaluation {
     return 0;
   }
 
-  private static bool IsPlanZero(Plan plan, IrType type)
-    => plan is ConstantPlan constant && IsZero(constant.Value, type);
-
-  private static bool IsPlanOne(Plan plan, IrType type)
-    => plan is ConstantPlan constant && Wrap(type, constant.Value) == 1;
+  private static int CountMultiplies(IrValue value, HashSet<IrValue> seen) {
+    if (!seen.Add(value) || value is not IrBinary binary)
+      return 0;
+    return (binary.Op == IrBinaryOp.Mul ? 1 : 0)
+           + CountMultiplies(binary.Lhs, seen)
+           + CountMultiplies(binary.Rhs, seen);
+  }
 
   private static bool IsZero(long value, IrType type) => Wrap(type, value) == 0;
 

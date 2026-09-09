@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟨 Partial — independent local fields plus proven whole-record copy/raw-equality decomposition implemented |
+| **Status** | 🟨 Partial — independent local fields plus proven whole-record copy/integer-equality decomposition implemented |
 | **Stage** | Mid-end, IR byte-region analysis |
 | **Source** | `Ir/Passes/AggregateBlockScalarization.cs`, `Ir/Passes/ScalarReplaceAggregates.cs`, followed by `Mem2Reg` |
 | **Gate** | Standard optimized IR pipeline |
@@ -33,9 +33,8 @@ That gives O0059 these implemented cases:
 - **BYVAL snapshot scalarization** — when all bytes are proven by independent scalar fields, the entry
   copy becomes scalar loads from the incoming record pointer at the original copy point, preserving
   the entry snapshot while removing the block-copy temporary;
-- **Raw whole-record equality** — `rt_mem_compare(...) ==/!= 0` becomes conjunction/inversion of
-  per-region equality. Integer regions compare directly; IEEE binary32/binary64 regions first bitcast
-  to same-width integers, so `+0`/`-0` and NaN payload distinctions remain byte-exact;
+- **Integer-only whole-record equality** — `rt_mem_compare(...) ==/!= 0` becomes conjunction/inversion
+  of per-region integer equality when every compared byte belongs to a proven integer region;
 - **No aggregate runtime representation** — the optimization introduces no descriptors, tags, boxing,
   dictionaries, or dispatch machinery;
 - **Conservative union handling** — distinct overlapping regions keep their shared backing storage,
@@ -81,15 +80,13 @@ The proof is intentionally narrower than ordinary source-level field reasoning:
 - whole-object operations with dynamic size, volatile copy, unknown storage, or non-equality users
   decline;
 - two distinct accessed regions that overlap decline. This is the rule that keeps `UNION` correct;
-- floating equality is never lowered to IEEE `fcmp`. Numeric equality would make `+0` equal `-0` and
-  would interpret NaNs rather than compare their stored payload bits. Binary32/binary64 regions instead
-  use same-width raw-bit casts followed by integer equality; wider floating storage remains on
-  `rt_mem_compare` until the target-neutral IR/back ends have a same-width scalar carrier for it.
+- floating whole-record equality stays on `rt_mem_compare`. IEEE `fcmp` would make `+0` equal `-0` and
+  treats NaNs according to numeric rules, while PowerBASIC's current UDT equality lowering compares raw
+  bytes. Replacing one with the other would be wrong even though both are spelled "equality".
 
 Whole-record copy decomposition may include floating scalar regions because a typed load followed by a
-typed store preserves the stored representation without performing floating arithmetic. Equality keeps
-that same byte contract by reinterpreting supported floating scalar values as integers before the
-comparison. The cast changes the type, not the bits.
+typed store preserves the stored representation without performing floating arithmetic. Equality has a
+tighter boundary because the comparison operation itself can reinterpret the bytes semantically.
 
 There is a separate `ScalarReplaceArrays` pass for homogeneous small arrays. It additionally proves
 that every access has the array element's storage type. This matters because packed UDT backing also
@@ -117,8 +114,8 @@ the copy was declared unnecessary.
 O0059 remains partial rather than complete because useful cases still require stronger proofs or a raw
 storage representation:
 
-- floating regions wider than binary64 still need a target-neutral same-width raw scalar carrier before
-  their equality can replace byte comparison;
+- floating-region whole-record equality needs a bit-preserving comparison form (for example a proven
+  same-width raw-bit cast) before it can replace byte comparison;
 - pointer-containing aggregates need target-aware storage widths/address-space rules;
 - copies with bytes that have no typed observation currently remain whole-object copies, even when
   field-granular liveness could prove those particular bytes dead;

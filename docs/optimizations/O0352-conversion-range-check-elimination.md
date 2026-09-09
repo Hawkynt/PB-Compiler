@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (shared finite/non-NaN FP domain) |
-| **Stage** | IR middle end |
+| **Status** | ✅ Implemented (bounded non-NaN float provenance) |
+| **Stage** | Emitter |
 | **IR** | `PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs` |
-| **Related** | [O0016](O0016-value-fact-analysis.md), [O0089](O0089-extension-elimination.md), [O0346](O0346-fp-classification-simplification.md) |
+| **Related** | [O0016](O0016-value-fact-analysis.md), [O0089](O0089-extension-elimination.md), [O0013](O0013-promotion-lowering.md) |
 
 ## The idea
 
@@ -30,27 +30,22 @@ NEXT
 
 ## IR implementation
 
-`ConversionRangeCheckElim` consumes the shared `FpDomainAnalysis` instead of maintaining a second float
-range evaluator. That analysis adapts `IrRangeAnalysis` facts through `SIToFP`/`UIToFP`, supported
-floating add/subtract/multiply/divide expressions, `FPExt`, and `FPTrunc`, reproducing binary32 or
-binary64 rounding at the IR operation where it occurs. A conversion guard comparison is folded only
-when both operands have finite, non-NaN domains and every value in those closed intervals gives the
-same ordered-comparison result.
+The existing integer `IrRangeAnalysis` intentionally refuses floating comparisons because an arbitrary
+floating value may be NaN. `ConversionRangeCheckElim` adds a narrow provenance domain instead of
+weakening that safety rule: floating constants and values produced by `SIToFP`/`UIToFP` from a bounded
+integer SSA value are known non-NaN and get numeric endpoints. `FPExt`, phis and selects composed only
+from such values preserve the fact. Ordered comparisons at the conversion guard can then be folded
+only when every value in both intervals gives the same result.
 
-O0352 retains conservative phi/select joins around those proven domains so a merge of individually
-safe conversion inputs remains safe. Cyclic or excessively deep joins are declined rather than guessed.
-Extended-precision expressions that the shared analysis cannot evaluate host-independently remain
-unknown.
-
-An arbitrary float argument, a NaN/infinity-bearing domain, or an unmodelled floating computation keeps
-its check. General float classification/range reasoning remains shared with
-[O0346](O0346-fp-classification-simplification.md), rather than being duplicated here.
+An arbitrary float argument, a NaN constant, or an unmodelled floating computation remains unknown and
+keeps its check. General float classification/range reasoning remains the domain of
+[O0346](O0346-fp-classification-simplification.md).
 
 ## What it needs
 
-- The interval domain ([O0016](O0016-value-fact-analysis.md)) at the conversion site — the same query
-  [O0217](O0217-bounds-check-elimination.md) makes for subscripts.
-- A finite, non-NaN proof before an ordered floating comparison can be decided.
-- Precision-aware endpoint evaluation for floating arithmetic; host-double algebra is not accepted as
-  a substitute for binary32/binary64 IR rounding.
+- The interval domain ([O0016](O0016-value-fact-analysis.md)) at the conversion
+  site — the same query [O0217](O0217-bounds-check-elimination.md) makes for
+  subscripts.
+- A no-NaN proof before ordered floating comparisons can be decided. The IR port obtains that proof
+  from conversion provenance rather than assuming it for arbitrary floats.
 - A check that *could* fire is never dropped — the error is observable behaviour.

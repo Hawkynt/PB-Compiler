@@ -351,13 +351,6 @@ public sealed class MBlock(string label) {
   public List<string> Successors { get; } = [];
 
   /// <summary>
-  /// Measured executions of this block for profile-guided register allocation. A null value means no
-  /// profile is attached; O0273 deliberately requires every block to have a count before it changes
-  /// spill ordering, so a partial/stale profile cannot accidentally make an unknown block look cold.
-  /// </summary>
-  public ulong? ExecutionCount { get; set; }
-
-  /// <summary>
   /// Every label control can leave this block for: its CFG successors PLUS the BASIC labels an
   /// inline-assembly block jumps to.
   ///
@@ -436,7 +429,7 @@ public sealed class MFunction(string name) {
     copy.ArgumentLoads.AddRange(this.ArgumentLoads);
     copy.MovedValues.UnionWith(this.MovedValues);
     foreach (var block in this.Blocks) {
-      var cloned = new MBlock(block.Label) { ExecutionCount = block.ExecutionCount };
+      var cloned = new MBlock(block.Label);
       cloned.Instructions.AddRange(block.Instructions);
       cloned.Successors.AddRange(block.Successors);
       copy.Blocks.Add(cloned);

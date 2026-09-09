@@ -47,9 +47,9 @@ public static class PointerCheckElim {
           && branch.Condition is IrCmp guard
           && TryNullTest(guard, out var guarded, out var trueMeansNull)
           && ReferenceEquals(guarded, value)) {
-        if (dom.EdgeDominates(at, branch.IfTrue, block))
+        if (dom.Dominates(branch.IfTrue, block))
           return trueMeansNull;
-        if (dom.EdgeDominates(at, branch.IfFalse, block))
+        if (dom.Dominates(branch.IfFalse, block))
           return !trueMeansNull;
       }
       if (ReferenceEquals(at, dom.ImmediateDominatorOf(at)))
