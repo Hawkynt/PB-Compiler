@@ -242,7 +242,7 @@ public sealed partial class CodeGenerator {
     if (this.Optimize)
       foreach (var f in module.Functions)
         if (!f.IsDeclaration)
-          MemoryRoutineSpecialization.Run(f);
+          MemoryRoutineSpecialization.Run(f, this.Cost);
 
     var byName = new Dictionary<string, IrFunction>(System.StringComparer.OrdinalIgnoreCase);
     foreach (var f in module.Functions)
@@ -321,7 +321,7 @@ public sealed partial class CodeGenerator {
     }
 
     foreach (var (proc, irFn, mfn) in candidates) {
-      MachineScheduler.Schedule(mfn);             // schedule first, then allocate the final order
+      MachineScheduler.Schedule(mfn, this.SelectionTarget);             // schedule first, then allocate the final order
       if (LinearScanAllocator.Allocate(mfn, this.SelectionTarget, out var noRegisters) is not { } alloc) {
         this._backendDeclines.Add((proc.Name, "allocation: " + (noRegisters ?? "unknown")));
         continue;                                 // a value live across a CALL has no register - decline
@@ -450,7 +450,7 @@ public sealed partial class CodeGenerator {
       return this.DeclineMain("selection: " + (declineReason ?? "unknown"));
     if (UndefinedRuntimeCallee(machine) is { } undefined)
       return this.DeclineMain($"routing: calls '{undefined}', which the DOS runtime does not define");
-    MachineScheduler.Schedule(machine);
+    MachineScheduler.Schedule(machine, this.SelectionTarget);
     if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } alloc)
       return this.DeclineMain("allocation: " + (noRegisters ?? "unknown"));
     return this._backendMain = (machine, alloc);
