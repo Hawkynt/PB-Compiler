@@ -22,6 +22,106 @@ public sealed class LibraryAndMemoryIdiomTests {
   }
 
   [Test]
+  public void FillLoop_GivenConditionalStore_ThenItIsNotPromotedToMemset() {
+    var module = new IrModule("test");
+    var condition = new IrArgument(IrType.I1, 0);
+    var fn = module.AddFunction(new IrFunction("fill_if", IrType.Void, [condition]));
+    var pre = fn.AddBlock(new IrBasicBlock("pre"));
+    var target = pre.Append(new IrAlloca(IrType.I8) { Count = 6 });
+    var (header, body, latch, exit, counter) = LoopSkeleton(fn, pre, 6);
+    var storeBlock = fn.AddBlock(new IrBasicBlock("store"));
+    var skipBlock = fn.AddBlock(new IrBasicBlock("skip"));
+    body.Append(new IrCondBr(condition, storeBlock, skipBlock));
+    var targetAt = storeBlock.Append(new IrGep(target, counter, IrType.I8));
+    storeBlock.Append(new IrStore(new IrConstantInt(IrType.I8, 0x5a), targetAt));
+    storeBlock.Append(new IrBr(latch));
+    skipBlock.Append(new IrBr(latch));
+    FinishLoop(header, latch, exit, counter, pre, 6);
+
+    Assert.That(LibraryCallRecognition.Run(module), Is.Zero);
+    Assert.That(module.FindFunction("llvm.memset.p0.i32"), Is.Null);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void FillLoop_GivenAnEarlyExit_ThenItIsNotPromotedToMemset() {
+    var module = new IrModule("test");
+    var condition = new IrArgument(IrType.I1, 0);
+    var fn = module.AddFunction(new IrFunction("fill_until", IrType.Void, [condition]));
+    var pre = fn.AddBlock(new IrBasicBlock("pre"));
+    var target = pre.Append(new IrAlloca(IrType.I8) { Count = 6 });
+    var (header, body, latch, exit, counter) = LoopSkeleton(fn, pre, 6);
+    var storeBlock = fn.AddBlock(new IrBasicBlock("store"));
+    body.Append(new IrCondBr(condition, storeBlock, exit));
+    var targetAt = storeBlock.Append(new IrGep(target, counter, IrType.I8));
+    storeBlock.Append(new IrStore(new IrConstantInt(IrType.I8, 0x5a), targetAt));
+    storeBlock.Append(new IrBr(latch));
+    FinishLoop(header, latch, exit, counter, pre, 6);
+
+    Assert.That(LibraryCallRecognition.Run(module), Is.Zero);
+    Assert.That(module.FindFunction("llvm.memset.p0.i32"), Is.Null);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void FillLoop_GivenAnInnerCycle_ThenItIsNotPromotedToMemset() {
+    var module = new IrModule("test");
+    var repeat = new IrArgument(IrType.I1, 0);
+    var fn = module.AddFunction(new IrFunction("fill_repeat", IrType.Void, [repeat]));
+    var pre = fn.AddBlock(new IrBasicBlock("pre"));
+    var target = pre.Append(new IrAlloca(IrType.I8) { Count = 6 });
+    var (header, body, latch, exit, counter) = LoopSkeleton(fn, pre, 6);
+    var targetAt = body.Append(new IrGep(target, counter, IrType.I8));
+    body.Append(new IrStore(new IrConstantInt(IrType.I8, 0x5a), targetAt));
+    body.Append(new IrCondBr(repeat, body, latch));
+    FinishLoop(header, latch, exit, counter, pre, 6);
+
+    Assert.That(LibraryCallRecognition.Run(module), Is.Zero);
+    Assert.That(module.FindFunction("llvm.memset.p0.i32"), Is.Null);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void FillLoop_GivenAStoreInTheTestHeader_ThenItIsNotPromotedToMemset() {
+    var module = new IrModule("test");
+    var fn = module.AddFunction(new IrFunction("header_store", IrType.Void));
+    var pre = fn.AddBlock(new IrBasicBlock("pre"));
+    var target = pre.Append(new IrAlloca(IrType.I8) { Count = 7 });
+    var (header, body, latch, exit, counter) = LoopSkeleton(fn, pre, 6);
+    var targetAt = header.InsertBefore(new IrGep(target, counter, IrType.I8), header.Terminator!);
+    header.InsertBefore(new IrStore(new IrConstantInt(IrType.I8, 0x5a), targetAt), header.Terminator!);
+    body.Append(new IrBr(latch));
+    FinishLoop(header, latch, exit, counter, pre, 6);
+
+    Assert.That(LibraryCallRecognition.Run(module), Is.Zero);
+    Assert.That(module.FindFunction("llvm.memset.p0.i32"), Is.Null);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void FillLoop_GivenAnInternalBranchAfterTheStore_ThenItStillBecomesMemset() {
+    var module = new IrModule("test");
+    var condition = new IrArgument(IrType.I1, 0);
+    var fn = module.AddFunction(new IrFunction("fill_branch", IrType.Void, [condition]));
+    var pre = fn.AddBlock(new IrBasicBlock("pre"));
+    var target = pre.Append(new IrAlloca(IrType.I8) { Count = 6 });
+    var (header, body, latch, exit, counter) = LoopSkeleton(fn, pre, 6);
+    var left = fn.AddBlock(new IrBasicBlock("left"));
+    var right = fn.AddBlock(new IrBasicBlock("right"));
+    var targetAt = body.Append(new IrGep(target, counter, IrType.I8));
+    body.Append(new IrStore(new IrConstantInt(IrType.I8, 0x5a), targetAt));
+    body.Append(new IrCondBr(condition, left, right));
+    left.Append(new IrBr(latch));
+    right.Append(new IrBr(latch));
+    FinishLoop(header, latch, exit, counter, pre, 6);
+
+    Assert.That(LibraryCallRecognition.Run(module), Is.EqualTo(1));
+    Assert.That((fn.AllInstructions.OfType<IrCall>().Single().Callee as IrFunction)?.Name,
+      Is.EqualTo("llvm.memset.p0.i32"));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
   public void CopyLoop_GivenDistinctAllocations_ThenItBecomesMemcpy() {
     var module = new IrModule("test");
     var fn = module.AddFunction(new IrFunction("copy", IrType.Void));
@@ -39,6 +139,26 @@ public sealed class LibraryAndMemoryIdiomTests {
     Assert.That(LibraryCallRecognition.Run(module), Is.EqualTo(1));
     Assert.That((fn.AllInstructions.OfType<IrCall>().Single().Callee as IrFunction)?.Name,
       Is.EqualTo("llvm.memcpy.p0.p0.i32"));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void CopyLoop_GivenTheSourceLoadInTheTestHeader_ThenItIsNotPromotedToMemcpy() {
+    var module = new IrModule("test");
+    var fn = module.AddFunction(new IrFunction("header_load", IrType.Void));
+    var pre = fn.AddBlock(new IrBasicBlock("pre"));
+    var source = pre.Append(new IrAlloca(IrType.I8) { Count = 7 });
+    var target = pre.Append(new IrAlloca(IrType.I8) { Count = 6 });
+    var (header, body, latch, exit, counter) = LoopSkeleton(fn, pre, 6);
+    var sourceAt = header.InsertBefore(new IrGep(source, counter, IrType.I8), header.Terminator!);
+    var value = header.InsertBefore(new IrLoad(IrType.I8, sourceAt), header.Terminator!);
+    var targetAt = body.Append(new IrGep(target, counter, IrType.I8));
+    body.Append(new IrStore(value, targetAt));
+    body.Append(new IrBr(latch));
+    FinishLoop(header, latch, exit, counter, pre, 6);
+
+    Assert.That(LibraryCallRecognition.Run(module), Is.Zero);
+    Assert.That(module.FindFunction("llvm.memcpy.p0.p0.i32"), Is.Null);
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 

@@ -35,11 +35,16 @@ public static class LibraryCallRecognition {
         || !ReferenceEquals(next.Lhs, loop.Counter) || next.Rhs is not IrConstantInt { Value: 1 })
       return false;
 
+    if (!HasSingleIterationControlFlow(loop) || IrDominators.Build(function) is not { } dominators)
+      return false;
+
     var stores = loop.Region.SelectMany(block => block.Instructions).OfType<IrStore>().ToList();
     if (stores.Count != 1)
       return false;
     var store = stores[0];
-    if (!TryIndexedByte(store.Pointer, loop.Counter, out var targetBase, out var targetGep)
+    if (store.Parent is not { } storeBlock || ReferenceEquals(storeBlock, loop.Header)
+        || !dominators.Dominates(storeBlock, loop.Latch)
+        || !TryIndexedByte(store.Pointer, loop.Counter, out var targetBase, out var targetGep)
         || DefinedInside(targetBase, loop.Region))
       return false;
 
@@ -52,7 +57,9 @@ public static class LibraryCallRecognition {
 
     var isCopy = false;
     IrValue? sourceBase = null;
-    if (store.Value is IrLoad load && TryIndexedByte(load.Pointer, loop.Counter, out var copyBase, out var sourceGep)
+    if (store.Value is IrLoad load && load.Parent is { } loadBlock && loop.Region.Contains(loadBlock)
+        && !ReferenceEquals(loadBlock, loop.Header) && dominators.Dominates(loadBlock, storeBlock)
+        && TryIndexedByte(load.Pointer, loop.Counter, out var copyBase, out var sourceGep)
         && load.Type.IsInteger && load.Type.Bits == 8 && load.Users.Count == 1 && ReferenceEquals(load.Users[0], store)
         && !DefinedInside(copyBase, loop.Region) && ProvenDisjoint(targetBase, copyBase)) {
       isCopy = true;
@@ -78,6 +85,54 @@ public static class LibraryCallRecognition {
     foreach (var block in loop.Region.ToList())
       function.RemoveBlock(block);
     return true;
+  }
+
+  /// <summary>
+  /// Proves that removing the region removes exactly one acyclic body execution per counted iteration.
+  /// The header's false edge is the sole exit and the latch-to-header edge is the sole cycle.
+  /// </summary>
+  private static bool HasSingleIterationControlFlow(CountedLoop loop) {
+    var indegree = loop.Region.ToDictionary<IrBasicBlock, IrBasicBlock, int>(
+      block => block,
+      _ => 0,
+      ReferenceEqualityComparer.Instance);
+
+    foreach (var block in loop.Region) {
+      if (!ReferenceEquals(block, loop.Header)
+          && block.Predecessors.Any(predecessor => !loop.Region.Contains(predecessor)))
+        return false;                               // deleting the region would strand a side entrance
+      if (block.Terminator is not { } terminator || terminator is IrRet or IrUnreachable)
+        return false;                               // EXIT SUB/FUNCTION is observable control flow
+
+      foreach (var successor in terminator.Successors) {
+        if (!loop.Region.Contains(successor)) {
+          if (!ReferenceEquals(block, loop.Header) || !ReferenceEquals(successor, loop.Exit))
+            return false;                           // EXIT LOOP or another side exit
+          continue;
+        }
+        if (ReferenceEquals(block, loop.Latch) && ReferenceEquals(successor, loop.Header))
+          continue;                                // the one counted-loop backedge
+        ++indegree[successor];
+      }
+    }
+
+    // After removing the counted backedge, one iteration must be a DAG. Otherwise a store could run
+    // more than once before the induction variable advances (an inner/self loop), which no single
+    // memcpy/memset call can reproduce.
+    var ready = new Queue<IrBasicBlock>(indegree.Where(pair => pair.Value == 0).Select(pair => pair.Key));
+    var visited = 0;
+    while (ready.Count > 0) {
+      var block = ready.Dequeue();
+      ++visited;
+      foreach (var successor in block.Successors) {
+        if (!loop.Region.Contains(successor)
+            || ReferenceEquals(block, loop.Latch) && ReferenceEquals(successor, loop.Header))
+          continue;
+        if (--indegree[successor] == 0)
+          ready.Enqueue(successor);
+      }
+    }
+    return visited == loop.Region.Count;
   }
 
   private static IrValue Start(CountedLoop loop, IrValue basePointer, IrConstantInt initial) {

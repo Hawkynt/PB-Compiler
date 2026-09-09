@@ -27,8 +27,22 @@ that touch exactly one byte per iteration and have no extra observable work.
   becomes `llvm.memcpy.p0.p0.i32`.
 - `memcpy` is formed only for storage pairs the IR can prove disjoint (distinct
   allocas/globals); a possibly-overlapping copy is deliberately left alone.
+- The memory operation must execute exactly once per counted iteration. Its block
+  must dominate the latch, it may not live in the test header, and after removing
+  the latch-to-header edge the matched loop body must be acyclic.
+- The matched region must be closed: no side entrance, `EXIT LOOP`, early return,
+  unreachable terminator, or other side exit may disappear when the loop is
+  replaced. The header's normal false edge is the only permitted exit.
+- For `memcpy`, the source load must likewise belong to the counted body rather
+  than the test header and dominate the store.
 - Declined matches are mutation-free: they do not even mint an intrinsic
   declaration.
+
+The exact-execution checks mirror the legality boundary used by LLVM's
+`LoopIdiomRecognize`: a store is only promotable when its block is unconditionally
+executed for the loop exits. PB-Compiler keeps its own narrower clean-room matcher
+rather than porting LLVM implementation code. LLVM's Language Reference is also
+the semantic reference for the non-overlap requirement of `llvm.memcpy`.
 
 The resulting intrinsic is then available to [O0339](O0339-memory-routine-by-size.md)
 and the existing target/runtime memory-copy policy.
