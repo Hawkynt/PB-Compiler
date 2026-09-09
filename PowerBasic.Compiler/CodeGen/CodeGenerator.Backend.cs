@@ -78,11 +78,10 @@ public sealed partial class CodeGenerator {
   public static string? BackendFilterReason(ProcedureSymbol proc) {
     if (proc.IsExternal || proc.Body is null)
       return "filter: external declaration - there is no body here to route";
-    // Error handling in a PROCEDURE, unlike in the module body: the direct path saves and restores
-    // the caller's handler triple around such a body, and the routed prologue/epilogue has no
-    // equivalent bookkeeping yet.
-    if (ContainsErrorHandling(proc.Body))
-      return "filter: error handling in a procedure body (ON ERROR / RESUME / TRY)";
+    // Procedure-local ON ERROR / RESUME / TRY no longer changes eligibility. The lowering already
+    // emits the handler intrinsics and selection expands them inline; ProcedureErrorHandlerPreservation
+    // adds the one ABI rule the module body does not need - save the caller's handler triple on entry
+    // and restore it before each return.
     return BackendAbiReason(proc);
   }
 
@@ -132,24 +131,25 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// The value shapes the routed calling sequence can pass and return: a 16- or 32-bit integer (AX or
-  /// DX:AX), a SINGLE or DOUBLE (ST(0)), and a dynamic-string handle (AX). The same shapes may be the
-  /// storage behind a one-word near BYREF pointer. Records are supported only BYREF (their ABI value
-  /// is that pointer); QUAD, BYTE, FIX/BCD, EXT and array values still need their own routed ABI work.
+  /// The value shapes a routed procedure definition can receive or return: BYTE/SBYTE/INTEGER in
+  /// AX (the byte forms consume/produce AL while retaining PB's word-sized stack slot), LONG in DX:AX,
+  /// SINGLE/DOUBLE/EXT reals in ST(0), and a dynamic-string handle in AX. EXT arguments keep their
+  /// native ten-byte TBYTE stack representation. Records are supported only BYREF (their ABI value is
+  /// one near pointer). FIX/BCD and array values still need routed ABI work.
   /// </summary>
   private static bool IsBackendAbiType(PbType type)
-    => type is ScalarType { IsFloat: false, ByteSize: 2 or 4 }
-            or ScalarType { IsFloat: true, ByteSize: 4 or 8 }
+    => type is ScalarType { IsFloat: false, ByteSize: 1 or 2 or 4 or 8 }
+            or ScalarType { IsFloat: true, ByteSize: 4 or 8 or 10 }
             or StringType;
 
   /// <summary>
   /// The functions the x86-16 back end will compile in place of the direct codegen (docs/X86-BACKEND.md).
-  /// A function qualifies when it is a pure INTEGER (signed-16) function with INTEGER BYVAL parameters
-  /// and no error handling, and - after IntegerRecovery turns PB's float-form integer arithmetic back
-  /// into integer ops - its SSA IR fully selects + allocates (which declines calls, division, float).
-  /// The back end OWNS the whole function via the IR (SSA - no shared memory cells), so it never reads
-  /// an optimizer-stale cell; the function is excluded from inlining and the register-parameter
-  /// convention so its emitted stack ABI matches the call sites. Gated on the opt-in flag.
+  /// A function qualifies when its ABI shape is supported and its SSA IR fully selects + allocates.
+  /// Procedure-local error handling is lowered like the module body's and then wrapped by the machine
+  /// ABI preservation pass so a callee cannot overwrite its caller's active handler. The back end OWNS
+  /// the whole function via the IR (SSA - no shared memory cells), so it never reads an optimizer-stale
+  /// cell; the function is excluded from inlining and the register-parameter convention so its emitted
+  /// stack ABI matches the call sites. Gated on the opt-in flag.
   /// </summary>
   private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc, bool ElideFrame)> BackendProcs() {
     if (this._backendProcs is not null)
@@ -293,6 +293,12 @@ public sealed partial class CodeGenerator {
         this._backendDeclines.Add((proc.Name, "selection: " + (declineReason ?? "unknown")));
         continue;
       }
+      // The handler itself is already machine IR at this point. What a procedure adds over main is
+      // one invocation-level ABI promise: whatever handler triple its caller had armed must be back
+      // when the procedure returns. Add that save/restore before scheduling and allocation so its
+      // frame slot and scratch registers participate in the ordinary machine analyses.
+      if (ContainsErrorHandling(proc.Body!))
+        ProcedureErrorHandlerPreservation.Run(mfn);
       if (UndefinedRuntimeCallee(mfn) is { } undefined) {
         this._backendDeclines.Add((proc.Name, $"routing: calls '{undefined}', which the DOS runtime does not define"));
         continue;
@@ -375,7 +381,7 @@ public sealed partial class CodeGenerator {
     // are minted by DataCellOf during emission, which happens after this returns.
     // The same bargain is struck for a SHARED dynamic array's descriptor, and it is checked here for
     // the same reason: the routed cells and the direct emitter's packed block are two descriptions of
-    // one array, so a split set of users would have a REDIM on one side and an UBOUND on the other.
+    // one array, so a split set of users would have a REDIM on one side and a UBOUND on the other.
     var dataSplit = !this._backendDataOwnershipDenied && !this.DataReadersRouteTogether();
     var dynSplit = !this._backendDynArrayOwnershipDenied && !this.SharedDynArrayUsersRouteTogether();
     if (!dataSplit && !dynSplit)
@@ -420,11 +426,9 @@ public sealed partial class CodeGenerator {
   private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? RouteMain() {
     this._backendMainKnown = true;
     var routed = this.BackendProcs();               // also lowers the module and fills _backendModule
-    // Error handling used to disqualify the module body outright. It no longer does: the selector
-    // expands the ON ERROR intrinsics inline (arming captures the CURRENT BP/SP, so a CALL would
-    // capture its own), and a handler is named by its block's offset. A PROCEDURE that arms one is
-    // still excluded - the direct path additionally saves and restores the caller's handler triple
-    // around such a body, and that bookkeeping has no equivalent here yet.
+    // Error handling in main is selected inline just like it is in a procedure. The only difference
+    // is the procedure boundary: ProcedureErrorHandlerPreservation saves/restores the caller's handler
+    // triple there, while main has no caller and therefore needs no wrapper.
     if (!this.UseExperimentalBackend)
       return null;
     // The module body's own filter, recorded for the same reason a procedure's is: 161/161 owned

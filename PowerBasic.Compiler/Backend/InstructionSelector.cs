@@ -48,6 +48,10 @@ public sealed partial class InstructionSelector {
   private readonly Dictionary<IrValue, MOperand.ParamCell> _floatParams =
     new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>QUAD parameters stay in their caller-owned eight-byte stack cell until first use.</summary>
+  private readonly Dictionary<IrValue, MOperand.ParamCell> _qwordParams =
+    new(ReferenceEqualityComparer.Instance);
+
   /// <summary>
   /// Where a QUAD read out of storage lives: an eight-byte frame cell of its own. A 64-bit integer
   /// has no register representation on this target - it would need four of them - and the x87 is
@@ -141,6 +145,10 @@ public sealed partial class InstructionSelector {
     // prologue relies on to load argument i into allocation[i]); they are function live-ins
     for (var index = 0; index < fn.Parameters.Count; ++index) {
       var arg = fn.Parameters[index];
+      if (IsQuad(arg.Type)) {
+        this._qwordParams[arg] = new MOperand.ParamCell(index, 0, MRegSize.Qword);
+        continue;
+      }
       if (arg.Type.IsFloat) {
         // The direct BASIC/PASCAL caller pushed the value's raw IEEE words. Keep the declared width:
         // FLD widens it to x87 only when an instruction consumes the parameter.
@@ -1119,6 +1127,25 @@ public sealed partial class InstructionSelector {
   private bool TryQwordSlot(IrValue value, out int slot) {
     if (this._qslots.TryGetValue(value, out slot))
       return true;
+    if (this._qwordParams.TryGetValue(value, out var parameter)) {
+      // Copy the caller-owned qword into a private SSA cell on first use. Four word moves avoid
+      // inventing a 64-bit GP-register representation and preserve the exact incoming bits.
+      slot = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(8);
+      this._qslots[value] = slot;
+      for (var offset = 0; offset < 8; offset += 2) {
+        // One SSA definition per copied word. Reusing a virtual register here would create four
+        // definitions for one vreg and break the allocator's single-definition invariant.
+        var scratch = new MOperand.Register(MReg.Virtual(this._nextVreg++, MRegSize.Word));
+        var source = new MOperand.ParamCell(parameter.ArgumentIndex, parameter.ByteDelta + offset, MRegSize.Word);
+        var destination = new MOperand.StackSlot(slot, MRegSize.Word, offset);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [scratch, source], MovEffect(scratch, source)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, scratch],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: false, WritesMemory: true)));
+      }
+      return true;
+    }
     if (value is not IrConstantInt { Type: { IsInteger: true, Bits: 64 }, Value: var constant })
       return this.Decline($"64-bit operand: {value.GetType().Name} has no cell");
 
@@ -2558,8 +2585,9 @@ public sealed partial class InstructionSelector {
       if (IsRuntimeName(callee.Name))
         return this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
     }
-    if (!call.Type.IsVoid && !call.Type.IsIeeeFloat && !IsWide(call.Type)
-        && RegSize(call.Type) != MRegSize.Word)
+    if (!call.Type.IsVoid && !call.Type.IsIeeeFloat && !IsWide(call.Type) && !IsQuad(call.Type)
+        && RegSize(call.Type) != MRegSize.Word
+        && call.Type is not { IsInteger: true, Bits: 8 })
       return this.Decline($"call: {callee.Name} returns {call.Type} (unsupported result shape)");
 
     var abi = X86CallAbi.For(call.Convention);
@@ -2595,6 +2623,16 @@ public sealed partial class InstructionSelector {
     if (call.Type.IsVoid)
       return true;
 
+    if (IsQuad(call.Type)) {
+      // QUAD shares the x87 return channel with real values, but the SSA result is an integer: park
+      // ST(0) with FISTP so later QUAD operations keep reading the exact signed qword bits.
+      var qword = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(8);
+      this._qslots[call] = qword;
+      this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(qword, MRegSize.Qword), reads: false);
+      return true;
+    }
+
     if (call.Type.IsIeeeFloat) {
       // The BASIC function ABI returns every IEEE real on ST(0); park it immediately so the x87
       // stack is empty again at the instruction boundary.
@@ -2628,8 +2666,8 @@ public sealed partial class InstructionSelector {
       if (!this.TryFloatOperand(argument, out var source))
         return false;
       bytes = argument.Type.Bits / 8;
-      if (bytes is not (4 or 8))
-        return this.Decline($"call: {calleeName} takes {argument.Type} (only SINGLE/DOUBLE arguments)");
+      if (bytes is not (4 or 8 or 10))
+        return this.Decline($"call: {calleeName} takes {argument.Type} (only SINGLE/DOUBLE/EXT arguments)");
       // Intermediates live in 80-bit cells. Storing to the parameter's declared width is both the
       // ABI representation and its required rounding boundary; pushing words from the TBYTE cell
       // itself would pass the x87 encoding as though it were IEEE bits.
@@ -2640,6 +2678,23 @@ public sealed partial class InstructionSelector {
       for (var offset = bytes - 2; offset >= 0; offset -= 2)
         this._current.Instructions.Add(PushOf(
           new MOperand.StackSlot(staged, MRegSize.Word, offset)));
+      return true;
+    }
+    if (IsQuad(argument.Type)) {
+      if (!this.TryQwordSlot(argument, out var qword))
+        return false;
+      for (var offset = 6; offset >= 0; offset -= 2)
+        this._current.Instructions.Add(PushOf(new MOperand.StackSlot(qword, MRegSize.Word, offset)));
+      bytes = 8;
+      return true;
+    }
+    if (argument.Type is { IsInteger: true, Bits: 8 }) {
+      // PB allocates a full word stack slot even for BYTE/SBYTE. The callee consumes the low byte;
+      // materializing a word here also matches the direct emitter's PUSH AX shape and keeps SP even.
+      if (!this.TryWordOperand(argument, $"call: {calleeName} BYTE argument", out var byteWord))
+        return false;
+      this._current.Instructions.Add(PushOf(byteWord));
+      bytes = 2;
       return true;
     }
     if (IsWide(argument.Type)) {
@@ -3818,6 +3873,60 @@ public sealed partial class InstructionSelector {
       this.PopRounded(cast.Type, this.FloatCell(cast));
       return true;
     }
+    // FILD has no byte source form: it reads signed m16/m32/m64 integers. A BYTE/SBYTE
+    // therefore gets its value-preserving word representation first. Keep the extension in
+    // virtual registers rather than pinning AX just to use CBW: BYTE clears the high byte;
+    // SBYTE uses (x XOR 80h) - 80h, the two's-complement sign-extension identity over the
+    // zero-extended low byte. Both forms are 8086 instructions and leave a signed word FILD
+    // can read exactly.
+    if (from is { IsInteger: true, Bits: 8 }) {
+      if (!this.TryOperand(cast.Value, out var source))
+        return false;
+      var id = this._nextVreg++;
+      var word = new MOperand.Register(MReg.Virtual(id, MRegSize.Word));
+      var lowByte = new MOperand.Register(MReg.Virtual(id, MRegSize.Byte));
+      var zero = new MOperand.Immediate(0);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, zero], MovEffect(word, zero)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowByte, source], MovEffect(lowByte, source)));
+      if (from.Signed) {
+        this.Add(MOpcode.Xor, word, new MOperand.Immediate(0x80));
+        this.Add(MOpcode.Sub, word, new MOperand.Immediate(0x80));
+      }
+      var byteSlot = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(2);
+      var byteCell = new MOperand.StackSlot(byteSlot, MRegSize.Word);
+      this.StoreWord(byteCell, word);
+      this.EmitX87(MOpcode.Fild, byteCell, reads: true);
+      this.PopRounded(cast.Type, this.FloatCell(cast));
+      return true;
+    }
+    // FILD has no byte source form: it reads signed m16/m32/m64 integers. A BYTE/SBYTE
+    // therefore gets its value-preserving word representation first. Keep the extension in
+    // virtual registers rather than pinning AX just to use CBW: BYTE clears the high byte;
+    // SBYTE uses (x XOR 80h) - 80h, the two's-complement sign-extension identity over the
+    // zero-extended low byte. Both forms are 8086 instructions and leave a signed word FILD
+    // can read exactly.
+    if (from is { IsInteger: true, Bits: 8 }) {
+      if (!this.TryOperand(cast.Value, out var source))
+        return false;
+      var id = this._nextVreg++;
+      var word = new MOperand.Register(MReg.Virtual(id, MRegSize.Word));
+      var lowByte = new MOperand.Register(MReg.Virtual(id, MRegSize.Byte));
+      var zero = new MOperand.Immediate(0);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, zero], MovEffect(word, zero)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowByte, source], MovEffect(lowByte, source)));
+      if (from.Signed) {
+        this.Add(MOpcode.Xor, word, new MOperand.Immediate(0x80));
+        this.Add(MOpcode.Sub, word, new MOperand.Immediate(0x80));
+      }
+      var byteSlot = this._function.StackSlots.Count;
+      this._function.StackSlots.Add(2);
+      var byteCell = new MOperand.StackSlot(byteSlot, MRegSize.Word);
+      this.StoreWord(byteCell, word);
+      this.EmitX87(MOpcode.Fild, byteCell, reads: true);
+      this.PopRounded(cast.Type, this.FloatCell(cast));
+      return true;
+    }
     if (!from.IsInteger || from.Bits is not (16 or 32))
       return this.Decline($"floating point: {cast.Op} from {from}");
     // FILD reads a SIGNED integer, so an unsigned source is staged one size LARGER than itself with
@@ -4077,6 +4186,15 @@ public sealed partial class InstructionSelector {
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lo], MovEffect(ax, lo)));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dx, hi], MovEffect(dx, hi)));
       this._current.Instructions.Add(ReturningIn(ax, dx));
+      return true;
+    }
+    if (ret.HasValue && ret.Value is { } quad && IsQuad(quad.Type)) {
+      // PowerBASIC returns a QUAD numerically in ST(0). The internal representation remains a qword
+      // integer cell, so FILD is the exact bridge and does not round any signed 64-bit value.
+      if (!this.TryQwordSlot(quad, out var qword))
+        return false;
+      this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(qword, MRegSize.Qword), reads: true);
+      this._current.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
       return true;
     }
     if (ret.HasValue && ret.Value is { Type.IsFloat: true } floating) {
