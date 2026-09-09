@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | ✅ Implemented for private packed scalar records |
 | **Stage** | Binder layout |
-| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — infers complete non-overlapping field coverage, weights static reads/writes, and rewrites all affine field offsets without changing record stride |
+| **IR** | ✅ `Ir/Passes/DataLayoutTransforms.cs` — infers complete non-overlapping field coverage, estimates access frequency from static references plus exact counted-loop trip counts, and rewrites all affine field offsets without changing record stride |
 | **Related** | [O0322](O0322-hot-cold-field-splitting.md), [O0163](O0163-dead-field-elimination.md), [O0320](O0320-aos-to-soa.md) |
 
 ## The idea
@@ -39,6 +39,13 @@ small displacements.
   or written to a file, `FIELD`ed, or shared with an external unit — is off
   limits ([O0260](O0260-escape-analysis.md)).
 
-The IR implementation uses static access counts rather than profile data and
-requires the complete packed record to be represented by analyzable scalar
+The IR implementation uses a static execution estimate rather than profile
+data. A reference outside a recognized counted loop has weight one; a reference
+inside a counted loop is multiplied by its exact static trip count, and nested
+recognized loops multiply those weights. Stores retain the existing higher
+memory-traffic weight. Equal-hotness fields keep their current packed order, so
+the pass does not reshuffle a record when it has no locality evidence for doing
+so.
+
+The complete packed record must be represented by analyzable scalar
 loads/stores. Any opaque/escaping use makes the pass decline.
