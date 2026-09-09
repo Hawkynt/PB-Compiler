@@ -26,6 +26,9 @@ public sealed class SemanticModel {
   /// <summary>The dialect that governs runtime quirk emulation: the <c>$COMPAT</c> override when set, else the compile dialect.</summary>
   public Dialect EffectiveDialect => this.CompatDialect ?? this.Dialect;
 
+  /// <summary>Implicit lower bound supplied when an array dimension omits <c>TO</c>; set by module-level <c>OPTION BASE</c>.</summary>
+  public int OptionBase { get; set; }
+
   /// <summary>Folded named constants (%equates).</summary>
   public Dictionary<string, ConstantValue> Equates { get; } = new(StringComparer.OrdinalIgnoreCase);
 

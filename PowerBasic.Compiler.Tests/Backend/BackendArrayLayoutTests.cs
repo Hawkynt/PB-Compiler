@@ -79,6 +79,30 @@ public sealed class BackendArrayLayoutTests {
   }
 
   [Test]
+  public void OptionBaseOne_DynamicDimAndRedimPreserve_UseOneAsEveryImplicitLowerBound() {
+    var (direct, routed, names) = RunBothWays("""
+      OPTION BASE 1
+      DIM a%(4, 5)
+      a%(4, 5) = 45
+      PRINT LBOUND(a%, 1)
+      PRINT UBOUND(a%, 1)
+      PRINT LBOUND(a%, 2)
+      PRINT UBOUND(a%, 2)
+
+      REDIM PRESERVE a%(4, 6)
+      PRINT LBOUND(a%, 1)
+      PRINT UBOUND(a%, 1)
+      PRINT LBOUND(a%, 2)
+      PRINT UBOUND(a%, 2)
+      PRINT a%(4, 5)
+      """);
+
+    Assert.That(names, Does.Contain("main"));
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(Lines(routed), Is.EqualTo(new[] { "1", "4", "1", "5", "1", "4", "1", "6", "45" }));
+  }
+
+  [Test]
   public void RedimPreserve_WhenOnlyTheLastDimensionGrows_KeepsEveryExistingElementInPlace() {
     var (direct, routed, names) = RunBothWays("""
       REDIM a%(1 TO 2, 10 TO 11)

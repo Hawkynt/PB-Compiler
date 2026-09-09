@@ -149,7 +149,7 @@ public sealed partial class IrLowering {
 
     var (lower, upper) = dims[0];
     var lo = lower is null
-      ? new IrConstantInt(IrType.I32, 0)
+      ? new IrConstantInt(IrType.I32, this._model.OptionBase)
       : this.Coerce(this.LowerExpr(lower), this._model.TypeOf(lower), PbType.Long);
     var hi = this.Coerce(this.LowerExpr(upper), this._model.TypeOf(upper), PbType.Long);
     var size = this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1));

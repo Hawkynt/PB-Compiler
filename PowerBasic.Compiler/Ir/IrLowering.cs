@@ -2616,7 +2616,7 @@ public sealed partial class IrLowering {
     for (var k = 0; k < dims.Count; ++k) {
       var (lower, upper) = dims[k];
       var lo = lower is null
-        ? new IrConstantInt(IrType.I32, 0)
+        ? new IrConstantInt(IrType.I32, this._model.OptionBase)
         : this.Coerce(this.LowerExpr(lower), this._model.TypeOf(lower), PbType.Long);
 
       if (preserve) {
