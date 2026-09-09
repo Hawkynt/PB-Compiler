@@ -296,6 +296,15 @@ public sealed partial class CodeGenerator {
           asm.Cwd();
           break;
         }
+        // O0302: multi-byte compile-time needles bypass dynamic-string materialization too. Short
+        // constants scan candidate first bytes and verify only those positions; longer constants use
+        // Boyer-Moore-Horspool with an emitter-built skip table. Empty and runtime needles retain the
+        // faithful rt_instr path, as do VERIFY and INSTR ... ANY.
+        if (this.Optimize && intrinsic.Name == "INSTR" && needle is not AnyMatchExpr
+            && this.TryEmitConstantInstr(args)) {
+          asm.Cwd();
+          break;
+        }
         if (hasStart) {
           this.EmitInt16Argument(args[0]);
           asm.Push(Reg.AX);
@@ -747,8 +756,10 @@ public sealed partial class CodeGenerator {
         // fold on the FPU: accumulator in ST1, candidate in ST0
         var wantMax = intrinsic.Name.StartsWith("MAX", StringComparison.Ordinal);
         // O0108/O0248: when every argument and the result are INTEGER, fold with an integer compare instead of
-        // the x87 round-trip (coerce-to-double, FCOM, coerce-back). The signed compare reproduces the FPU
-        // fold's result exactly over the int16 range, ties included (both keep the earlier accumulator).
+        // the x87 round-trip. The accumulator lives in AX; each further argument is loaded into BX and a `cmp`/conditional
+        // keeps the larger (MAX) or smaller (MIN). On a tie the accumulator is kept, matching the FPU fold (Ja/Jb are
+        // strict). Preserves the accumulator across each argument's evaluation via the stack, since evaluating an
+        // argument may itself call a FUNCTION and clobber AX/BX.
         if (this.Optimize && KindOf(model.TypeOf(call)) == ValueKind.Int16
             && args.All(a => KindOf(model.TypeOf(a)) == ValueKind.Int16)) {
           this.EmitIntegerMinMaxFold(args, wantMax);
