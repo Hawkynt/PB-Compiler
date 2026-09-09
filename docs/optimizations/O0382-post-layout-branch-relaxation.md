@@ -2,30 +2,58 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned (the relaxation itself exists — [O0035](O0035-jump-relaxation.md); running it *after* layout does not) |
+| **Status** | ✅ Implemented for O0360 terminal branches — post-link layout regenerates fall-through control and relaxes Jcc/JMP encodings to a monotone fixpoint |
 | **Stage** | After layout |
+| **Source** | `Emit/PostLinkLayout.cs` (`PostLinkLayoutRewriter`) |
 | **Related** | [O0035](O0035-jump-relaxation.md), [O0360](O0360-basic-block-fragments.md), [O0093](O0093-jump-threading.md) |
 
 ## The idea
 
-**Layout must not be the last step.** Moving blocks changes every displacement,
-which creates new opportunities that the earlier passes could not see:
+**Layout must not be the last step.** Moving blocks changes every displacement
+and, more importantly, changes which CFG edge can be a fall-through.
 
-- a near branch whose new displacement fits the short form;
-- a `JMP` that now targets the next instruction and disappears
-  ([O0230](O0230-jump-to-next-removal.md));
-- an inverted condition that now creates a fall-through
-  ([O0094](O0094-branch-inversion.md));
-- newly adjacent identical cold blocks that can be folded
-  ([O0391](O0391-cold-code-deduplication.md)).
+For fragment-aware functions the linker therefore does not copy the old terminal
+branch bytes. PBU2 records their semantics; after the new physical order is
+known, `PostLinkLayoutRewriter` rebuilds the terminal control:
 
-So the late pipeline is: **layout → relaxation → jump cleanup → alignment →
-final fixups**, and each of those steps can feed the next.
+- an unconditional edge to the next fragment emits no jump;
+- an unconditional non-fall-through edge emits `JMP`;
+- a conditional with its false/secondary edge next emits one `Jcc` to the
+  primary edge;
+- a conditional whose primary edge is next is inverted so the other edge is the
+  taken branch;
+- when neither conditional successor is next, the linker emits `Jcc primary`
+  followed by `JMP secondary`.
 
-## What it needs
+This is the same CFG with a new physical spelling; block layout never changes
+program semantics.
 
-- Iteration to a fixpoint, with care: relaxing a branch shortens the code, which
-  shifts everything after it and may make another branch relaxable — the classic
-  branch-relaxation convergence problem, which must be monotone to terminate.
-- The assembler already owns every label and fixup, which is exactly what makes
-  the re-run cheap.
+## Relaxation
+
+Generated control starts from a safe long form and only shrinks:
+
+- `JMP rel16` (3 bytes) → `JMP rel8` (2 bytes) when the final signed-byte
+  displacement fits;
+- on 80386+ targets, `0F 8x rel16` (4 bytes) → `7x rel8` (2 bytes);
+- on 8086/80186/80286 targets, the long conditional spelling is
+  `J!cc +3 ; E9 rel16` (5 bytes), which likewise contracts to `7x rel8` when
+  possible.
+
+After any shrink, downstream block addresses change. The pass recomputes starts
+and tries again until no encoding becomes shorter. Every transition strictly
+reduces code size and no transition expands again, so convergence is monotone
+and finite.
+
+Retained non-terminal internal relative transfers are repatched against the
+moved target. A retained short transfer that would become out of range is
+rejected rather than guessed into a larger instruction, because expanding an
+instruction inside an opaque fragment would require instruction-granular
+fragment metadata that O0360 deliberately does not claim to have.
+
+## Scope
+
+This entry covers the post-layout branch work O0276 requires: fall-through
+removal, conditional inversion, long/short selection and final relative fixups.
+Other late layout ideas such as cold-block deduplication or profile-driven
+alignment retain their own optimization IDs and are not silently bundled into
+this pass.
