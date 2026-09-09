@@ -1,40 +1,50 @@
+using PowerBasic.Compiler.CodeGen;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
 /// O0339 — specializes small constant-size LLVM memory intrinsics into straight-line scalar accesses.
-/// The pass is currently wired only from the x86-16 late backend, so a word is the widest access every
-/// supported target can execute, including at an unaligned address. Larger transfers stay as intrinsics
-/// so the target/runtime keeps the existing REP/MOVSD policy for medium and large copies.
+/// Profitability is target-driven: each CPU tier supplies its scalar width and its copy/fill store
+/// budgets through <see cref="TargetCost"/>. The targetless overload deliberately preserves the
+/// conservative 8086 baseline for standalone IR users and tests.
 /// </summary>
 public static class MemoryRoutineSpecialization {
 
-  private const int _MAX_MEMCPY_ACCESSES = 3;
-  private const int _MAX_MEMSET_ACCESSES = 4;
+  private const int _MAX_DYNAMIC_MEMSET_STORES = 4;
   private const string _MEMCPY = "llvm.memcpy.p0.p0.i32";
   private const string _MEMSET = "llvm.memset.p0.i32";
 
+  private static readonly TargetCost _baseline = new(CpuTier.I8086, CostObjective.Balanced);
+
   private readonly record struct Access(int Offset, IrType Type);
 
-  /// <summary>Expands qualifying calls in <paramref name="fn"/>; returns the number specialized.</summary>
-  public static int Run(IrFunction fn) {
+  /// <summary>
+  /// Expands qualifying calls using the conservative 8086 policy. Production target-aware callers
+  /// should use <see cref="Run(IrFunction,TargetCost)"/>.
+  /// </summary>
+  public static int Run(IrFunction fn) => Run(fn, _baseline);
+
+  /// <summary>Expands qualifying calls in <paramref name="fn"/> for <paramref name="cost"/>.</summary>
+  public static int Run(IrFunction fn, TargetCost cost) {
     ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(cost);
     if (fn.HasErrorHandler || fn.HasInlineAsm)
       return 0;
 
     var specialized = 0;
     foreach (var call in fn.AllInstructions.OfType<IrCall>().ToList())
-      if (TryMemcpy(call) || TryMemset(call))
+      if (TryMemcpy(call, cost) || TryMemset(call, cost))
         ++specialized;
     return specialized;
   }
 
-  private static bool TryMemcpy(IrCall call) {
+  private static bool TryMemcpy(IrCall call, TargetCost cost) {
     if (call.Callee is not IrFunction { Name: _MEMCPY } || call.ArgCount != 4)
       return false;
     var args = call.Args.ToArray();
     if (!NonVolatile(args[3]) || !ConstantSize(args[2], out var size)
         || args[0] is IrFarPtr || args[1] is IrFarPtr
-        || !TryAccessPlan(size, allowWords: true, _MAX_MEMCPY_ACCESSES, out var accesses))
+        || !TryAccessPlan(size, cost.MemoryScalarBits, cost.MaxStoresPerMemcpy, out var accesses))
       return false;
 
     var block = call.Parent;
@@ -52,7 +62,7 @@ public static class MemoryRoutineSpecialization {
     return true;
   }
 
-  private static bool TryMemset(IrCall call) {
+  private static bool TryMemset(IrCall call, TargetCost cost) {
     if (call.Callee is not IrFunction { Name: _MEMSET } || call.ArgCount != 4)
       return false;
     var args = call.Args.ToArray();
@@ -60,10 +70,13 @@ public static class MemoryRoutineSpecialization {
         || !args[1].Type.IsInteger || args[1].Type.Bits != 8)
       return false;
 
-    // A constant byte can be splatted into a word for free at compile time. A dynamic byte cannot:
-    // materializing value * 0x0101 would add arithmetic and pressure, especially disastrous on an 8086.
+    // A constant byte can be splatted into the target's widest scalar for free at compile time. A
+    // dynamic byte cannot: manufacturing value * 0x01010101 adds arithmetic and pressure, especially
+    // badly on the early targets, so that case deliberately remains byte-wise with the old four-store cap.
     var constantFill = args[1] is IrConstantInt;
-    if (!TryAccessPlan(size, allowWords: constantFill, _MAX_MEMSET_ACCESSES, out var accesses))
+    var width = constantFill ? cost.MemoryScalarBits : 8;
+    var budget = constantFill ? cost.MaxStoresPerMemset : _MAX_DYNAMIC_MEMSET_STORES;
+    if (!TryAccessPlan(size, width, budget, out var accesses))
       return false;
 
     var block = call.Parent;
@@ -77,19 +90,22 @@ public static class MemoryRoutineSpecialization {
   }
 
   /// <summary>
-  /// Builds the widest-first access plan, following the same profitability shape LLVM exposes through
-  /// MaxStoresPerMemcpy/MaxStoresPerMemset: count scalar memory operations, not raw bytes. Three word
-  /// copies cover six bytes while deliberately leaving the important seven/eight-byte UDT cases to the
-  /// existing target-aware REP/MOVSD path; memset gets one extra access because it has no corresponding load.
+  /// Builds the widest-first plan required by the target's scalar width. The budget counts STORES,
+  /// matching LLVM TargetLowering's MaxStoresPerMemcpy/MaxStoresPerMemset contract: consume as many
+  /// largest legal accesses as possible, then use smaller accesses for the tail.
   /// </summary>
-  private static bool TryAccessPlan(int size, bool allowWords, int maxAccesses, out List<Access> accesses) {
+  private static bool TryAccessPlan(int size, int maxScalarBits, int maxAccesses, out List<Access> accesses) {
     accesses = [];
     for (var offset = 0; offset < size;) {
       if (accesses.Count >= maxAccesses) {
         accesses = [];
         return false;
       }
-      var type = allowWords && size - offset >= 2 ? IrType.I16 : IrType.I8;
+
+      var remaining = size - offset;
+      var type = maxScalarBits >= 32 && remaining >= 4 ? IrType.I32
+        : maxScalarBits >= 16 && remaining >= 2 ? IrType.I16
+        : IrType.I8;
       accesses.Add(new Access(offset, type));
       offset += type.Bits / 8;
     }
