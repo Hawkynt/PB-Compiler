@@ -133,13 +133,19 @@ public sealed class MachineEmitter {
       }
     }
 
-    // the caller pushed the arguments; load each into the register the allocator gave its vreg.
-    // A 32-bit argument is two words, so the selector supplies an explicit table; a function selected
-    // before that existed (or built by hand in a test) keeps the positional one-word-per-argument form.
+    // The caller pushed the arguments; load each into the register the allocator gave its vreg.
+    // Baseline 32-bit arguments are two word entries. Under O0058 an optimized 386 SPEED function may
+    // instead carry one dword entry, in which case the prologue performs one operand-size-prefixed load.
+    // A function selected before the explicit table existed (or built by hand in a test) keeps the
+    // positional one-word-per-argument form.
     if (function.HasArgumentPlan)
       foreach (var (virtualId, argumentIndex, byteDelta) in function.ArgumentLoads) {
-        if (allocation.TryGetValue(virtualId, out var reg))
-          asm.Mov(reg, Asm.Mem.Word(Asm.Reg.BP, paramOffsets[argumentIndex] + byteDelta));
+        if (allocation.TryGetValue(virtualId, out var reg)) {
+          var offset = paramOffsets[argumentIndex] + byteDelta;
+          asm.Mov(reg, reg.IsDword()
+            ? Asm.Mem.Dword(Asm.Reg.BP, offset)
+            : Asm.Mem.Word(Asm.Reg.BP, offset));
+        }
       }
     else
       for (var i = 0; i < paramOffsets.Length; ++i)

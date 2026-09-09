@@ -156,8 +156,14 @@ public sealed partial class InstructionSelector {
         continue;
       }
       if (IsWide(arg.Type)) {
-        // a 32-bit argument arrives as two words: its low half at the parameter's own offset and its
-        // high half at +2, each into its own register
+        if (this.UsesNativeDwordRegisters) {
+          var native = this.FreshVreg(arg.Type);
+          this._vregs[arg] = native;
+          this._function.ArgumentLoads.Add((native.VirtualId, index, 0));
+          continue;
+        }
+        // Baseline targets keep the ABI's two stack words in two virtual registers. An optimized 386
+        // SPEED target above reads the same four bytes whole without changing the public stack ABI.
         var (lo, hi) = this.FreshPair(arg);
         this._function.ArgumentLoads.Add((lo.Reg.VirtualId, index, 0));
         this._function.ArgumentLoads.Add((hi.Reg.VirtualId, index, 2));
@@ -260,9 +266,9 @@ public sealed partial class InstructionSelector {
 
   /// <summary>
   /// Finds the loop-carried LONG phis whose complete recurrence can stay in native dwords. The set is
-  /// reduced to a fixed point: a phi remains only when every incoming value is a constant, another
-  /// remaining phi, or an arithmetic expression composed solely from those values. A runtime result,
-  /// load, argument, cast, or unsupported operation keeps that whole recurrence on word pairs.
+  /// reduced to a fixed point: a phi remains only when every incoming value is a constant, a 32-bit
+  /// argument, another remaining phi, or an arithmetic expression composed solely from those values.
+  /// Runtime results, loads, casts, and unsupported operations keep that whole recurrence on word pairs.
   /// </summary>
   private static HashSet<IrPhi> NativeDwordPhis(IrFunction function, IrDominators dominators) {
     var candidates = new HashSet<IrPhi>(ReferenceEqualityComparer.Instance);
@@ -274,6 +280,7 @@ public sealed partial class InstructionSelector {
 
     bool IsNativeExpression(IrValue value) => value switch {
       IrConstantInt => true,
+      IrArgument argument when IsWide(argument.Type) => true,
       IrPhi phi => candidates.Contains(phi),
       IrBinary binary when binary.Op is IrBinaryOp.Add or IrBinaryOp.Sub
           or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor
@@ -4249,8 +4256,19 @@ public sealed partial class InstructionSelector {
       var source = new MOperand.Register(native);
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cell, source],
         new MInstrEffect([], [1], false, false, false, WritesMemory: true)));
-      lo = new MOperand.StackSlot(slot, MRegSize.Word);
-      hi = new MOperand.StackSlot(slot, MRegSize.Word, 2);
+      // The bridge CELL is where the two halves come from, but it is not what the pair may BE. Every
+      // consumer of a pair assumes an operand it can use on either side of an instruction, and two
+      // memory operands is the one combination x86 has no encoding for - a pair stored into another
+      // cell (a wide STORE, the DX:AX return staging) became MOV slot, slot. So the halves are read
+      // out into registers here, once, and the allocator is free to coalesce them away again.
+      var loHalf = MReg.Virtual(this._nextVreg++, MRegSize.Word);
+      var hiHalf = MReg.Virtual(this._nextVreg++, MRegSize.Word);
+      lo = new MOperand.Register(loHalf);
+      hi = new MOperand.Register(hiHalf);
+      var loCell = new MOperand.StackSlot(slot, MRegSize.Word);
+      var hiCell = new MOperand.StackSlot(slot, MRegSize.Word, 2);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, loCell], MovEffect((MOperand.Register)lo, loCell)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, hiCell], MovEffect((MOperand.Register)hi, hiCell)));
       return true;
     }
     lo = hi = null!;
