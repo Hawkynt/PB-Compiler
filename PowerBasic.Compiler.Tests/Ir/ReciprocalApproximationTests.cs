@@ -27,7 +27,7 @@ public sealed class ReciprocalApproximationTests {
 
     Assert.Multiple(() => {
       Assert.That(llvm, Does.Contain("\"reciprocal-estimates\"=\"divf\""));
-      Assert.That(llvm, Does.Contain("fdiv reassoc nnan ninf nsz arcp contract float"));
+      Assert.That(llvm, Does.Contain("fdiv reassoc nnan ninf nsz arcp float"));
     });
   }
 
@@ -79,7 +79,7 @@ public sealed class ReciprocalApproximationTests {
     var llvm = LlvmEmitter.Emit(function);
 
     Assert.Multiple(() => {
-      Assert.That(llvm, Does.Contain("fdiv reassoc nnan ninf nsz arcp contract x86_fp80"));
+      Assert.That(llvm, Does.Contain("fdiv reassoc nnan ninf nsz arcp x86_fp80"));
       Assert.That(llvm, Does.Not.Contain("reciprocal-estimates"));
     });
   }

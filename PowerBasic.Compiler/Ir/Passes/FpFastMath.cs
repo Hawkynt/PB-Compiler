@@ -9,8 +9,7 @@ public static class FpFastMath {
 
   private const int _MAX_REASSOC_LEAVES = 32;
   private const IrFastMathFlags _ARITHMETIC_FLAGS = IrFastMathFlags.Reassociate
-    | IrFastMathFlags.NoNaNs | IrFastMathFlags.NoInfs | IrFastMathFlags.NoSignedZeros
-    | IrFastMathFlags.AllowContract;
+    | IrFastMathFlags.NoNaNs | IrFastMathFlags.NoInfs | IrFastMathFlags.NoSignedZeros;
 
   private readonly record struct SignedValue(IrValue Value, bool Negative);
 
@@ -23,6 +22,7 @@ public static class FpFastMath {
       changes += Reassociate(function, flags);
     if ((flags & IrFastMathFlags.AllowReciprocal) != 0)
       changes += FactorCommonDenominators(function, flags);
+    changes += AnnotateContractions(function, flags);
     changes += Annotate(function, flags);
     return changes;
   }
@@ -226,6 +226,37 @@ public static class FpFastMath {
 
   private static bool IsOne(IrValue value) => value is IrConstantFloat { Value: 1.0 };
 
+  private static int AnnotateContractions(IrFunction function, IrFastMathFlags flags) {
+    if ((flags & IrFastMathFlags.AllowContract) == 0)
+      return 0;
+
+    var changes = 0;
+    foreach (var operation in function.AllInstructions.OfType<IrBinary>()) {
+      if (operation.Op is not (IrBinaryOp.FAdd or IrBinaryOp.FSub) || !operation.Type.IsIeeeFloat)
+        continue;
+
+      var hasProduct = false;
+      changes += AnnotateProduct(operation.Lhs, ref hasProduct);
+      changes += AnnotateProduct(operation.Rhs, ref hasProduct);
+      if (hasProduct)
+        changes += AddFlag(operation, IrFastMathFlags.AllowContract);
+    }
+    return changes;
+  }
+
+  private static int AnnotateProduct(IrValue value, ref bool hasProduct) {
+    if (value is not IrBinary { Op: IrBinaryOp.FMul, Type.IsIeeeFloat: true } product)
+      return 0;
+    hasProduct = true;
+    return AddFlag(product, IrFastMathFlags.AllowContract);
+  }
+
+  private static int AddFlag(IrInstruction instruction, IrFastMathFlags flag) {
+    if ((instruction.FastMathFlags & flag) != 0)
+      return 0;
+    instruction.FastMathFlags |= flag;
+    return 1;
+  }
   private static bool IsRsqrtDivision(IrBinary binary)
     => binary.Op == IrBinaryOp.FDiv && IsOne(binary.Lhs)
        && binary.Rhs is IrCall call && IrFpMath.TryGet(call, out var kind)
@@ -261,8 +292,11 @@ public static class FpFastMath {
       return common;
 
     var applicable = common | (flags & IrFastMathFlags.AllowReciprocal);
+    // Contraction is otherwise granted only where a product actually feeds an add or subtract, but the
+    // reciprocal-sqrt pair is lowered as one operation: the division has to keep the permission its
+    // sqrt already gets in FlagsForMathCall, or the backend cannot form rsqrt at all.
     if (IsRsqrtDivision(binary) && (flags & IrFastMathFlags.AllowContract) != 0)
-      applicable |= flags & IrFastMathFlags.ApproxFunc;
+      applicable |= flags & (IrFastMathFlags.ApproxFunc | IrFastMathFlags.AllowContract);
     return applicable;
   }
 
