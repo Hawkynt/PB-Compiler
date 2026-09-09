@@ -17,6 +17,13 @@ public sealed class IrBasicBlock : IrValue {
   /// <summary>The function this block belongs to.</summary>
   public IrFunction? Parent { get; internal set; }
 
+  /// <summary>
+  /// The stable, function-local identity used by profile data. It is assigned when the block first
+  /// joins a function and is deliberately independent of its current list position, so later block
+  /// insertion, removal and layout changes do not renumber surviving profile sites.
+  /// </summary>
+  public int? ProfileId { get; internal set; }
+
   /// <summary>The instructions of this block in execution order.</summary>
   public IReadOnlyList<IrInstruction> Instructions => this._instructions;
 

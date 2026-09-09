@@ -10,6 +10,7 @@ public sealed class IrFunction : IrGlobalValue {
 
   private readonly List<IrBasicBlock> _blocks = [];
   private readonly List<IrArgument> _parameters = [];
+  private int _nextProfileBlockId;
 
   public IrFunction(string name, IrType returnType, IEnumerable<IrArgument>? parameters = null) : base(name) {
     this.ReturnType = returnType;
@@ -92,6 +93,7 @@ public sealed class IrFunction : IrGlobalValue {
 
   /// <summary>Appends a block to the end of the function.</summary>
   public IrBasicBlock AddBlock(IrBasicBlock block) {
+    this.AttachProfileIdentity(block);
     block.Parent = this;
     this._blocks.Add(block);
     return block;
@@ -107,7 +109,9 @@ public sealed class IrFunction : IrGlobalValue {
   /// value that arrives the first time round and the entry of a function has none.
   /// </summary>
   public IrBasicBlock CreateEntryBlock(string label) {
-    var block = new IrBasicBlock(label) { Parent = this };
+    var block = new IrBasicBlock(label);
+    this.AttachProfileIdentity(block);
+    block.Parent = this;
     this._blocks.Insert(0, block);
     return block;
   }
@@ -194,5 +198,17 @@ public sealed class IrFunction : IrGlobalValue {
       foreach (var inst in block.Instructions.ToList())
         inst.EraseFromParent();
     this._blocks.Clear();
+  }
+
+  private void AttachProfileIdentity(IrBasicBlock block) {
+    if (block.ProfileId is not { } id) {
+      block.ProfileId = this._nextProfileBlockId++;
+      return;
+    }
+
+    if (id < 0)
+      throw new ArgumentOutOfRangeException(nameof(block), "profile block ids cannot be negative");
+    if (id >= this._nextProfileBlockId)
+      this._nextProfileBlockId = checked(id + 1);
   }
 }

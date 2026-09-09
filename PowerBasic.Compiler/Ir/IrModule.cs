@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Ir.Profiling;
 using PowerBasic.Compiler.Syntax;
 
 namespace PowerBasic.Compiler.Ir;
@@ -28,6 +29,10 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   public Dialect EffectiveDialect { get; } = compatDialect ?? dialect;
 
   /// <summary>
+  /// Optional execution profile associated with this module. Optimizations must treat a missing entry
+  /// exactly like a missing profile and fall back to their static heuristics rather than inventing heat.
+  /// </summary>
+  public IrProfile? Profile { get; set; }
   /// The optimization objective most recently applied to this module. Late passes outside
   /// <see cref="Passes.IrPassManager.Standard"/> use it to keep size-growing rewrites SPEED-only.
   /// </summary>
