@@ -598,10 +598,17 @@ internal static class Spiller {
     // A value the spiller has not moved yet is offered before one it has, whatever their lengths: taking
     // a range apart a second time is the move that may settle nothing at all, and the longest range in
     // the function is exactly the one most likely to have been taken apart already.
-    var candidates = offered
-      .OrderBy(interval => function.MovedValues.Contains(interval.VirtualId) ? 1 : 0)
-      .ThenByDescending(interval => interval.End - interval.Start)
-      .ThenBy(interval => interval.VirtualId);
+    var unmovedFirst = offered
+      .OrderBy(interval => function.MovedValues.Contains(interval.VirtualId) ? 1 : 0);
+    var profileCosts = ProfileGuidedSpillCost.Compute(function);
+    var candidates = profileCosts is null
+      ? unmovedFirst
+        .ThenByDescending(interval => interval.End - interval.Start)
+        .ThenBy(interval => interval.VirtualId)
+      : unmovedFirst
+        .ThenBy(interval => profileCosts.GetValueOrDefault(interval.VirtualId))
+        .ThenByDescending(interval => interval.End - interval.Start)
+        .ThenBy(interval => interval.VirtualId);
 
     foreach (var interval in candidates) {
       var argumentAt = function.ArgumentLoads.FindIndex(load => load.VirtualId == interval.VirtualId);
@@ -765,15 +772,23 @@ internal static class Spiller {
       length[interval.VirtualId] = interval.End - interval.Start;
 
     var arguments = function.ArgumentLoads.ToDictionary(a => a.VirtualId, a => a);
-    var candidates = function.AllInstructions
+    var values = function.AllInstructions
       .SelectMany(i => i.Operands)
       .OfType<MOperand.Register>()
       .Where(r => r.Reg.IsVirtual)
       .Select(r => r.Reg.VirtualId)
-      .Distinct()
-      .OrderByDescending(v => arguments.ContainsKey(v))          // a parameter's cell costs nothing
-      .ThenByDescending(v => length.GetValueOrDefault(v))
-      .ThenBy(v => v);
+      .Distinct();
+    var profileCosts = ProfileGuidedSpillCost.Compute(function);
+    var candidates = profileCosts is null
+      ? values
+        .OrderByDescending(v => arguments.ContainsKey(v))          // a parameter's cell costs nothing
+        .ThenByDescending(v => length.GetValueOrDefault(v))
+        .ThenBy(v => v)
+      : values
+        .OrderBy(v => profileCosts.GetValueOrDefault(v))           // cold dynamic memory traffic first
+        .ThenByDescending(v => arguments.ContainsKey(v))           // equal traffic: free parameter cell wins
+        .ThenByDescending(v => length.GetValueOrDefault(v))        // equal traffic: relieve more pressure
+        .ThenBy(v => v);
 
     foreach (var virtualId in candidates) {
       if (!CanSpill(function, virtualId, arguments.ContainsKey(virtualId)))
