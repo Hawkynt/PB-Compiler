@@ -265,6 +265,33 @@ internal static class RuntimeAbi {
     // "StrFree: AX=handle (0 ok)" - the zero case is why an assignment needs no first-time guard
     ["rt_str_free"] = new("rt_strfree", [new(ArgKind.Word, Reg.AX)], _callerSaved),
 
+    // O0289: begin preflights a bounded region in CX; end closes it. The specialized producers keep
+    // the ordinary string register ABI but route allocation through the preflighted DOS heap path.
+    ["rt_str_coalesce_begin"] = new("rt_strcoal_begin", [new(ArgKind.Word, Reg.CX)], _callerSaved),
+    ["rt_str_coalesce_end"] = new("rt_strcoal_end", [], _callerSaved),
+    ["rt_str_const_coalesced"] = new("rt_strmem_coal",
+      [new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Presets: [(Reg.DX, Reg.DS)]),
+    ["rt_str_left_coalesced"] = new("rt_strleft_coal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_right_coalesced"] = new("rt_strright_coal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_mid_coalesced"] = new("rt_strmid_coal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)],
+      _callerSaved, Result: Reg.AX),
+    ["rt_str_left_borrow_coalesced"] = new("rt_strleft_bcoal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_right_borrow_coalesced"] = new("rt_strright_bcoal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_mid_borrow_coalesced"] = new("rt_strmid_bcoal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)],
+      _callerSaved, Result: Reg.AX),
+    ["rt_str_space_coalesced"] = new("rt_strfill_coal", [new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Constants: [(Reg.DX, ' ')]),
+    ["rt_str_string_coalesced"] = new("rt_strfill_coal",
+      [new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_chr_coalesced"] = new("rt_chr_coal", [new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+
     // rt_print_strvar(ptr handle) is the runtime's StrPrint: "AX=handle - writes to current output
     // (consumes)". PRINT of a string VARIABLE goes through this rather than through rt_print_str,
     // which takes literal bytes at DS:SI and has no handle to release. Consuming is what the IR wants
@@ -591,18 +618,18 @@ internal static class RuntimeAbi {
     // integer at once.
     ["rt_finput_u8"] = new("rt_inp_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.LowByte),
-    ["rt_input_u8"] = new("rt_inp_i16", [], _callerSaved, Result: Reg.AX,
-      Answer: ResultKind.LowByte, Constants: [(Reg.AX, 0)]),
+    ["rt_input_u8"] = new("rt_inp_i16", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.LowByte, Constants: [(Reg.AX, 0)]),
     ["rt_finput_u16"] = new("rt_inp_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_input_u16"] = new("rt_inp_i16", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
     ["rt_finput_u32"] = new("rt_inp_i32", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.Pair),
-    ["rt_input_u32"] = new("rt_inp_i32", [], _callerSaved, Result: Reg.AX,
-      Answer: ResultKind.Pair, Constants: [(Reg.AX, 0)]),
+    ["rt_input_u32"] = new("rt_inp_i32", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair, Constants: [(Reg.AX, 0)]),
     ["rt_finput_i64"] = new("rt_inp_i64", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.St0ToQword),
-    ["rt_input_i64"] = new("rt_inp_i64", [], _callerSaved, Result: Reg.AX,
-      Answer: ResultKind.St0ToQword, Constants: [(Reg.AX, 0)]),
+    ["rt_input_i64"] = new("rt_inp_i64", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0ToQword, Constants: [(Reg.AX, 0)]),
 
     // "Rnd: -> ST0 = next SINGLE in [0,1)"
     ["rt_rnd"] = new("rt_rnd", [], _callerSaved, Answer: ResultKind.St0),

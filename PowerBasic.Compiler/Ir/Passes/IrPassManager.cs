@@ -317,6 +317,10 @@ public sealed class IrPassManager {
     .AddModulePassWhen(includeModulePasses, "strbyte", StringByteRead.Run)
     .AddModulePassWhen(includeModulePasses, "strcmpeq", StringCompareEquality.Run)
     .AddModulePassWhen(includeModulePasses, "strempty", StringEmptinessTest.Run)
+    // O0289 wants the final string call shape. Once it inserts a begin/end reservation pair those
+    // calls intentionally become barriers, so allocation coalescing runs after every other string
+    // canonicalizer and immediately before the unrelated global cleanups.
+    .AddModulePassWhen(includeModulePasses, "strcoalesce", StringAllocationCoalescing.Run)
     .AddModulePassWhen(includeModulePasses, "readonly-globals", ReadOnlyGlobals.Run)
     .AddModulePassWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
     // O0279 wants the SSA/global cleanup above, and IPCP wants the direct edges O0279 exposes.

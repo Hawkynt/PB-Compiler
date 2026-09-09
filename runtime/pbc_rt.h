@@ -35,6 +35,24 @@ void *rt_str_append_var(void *target, void *source);
 void *rt_str_append_lit(void *target, void *bytes, int32_t len);
 void *rt_str_dup(void *s);
 void rt_str_free(void *s);
+
+/* O0289 allocation coalescing is a DOS heap optimization. Hosted runtimes do not expose that heap,
+   so the region markers are harmless no-ops and the specialized producers are ABI aliases of the
+   ordinary string operations. Keeping real symbols here lets both emitted C and LLVM share the same
+   optimized IR without target-specific pass suppression. */
+void rt_str_coalesce_begin(int16_t capacity);
+void rt_str_coalesce_end(void);
+void *rt_str_const_coalesced(void *bytes, int32_t len);
+void *rt_str_left_coalesced(void *s, int32_t n);
+void *rt_str_right_coalesced(void *s, int32_t n);
+void *rt_str_mid_coalesced(void *s, int32_t start, int32_t len);
+void *rt_str_left_borrow_coalesced(void *s, int32_t n);
+void *rt_str_right_borrow_coalesced(void *s, int32_t n);
+void *rt_str_mid_borrow_coalesced(void *s, int32_t start, int32_t len);
+void *rt_str_space_coalesced(int32_t n);
+void *rt_str_string_coalesced(int32_t n, int32_t ch);
+void *rt_str_chr_coalesced(int32_t code);
+
 int32_t rt_str_len(void *s);
 int32_t rt_str_compare(void *a, void *b);
 int32_t rt_str_compare_eq(void *a, void *b);
