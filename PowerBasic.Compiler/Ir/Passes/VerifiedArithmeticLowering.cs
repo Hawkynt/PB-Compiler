@@ -41,14 +41,16 @@ public static class VerifiedArithmeticLowering {
     else if (binary.Lhs is IrConstantInt left) { value = binary.Rhs; constant = left; }
     else return null;
 
-    // The simple 0/1/-1/power-of-two cases already belong to InstCombine. This pass owns the first
-    // non-trivial family: 2^k +/- 1, optionally negated, because it becomes one shift and one add/sub.
     var factor = unchecked((short)constant.ZeroExtended);
     if (!TryVerifiedMultiplyPlan(factor, out var plan))
       return null;
 
-    var shifted = Emit(binary, IrBinaryOp.Shl, value, C(binary.Type, plan.Shift));
-    IrValue result = Emit(binary, plan.Subtract ? IrBinaryOp.Sub : IrBinaryOp.Add, shifted, value);
+    var first = EmitShift(binary, value, plan.FirstShift);
+    IrValue result = first;
+    if (plan.SecondShift is { } secondShift) {
+      var second = EmitShift(binary, value, secondShift);
+      result = Emit(binary, plan.Subtract ? IrBinaryOp.Sub : IrBinaryOp.Add, first, second);
+    }
     if (plan.Negate)
       result = Emit(binary, IrBinaryOp.Sub, C(binary.Type, 0), result);
     return result;
@@ -62,20 +64,26 @@ public static class VerifiedArithmeticLowering {
       return null;
 
     var type = binary.Type;
+    var mask = (1 << shift) - 1;
     var sign = Emit(binary, IrBinaryOp.AShr, binary.Lhs, C(type, type.Bits - 1));
-    var bias = Emit(binary, IrBinaryOp.And, sign, C(type, (1 << shift) - 1));
+    var bias = Emit(binary, IrBinaryOp.And, sign, C(type, mask));
     var adjusted = Emit(binary, IrBinaryOp.Add, binary.Lhs, bias);
+
+    if (remainder) {
+      // For truncation-toward-zero division, ((x + bias) & mask) - bias is the signed remainder.
+      // It is independent of the divisor's sign and avoids constructing a quotient only to multiply it back.
+      var masked = Emit(binary, IrBinaryOp.And, adjusted, C(type, mask));
+      return Emit(binary, IrBinaryOp.Sub, masked, bias);
+    }
+
     IrValue quotient = Emit(binary, IrBinaryOp.AShr, adjusted, C(type, shift));
     if (negative)
       quotient = Emit(binary, IrBinaryOp.Sub, C(type, 0), quotient);
-    if (!remainder)
-      return quotient;
-
-    IrValue product = Emit(binary, IrBinaryOp.Shl, quotient, C(type, shift));
-    if (negative)
-      product = Emit(binary, IrBinaryOp.Sub, C(type, 0), product);
-    return Emit(binary, IrBinaryOp.Sub, binary.Lhs, product);
+    return quotient;
   }
+
+  private static IrValue EmitShift(IrInstruction before, IrValue value, int shift)
+    => shift == 0 ? value : Emit(before, IrBinaryOp.Shl, value, C(before.Type, shift));
 
   private static IrBinary Emit(IrInstruction before, IrBinaryOp op, IrValue left, IrValue right)
     => before.Parent!.InsertBefore(new IrBinary(op, left, right), before);
@@ -99,27 +107,71 @@ public static class VerifiedArithmeticLowering {
   private static MultiplyPlan? CreateMultiplyPlan(short factor) {
     if (factor is 0 or 1 or -1)
       return null;
-    var magnitude = Math.Abs((int)factor);
-    if (IsPowerOfTwo(magnitude))
-      return null;
 
-    for (var shift = 1; shift < 16; ++shift) {
-      var power = 1 << shift;
-      if (magnitude == power + 1)
-        return new(shift, Subtract: false, Negate: factor < 0);
-      if (magnitude == power - 1)
-        return new(shift, Subtract: true, Negate: factor < 0);
+    var magnitude = Math.Abs((int)factor);
+    if (IsPowerOfTwo(magnitude)) {
+      // Positive powers (and 0x8000, whose signed spelling is -32768) are already handled by InstCombine.
+      // Other negative powers are not power-of-two bit patterns, so admit shift+negate here after proof.
+      if (factor > 0 || factor == short.MinValue)
+        return null;
+      return new(System.Numerics.BitOperations.TrailingZeroCount((uint)magnitude), null, Subtract: false, Negate: true);
     }
-    return null;
+
+    MultiplyPlan? best = null;
+    var bestCost = int.MaxValue;
+    for (var highShift = 1; highShift < 16; ++highShift) {
+      for (var lowShift = 0; lowShift < highShift; ++lowShift) {
+        Consider(new(highShift, lowShift, Subtract: false, Negate: false));
+        Consider(new(highShift, lowShift, Subtract: true, Negate: false));
+        Consider(new(lowShift, highShift, Subtract: true, Negate: false));
+        Consider(new(highShift, lowShift, Subtract: false, Negate: true));
+      }
+    }
+    return best;
+
+    void Consider(MultiplyPlan candidate) {
+      if (EvaluateFactor(candidate) != factor)
+        return;
+      var cost = PlanCost(candidate);
+      if (cost >= bestCost)
+        return;
+      best = candidate;
+      bestCost = cost;
+    }
+  }
+
+  private static short EvaluateFactor(MultiplyPlan plan) {
+    var first = 1 << plan.FirstShift;
+    var value = first;
+    if (plan.SecondShift is { } secondShift) {
+      var second = 1 << secondShift;
+      value = plan.Subtract ? first - second : first + second;
+    }
+    if (plan.Negate)
+      value = -value;
+    return unchecked((short)value);
+  }
+
+  private static int PlanCost(MultiplyPlan plan) {
+    var cost = plan.FirstShift == 0 ? 0 : 1;
+    if (plan.SecondShift is { } secondShift)
+      cost += (secondShift == 0 ? 0 : 1) + 1;
+    if (plan.Negate)
+      ++cost;
+    return cost;
   }
 
   private static bool VerifyMultiply(short factor, MultiplyPlan plan) {
     for (var raw = 0; raw <= ushort.MaxValue; ++raw) {
       var x = (ushort)raw;
-      var shifted = unchecked((ushort)(x << plan.Shift));
-      var candidate = plan.Subtract
-        ? unchecked((ushort)(shifted - x))
-        : unchecked((ushort)(shifted + x));
+      var first = unchecked((ushort)(x << plan.FirstShift));
+      var candidate = first;
+      if (plan.SecondShift is { } secondShift) {
+        var second = unchecked((ushort)(x << secondShift));
+        candidate = plan.Subtract
+          ? unchecked((ushort)(first - second))
+          : unchecked((ushort)(first + second));
+      }
       if (plan.Negate)
         candidate = unchecked((ushort)-candidate);
       var expected = unchecked((ushort)(x * unchecked((ushort)factor)));
@@ -154,14 +206,15 @@ public static class VerifiedArithmeticLowering {
     for (var raw = (int)short.MinValue; raw <= short.MaxValue; ++raw) {
       var x = (short)raw;
       var sign = (short)(x >> 15);
-      var adjusted = unchecked((short)(x + (sign & mask)));
+      var bias = sign & mask;
+      var adjusted = unchecked((short)(x + bias));
       var quotient = (short)(adjusted >> shift);
       if (divisor < 0)
         quotient = unchecked((short)-quotient);
       if (quotient != x / divisor)
         return false;
-      var product = unchecked((short)(quotient * divisor));
-      var candidateRemainder = unchecked((short)(x - product));
+
+      var candidateRemainder = unchecked((short)((adjusted & mask) - bias));
       if (candidateRemainder != x % divisor)
         return false;
     }
@@ -170,5 +223,5 @@ public static class VerifiedArithmeticLowering {
 
   private static bool IsPowerOfTwo(int value) => value > 0 && (value & (value - 1)) == 0;
 
-  private readonly record struct MultiplyPlan(int Shift, bool Subtract, bool Negate);
+  private readonly record struct MultiplyPlan(int FirstShift, int? SecondShift, bool Subtract, bool Negate);
 }
