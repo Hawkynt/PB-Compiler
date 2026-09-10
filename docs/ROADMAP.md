@@ -80,10 +80,12 @@ to the frame, so it has no eight-value ceiling.
 Extends the OMF reader/linker + calling-convention work already landed.
 
 ### Must
-- **Routed near stack ABIs. Done for callers.** `IrCall` now preserves the declared BASIC, PASCAL,
+- **Routed near ABIs. Done for common-word callers.** `IrCall` preserves the declared BASIC, PASCAL,
   CDECL, STDCALL, FASTCALL or WATCALL identity. The x86-16 descriptor maps order, cleanup, distance and
   register slots; routed CDECL/STDCALL callers use right-to-left argument groups and CDECL caller
-  cleanup. Non-BASIC/PASCAL procedure definitions and register-argument call selection remain below.
+  cleanup. Routed FASTCALL/WATCALL callers stage their leading 8/16-bit or near-pointer values in
+  AX/DX/BX(/CX), push overflow in the declared direction and leave cleanup to the callee.
+  Non-BASIC/PASCAL procedure definitions and wider register value classes remain below.
 - **Vendor-specific register ABI identities.** The current BASIC `FASTCALL` surface names the
   repository's established AX/DX/BX convention, but Microsoft and Borland register conventions are not
   interchangeable across compiler versions. Split those identities, decoration rules and size classes
@@ -108,10 +110,10 @@ Extends the OMF reader/linker + calling-convention work already landed.
   `LinkedImage`.
 
 ### Should
-- **Full register arg-size rules** for `WATCALL`/`FASTCALL`: LONG/float/pointer
+- **Full register arg-size rules** for `WATCALL`/`FASTCALL`: LONG/float/far-pointer
   arguments in register *pairs* (deferred from the common-word-case scope).
-  *Touch points:* `CodeGenerator.Procs.cs` (`ConventionRegisters`, `EmitCall`,
-  `LayoutFrame`, `BeginFrame`).
+  *Touch points:* `InstructionSelector.cs`, `CodeGenerator.Procs.cs`
+  (`ConventionRegisters`, `EmitCall`, `LayoutFrame`, `BeginFrame`).
 - **C-runtime linking (M3).** *No-crt0 subset done.* Beyond leaf `strlen`, a genuine
   `printf`-family routine now links and runs: Borland/Turbo C small-model **`sprintf`**
   formats an integer into a buffer through the real `CS.LIB` formatting engine
@@ -285,8 +287,8 @@ the body — before the selector is asked, so a procedure it skips lands in neit
 and 263/263 means "of the functions we attempted, how many succeeded". The routed rows come from the
 production code generator's own record of its own decision (`CodeGenerator.BackendDeclines`). The
 optimized corpus gap is now empty: `LINKDEMO` routes when the census supplies the `MATHUNIT.PBU` named
-by its `$LINK`; near CDECL/STDCALL declarations route too, while register conventions still decline
-individually. With optimization
+by its `$LINK`; near CDECL/STDCALL declarations route too, as do the implemented one-word
+FASTCALL/WATCALL call shapes. Wider register values still decline individually. With optimization
 off, four selector gaps remain: two phi edge-copy cycles, one `FPToSI f80 -> i64`, and one `f32`
 `select`. Near BYREF
 INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE
@@ -435,8 +437,8 @@ remaining `f32 parameter has no frame cell` decline. Selection/routing is now 20
 whole-module ownership is 116 of 135 lowered programs, with zero allocation declines. The corpus
 differential remains 234 participating, 228 agreeing, 6 outside the executor's opcode set, and 0
 disagreeing: those programs already counted as participating because another procedure routed; the
-new result is that their complete module bodies are now owned. `EXT`, MBF, BYREF reals, and foreign
-register conventions remain separate ABI work.
+new result is that their complete module bodies are now owned. `EXT`, MBF, BYREF reals, and wide/float
+foreign register-convention values remain separate ABI work.
 
 ### Remaining DOS string kernels - explicit runtime ABI mappings
 

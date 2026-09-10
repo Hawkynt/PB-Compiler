@@ -127,13 +127,16 @@ constrains what foreign code can be linked and is the crux of the whole feature.
     **AX, DX, BX, CX**, overflow right-to-left, callee cleans the overflow, public
     `name_` (trailing underscore).
 
-  Both are emitted for **calling and defining**: the call site evaluates the leading
-  args and loads the registers (pushing then popping so they survive arg evaluation);
-  a defined `SUB/FUNCTION WATCALL|FASTCALL` spills the incoming AX,DX,BX(,CX) into its
-  parameter slots in the prologue and `RET n`s the overflow. Scope is the common
+  Both are emitted for **calling and defining** by the direct emitter: the call site
+  evaluates the leading args and loads the registers (pushing then popping so they
+  survive arg evaluation); a defined `SUB/FUNCTION WATCALL|FASTCALL` spills the incoming
+  AX,DX,BX(,CX) into its parameter slots in the prologue and `RET n`s the overflow.
+  The experimental x86 back end now also routes external call sites, with physical
+  register uses kept live through the call; routed register-convention definitions
+  still decline until their prologue can consume those physical inputs. Scope is the common
   16-bit case: every register-passed parameter must be a single word (BYVAL ≤ 2 bytes
-  or a BYREF near pointer); LONG/float/UDT/string in a register slot needs the full
-  per-compiler size rules and is rejected with a diagnostic rather than miscompiled.
+  or a BYREF near pointer); multiword LONG/float/aggregate/far-pointer values need
+  the full per-compiler size rules and are rejected with a diagnostic rather than miscompiled.
   `CInteropTests` calls genuine watcall/fastcall/pascal objects; `CallingConventionTests`
   round-trips define+call (incl. stack overflow) for watcall and fastcall.
 

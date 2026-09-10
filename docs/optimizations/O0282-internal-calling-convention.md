@@ -49,8 +49,10 @@ escapes:
   outside callers are not visible.
 
 Caller and callee still change together through the same `ProcedureSymbol`:
-`EmitCall` stages the WATCALL arguments and `LayoutFrame`/`BeginFrame` consumes
-that convention at the definition. No source-visible declaration is rewritten.
+`EmitCall` stages the WATCALL arguments and `LayoutFrame`/`BeginFrame` consumes that
+convention at the definition. The caller may use either the direct emitter or the routed
+x86 back end; the register-convention definition deliberately remains on the direct path.
+No source-visible declaration is rewritten.
 
 ## Applies to the implemented slice
 

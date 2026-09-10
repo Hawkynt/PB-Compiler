@@ -98,14 +98,16 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// Why a call site cannot use a declared external ABI. All near stack conventions are selectable;
-  /// FASTCALL/WATCALL still decline until the selector stages their register arguments.
+  /// Why a call site cannot use a declared external ABI. Every near convention is selectable for
+  /// its implemented value shapes; register conventions deliberately remain limited to one-word
+  /// arguments until their compiler-specific pair/float allocation rules are modelled.
   /// </summary>
   private static string? BackendCallAbiReason(ProcedureSymbol proc) {
-    if (proc.CallConv is CallConvention.Fastcall or CallConvention.Watcall)
-      return $"filter: register calling convention outside the routed call ABI ({proc.CallConv})";
+    if (HasUnsupportedRegisterParam(proc))
+      return $"filter: {proc.CallConv} register-convention arguments must be word-sized";
     return BackendAbiShapeReason(proc);
   }
+
   private static string? BackendAbiShapeReason(ProcedureSymbol proc) {
     // a FUNCTION with no resolved return type is refused along with the rest, exactly as the pattern
     // this replaced did - `null is not ScalarType{...}` was true, and the shape has no ABI either way

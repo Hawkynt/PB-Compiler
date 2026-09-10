@@ -97,6 +97,48 @@ public sealed class BackendCallRoutingTests {
       "CALL BX must encode as the 8086 near-indirect FF /2 form");
   }
 
+  [TestCase(IrCallConvention.Fastcall, 3)]
+  [TestCase(IrCallConvention.Watcall, 4)]
+  public void Select_GivenNearIndirectRegisterCall_ThenKeepsTargetOutsideArgumentPrefix(
+      IrCallConvention convention, int argumentCount) {
+    var target = new IrArgument(IrType.Ptr, 0, "target");
+    var arguments = Enumerable.Range(0, argumentCount)
+      .Select(i => new IrArgument(IrType.I16, i + 1, $"value{i}"))
+      .ToList();
+    var parameters = new List<IrArgument> { target };
+    parameters.AddRange(arguments);
+    var fn = new IrFunction("Invoke", IrType.I16, parameters);
+    var entry = fn.CreateBlock("entry");
+    var call = entry.Append(new IrCall(IrType.I16, target, arguments.Cast<IrValue>().ToList(), convention));
+    entry.Append(new IrRet(call));
+
+    var selected = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(selected, Is.Not.Null, $"declined: {reason}");
+    MachineScheduler.Schedule(selected!);
+    var indirect = selected!.AllInstructions.Single(i => i.Opcode == MOpcode.Call);
+    var argumentRegisters = indirect.Operands.Skip(1).Cast<MOperand.Register>()
+      .Select(operand => operand.Reg.Physical).ToList();
+    Assert.Multiple(() => {
+      Assert.That(indirect.Operands[0], Is.EqualTo(new MOperand.Register(MReg.Physical_(Reg.SI))),
+        "BX carries argument three, so the computed call target needs a disjoint register");
+      Assert.That(argumentRegisters,
+        Is.EqualTo(X86CallAbi.For(convention).ArgumentRegisters.Take(argumentCount)));
+      Assert.That(indirect.Effect.ReadRegs, Is.EqualTo(Enumerable.Range(0, argumentCount + 1)),
+        "the call must consume its target and every physical argument register");
+    });
+    var allocation = LinearScanAllocator.Allocate(selected, out var allocationReason);
+    Assert.That(allocation, Is.Not.Null, $"allocation declined: {allocationReason}");
+
+    var asm = new Assembler();
+    var parameterOffsets = Enumerable.Range(0, parameters.Count)
+      .Select(i => 4 + (parameters.Count - i - 1) * 2).ToArray();
+    MachineEmitter.EmitFunction(asm, selected, allocation!, parameterOffsets, parameters.Count * 2);
+
+    Assert.That(Contains(asm.ToArray(), 0xFF, 0xD6), Is.True,
+      "CALL SI must encode as the 8086 near-indirect FF /2 form");
+  }
+
   [TestCase(IrCallConvention.Cdecl, true)]
   [TestCase(IrCallConvention.Stdcall, false)]
   public void Select_GivenRightToLeftStackConvention_ThenReversesArgumentGroupsAndUsesDeclaredCleanup(
@@ -152,17 +194,80 @@ public sealed class BackendCallRoutingTests {
 
   [TestCase(IrCallConvention.Fastcall)]
   [TestCase(IrCallConvention.Watcall)]
-  public void Select_GivenRegisterConvention_ThenDeclinesExplicitly(IrCallConvention convention) {
+  public void Select_GivenRegisterConvention_ThenStagesLeadingWordsAndPushesOverflowInDeclaredOrder(
+      IrCallConvention convention) {
     var module = new IrModule("t");
     var callee = module.AddFunction(new IrFunction("foreign", IrType.Void,
-      [new IrArgument(IrType.I16, 0)]));
+      Enumerable.Range(0, 6).Select(i => new IrArgument(IrType.I16, i)).ToList()));
     var fn = module.AddFunction(new IrFunction("main", IrType.Void));
     var entry = fn.AddBlock(new IrBasicBlock("entry"));
-    entry.Append(new IrCall(IrType.Void, callee, [new IrConstantInt(IrType.I16, 1)], convention));
+    entry.Append(new IrCall(IrType.Void, callee,
+      Enumerable.Range(1, 6).Select(i => (IrValue)new IrConstantInt(IrType.I16, i * 11)).ToList(),
+      convention));
+    entry.Append(new IrRet());
+
+    var selected = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(selected, Is.Not.Null, $"declined: {reason}");
+    var beforeCall = selected!.AllInstructions.TakeWhile(i => i.Opcode != MOpcode.Call).ToList();
+    var stages = beforeCall.Where(i => i.Opcode == MOpcode.Mov).Select(i => (
+      Register: ((MOperand.Register)i.Operands[0]).Reg.Physical,
+      Value: ((MOperand.Immediate)i.Operands[1]).Value)).ToList();
+    var pushes = beforeCall.Where(i => i.Opcode == MOpcode.Push)
+      .Select(i => ((MOperand.Immediate)i.Operands[0]).Value).ToList();
+    var expectedStages = convention == IrCallConvention.Fastcall
+      ? new[] { (Reg.AX, 11L), (Reg.DX, 22L), (Reg.BX, 33L) }
+      : [(Reg.AX, 11L), (Reg.DX, 22L), (Reg.BX, 33L), (Reg.CX, 44L)];
+    var expectedPushes = convention == IrCallConvention.Fastcall
+      ? new long[] { 44, 55, 66 }
+      : [66, 55];
+    var callInstruction = selected.AllInstructions.First(i => i.Opcode == MOpcode.Call);
+    Assert.Multiple(() => {
+      Assert.That(stages, Is.EqualTo(expectedStages));
+      Assert.That(pushes, Is.EqualTo(expectedPushes));
+      Assert.That(callInstruction.Effect.ReadRegs, Has.Count.EqualTo(expectedStages.Length),
+        "the call must keep every staged physical register in flight until it consumes it");
+      Assert.That(selected.AllInstructions.Any(i => i.Opcode == MOpcode.Add
+        && i.Operands[0] is MOperand.Register { Reg.IsVirtual: false, Reg.Physical: Reg.SP }), Is.False,
+        "both register conventions leave overflow cleanup to the callee");
+    });
+  }
+
+  [TestCase(IrCallConvention.Fastcall)]
+  [TestCase(IrCallConvention.Watcall)]
+  public void Allocate_GivenRegisterConventionWithSixLiveArguments_ThenStagingRemainsAllocatable(
+      IrCallConvention convention) {
+    var parameters = Enumerable.Range(0, 6).Select(i => new IrArgument(IrType.I16, i)).ToList();
+    var module = new IrModule("t");
+    var callee = module.AddFunction(new IrFunction("foreign", IrType.Void,
+      Enumerable.Range(0, 6).Select(i => new IrArgument(IrType.I16, i)).ToList()));
+    var caller = module.AddFunction(new IrFunction("caller", IrType.Void, parameters));
+    var entry = caller.AddBlock(new IrBasicBlock("entry"));
+    entry.Append(new IrCall(IrType.Void, callee, parameters.Cast<IrValue>().ToList(), convention));
+    entry.Append(new IrRet());
+
+    var selected = InstructionSelector.TrySelect(caller, out var selectionReason);
+    Assert.That(selected, Is.Not.Null, $"selection declined: {selectionReason}");
+    MachineScheduler.Schedule(selected!);
+
+    Assert.That(LinearScanAllocator.Allocate(selected!, out var allocationReason), Is.Not.Null,
+      $"allocation declined: {allocationReason}");
+  }
+
+  [TestCase(IrCallConvention.Fastcall)]
+  [TestCase(IrCallConvention.Watcall)]
+  public void Select_GivenRegisterConventionWithWideArgument_ThenDeclinesExplicitly(
+      IrCallConvention convention) {
+    var module = new IrModule("t");
+    var callee = module.AddFunction(new IrFunction("foreign", IrType.Void,
+      [new IrArgument(IrType.I32, 0)]));
+    var fn = module.AddFunction(new IrFunction("main", IrType.Void));
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    entry.Append(new IrCall(IrType.Void, callee, [new IrConstantInt(IrType.I32, 1)], convention));
     entry.Append(new IrRet());
 
     Assert.That(InstructionSelector.TrySelect(fn, out var reason), Is.Null);
-    Assert.That(reason, Does.Contain("register arguments"));
+    Assert.That(reason, Does.Contain("word arguments"));
   }
 
   [Test]

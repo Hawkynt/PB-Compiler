@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-09-05 12:52 UTC by index_codebase.py.
+Generated 2026-09-10 14:21 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-727 files, 6321 symbols.
+1056 files, 10153 symbols.
 
 ## PowerBasic.Compiler.Tests/Asm/
 
@@ -122,6 +122,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Asm` — PowerBasic.Compiler.Tests/Asm/OrphanedJumpHopTests.cs:2
 - class `OrphanedJumpHopTests` — O0093's second half: once threading has bypassed an A: JMP B hop, the hop is dead code — PowerBasic.Compiler.Tests/Asm/OrphanedJumpHopTests.cs:28
 
+### PostLinkRelocatableTests.cs  `C#, 74 lines`
+- namespace `PowerBasic.Compiler.Tests.Asm` — PowerBasic.Compiler.Tests/Asm/PostLinkRelocatableTests.cs:2
+- class `PostLinkRelocatableTests` — PowerBasic.Compiler.Tests/Asm/PostLinkRelocatableTests.cs:4
+
 ### TailMergeTests.cs  `C#, 114 lines`
 - namespace `PowerBasic.Compiler.Tests.Asm` — PowerBasic.Compiler.Tests/Asm/TailMergeTests.cs:2
 - class `TailMergeTests` — S3 identical-code folding: procedure regions with byte- and fixup-identical content fold — PowerBasic.Compiler.Tests/Asm/TailMergeTests.cs:9
@@ -158,12 +162,15 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `g(1 TO 2, 1 TO 3)` — PowerBasic.Compiler.Tests/Backend/BackendArrayElementTests.cs:204
 - method `g(2, 3)` — PowerBasic.Compiler.Tests/Backend/BackendArrayElementTests.cs:210
 
-### BackendArrayLayoutTests.cs  `C#, 137 lines`
+### BackendArrayLayoutTests.cs  `C#, 230 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendArrayLayoutTests.cs:5
 - class `BackendArrayLayoutTests` — Physical multidimensional-array layout. PowerBASIC stores the first subscript contiguously, so — PowerBasic.Compiler.Tests/Backend/BackendArrayLayoutTests.cs:14
 - method `Execute` — PowerBasic.Compiler.Tests/Backend/BackendArrayLayoutTests.cs:30
 - method `CLNG(VARPTR(a%(11, 20)))` — PowerBasic.Compiler.Tests/Backend/BackendArrayLayoutTests.cs:53
 - method `CLNG(VARPTR(a%(11, 20)))` — PowerBasic.Compiler.Tests/Backend/BackendArrayLayoutTests.cs:71
+- method `LBOUND(a%, 1)` — PowerBasic.Compiler.Tests/Backend/BackendArrayLayoutTests.cs:110
+- method `LBOUND` — PowerBasic.Compiler.Tests/Backend/BackendArrayLayoutTests.cs:134
+- method `LBOUND` — PowerBasic.Compiler.Tests/Backend/BackendArrayLayoutTests.cs:159
 
 ### BackendArraySortTests.cs  `C#, 352 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendArraySortTests.cs:5
@@ -204,17 +211,22 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `source` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:195
 - method `Bump(value AS INTEGER)` — PowerBasic.Compiler.Tests/Backend/BackendByRefRoutingTests.cs:200
 
-### BackendCallRoutingTests.cs  `C#, 360 lines`
+### BackendByteParameterRoutingTests.cs  `C#, 72 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendByteParameterRoutingTests.cs:8
+- class `BackendByteParameterRoutingTests` — End-to-end and selector gates for BYTE/SBYTE integer-to-float staging. x87 FILD has no — PowerBasic.Compiler.Tests/Backend/BackendByteParameterRoutingTests.cs:15
+
+### BackendCallRoutingTests.cs  `C#, 523 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:9
 - class `BackendCallRoutingTests` — A back-end-compiled function that calls another one. Until calls were selectable the — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:25
-- method `IrConstantInt(IrType.I32, 0x11112222)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:112
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:226
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:257
-- method `Touch(v%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:258
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:286
-- method `CountDown(v%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:287
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:337
-- method `Sum(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:338
+- method `IrConstantInt(IrType.I32, 0x11112222)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:180
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:357
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:388
+- method `Touch(v%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:389
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:417
+- method `CountDown(v%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:418
+- method `F(BYVAL a%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:454
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:493
+- method `Sum(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:494
 
 ### BackendChainTests.cs  `C#, 250 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendChainTests.cs:9
@@ -250,7 +262,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Show(string text, int from, int at)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:250
 - method `OneLine(string text, int limit)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:262
 
-### BackendCoverageTests.cs  `C#, 947 lines`
+### BackendCoverageTests.cs  `C#, 954 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:9
 - class `BackendCoverageTests` — How much of the real corpus the in-house x86-16 back end can actually compile, and - for — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:44
 - record `Census` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:84
@@ -359,16 +371,22 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Churn(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:268
 - method `Churn` — PowerBasic.Compiler.Tests/Backend/BackendExitFarTests.cs:277
 
+### BackendExtendedParameterRoutingTests.cs  `C#, 53 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendExtendedParameterRoutingTests.cs:5
+- class `BackendExtendedParameterRoutingTests` — End-to-end ABI gate for PowerBASIC EXT parameters/results. EXT is the x87 80-bit format: a — PowerBasic.Compiler.Tests/Backend/BackendExtendedParameterRoutingTests.cs:14
+
 ### BackendFieldTests.cs  `C#, 246 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendFieldTests.cs:9
 - class `BackendFieldTests` — FIELD through the retargetable path: a record buffer read and written through named windows on — PowerBasic.Compiler.Tests/Backend/BackendFieldTests.cs:21
 
-### BackendFixBcdTests.cs  `C#, 219 lines`
+### BackendFixBcdTests.cs  `C#, 246 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs:6
 - class `BackendFixBcdTests` — PowerBASIC's two decimal types through the retargetable path, and the reason they are not one — PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs:20
 - method `SIZEOF(b@@)` — PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs:86
 - method `SIZEOF(f@)` — PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs:123
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs:191
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs:159
+- method `F(BYVAL a@)` — PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs:160
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendFixBcdTests.cs:218
 
 ### BackendFloatPhiTests.cs  `C#, 67 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendFloatPhiTests.cs:8
@@ -397,14 +415,15 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `source` — PowerBasic.Compiler.Tests/Backend/BackendFrameTests.cs:103
 - method `Dirty(1234)` — PowerBasic.Compiler.Tests/Backend/BackendFrameTests.cs:104
 
-### BackendGlobalAccessTests.cs  `C#, 357 lines`
+### BackendGlobalAccessTests.cs  `C#, 353 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendGlobalAccessTests.cs:8
 - class `BackendGlobalAccessTests` — A back-end-compiled function reading a module-level variable. The back end lays out no data of its — PowerBasic.Compiler.Tests/Backend/BackendGlobalAccessTests.cs:24
 - method `Store` — PowerBasic.Compiler.Tests/Backend/BackendGlobalAccessTests.cs:69
 - method `Show` — PowerBasic.Compiler.Tests/Backend/BackendGlobalAccessTests.cs:82
 - method `DataCells` — PowerBasic.Compiler.Tests/Backend/BackendGlobalAccessTests.cs:155
 - field `source` — PowerBasic.Compiler.Tests/Backend/BackendGlobalAccessTests.cs:225
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendGlobalAccessTests.cs:263
+- method `FASTCALL` — PowerBasic.Compiler.Tests/Backend/BackendGlobalAccessTests.cs:226
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendGlobalAccessTests.cs:259
 
 ### BackendIdiomTests.cs  `C#, 214 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendIdiomTests.cs:4
@@ -431,7 +450,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `BackendLoopStepTests` — FOR i = a TO b STEP s where s is a runtime value, compiled both ways and executed. — PowerBasic.Compiler.Tests/Backend/BackendLoopStepTests.cs:31
 - method `Walk(BYVAL a&, BYVAL b&, BYVAL s&)` — PowerBasic.Compiler.Tests/Backend/BackendLoopStepTests.cs:106
 
-### BackendMainRoutingTests.cs  `C#, 101 lines`
+### BackendMainRoutingTests.cs  `C#, 105 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendMainRoutingTests.cs:4
 - class `BackendMainRoutingTests` — The module body compiled by the x86-16 back end - the step from "the back end compiles some — PowerBasic.Compiler.Tests/Backend/BackendMainRoutingTests.cs:14
 
@@ -520,6 +539,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `POS(0)` — PowerBasic.Compiler.Tests/Backend/BackendPrintUsingTests.cs:250
 - method `POS(0)` — PowerBasic.Compiler.Tests/Backend/BackendPrintUsingTests.cs:339
 
+### BackendProcedureErrorHandlerRoutingTests.cs  `C#, 122 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendProcedureErrorHandlerRoutingTests.cs:5
+- class `BackendProcedureErrorHandlerRoutingTests` — Procedure-local error traps need one ABI behavior the module body does not: a callee may replace — PowerBasic.Compiler.Tests/Backend/BackendProcedureErrorHandlerRoutingTests.cs:13
+- method `Inner()` — PowerBasic.Compiler.Tests/Backend/BackendProcedureErrorHandlerRoutingTests.cs:20
+- method `Inner()` — PowerBasic.Compiler.Tests/Backend/BackendProcedureErrorHandlerRoutingTests.cs:46
+
 ### BackendQuadPrintTests.cs  `C#, 423 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendQuadPrintTests.cs:9
 - class `BackendQuadPrintTests` — PRINT of a signed QUAD. Genuine PB 3.5 keeps the integer exact on the x87 stack and sends it — PowerBasic.Compiler.Tests/Backend/BackendQuadPrintTests.cs:17
@@ -540,6 +565,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendRandomTests.cs:5
 - class `BackendRandomTests` — RANDOMIZE, RND and TIMER over both back ends. — PowerBasic.Compiler.Tests/Backend/BackendRandomTests.cs:36
 - method `RND(1, 1000)` — PowerBasic.Compiler.Tests/Backend/BackendRandomTests.cs:74
+
+### BackendRecordParameterRoutingTests.cs  `C#, 63 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendRecordParameterRoutingTests.cs:5
+- class `BackendRecordParameterRoutingTests` — Execution-level gate for BYREF record parameters, the ABI class whose routing is what lets the — PowerBasic.Compiler.Tests/Backend/BackendRecordParameterRoutingTests.cs:15
+- method `Sum` — PowerBasic.Compiler.Tests/Backend/BackendRecordParameterRoutingTests.cs:26
 
 ### BackendRecordSwapTests.cs  `C#, 123 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendRecordSwapTests.cs:5
@@ -567,32 +597,42 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendRoundingTests.cs:7
 - class `BackendRoundingTests` — The three roundings PowerBASIC keeps apart on purpose, measured on the x86-16 back end by — PowerBasic.Compiler.Tests/Backend/BackendRoundingTests.cs:29
 
-### BackendRoutingGateTests.cs  `C#, 471 lines`
+### BackendRoutingGateTests.cs  `C#, 483 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:5
 - class `BackendRoutingGateTests` — One tiny program per construct, compiled twice - with routing on and with routing off - so that a — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:41
 - record `Construct` — how the case reads in the test list. — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:48
 - method `ToString()` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:49
 - method `F(BYVAL a%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:55
-- method `F(v%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:85
-- method `F(BYVAL a$)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:88
-- method `Grow(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:198
-- method `LBOUND` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:202
-- method `Grow` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:204
-- method `ABS(v)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:268
-- method `F(BYVAL a&&)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:305
+- method `F(v%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:131
+- method `F(BYVAL a$)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:134
+- method `CDECL(BYVAL a%, BYVAL b%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:164
+- method `STDCALL(BYVAL a%, BYVAL b%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:170
+- method `F` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:179
+- method `a(1 TO 4)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:224
+- method `Grow(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:286
+- method `LBOUND` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:290
+- method `Grow` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:292
+- method `ABS(v)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:356
+- method `F(BYVAL a%)` — PowerBasic.Compiler.Tests/Backend/BackendRoutingGateTests.cs:397
 
-### BackendRuntimeCallTests.cs  `C#, 988 lines`
+### BackendRuntimeCallTests.cs  `C#, 995 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:9
 - class `BackendRuntimeCallTests` — The runtime-label bridge: a back-end-compiled function calling the DOS runtime. — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:21
-- method `KeepPair` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:99
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:320
-- method `IsPhysicalMove` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:474
-- method `Destination(MInstr instruction)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:477
-- method `LOF(1)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:633
-- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:825
-- method `IrConstantInt` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:834
-- method `a(1 TO 5)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:947
-- method `a(1 TO 5)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:973
+- method `KeepPair` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:106
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:327
+- method `IsPhysicalMove` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:481
+- method `Destination(MInstr instruction)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:484
+- method `LOF(1)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:640
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:832
+- method `IrConstantInt` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:841
+- method `a(1 TO 5)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:954
+- method `a(1 TO 5)` — PowerBasic.Compiler.Tests/Backend/BackendRuntimeCallTests.cs:980
+
+### BackendSemanticFunctionMergingTests.cs  `C#, 168 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendSemanticFunctionMergingTests.cs:5
+- class `BackendSemanticFunctionMergingTests` — End-to-end coverage for O0284's ABI-preserving native x86 entry-thunk form. — PowerBasic.Compiler.Tests/Backend/BackendSemanticFunctionMergingTests.cs:9
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendSemanticFunctionMergingTests.cs:22
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendSemanticFunctionMergingTests.cs:91
 
 ### BackendSpillTerminationTests.cs  `C#, 238 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendSpillTerminationTests.cs:7
@@ -617,6 +657,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Size(MOperand operand)` — PowerBasic.Compiler.Tests/Backend/BackendSpillTests.cs:347
 - field `source` — PowerBasic.Compiler.Tests/Backend/BackendSpillTests.cs:368
 - method `Work()` — PowerBasic.Compiler.Tests/Backend/BackendSpillTests.cs:369
+
+### BackendStackConventionRoutingTests.cs  `C#, 51 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendStackConventionRoutingTests.cs:5
+- class `BackendStackConventionRoutingTests` — Execution-level gate for stack-only non-default procedure conventions. Two parameters make the — PowerBasic.Compiler.Tests/Backend/BackendStackConventionRoutingTests.cs:13
 
 ### BackendStringLifetimeTests.cs  `C#, 372 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendStringLifetimeTests.cs:5
@@ -720,10 +764,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/LivenessAnalysisTests.cs:3
 - class `LivenessAnalysisTests` — Stage 3 of the x86-16 back end (docs/X86-BACKEND.md): live-interval analysis. Each virtual — PowerBasic.Compiler.Tests/Backend/LivenessAnalysisTests.cs:11
 
-### MachineEmitterTests.cs  `C#, 207 lines`
+### MachineEmitterTests.cs  `C#, 248 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/MachineEmitterTests.cs:4
 - class `MachineEmitterTests` — Stage 5 of the x86-16 back end (docs/X86-BACKEND.md): emission. The selected machine IR, once — PowerBasic.Compiler.Tests/Backend/MachineEmitterTests.cs:13
-- method `if(haystack[i + k] != needle[k])` — PowerBasic.Compiler.Tests/Backend/MachineEmitterTests.cs:200
+- method `if(haystack[i + k] != needle[k])` — PowerBasic.Compiler.Tests/Backend/MachineEmitterTests.cs:241
 
 ### MachineIrTests.cs  `C#, 57 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/MachineIrTests.cs:3
@@ -747,17 +791,59 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `MachineSchedulerX87Tests` — The x87 stack is a resource no can name, so the scheduler orders x87 — PowerBasic.Compiler.Tests/Backend/MachineSchedulerX87Tests.cs:16
 - method `MInstr(MOpcode.Ret, [], MInstrEffect.None)` — PowerBasic.Compiler.Tests/Backend/MachineSchedulerX87Tests.cs:41
 
-### O0355O0358MachineOptimizationTests.cs  `C#, 198 lines`
+### O0058RegisterAllocationTests.cs  `C#, 121 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/O0058RegisterAllocationTests.cs:3
+- class `O0058RegisterAllocationTests` — O0058's 386-only whole-register representation for LONG/DWORD values. The public stack ABI remains — PowerBasic.Compiler.Tests/Backend/O0058RegisterAllocationTests.cs:11
+
+### O0064LeaFusionTests.cs  `C#, 168 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/O0064LeaFusionTests.cs:3
+- class `O0064LeaFusionTests` — PowerBasic.Compiler.Tests/Backend/O0064LeaFusionTests.cs:5
+- method `MInstr(MOpcode.Mov, [new MOperand.Register(result), new MOperand.Register(x…` — PowerBasic.Compiler.Tests/Backend/O0064LeaFusionTests.cs:53
+- method `MInstr(MOpcode.Mov, [new MOperand.Register(result), new MOperand.Register(x…` — PowerBasic.Compiler.Tests/Backend/O0064LeaFusionTests.cs:82
+- method `MInstr(MOpcode.Mov, [new MOperand.Register(result), new MOperand.Register(x…` — PowerBasic.Compiler.Tests/Backend/O0064LeaFusionTests.cs:103
+- method `MInstr(MOpcode.Mov, [new MOperand.Register(result), new MOperand.Register(x…` — PowerBasic.Compiler.Tests/Backend/O0064LeaFusionTests.cs:122
+- method `MInstr(MOpcode.Mov, [new MOperand.Register(result), new MOperand.Register(x…` — PowerBasic.Compiler.Tests/Backend/O0064LeaFusionTests.cs:143
+
+### O0273ProfileGuidedRegisterAllocationTests.cs  `C#, 112 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/O0273ProfileGuidedRegisterAllocationTests.cs:3
+- class `O0273ProfileGuidedRegisterAllocationTests` — O0273 — profile-weighted spill and split selection in the machine register allocator. — PowerBasic.Compiler.Tests/Backend/O0273ProfileGuidedRegisterAllocationTests.cs:7
+- enum `Profile` — PowerBasic.Compiler.Tests/Backend/O0273ProfileGuidedRegisterAllocationTests.cs:57
+- field `values` — PowerBasic.Compiler.Tests/Backend/O0273ProfileGuidedRegisterAllocationTests.cs:61
+- method `DefineFromMemory` — PowerBasic.Compiler.Tests/Backend/O0273ProfileGuidedRegisterAllocationTests.cs:91
+
+### O0339MemoryRoutineSpecializationTests.cs  `C#, 149 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/O0339MemoryRoutineSpecializationTests.cs:5
+- class `O0339MemoryRoutineSpecializationTests` — O0339 target hand-off: widest-first IR accesses become legal native machine moves per CPU. — PowerBasic.Compiler.Tests/Backend/O0339MemoryRoutineSpecializationTests.cs:9
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Backend/O0339MemoryRoutineSpecializationTests.cs:102
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Backend/O0339MemoryRoutineSpecializationTests.cs:117
+
+### O0355O0358MachineOptimizationTests.cs  `C#, 274 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:3
 - class `O0355O0358MachineOptimizationTests` — Target-machine regression coverage for O0355-O0358. — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:7
 - method `MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [], …` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:15
 - method `MInstrEffect(WrittenRegs: [], ReadRegs: source is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:20
 - method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:25
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:30
-- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: true, ReadsMemory: true, Wri…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:35
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:68
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:95
-- method `MInstr(MOpcode.Mov, [V(1), new MOperand.Register(source)], new MInstrEffect…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:114
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:30
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:35
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: true, WritesFlags: false,…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:40
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: true, WritesFlags: false,…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:45
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: true, WritesFlags: false,…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:50
+- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: true, ReadsMemory: true, Wri…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:55
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:105
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:171
+- method `MInstr(MOpcode.Mov, [V(1), new MOperand.Register(source)], new MInstrEffect…` — PowerBasic.Compiler.Tests/Backend/O0355O0358MachineOptimizationTests.cs:190
+
+### O0357PostRegisterAllocationPeepholeTests.cs  `C#, 44 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/O0357PostRegisterAllocationPeepholeTests.cs:3
+- class `O0357PostRegisterAllocationPeepholeTests` — Regression coverage for O0357 post-register-allocation register-view matching. — PowerBasic.Compiler.Tests/Backend/O0357PostRegisterAllocationPeepholeTests.cs:7
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [], …` — PowerBasic.Compiler.Tests/Backend/O0357PostRegisterAllocationPeepholeTests.cs:14
+
+### O0358RegisterAliasTests.cs  `C#, 103 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/O0358RegisterAliasTests.cs:3
+- class `O0358RegisterAliasTests` — Regression coverage for O0358 physical-register alias invalidation. — PowerBasic.Compiler.Tests/Backend/O0358RegisterAliasTests.cs:7
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: source is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler.Tests/Backend/O0358RegisterAliasTests.cs:80
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler.Tests/Backend/O0358RegisterAliasTests.cs:85
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler.Tests/Backend/O0358RegisterAliasTests.cs:91
 
 ### O0358SpillProvenanceTests.cs  `C#, 50 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/O0358SpillProvenanceTests.cs:3
@@ -785,6 +871,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: fal…` — PowerBasic.Compiler.Tests/Backend/PeepholeTests.cs:198
 - method `MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: fal…` — PowerBasic.Compiler.Tests/Backend/PeepholeTests.cs:256
 - method `MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: fal…` — PowerBasic.Compiler.Tests/Backend/PeepholeTests.cs:259
+
+### ProcedureErrorHandlerPreservationTests.cs  `C#, 71 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/ProcedureErrorHandlerPreservationTests.cs:2
+- class `ProcedureErrorHandlerPreservationTests` — PowerBasic.Compiler.Tests/Backend/ProcedureErrorHandlerPreservationTests.cs:4
 
 ### UnoptimizedByteCompatibilityTests.cs  `C#, 91 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/UnoptimizedByteCompatibilityTests.cs:5
@@ -816,6 +906,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Show(report, "printer", directRun.Printer, routedRun.Printer)` — PowerBasic.Compiler.Tests/Backend/Wave3SweepHarness.cs:141
 - method `Show(report, "files", directRun.Files, routedRun.Files)` — PowerBasic.Compiler.Tests/Backend/Wave3SweepHarness.cs:142
 - method `if(directRun.ExitCode != routedRun.ExitCode)` — PowerBasic.Compiler.Tests/Backend/Wave3SweepHarness.cs:143
+
+### X87StackOptimizerTests.cs  `C#, 233 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/X87StackOptimizerTests.cs:2
+- class `X87StackOptimizerTests` — O0348/O0349 — conservative x87 stack scheduling/value retention after selection. — PowerBasic.Compiler.Tests/Backend/X87StackOptimizerTests.cs:6
 
 ## PowerBasic.Compiler.Tests/Cli/
 
@@ -888,7 +982,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `mangled` — the mangled public must be present exactly as Borland decorates a free int square(int) — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:518
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:568
 
-### CallingConventionTests.cs  `C#, 292 lines`
+### CallingConventionTests.cs  `C#, 316 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:5
 - class `CallingConventionTests` — Register calling conventions (docs/LINKER.md): WATCALL (Watcom: args in AX,DX,BX,CX, — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:16
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:32
@@ -911,8 +1005,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `calc(BYVAL a AS INTEGER, BYVAL b AS INTEGER, BYVAL c AS INTEGER, BYVAL d …` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:192
 - field `source` — a LONG does not fit the common-case word model; reject rather than silently miscompile — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:219
 - method `WATCALL(BYVAL x AS LONG)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:220
-- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:244
-- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:274
+- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:243
+- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:268
+- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:298
 
 ### CeilFracTests.cs  `C#, 69 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/CeilFracTests.cs:5
@@ -1161,6 +1256,13 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `InlineByRefBindingTests` — How the inliner binds a BYREF parameter, and the one shape it got wrong. — PowerBasic.Compiler.Tests/CodeGen/InlineByRefBindingTests.cs:34
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/InlineByRefBindingTests.cs:87
 
+### InternalCallingConventionSpecializationTests.cs  `C#, 86 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:5
+- class `InternalCallingConventionSpecializationTests` — O0282: whole-program selection of a private calling convention. — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:9
+- method `escaped(BYVAL a AS INTEGER)` — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:23
+- method `unused(BYVAL a AS INTEGER)` — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:50
+- method `bump(value AS INTEGER)` — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:64
+
 ### IntervalRangeTests.cs  `C#, 429 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/IntervalRangeTests.cs:4
 - class `IntervalRangeTests` — O16 value facts: interval arithmetic plus the forward reduced-product analysis over a bound — PowerBasic.Compiler.Tests/CodeGen/IntervalRangeTests.cs:12
@@ -1261,14 +1363,24 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `LEN(r$)` — PowerBasic.Compiler.Tests/CodeGen/MultiConcatTests.cs:82
 - field `source` — output-equivalence: the optimized (pb36) and unoptimized (pb35) builds produce identical text. — PowerBasic.Compiler.Tests/CodeGen/MultiConcatTests.cs:146
 
-### OmfLinkTests.cs  `C#, 101 lines`
+### O0308ArrayPreflightTests.cs  `C#, 138 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/O0308ArrayPreflightTests.cs:4
+- class `O0308ArrayPreflightTests` — O0308's direct-emitter consumer: checked signed INTEGER add/sub array loops may pay one — PowerBasic.Compiler.Tests/CodeGen/O0308ArrayPreflightTests.cs:13
+- method `if(image[i + k] != pattern[k])` — PowerBasic.Compiler.Tests/CodeGen/O0308ArrayPreflightTests.cs:31
+
+### OmfLinkTests.cs  `C#, 249 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:7
 - class `OmfLinkTests` — End-to-end external OMF object linking (docs/LINKER.md, M1): a BASIC program — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:17
-- method `Record(0x80, Str(moduleName))` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:38
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:54
-- method `addone(41)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:56
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:71
-- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:73
+- method `Record(0x80, Str(moduleName))` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:54
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:82
+- method `addone(41)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:84
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:99
+- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:101
+- method `mix(50, 8, 4, 2, 1, 6)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:140
+- method `identity(200)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:176
+- method `load(value)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:207
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:233
+- method `wide(1)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:235
 
 ### OptDeadGlobalsTests.cs  `C#, 267 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/OptDeadGlobalsTests.cs:5
@@ -1750,6 +1862,13 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `SCREEN` — PowerBasic.Compiler.Tests/CodeGen/ScreenFunctionTests.cs:94
 - method `SCREEN` — PowerBasic.Compiler.Tests/CodeGen/ScreenFunctionTests.cs:107
 
+### SearchAlgorithmSelectionTests.cs  `C#, 78 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/SearchAlgorithmSelectionTests.cs:4
+- class `SearchAlgorithmSelectionTests` — PowerBasic.Compiler.Tests/CodeGen/SearchAlgorithmSelectionTests.cs:6
+- field `needle` — PowerBasic.Compiler.Tests/CodeGen/SearchAlgorithmSelectionTests.cs:52
+- field `needle` — PowerBasic.Compiler.Tests/CodeGen/SearchAlgorithmSelectionTests.cs:64
+- field `needle` — PowerBasic.Compiler.Tests/CodeGen/SearchAlgorithmSelectionTests.cs:72
+
 ### SelectJumpTableTests.cs  `C#, 234 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/SelectJumpTableTests.cs:4
 - class `SelectJumpTableTests` — pb36 dense SELECT CASE -> jump table. The byte-identical output contract is enforced — PowerBasic.Compiler.Tests/CodeGen/SelectJumpTableTests.cs:21
@@ -1807,7 +1926,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/StringRemoveTests.cs:5
 - class `StringRemoveTests` — REMOVE$(s$, match$) - the source with every occurrence of the match cut out. — PowerBasic.Compiler.Tests/CodeGen/StringRemoveTests.cs:18
 
-### TargetCostTests.cs  `C#, 138 lines`
+### TargetCostTests.cs  `C#, 170 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/TargetCostTests.cs:2
 - class `TargetCostTests` — O0174 the per-target cost model (docs/optimizations/O0174). These pin the trade-offs the model exis… — PowerBasic.Compiler.Tests/CodeGen/TargetCostTests.cs:10
 
@@ -1961,7 +2080,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if` — PowerBasic.Compiler.Tests/Emit/DirectOptimizerOnRenderedBasicTests.cs:108
 - method `if(optimized != plain)` — PowerBasic.Compiler.Tests/Emit/DirectOptimizerOnRenderedBasicTests.cs:136
 
-### IrBasicWriterCensusTests.cs  `C#, 272 lines`
+### IrBasicWriterCensusTests.cs  `C#, 274 lines`
 - namespace `PowerBasic.Compiler.Tests.Emit` — PowerBasic.Compiler.Tests/Emit/IrBasicWriterCensusTests.cs:7
 - class `IrBasicWriterCensusTests` — How much of the real corpus can render, and - for everything it — PowerBasic.Compiler.Tests/Emit/IrBasicWriterCensusTests.cs:19
 - method `if(model.Errors.Count > 0)` — PowerBasic.Compiler.Tests/Emit/IrBasicWriterCensusTests.cs:39
@@ -1998,19 +2117,19 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Emit` — PowerBasic.Compiler.Tests/Emit/IrDialectCarryTests.cs:6
 - class `IrDialectCarryTests` — Dialect facts the IR carries, and what the pb35 renderer does with the ones pb35 has no spelling — PowerBasic.Compiler.Tests/Emit/IrDialectCarryTests.cs:17
 
-### IrPassObservableEquivalenceTests.cs  `C#, 251 lines`
+### IrPassObservableEquivalenceTests.cs  `C#, 268 lines`
 - namespace `PowerBasic.Compiler.Tests.Emit` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:9
 - class `IrPassObservableEquivalenceTests` — The observable contract, made checkable: an optimization pass may rewrite a program however it — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:26
-- method `a(0 TO 9)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:95
-- method `a(i)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:101
-- method `Announce(3)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:108
-- method `pass(fn)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:156
-- method `RunOnEveryFunction(m, Mem2Reg.Run)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:179
-- method `RunOnEveryFunction(m, run)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:180
-- method `if(got != expected)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:186
-- method `RunOnEveryFunction(m, Mem2Reg.Run)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:207
-- method `run(m)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:208
-- method `if(got != expected)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:214
+- method `a(0 TO 9)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:97
+- method `a(i)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:103
+- method `a(0 TO 31)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:110
+- method `pass(fn)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:173
+- method `RunOnEveryFunction(m, Mem2Reg.Run)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:196
+- method `RunOnEveryFunction(m, run)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:197
+- method `if(got != expected)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:203
+- method `RunOnEveryFunction(m, Mem2Reg.Run)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:224
+- method `run(m)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:225
+- method `if(got != expected)` — PowerBasic.Compiler.Tests/Emit/IrPassObservableEquivalenceTests.cs:231
 
 ### LinkerTests.cs  `C#, 174 lines`
 - namespace `PowerBasic.Compiler.Tests.Emit` — PowerBasic.Compiler.Tests/Emit/LinkerTests.cs:2
@@ -2037,13 +2156,27 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Emit` — PowerBasic.Compiler.Tests/Emit/PbuPblTests.cs:2
 - class `PbuPblTests` — PowerBasic.Compiler.Tests/Emit/PbuPblTests.cs:4
 
+### PbuPostLinkMetadataTests.cs  `C#, 70 lines`
+- namespace `PowerBasic.Compiler.Tests.Emit` — PowerBasic.Compiler.Tests/Emit/PbuPostLinkMetadataTests.cs:4
+- class `PbuPostLinkMetadataTests` — PowerBasic.Compiler.Tests/Emit/PbuPostLinkMetadataTests.cs:6
+
+### PostLinkLayoutTests.cs  `C#, 169 lines`
+- namespace `PowerBasic.Compiler.Tests.Emit` — PowerBasic.Compiler.Tests/Emit/PostLinkLayoutTests.cs:3
+- class `PostLinkLayoutTests` — PowerBasic.Compiler.Tests/Emit/PostLinkLayoutTests.cs:5
+- method `PbuRelativeFixup(1, 2, PbuRelativeFixupKind.Conditional, (byte)Condition.NotEqual, 6)` — PowerBasic.Compiler.Tests/Emit/PostLinkLayoutTests.cs:21
+
 ### PowerBasic35EmitterTests.cs  `C#, 354 lines`
 - namespace `PowerBasic.Compiler.Tests.Emit` — PowerBasic.Compiler.Tests/Emit/PowerBasic35EmitterTests.cs:4
 - class `PowerBasic35EmitterTests` — The back-emitter (): turns a bound program back into PB 3.5-compatible — PowerBasic.Compiler.Tests/Emit/PowerBasic35EmitterTests.cs:13
 
+### SideExitDeoptimizationObservableTests.cs  `C#, 77 lines`
+- namespace `PowerBasic.Compiler.Tests.Emit` — PowerBasic.Compiler.Tests/Emit/SideExitDeoptimizationObservableTests.cs:8
+- class `SideExitDeoptimizationObservableTests` — Execution-level O0310 regression. The failed assumption happens after an observable accumulator — PowerBasic.Compiler.Tests/Emit/SideExitDeoptimizationObservableTests.cs:15
+- method `if(SideExitDeoptimization.TryVersionLoop(fn, header, guard, assumedValu…` — PowerBasic.Compiler.Tests/Emit/SideExitDeoptimizationObservableTests.cs:49
+
 ## PowerBasic.Compiler.Tests/Exec/
 
-### Cpu8086.cs  `C#, 2167 lines`
+### Cpu8086.cs  `C#, 2174 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2
 - class `Cpu8086` — A real-mode 8086 interpreter, enough of one to run the executables this compiler emits. — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:23
 - class `MemoryFile` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:52
@@ -2063,67 +2196,67 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:635
 - method `if(mode == 3)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:654
 - method `Cpu8086Exception("LEA with a register operand")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:655
-- method `if(opcode == 0xC0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:696
-- method `if((opcode & 1) == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:713
-- method `if(taken)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:727
-- method `Cpu8086Exception( $"unimplemented opcode {opcode:X2} at {this._cs:X4}:{this._ip - 1:X…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:754
-- method `if(toRegister)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:781
-- method `unchecked((uint)(int)(sbyte)this.Fetch())` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:791
-- method `Cpu8086Exception($"unimplemented dword C7 operation /{operation}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:801
-- method `Cpu8086Exception($"unimplemented opcode 66 0F {opcode:X2}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:874
-- method `Cpu8086Exception("only register dword SHLD/SHRD is supported")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:878
-- method `if(operand == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:931
-- method `if(quotient > uint.MaxValue)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:935
-- method `if(divisor == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:943
-- method `if(dividend == long.MinValue && divisor == -1)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:946
-- method `if(quotient is < int.MinValue or > int.MaxValue)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:949
-- record `X87Value` — One x87 value. FILD must retain every bit of a signed 64-bit integer: extended precision has a — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:965
-- method `Exact` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:967
-- method `Floating(double value)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:969
-- method `Abs` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:970
-- method `Negate` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:974
-- method `Cpu8086Exception($"unimplemented x87 {opcode:X2} /{reg} at {this._cs:X4}:{start:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1068
-- method `if((bits & 1) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1139
-- method `if((bits & 2) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1141
-- method `if((bits & 4) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1143
-- method `if(modrm >= 0xD8)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1174
-- method `if(!intoStack0 && op >= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1187
-- method `Arithmetic(op, this.St(0), this.St(index))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1190
-- method `if(intoStack0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1192
-- method `if(opcode == 0xDE)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1196
-- method `Cpu8086Exception($"unimplemented x87 {opcode:X2} {modrm:X2} at {this._cs:X4}:{start:X…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1201
-- method `if(ai == bi)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1275
-- method `if(this.Condition(opcode - 0x80))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1348
-- method `if(count == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1371
-- method `Cpu8086Exception($"unimplemented 0F {opcode:X2} at {this._cs:X4}:{this._ip - 2:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1385
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1544
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1558
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1571
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1584
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1599
-- method `if(compares && this._zf != (repeat == 2))` — this._r[_CX]; — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1676
-- method `if(subfunction != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1802
-- method `Cpu8086Exception($"unhandled DOS EXEC AL={subfunction:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1803
-- method `if(!this._executables.TryGetValue(name, out var image))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1805
-- method `Cpu8086Exception($"unavailable EXEC target {name}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1806
-- method `if(handle is 1 or 2)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1818
-- method `for(var i = 0; i < count; ++i)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1819
-- method `if(handle == 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1823
-- method `if(this._files.TryGetValue(handle, out var open))` — A write lands AT the file position and advances it - it does not append. Appending is what — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1831
-- method `while(bytes.Count < open.Position)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1833
-- method `if(count == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1835
-- method `for(var i = 0; i < count; ++i, ++open.Position)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1838
-- method `if(open.Position < bytes.Count)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1840
-- method `if(!this._byName.TryGetValue(name, out var file))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1853
-- method `if(!this._byName.TryGetValue(name, out var file))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1863
-- method `if(!this._byName.Remove(from, out var file) || this._byName.ContainsKey…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1903
-- method `if(subfunction != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1922
-- method `Cpu8086Exception($"unhandled DOS IOCTL AL={subfunction:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1923
-- method `if(handle <= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1925
-- method `if(this._videoMode == 0x13)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1986
-- method `for(var column = 0; column < _SCREEN_COLUMNS; ++column)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2064
-- method `while(this._cursorColumn % 8 != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2096
-- class `Cpu8086Exception` — Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runa… — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2166
+- method `if(opcode == 0xC0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:703
+- method `if((opcode & 1) == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:720
+- method `if(taken)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:734
+- method `Cpu8086Exception( $"unimplemented opcode {opcode:X2} at {this._cs:X4}:{this._ip - 1:X…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:761
+- method `if(toRegister)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:788
+- method `unchecked((uint)(int)(sbyte)this.Fetch())` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:798
+- method `Cpu8086Exception($"unimplemented dword C7 operation /{operation}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:808
+- method `Cpu8086Exception($"unimplemented opcode 66 0F {opcode:X2}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:881
+- method `Cpu8086Exception("only register dword SHLD/SHRD is supported")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:885
+- method `if(operand == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:938
+- method `if(quotient > uint.MaxValue)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:942
+- method `if(divisor == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:950
+- method `if(dividend == long.MinValue && divisor == -1)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:953
+- method `if(quotient is < int.MinValue or > int.MaxValue)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:956
+- record `X87Value` — One x87 value. FILD must retain every bit of a signed 64-bit integer: extended precision has a — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:972
+- method `Exact` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:974
+- method `Floating(double value)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:976
+- method `Abs` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:977
+- method `Negate` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:981
+- method `Cpu8086Exception($"unimplemented x87 {opcode:X2} /{reg} at {this._cs:X4}:{start:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1075
+- method `if((bits & 1) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1146
+- method `if((bits & 2) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1148
+- method `if((bits & 4) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1150
+- method `if(modrm >= 0xD8)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1181
+- method `if(!intoStack0 && op >= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1194
+- method `Arithmetic(op, this.St(0), this.St(index))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1197
+- method `if(intoStack0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1199
+- method `if(opcode == 0xDE)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1203
+- method `Cpu8086Exception($"unimplemented x87 {opcode:X2} {modrm:X2} at {this._cs:X4}:{start:X…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1208
+- method `if(ai == bi)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1282
+- method `if(this.Condition(opcode - 0x80))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1355
+- method `if(count == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1378
+- method `Cpu8086Exception($"unimplemented 0F {opcode:X2} at {this._cs:X4}:{this._ip - 2:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1392
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1551
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1565
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1578
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1591
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1606
+- method `if(compares && this._zf != (repeat == 2))` — this._r[_CX]; — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1683
+- method `if(subfunction != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1809
+- method `Cpu8086Exception($"unhandled DOS EXEC AL={subfunction:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1810
+- method `if(!this._executables.TryGetValue(name, out var image))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1812
+- method `Cpu8086Exception($"unavailable EXEC target {name}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1813
+- method `if(handle is 1 or 2)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1825
+- method `for(var i = 0; i < count; ++i)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1826
+- method `if(handle == 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1830
+- method `if(this._files.TryGetValue(handle, out var open))` — A write lands AT the file position and advances it - it does not append. Appending is what — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1838
+- method `while(bytes.Count < open.Position)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1840
+- method `if(count == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1842
+- method `for(var i = 0; i < count; ++i, ++open.Position)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1845
+- method `if(open.Position < bytes.Count)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1847
+- method `if(!this._byName.TryGetValue(name, out var file))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1860
+- method `if(!this._byName.TryGetValue(name, out var file))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1870
+- method `if(!this._byName.Remove(from, out var file) || this._byName.ContainsKey…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1910
+- method `if(subfunction != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1929
+- method `Cpu8086Exception($"unhandled DOS IOCTL AL={subfunction:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1930
+- method `if(handle <= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1932
+- method `if(this._videoMode == 0x13)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1993
+- method `for(var column = 0; column < _SCREEN_COLUMNS; ++column)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2071
+- method `while(this._cursorColumn % 8 != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2103
+- class `Cpu8086Exception` — Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runa… — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2173
 
 ### InterpreterSanityTests.cs  `C#, 97 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/InterpreterSanityTests.cs:4
@@ -2141,18 +2274,22 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `AggregateBlockScalarizationTests` — PowerBasic.Compiler.Tests/Ir/AggregateBlockScalarizationTests.cs:7
 - method `Change` — PowerBasic.Compiler.Tests/Ir/AggregateBlockScalarizationTests.cs:31
 
-### AggregateZeroCostTests.cs  `C#, 338 lines`
+### AggregateRawBitFloatingEqualityTests.cs  `C#, 165 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/AggregateRawBitFloatingEqualityTests.cs:5
+- class `AggregateRawBitFloatingEqualityTests` — PowerBasic.Compiler.Tests/Ir/AggregateRawBitFloatingEqualityTests.cs:7
+
+### AggregateZeroCostTests.cs  `C#, 340 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/AggregateZeroCostTests.cs:5
 - class `AggregateZeroCostTests` — Zero-cost aggregate lowering invariants. — PowerBasic.Compiler.Tests/Ir/AggregateZeroCostTests.cs:16
-- method `GenericProbe` — PowerBasic.Compiler.Tests/Ir/AggregateZeroCostTests.cs:234
-- method `AliasProbe` — PowerBasic.Compiler.Tests/Ir/AggregateZeroCostTests.cs:263
-- method `UnionProbe` — PowerBasic.Compiler.Tests/Ir/AggregateZeroCostTests.cs:287
+- method `GenericProbe` — PowerBasic.Compiler.Tests/Ir/AggregateZeroCostTests.cs:236
+- method `AliasProbe` — PowerBasic.Compiler.Tests/Ir/AggregateZeroCostTests.cs:265
+- method `UnionProbe` — PowerBasic.Compiler.Tests/Ir/AggregateZeroCostTests.cs:289
 
 ### AliasAnalysisTests.cs  `C#, 101 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/AliasAnalysisTests.cs:3
 - class `AliasAnalysisTests` — Basic width-aware alias analysis over IR memory locations. — PowerBasic.Compiler.Tests/Ir/AliasAnalysisTests.cs:7
 
-### ArithmeticIdiomOptimizationTests.cs  `C#, 84 lines`
+### ArithmeticIdiomOptimizationTests.cs  `C#, 142 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ArithmeticIdiomOptimizationTests.cs:3
 - class `ArithmeticIdiomOptimizationTests` — O0337/O0338 — exact polynomial and reciprocal sequence rewrites. — PowerBasic.Compiler.Tests/Ir/ArithmeticIdiomOptimizationTests.cs:7
 
@@ -2160,11 +2297,23 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ArrayLoweringTests.cs:6
 - class `ArrayLoweringTests` — Static array lowering: DIM allocation plus indexed load/store via byte GEPs. — PowerBasic.Compiler.Tests/Ir/ArrayLoweringTests.cs:10
 
+### ArrayZeroFillElisionTests.cs  `C#, 122 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ArrayZeroFillElisionTests.cs:5
+- class `ArrayZeroFillElisionTests` — PowerBasic.Compiler.Tests/Ir/ArrayZeroFillElisionTests.cs:7
+
+### AsciiStringSpecializationTests.cs  `C#, 85 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/AsciiStringSpecializationTests.cs:6
+- class `AsciiStringSpecializationTests` — O0300: when the IR owns the complete byte vector and every byte is 7-bit ASCII, UCASE$/LCASE$ — PowerBasic.Compiler.Tests/Ir/AsciiStringSpecializationTests.cs:14
+
 ### AsciizLoweringTests.cs  `C#, 112 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/AsciizLoweringTests.cs:6
 - class `AsciizLoweringTests` — ASCIIZ * n on the IR path. — PowerBasic.Compiler.Tests/Ir/AsciizLoweringTests.cs:20
 - method `LEN` — PowerBasic.Compiler.Tests/Ir/AsciizLoweringTests.cs:85
 - method `LEN(z)` — PowerBasic.Compiler.Tests/Ir/AsciizLoweringTests.cs:104
+
+### BasicBlockVersioningTests.cs  `C#, 426 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/BasicBlockVersioningTests.cs:3
+- class `BasicBlockVersioningTests` — O0305 — path facts materialized as specialized copies of bounded reconverged regions. — PowerBasic.Compiler.Tests/Ir/BasicBlockVersioningTests.cs:7
 
 ### BitLoweringTests.cs  `C#, 158 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/BitLoweringTests.cs:6
@@ -2179,6 +2328,13 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `source` — PowerBasic.Compiler.Tests/Ir/BitLoweringTests.cs:119
 - method `BIT(v, -1)` — PowerBasic.Compiler.Tests/Ir/BitLoweringTests.cs:122
 - method `BIT(s, 2)` — PowerBasic.Compiler.Tests/Ir/BitLoweringTests.cs:143
+
+### BitsetSubstitutionTests.cs  `C#, 125 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/BitsetSubstitutionTests.cs:3
+- class `BitsetSubstitutionTests` — O0331 — Boolean-domain proof and whole-array preservation for bitset substitution. — PowerBasic.Compiler.Tests/Ir/BitsetSubstitutionTests.cs:7
+- method `IrConstantInt` — PowerBasic.Compiler.Tests/Ir/BitsetSubstitutionTests.cs:71
+- method `IrConstantInt` — PowerBasic.Compiler.Tests/Ir/BitsetSubstitutionTests.cs:100
+- method `IrArgument(IrType.Ptr, 0, "destination")` — PowerBasic.Compiler.Tests/Ir/BitsetSubstitutionTests.cs:119
 
 ### BoolCanonTests.cs  `C#, 49 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/BoolCanonTests.cs:5
@@ -2225,6 +2381,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ConsoleCommandLoweringTests.cs:4
 - class `ConsoleCommandLoweringTests` — Two of the statements the lowering used to reject wholesale as "CommandStmt": LOCATE and — PowerBasic.Compiler.Tests/Ir/ConsoleCommandLoweringTests.cs:13
 
+### ConstantDataMergingTests.cs  `C#, 181 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ConstantDataMergingTests.cs:3
+- class `ConstantDataMergingTests` — O0285 — whole-module merging of provably private read-only byte blobs. — PowerBasic.Compiler.Tests/Ir/ConstantDataMergingTests.cs:7
+
 ### CorrelatedValuePropTests.cs  `C#, 60 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/CorrelatedValuePropTests.cs:3
 - class `CorrelatedValuePropTests` — Correlated value propagation: facts from if (x == C) flow into the guarded region. — PowerBasic.Compiler.Tests/Ir/CorrelatedValuePropTests.cs:7
@@ -2233,7 +2393,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/CseShapeTests.cs:5
 - class `CseShapeTests` — The three CSE shapes the direct emitter needed separate machinery for (O0185 past a merge, O0186 — PowerBasic.Compiler.Tests/Ir/CseShapeTests.cs:20
 
-### DataLayoutTransformsTests.cs  `C#, 275 lines`
+### DataLayoutTransformsTests.cs  `C#, 528 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DataLayoutTransformsTests.cs:3
 - class `DataLayoutTransformsTests` — PowerBasic.Compiler.Tests/Ir/DataLayoutTransformsTests.cs:5
 
@@ -2245,6 +2405,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DataRepresentationOptimizationTests.cs:3
 - class `DataRepresentationOptimizationTests` — O0331/O0332/O0333 — compact Boolean storage and lookup-table tradeoffs. — PowerBasic.Compiler.Tests/Ir/DataRepresentationOptimizationTests.cs:7
 
+### DataTranspositionTests.cs  `C#, 77 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DataTranspositionTests.cs:3
+- class `DataTranspositionTests` — PowerBasic.Compiler.Tests/Ir/DataTranspositionTests.cs:5
+
 ### DeadLoopEliminationTests.cs  `C#, 320 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DeadLoopEliminationTests.cs:8
 - class `DeadLoopEliminationTests` — Deleting a counted loop nobody can observe - and, just as much a part of the contract, NOT — PowerBasic.Compiler.Tests/Ir/DeadLoopEliminationTests.cs:22
@@ -2254,9 +2418,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `source` — PowerBasic.Compiler.Tests/Ir/DeadLoopEliminationTests.cs:243
 - method `Walk(BYVAL n%)` — PowerBasic.Compiler.Tests/Ir/DeadLoopEliminationTests.cs:246
 
-### DeadStoreElimTests.cs  `C#, 91 lines`
+### DeadStoreElimTests.cs  `C#, 196 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DeadStoreElimTests.cs:5
-- class `DeadStoreElimTests` — Intra-block dead-store elimination for memory (DeadStoreElim). — PowerBasic.Compiler.Tests/Ir/DeadStoreElimTests.cs:9
+- class `DeadStoreElimTests` — O0048 local overwrite DSE plus O0065 whole-function private-frame DSE. — PowerBasic.Compiler.Tests/Ir/DeadStoreElimTests.cs:9
 
 ### DemandedBitsTests.cs  `C#, 86 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DemandedBitsTests.cs:3
@@ -2280,6 +2444,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(err.StartsWith("pbc:", StringComparison.Ordinal))` — PowerBasic.Compiler.Tests/Ir/EmitterNeverThrowsTests.cs:258
 - method `if(code == 0)` — PowerBasic.Compiler.Tests/Ir/EmitterNeverThrowsTests.cs:321
 - method `if(!err.Contains(names, StringComparison.Ordinal))` — PowerBasic.Compiler.Tests/Ir/EmitterNeverThrowsTests.cs:323
+
+### EncodingConversionEliminationTests.cs  `C#, 132 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/EncodingConversionEliminationTests.cs:3
+- class `EncodingConversionEliminationTests` — O0301 lossless representation-round-trip elimination. — PowerBasic.Compiler.Tests/Ir/EncodingConversionEliminationTests.cs:7
 
 ### EndStmtLoweringTests.cs  `C#, 35 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/EndStmtLoweringTests.cs:4
@@ -2312,13 +2480,41 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `FloatToIntegerRoundingTests` — BASIC rounds a real on its way into an integer variable - n% = 2.7 is 3 - while a C — PowerBasic.Compiler.Tests/Ir/FloatToIntegerRoundingTests.cs:18
 - method `FIX(s)` — PowerBasic.Compiler.Tests/Ir/FloatToIntegerRoundingTests.cs:54
 
+### FmaContractionTests.cs  `C#, 76 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/FmaContractionTests.cs:3
+- class `FmaContractionTests` — O0340 — contraction permission belongs only to an actual multiply-add/subtract pair. — PowerBasic.Compiler.Tests/Ir/FmaContractionTests.cs:7
+
 ### ForwardingBlockElisionTests.cs  `C#, 126 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ForwardingBlockElisionTests.cs:3
 - class `ForwardingBlockElisionTests` — PowerBasic.Compiler.Tests/Ir/ForwardingBlockElisionTests.cs:5
 
+### FpClassificationSimplificationTests.cs  `C#, 151 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/FpClassificationSimplificationTests.cs:3
+- class `FpClassificationSimplificationTests` — O0346 — strict floating-point classification and range simplification. — PowerBasic.Compiler.Tests/Ir/FpClassificationSimplificationTests.cs:7
+
+### FpDomainSpecializationTests.cs  `C#, 60 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/FpDomainSpecializationTests.cs:3
+- class `FpDomainSpecializationTests` — O0343 — range-driven transcendental specialization. — PowerBasic.Compiler.Tests/Ir/FpDomainSpecializationTests.cs:7
+
+### FpOptimizationTests.cs  `C#, 323 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/FpOptimizationTests.cs:3
+- class `FpOptimizationTests` — O0340-O0347 — strict floating-point facts plus explicitly relaxed SPEED transforms. — PowerBasic.Compiler.Tests/Ir/FpOptimizationTests.cs:7
+
+### FpReassociationTests.cs  `C#, 104 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/FpReassociationTests.cs:3
+- class `FpReassociationTests` — O0344 — floating-point reassociation under the explicit fast-math contract. — PowerBasic.Compiler.Tests/Ir/FpReassociationTests.cs:7
+
+### FpRsqrtOptimizationTests.cs  `C#, 82 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/FpRsqrtOptimizationTests.cs:3
+- class `FpRsqrtOptimizationTests` — O0342 — reciprocal square-root approximation contract. — PowerBasic.Compiler.Tests/Ir/FpRsqrtOptimizationTests.cs:7
+
 ### FrameElisionTests.cs  `C#, 60 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/FrameElisionTests.cs:3
 - class `FrameElisionTests` — PowerBasic.Compiler.Tests/Ir/FrameElisionTests.cs:5
+
+### FsmCompilationTests.cs  `C#, 145 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/FsmCompilationTests.cs:3
+- class `FsmCompilationTests` — O0336 — finite-state-machine compilation for dense byte classifiers. — PowerBasic.Compiler.Tests/Ir/FsmCompilationTests.cs:7
 
 ### FunctionSummariesTests.cs  `C#, 155 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/FunctionSummariesTests.cs:3
@@ -2340,13 +2536,28 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/GotoLoweringTests.cs:5
 - class `GotoLoweringTests` — GOTO / label lowering (arbitrary control flow over the alloca form). — PowerBasic.Compiler.Tests/Ir/GotoLoweringTests.cs:9
 
-### GvnTests.cs  `C#, 126 lines`
+### GuardedSpecializationTests.cs  `C#, 164 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/GuardedSpecializationTests.cs:3
+- class `GuardedSpecializationTests` — O0304 — guarded specialization. The primitive must keep the general region correct while making a — PowerBasic.Compiler.Tests/Ir/GuardedSpecializationTests.cs:10
+- method `Dictionary` — PowerBasic.Compiler.Tests/Ir/GuardedSpecializationTests.cs:133
+
+### GvnTests.cs  `C#, 190 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/GvnTests.cs:3
-- class `GvnTests` — Global value numbering: redundant pure computations are replaced by a dominating equal. — PowerBasic.Compiler.Tests/Ir/GvnTests.cs:7
+- class `GvnTests` — Global value numbering: redundant pure computations and unchanged loads use dominating leaders. — PowerBasic.Compiler.Tests/Ir/GvnTests.cs:7
 
 ### IfConversionTests.cs  `C#, 107 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/IfConversionTests.cs:5
 - class `IfConversionTests` — If-conversion: a simple diamond becomes a branchless select. — PowerBasic.Compiler.Tests/Ir/IfConversionTests.cs:9
+
+### IndirectCallPromotionTests.cs  `C#, 182 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/IndirectCallPromotionTests.cs:3
+- class `IndirectCallPromotionTests` — O0271 — profile-guided indirect call promotion. — PowerBasic.Compiler.Tests/Ir/IndirectCallPromotionTests.cs:7
+
+### InductionVariableSimplificationTests.cs  `C#, 161 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/InductionVariableSimplificationTests.cs:3
+- class `InductionVariableSimplificationTests` — PowerBasic.Compiler.Tests/Ir/InductionVariableSimplificationTests.cs:5
+- record `LoopFixture` — PowerBasic.Compiler.Tests/Ir/InductionVariableSimplificationTests.cs:8
+- method `new` — PowerBasic.Compiler.Tests/Ir/InductionVariableSimplificationTests.cs:40
 
 ### InlineAsmLoweringTests.cs  `C#, 109 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/InlineAsmLoweringTests.cs:5
@@ -2404,6 +2615,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/IrModelTests.cs:2
 - class `IrModelTests` — The LLVM-style typed SSA IR data model: types, use-lists, operand rewiring and — PowerBasic.Compiler.Tests/Ir/IrModelTests.cs:10
 
+### IrModuleLinkerTests.cs  `C#, 153 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/IrModuleLinkerTests.cs:4
+- class `IrModuleLinkerTests` — O0277's IR thin-link: separately lowered modules become one call graph before interprocedural — PowerBasic.Compiler.Tests/Ir/IrModuleLinkerTests.cs:11
+- method `IrArgument(IrType.I16, 0, "v")` — PowerBasic.Compiler.Tests/Ir/IrModuleLinkerTests.cs:19
+- method `IrConstantInt(IrType.I16, 3)` — PowerBasic.Compiler.Tests/Ir/IrModuleLinkerTests.cs:24
+
 ### IrPassManagerTests.cs  `C#, 81 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/IrPassManagerTests.cs:5
 - class `IrPassManagerTests` — The pass manager: the standard pipeline run to a verified fixpoint. — PowerBasic.Compiler.Tests/Ir/IrPassManagerTests.cs:9
@@ -2416,6 +2633,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/IrPrinterTests.cs:2
 - class `IrPrinterTests` — The textual IR printer: deterministic, LLVM-like rendering used for inspection — PowerBasic.Compiler.Tests/Ir/IrPrinterTests.cs:9
 
+### IrProfileTests.cs  `C#, 115 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/IrProfileTests.cs:4
+- class `IrProfileTests` — O0268: stable profile identities and profile count persistence. — PowerBasic.Compiler.Tests/Ir/IrProfileTests.cs:8
+
 ### IrTypeSystemTests.cs  `C#, 213 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/IrTypeSystemTests.cs:4
 - class `IrTypeSystemTests` — The two distinctions the BASIC family makes that LLVM's type system does not, and that the IR — PowerBasic.Compiler.Tests/Ir/IrTypeSystemTests.cs:15
@@ -2424,11 +2645,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/IrVerifierTests.cs:2
 - class `IrVerifierTests` — The IR verifier: structural, SSA-dominance and type well-formedness. — PowerBasic.Compiler.Tests/Ir/IrVerifierTests.cs:6
 
-### LibraryAndMemoryIdiomTests.cs  `C#, 135 lines`
-- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LibraryAndMemoryIdiomTests.cs:3
-- class `LibraryAndMemoryIdiomTests` — O0330/O0339 — memory-loop recognition and constant-size specialization. — PowerBasic.Compiler.Tests/Ir/LibraryAndMemoryIdiomTests.cs:7
-- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/LibraryAndMemoryIdiomTests.cs:67
-- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/LibraryAndMemoryIdiomTests.cs:88
+### LibraryAndMemoryIdiomTests.cs  `C#, 419 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LibraryAndMemoryIdiomTests.cs:4
+- class `LibraryAndMemoryIdiomTests` — O0330/O0339 — memory-loop recognition and constant-size specialization. — PowerBasic.Compiler.Tests/Ir/LibraryAndMemoryIdiomTests.cs:8
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/LibraryAndMemoryIdiomTests.cs:344
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/LibraryAndMemoryIdiomTests.cs:359
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/LibraryAndMemoryIdiomTests.cs:373
 
 ### LicmTests.cs  `C#, 153 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LicmTests.cs:3
@@ -2438,9 +2660,17 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LlvmEmitterTests.cs:6
 - class `LlvmEmitterTests` — The strict LLVM text emitter. The snapshot tests pin the spelling; the toolchain — PowerBasic.Compiler.Tests/Ir/LlvmEmitterTests.cs:14
 
-### LocalizeGlobalsTests.cs  `C#, 99 lines`
+### LocalizeGlobalsTests.cs  `C#, 145 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LocalizeGlobalsTests.cs:3
 - class `LocalizeGlobalsTests` — O0278 — global variable localization. The interesting condition is not "only one function uses — PowerBasic.Compiler.Tests/Ir/LocalizeGlobalsTests.cs:11
+
+### LookupTableEliminationTests.cs  `C#, 68 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LookupTableEliminationTests.cs:3
+- class `LookupTableEliminationTests` — O0333 — lookup-table elimination formula recovery. — PowerBasic.Compiler.Tests/Ir/LookupTableEliminationTests.cs:7
+
+### LookupTableGenerationTests.cs  `C#, 182 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LookupTableGenerationTests.cs:3
+- class `LookupTableGenerationTests` — O0332 — range-aware compile-time lookup-table generation. — PowerBasic.Compiler.Tests/Ir/LookupTableGenerationTests.cs:7
 
 ### LoopDependenceAnalysisTests.cs  `C#, 168 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LoopDependenceAnalysisTests.cs:3
@@ -2456,13 +2686,26 @@ with unrelated edits, so treat them as anchors, not gospel.
 - record `Fixture` — PowerBasic.Compiler.Tests/Ir/LoopInterchangeTests.cs:8
 - method `AddTerm` — PowerBasic.Compiler.Tests/Ir/LoopInterchangeTests.cs:87
 
-### LoopUnrollTests.cs  `C#, 211 lines`
+### LoopUnrollTests.cs  `C#, 244 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LoopUnrollTests.cs:8
 - class `LoopUnrollTests` — Full unrolling of a constant-trip counted loop, on the IR - the first optimization ported from the — PowerBasic.Compiler.Tests/Ir/LoopUnrollTests.cs:21
 
 ### LoopUnswitchTests.cs  `C#, 121 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LoopUnswitchTests.cs:5
 - class `LoopUnswitchTests` — O0114 — loop unswitching. A conditional inside a loop whose condition never changes is tested every — PowerBasic.Compiler.Tests/Ir/LoopUnswitchTests.cs:16
+
+### LoopVersioningTests.cs  `C#, 331 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:5
+- class `LoopVersioningTests` — O0306 — guarded loop versioning. The original checked loop remains the fallback while the cloned — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:13
+- method `Work(BYVAL n%)` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:125
+- method `Work(BYVAL n%)` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:141
+- method `Work()` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:165
+- method `Work(BYVAL n%)` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:183
+- method `Work(BYVAL n%)` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:202
+- method `Work(BYVAL n%)` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:218
+- method `Work(BYVAL n%, BYVAL stride%)` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:235
+- method `Work(BYVAL n&)` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:255
+- method `Work(BYVAL n%, BYVAL bias%)` — PowerBasic.Compiler.Tests/Ir/LoopVersioningTests.cs:272
 
 ### MathIntrinsicTests.cs  `C#, 81 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/MathIntrinsicTests.cs:6
@@ -2477,6 +2720,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/Mem2RegTests.cs:5
 - class `Mem2RegTests` — mem2reg: promotes alloca/load/store slots to SSA registers + phis. — PowerBasic.Compiler.Tests/Ir/Mem2RegTests.cs:9
 
+### MemorySsaTests.cs  `C#, 114 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/MemorySsaTests.cs:3
+- class `MemorySsaTests` — Function-local memory SSA construction and alias-aware clobber walking. — PowerBasic.Compiler.Tests/Ir/MemorySsaTests.cs:7
+
 ### MinMaxLoweringTests.cs  `C#, 94 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/MinMaxLoweringTests.cs:5
 - class `MinMaxLoweringTests` — MIN and MAX on the IR path, as a left fold of compare-and-select. — PowerBasic.Compiler.Tests/Ir/MinMaxLoweringTests.cs:20
@@ -2485,13 +2732,85 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ModuleLoweringTests.cs:6
 - class `ModuleLoweringTests` — Whole-module lowering: main body plus user SUB/FUNCTION (BYVAL scalar params) and calls. — PowerBasic.Compiler.Tests/Ir/ModuleLoweringTests.cs:10
 
+### O0056MiddleEndTests.cs  `C#, 98 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0056MiddleEndTests.cs:4
+- class `O0056MiddleEndTests` — Regression coverage for O0056 reciprocal-multiply division in the IR middle end. — PowerBasic.Compiler.Tests/Ir/O0056MiddleEndTests.cs:8
+
+### O0286AllocationEliminationTests.cs  `C#, 162 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0286AllocationEliminationTests.cs:3
+- class `O0286AllocationEliminationTests` — Regression tests for O0286's length-only string allocation elimination. — PowerBasic.Compiler.Tests/Ir/O0286AllocationEliminationTests.cs:7
+
+### O0286PipelineTests.cs  `C#, 33 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0286PipelineTests.cs:3
+- class `O0286PipelineTests` — PowerBasic.Compiler.Tests/Ir/O0286PipelineTests.cs:5
+
+### O0288MiddleEndTests.cs  `C#, 196 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0288MiddleEndTests.cs:5
+- class `O0288MiddleEndTests` — Regression coverage for O0288 allocation sinking. — PowerBasic.Compiler.Tests/Ir/O0288MiddleEndTests.cs:9
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/O0288MiddleEndTests.cs:17
+- field `source` — PowerBasic.Compiler.Tests/Ir/O0288MiddleEndTests.cs:162
+- method `RareMessage(BYVAL err%)` — PowerBasic.Compiler.Tests/Ir/O0288MiddleEndTests.cs:163
+
+### O0291HandleOwnershipElisionTests.cs  `C#, 215 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0291HandleOwnershipElisionTests.cs:5
+- class `O0291HandleOwnershipElisionTests` — Regression tests for O0291 handle ownership elision. — PowerBasic.Compiler.Tests/Ir/O0291HandleOwnershipElisionTests.cs:9
+
+### O0303MiddleEndTests.cs  `C#, 107 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0303MiddleEndTests.cs:3
+- class `O0303MiddleEndTests` — Regression coverage for O0303 formatted-print specialization in the IR middle end. — PowerBasic.Compiler.Tests/Ir/O0303MiddleEndTests.cs:7
+- method `IrArgument(IrType.I32, 0)` — PowerBasic.Compiler.Tests/Ir/O0303MiddleEndTests.cs:20
+- method `IrArgument(IrType.I32, 0)` — PowerBasic.Compiler.Tests/Ir/O0303MiddleEndTests.cs:46
+- method `IrArgument(IrType.I32, 0)` — PowerBasic.Compiler.Tests/Ir/O0303MiddleEndTests.cs:71
+- method `IrArgument(IrType.I32, 0)` — PowerBasic.Compiler.Tests/Ir/O0303MiddleEndTests.cs:89
+
+### O0307MiddleEndTests.cs  `C#, 94 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0307MiddleEndTests.cs:3
+- class `O0307MiddleEndTests` — Regression coverage for O0307 speculative devirtualization. — PowerBasic.Compiler.Tests/Ir/O0307MiddleEndTests.cs:7
+
+### O0308SpeculativeOverflowEliminationTests.cs  `C#, 145 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0308SpeculativeOverflowEliminationTests.cs:3
+- class `O0308SpeculativeOverflowEliminationTests` — PowerBasic.Compiler.Tests/Ir/O0308SpeculativeOverflowEliminationTests.cs:5
+- record `Fixture` — PowerBasic.Compiler.Tests/Ir/O0308SpeculativeOverflowEliminationTests.cs:78
+- method `IrConstantInt(IrType.I32, constant)` — PowerBasic.Compiler.Tests/Ir/O0308SpeculativeOverflowEliminationTests.cs:117
+- method `new` — PowerBasic.Compiler.Tests/Ir/O0308SpeculativeOverflowEliminationTests.cs:141
+
+### O0325ArrayPaddingAlignmentTests.cs  `C#, 107 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0325ArrayPaddingAlignmentTests.cs:3
+- class `O0325ArrayPaddingAlignmentTests` — PowerBasic.Compiler.Tests/Ir/O0325ArrayPaddingAlignmentTests.cs:5
+
+### O0345CommonDenominatorFactoringTests.cs  `C#, 129 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0345CommonDenominatorFactoringTests.cs:3
+- class `O0345CommonDenominatorFactoringTests` — PowerBasic.Compiler.Tests/Ir/O0345CommonDenominatorFactoringTests.cs:5
+
+### O0347MixedPrecisionTests.cs  `C#, 112 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0347MixedPrecisionTests.cs:3
+- class `O0347MixedPrecisionTests` — PowerBasic.Compiler.Tests/Ir/O0347MixedPrecisionTests.cs:5
+
 ### O0350O0353MiddleEndTests.cs  `C#, 231 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0350O0353MiddleEndTests.cs:3
 - class `O0350O0353MiddleEndTests` — Regression tests for the O0350-O0353 middle-end ports. — PowerBasic.Compiler.Tests/Ir/O0350O0353MiddleEndTests.cs:7
 - method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/O0350O0353MiddleEndTests.cs:164
 - method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/O0350O0353MiddleEndTests.cs:202
 
-### O0354O0359MiddleEndTests.cs  `C#, 137 lines`
+### O0350OverflowCheckCoalescingTests.cs  `C#, 121 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0350OverflowCheckCoalescingTests.cs:3
+- class `O0350OverflowCheckCoalescingTests` — Control-flow safety regressions for O0350 overflow-check coalescing. — PowerBasic.Compiler.Tests/Ir/O0350OverflowCheckCoalescingTests.cs:7
+
+### O0351PointerCheckElimTests.cs  `C#, 80 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0351PointerCheckElimTests.cs:3
+- class `O0351PointerCheckElimTests` — Focused CFG edge-dominance regressions for O0351 pointer-check elimination. — PowerBasic.Compiler.Tests/Ir/O0351PointerCheckElimTests.cs:7
+
+### O0352ConversionRangeCheckElimTests.cs  `C#, 82 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0352ConversionRangeCheckElimTests.cs:3
+- class `O0352ConversionRangeCheckElimTests` — PowerBasic.Compiler.Tests/Ir/O0352ConversionRangeCheckElimTests.cs:5
+
+### O0353StringCapacityHoistingSafetyTests.cs  `C#, 85 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0353StringCapacityHoistingSafetyTests.cs:3
+- class `O0353StringCapacityHoistingSafetyTests` — Safety regressions for O0353 string-capacity hoisting. — PowerBasic.Compiler.Tests/Ir/O0353StringCapacityHoistingSafetyTests.cs:7
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/O0353StringCapacityHoistingSafetyTests.cs:14
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/O0353StringCapacityHoistingSafetyTests.cs:50
+
+### O0354O0359MiddleEndTests.cs  `C#, 177 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/O0354O0359MiddleEndTests.cs:3
 - class `O0354O0359MiddleEndTests` — Regression coverage for equality saturation and verified arithmetic lowering. — PowerBasic.Compiler.Tests/Ir/O0354O0359MiddleEndTests.cs:7
 
@@ -2513,9 +2832,41 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/OptimizationPortingLedgerTests.cs:3
 - class `OptimizationPortingLedgerTests` — How much of the optimization catalogue can move to the IR, and how much of it already has. — PowerBasic.Compiler.Tests/Ir/OptimizationPortingLedgerTests.cs:20
 
+### OptimizationStatusTableTests.cs  `C#, 95 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/OptimizationStatusTableTests.cs:3
+- class `OptimizationStatusTableTests` — The optimization table in the top-level README is a view of the pages under — PowerBasic.Compiler.Tests/Ir/OptimizationStatusTableTests.cs:16
+
 ### OverflowCheckLoweringTests.cs  `C#, 135 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/OverflowCheckLoweringTests.cs:5
 - class `OverflowCheckLoweringTests` — $ERROR OVERFLOW ON in the IR lowering. The direct emitter reads the overflow flag straight — PowerBasic.Compiler.Tests/Ir/OverflowCheckLoweringTests.cs:17
+
+### OwnershipBatchingTests.cs  `C#, 244 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/OwnershipBatchingTests.cs:3
+- class `OwnershipBatchingTests` — O0292: batching repeated dynamic-string ownership operations. — PowerBasic.Compiler.Tests/Ir/OwnershipBatchingTests.cs:7
+- record `LoopFixture` — PowerBasic.Compiler.Tests/Ir/OwnershipBatchingTests.cs:189
+- method `new` — PowerBasic.Compiler.Tests/Ir/OwnershipBatchingTests.cs:233
+
+### ParallelLoopVersioningTests.cs  `C#, 156 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ParallelLoopVersioningTests.cs:3
+- class `ParallelLoopVersioningTests` — PowerBasic.Compiler.Tests/Ir/ParallelLoopVersioningTests.cs:5
+- record `Fixture` — PowerBasic.Compiler.Tests/Ir/ParallelLoopVersioningTests.cs:8
+
+### ParallelPrefixScanTests.cs  `C#, 147 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ParallelPrefixScanTests.cs:3
+- class `ParallelPrefixScanTests` — O0313 — inclusive integer prefix-scan recognition and SSA recurrence formation. — PowerBasic.Compiler.Tests/Ir/ParallelPrefixScanTests.cs:7
+- record `Fixture` — PowerBasic.Compiler.Tests/Ir/ParallelPrefixScanTests.cs:9
+
+### ParallelReductionTests.cs  `C#, 140 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ParallelReductionTests.cs:3
+- class `ParallelReductionTests` — O0312 — reduction recognition for hosted parallel-loop lowering. The tests deliberately exercise — PowerBasic.Compiler.Tests/Ir/ParallelReductionTests.cs:11
+- method `IrConstantFloat(type, 1.25)` — PowerBasic.Compiler.Tests/Ir/ParallelReductionTests.cs:116
+- method `IrBinary(op, input, accumulator)` — PowerBasic.Compiler.Tests/Ir/ParallelReductionTests.cs:125
+- method `new` — PowerBasic.Compiler.Tests/Ir/ParallelReductionTests.cs:134
+- record `Fixture` — PowerBasic.Compiler.Tests/Ir/ParallelReductionTests.cs:137
+
+### PassListDocumentationTests.cs  `C#, 34 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PassListDocumentationTests.cs:2
+- class `PassListDocumentationTests` — The sentence in that lists which passes Standard leaves off has — PowerBasic.Compiler.Tests/Ir/PassListDocumentationTests.cs:15
 
 ### PeekPokeLoweringTests.cs  `C#, 119 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PeekPokeLoweringTests.cs:6
@@ -2527,6 +2878,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 ### PeepholeTests.cs  `C#, 76 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PeepholeTests.cs:3
 - class `PeepholeTests` — Additional sound InstCombine peephole identities. — PowerBasic.Compiler.Tests/Ir/PeepholeTests.cs:7
+
+### PerfectHashStaticSearchTests.cs  `C#, 90 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PerfectHashStaticSearchTests.cs:3
+- class `PerfectHashStaticSearchTests` — O0335 — byte static searches must reach the word-sized backend dispatch selector. — PowerBasic.Compiler.Tests/Ir/PerfectHashStaticSearchTests.cs:7
 
 ### PhiBranchFoldingTests.cs  `C#, 122 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PhiBranchFoldingTests.cs:3
@@ -2540,13 +2895,35 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PipelineSoundnessTests.cs:5
 - class `PipelineSoundnessTests` — A safety net for the whole middle-end: lower a spread of representative programs and — PowerBasic.Compiler.Tests/Ir/PipelineSoundnessTests.cs:14
 
+### PointerCompressionTests.cs  `C#, 110 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PointerCompressionTests.cs:3
+- class `PointerCompressionTests` — PowerBasic.Compiler.Tests/Ir/PointerCompressionTests.cs:5
+
 ### PortedMidEndOptimizationsTests.cs  `C#, 157 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PortedMidEndOptimizationsTests.cs:5
 - class `PortedMidEndOptimizationsTests` — Mid-end optimizations the IR pipeline already achieves, each verified rather than assumed. — PowerBasic.Compiler.Tests/Ir/PortedMidEndOptimizationsTests.cs:20
 
+### PostLinkOptimizationTests.cs  `C#, 158 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PostLinkOptimizationTests.cs:3
+- class `PostLinkOptimizationTests` — O0276 — middle-end post-link layout planning. These tests pin the contract the eventual fragment — PowerBasic.Compiler.Tests/Ir/PostLinkOptimizationTests.cs:11
+- method `new` — PowerBasic.Compiler.Tests/Ir/PostLinkOptimizationTests.cs:152
+- record `Fixture` — PowerBasic.Compiler.Tests/Ir/PostLinkOptimizationTests.cs:155
+
 ### PrintLoweringTests.cs  `C#, 86 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PrintLoweringTests.cs:5
 - class `PrintLoweringTests` — Numeric PRINT lowering via a runtime-call ABI (the computation is optimized; output is a runtime ca… — PowerBasic.Compiler.Tests/Ir/PrintLoweringTests.cs:9
+
+### ProfileGuidedCodeLayoutTests.cs  `C#, 185 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ProfileGuidedCodeLayoutTests.cs:3
+- class `ProfileGuidedCodeLayoutTests` — O0274 — profile-guided code layout over current IR CFG edge counts. — PowerBasic.Compiler.Tests/Ir/ProfileGuidedCodeLayoutTests.cs:7
+
+### ProfileGuidedInliningTests.cs  `C#, 101 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ProfileGuidedInliningTests.cs:3
+- class `ProfileGuidedInliningTests` — PowerBasic.Compiler.Tests/Ir/ProfileGuidedInliningTests.cs:5
+
+### ProfileGuidedLoopOptimizationTests.cs  `C#, 140 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ProfileGuidedLoopOptimizationTests.cs:8
+- class `ProfileGuidedLoopOptimizationTests` — O0272 profile-guided loop policy: distribution-aware small-trip peeling with fallback. — PowerBasic.Compiler.Tests/Ir/ProfileGuidedLoopOptimizationTests.cs:12
 
 ### RadixIntrinsicLoweringTests.cs  `C#, 96 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/RadixIntrinsicLoweringTests.cs:4
@@ -2574,9 +2951,13 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ReadOnlyGlobalsTests.cs:3
 - class `ReadOnlyGlobalsTests` — O0165 — read-only global propagation. As with the other interprocedural passes, the cases that — PowerBasic.Compiler.Tests/Ir/ReadOnlyGlobalsTests.cs:11
 
-### ReassociateTests.cs  `C#, 105 lines`
+### ReassociateTests.cs  `C#, 123 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ReassociateTests.cs:3
 - class `ReassociateTests` — O0061 — reassociation. The pass is judged on what it EXPOSES, not on the tree it builds: a — PowerBasic.Compiler.Tests/Ir/ReassociateTests.cs:11
+
+### ReciprocalApproximationTests.cs  `C#, 87 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ReciprocalApproximationTests.cs:3
+- class `ReciprocalApproximationTests` — O0341 — reciprocal approximation lowering into LLVM target-selected estimates. — PowerBasic.Compiler.Tests/Ir/ReciprocalApproximationTests.cs:7
 
 ### RecurrenceClosedFormTests.cs  `C#, 132 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/RecurrenceClosedFormTests.cs:5
@@ -2603,6 +2984,14 @@ with unrelated edits, so treat them as anchors, not gospel.
 ### ReproTests.cs  `C#, 41 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ReproTests.cs:5
 - class `InlineRegressionTests` — Regression tests for inlining interactions that previously produced invalid IR. — PowerBasic.Compiler.Tests/Ir/ReproTests.cs:9
+
+### ReturnStructureReductionPipelineTests.cs  `C#, 40 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ReturnStructureReductionPipelineTests.cs:3
+- class `ReturnStructureReductionPipelineTests` — PowerBasic.Compiler.Tests/Ir/ReturnStructureReductionPipelineTests.cs:5
+
+### ReturnStructureReductionTests.cs  `C#, 210 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ReturnStructureReductionTests.cs:3
+- class `ReturnStructureReductionTests` — PowerBasic.Compiler.Tests/Ir/ReturnStructureReductionTests.cs:5
 
 ### RuntimeStepForTests.cs  `C#, 83 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/RuntimeStepForTests.cs:5
@@ -2633,6 +3022,14 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/SelectLoweringTests.cs:5
 - class `SelectLoweringTests` — SELECT CASE lowering: value/list/range/IS arms and CASE ELSE as a comparison chain. — PowerBasic.Compiler.Tests/Ir/SelectLoweringTests.cs:9
 
+### SemanticFunctionMergingTests.cs  `C#, 182 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/SemanticFunctionMergingTests.cs:3
+- class `SemanticFunctionMergingTests` — PowerBasic.Compiler.Tests/Ir/SemanticFunctionMergingTests.cs:5
+
+### SemanticFunctionMergingThunkTests.cs  `C#, 163 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/SemanticFunctionMergingThunkTests.cs:3
+- class `SemanticFunctionMergingThunkTests` — PowerBasic.Compiler.Tests/Ir/SemanticFunctionMergingThunkTests.cs:5
+
 ### ShiftMergeTests.cs  `C#, 63 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ShiftMergeTests.cs:3
 - class `ShiftMergeTests` — InstCombine shift-chain merging. — PowerBasic.Compiler.Tests/Ir/ShiftMergeTests.cs:7
@@ -2640,6 +3037,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 ### ShiftStatementLoweringTests.cs  `C#, 77 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ShiftStatementLoweringTests.cs:4
 - class `ShiftStatementLoweringTests` — SHIFT LEFT v, n / SHIFT RIGHT v, n - a shift written as a statement, updating the — PowerBasic.Compiler.Tests/Ir/ShiftStatementLoweringTests.cs:14
+
+### SideExitDeoptimizationTests.cs  `C#, 163 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/SideExitDeoptimizationTests.cs:3
+- class `SideExitDeoptimizationTests` — O0310 — side exits are mostly a state-reconstruction problem. These tests build the shape directly — PowerBasic.Compiler.Tests/Ir/SideExitDeoptimizationTests.cs:11
+- record `Fixture` — PowerBasic.Compiler.Tests/Ir/SideExitDeoptimizationTests.cs:13
 
 ### SimplifyCfgFoldTests.cs  `C#, 61 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/SimplifyCfgFoldTests.cs:3
@@ -2649,29 +3051,62 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/SimplifyCfgTests.cs:5
 - class `SimplifyCfgTests` — SimplifyCFG: trivial-phi elimination and single-predecessor block merging. — PowerBasic.Compiler.Tests/Ir/SimplifyCfgTests.cs:9
 
+### SpeculativeIntegerNarrowingTests.cs  `C#, 153 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/SpeculativeIntegerNarrowingTests.cs:3
+- class `SpeculativeIntegerNarrowingTests` — O0309 — one scalar range guard versions a canonical loop so several 32-bit operations can run — PowerBasic.Compiler.Tests/Ir/SpeculativeIntegerNarrowingTests.cs:10
+- method `IrConstantInt` — PowerBasic.Compiler.Tests/Ir/SpeculativeIntegerNarrowingTests.cs:145
+
 ### StackProbeLoweringTests.cs  `C#, 124 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StackProbeLoweringTests.cs:6
 - class `StackProbeLoweringTests` — $ERROR STACK ON on the IR path: every procedure entry probes for headroom and raises — PowerBasic.Compiler.Tests/Ir/StackProbeLoweringTests.cs:21
 - method `Deep` — PowerBasic.Compiler.Tests/Ir/StackProbeLoweringTests.cs:53
 - method `Down(n - 1)` — PowerBasic.Compiler.Tests/Ir/StackProbeLoweringTests.cs:68
 
-### StaticDispatchOptimizationTests.cs  `C#, 152 lines`
+### StaticDispatchOptimizationTests.cs  `C#, 265 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StaticDispatchOptimizationTests.cs:3
 - class `StaticDispatchOptimizationTests` — O0334/O0335/O0336 — constant-set search and byte-classification dispatch recovery. — PowerBasic.Compiler.Tests/Ir/StaticDispatchOptimizationTests.cs:7
-- method `Visit` — PowerBasic.Compiler.Tests/Ir/StaticDispatchOptimizationTests.cs:137
-- method `if(Visit(successor))` — PowerBasic.Compiler.Tests/Ir/StaticDispatchOptimizationTests.cs:144
+- method `Visit` — PowerBasic.Compiler.Tests/Ir/StaticDispatchOptimizationTests.cs:250
+- method `if(Visit(successor))` — PowerBasic.Compiler.Tests/Ir/StaticDispatchOptimizationTests.cs:257
 
 ### StrengthReductionTests.cs  `C#, 72 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StrengthReductionTests.cs:3
 - class `StrengthReductionTests` — InstCombine strength reduction: power-of-two multiply/divide/remainder become shifts and masks. — PowerBasic.Compiler.Tests/Ir/StrengthReductionTests.cs:7
 
+### StringAllocationCoalescingTests.cs  `C#, 143 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringAllocationCoalescingTests.cs:3
+- class `StringAllocationCoalescingTests` — PowerBasic.Compiler.Tests/Ir/StringAllocationCoalescingTests.cs:5
+
 ### StringArrayLoweringTests.cs  `C#, 105 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringArrayLoweringTests.cs:6
 - class `StringArrayLoweringTests` — String arrays: a DIM of string elements allocates a buffer of target-sized pointer — PowerBasic.Compiler.Tests/Ir/StringArrayLoweringTests.cs:14
 
+### StringBuilderRecognitionTests.cs  `C#, 96 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringBuilderRecognitionTests.cs:3
+- class `StringBuilderRecognitionTests` — PowerBasic.Compiler.Tests/Ir/StringBuilderRecognitionTests.cs:5
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/StringBuilderRecognitionTests.cs:51
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler.Tests/Ir/StringBuilderRecognitionTests.cs:58
+
+### StringCompareEqualityTests.cs  `C#, 64 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringCompareEqualityTests.cs:3
+- class `StringCompareEqualityTests` — O0298: route string compares to the length-guarded equality-only runtime entry when ordering is uno… — PowerBasic.Compiler.Tests/Ir/StringCompareEqualityTests.cs:7
+
+### StringConstantFoldTests.cs  `C#, 44 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringConstantFoldTests.cs:3
+- class `StringConstantFoldTests` — O0299: comparisons between literal handles whose backing pool entry is already canonical. — PowerBasic.Compiler.Tests/Ir/StringConstantFoldTests.cs:7
+
+### StringCopyOnWriteElisionTests.cs  `C#, 149 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringCopyOnWriteElisionTests.cs:5
+- class `StringCopyOnWriteElisionTests` — O0293 — statically delayed duplication for non-escaping SSA string ownership lifetimes. — PowerBasic.Compiler.Tests/Ir/StringCopyOnWriteElisionTests.cs:9
+- record `Fixture` — PowerBasic.Compiler.Tests/Ir/StringCopyOnWriteElisionTests.cs:140
+
 ### StringLoweringTests.cs  `C#, 194 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringLoweringTests.cs:6
 - class `StringLoweringTests` — Basic string-variable support: assignment, concatenation, PRINT via the runtime-handle ABI. — PowerBasic.Compiler.Tests/Ir/StringLoweringTests.cs:10
+
+### StringMoveTests.cs  `C#, 146 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringMoveTests.cs:3
+- class `StringMoveTests` — O0296 — ownership-safe dynamic-string copy-to-move conversion. — PowerBasic.Compiler.Tests/Ir/StringMoveTests.cs:7
+- record `Fixture` — PowerBasic.Compiler.Tests/Ir/StringMoveTests.cs:137
 
 ### StringOwnershipTests.cs  `C#, 177 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringOwnershipTests.cs:6
@@ -2679,17 +3114,42 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Touch(value$)` — PowerBasic.Compiler.Tests/Ir/StringOwnershipTests.cs:109
 - method `Work(BYVAL input$)` — PowerBasic.Compiler.Tests/Ir/StringOwnershipTests.cs:135
 
+### StringResultBufferForwardingTests.cs  `C#, 120 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringResultBufferForwardingTests.cs:5
+- class `StringResultBufferForwardingTests` — O0295 is intentionally represented as owned-handle forwarding rather than an sret-style hidden — PowerBasic.Compiler.Tests/Ir/StringResultBufferForwardingTests.cs:14
+
+### StringSliceViewTests.cs  `C#, 190 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StringSliceViewTests.cs:5
+- class `StringSliceViewTests` — O0297 read-only substring views in the IR middle end. — PowerBasic.Compiler.Tests/Ir/StringSliceViewTests.cs:9
+
+### StructurePackingByRangeTests.cs  `C#, 78 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/StructurePackingByRangeTests.cs:3
+- class `StructurePackingByRangeTests` — PowerBasic.Compiler.Tests/Ir/StructurePackingByRangeTests.cs:5
+
 ### SwapLoweringTests.cs  `C#, 57 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/SwapLoweringTests.cs:5
 - class `SwapLoweringTests` — SWAP statement lowering (exchange of equally typed lvalues). — PowerBasic.Compiler.Tests/Ir/SwapLoweringTests.cs:9
 
-### SwitchFormationTests.cs  `C#, 243 lines`
+### SwitchFormationTests.cs  `C#, 266 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/SwitchFormationTests.cs:5
 - class `SwitchFormationTests` — : putting a SELECT CASE back together out of the per-arm compare — PowerBasic.Compiler.Tests/Ir/SwitchFormationTests.cs:20
+
+### TemporaryArrayFusionTests.cs  `C#, 75 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/TemporaryArrayFusionTests.cs:3
+- class `TemporaryArrayFusionTests` — PowerBasic.Compiler.Tests/Ir/TemporaryArrayFusionTests.cs:5
 
 ### UdtLoweringTests.cs  `C#, 173 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/UdtLoweringTests.cs:6
 - class `UdtLoweringTests` — User-defined TYPE records: a UDT variable is a packed byte buffer, and member access — PowerBasic.Compiler.Tests/Ir/UdtLoweringTests.cs:13
+
+### ValueProfileSpecializationTests.cs  `C#, 180 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/ValueProfileSpecializationTests.cs:3
+- class `ValueProfileSpecializationTests` — O0270 — guarded specialization from externally supplied argument value profiles. — PowerBasic.Compiler.Tests/Ir/ValueProfileSpecializationTests.cs:7
+- method `params(IrConstant Value, long Count)` — PowerBasic.Compiler.Tests/Ir/ValueProfileSpecializationTests.cs:11
+
+### WholeProgramDevirtualizationTests.cs  `C#, 179 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/WholeProgramDevirtualizationTests.cs:3
+- class `WholeProgramDevirtualizationTests` — O0279 — whole-program devirtualization. The pass may turn an indirect call into a direct one only — PowerBasic.Compiler.Tests/Ir/WholeProgramDevirtualizationTests.cs:11
 
 ### WriteSetEofLoweringTests.cs  `C#, 124 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/WriteSetEofLoweringTests.cs:6
@@ -2794,6 +3254,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Semantics` — PowerBasic.Compiler.Tests/Semantics/PbTypeTests.cs:2
 - class `PbTypeTests` — PowerBasic.Compiler.Tests/Semantics/PbTypeTests.cs:4
 
+### RedimRankBinderTests.cs  `C#, 64 lines`
+- namespace `PowerBasic.Compiler.Tests.Semantics` — PowerBasic.Compiler.Tests/Semantics/RedimRankBinderTests.cs:3
+- class `RedimRankBinderTests` — REDIM may replace an existing dynamic array's bounds, but its number of dimensions is part of — PowerBasic.Compiler.Tests/Semantics/RedimRankBinderTests.cs:11
+
 ### StaticAssertReflectionTests.cs  `C#, 143 lines`
 - namespace `PowerBasic.Compiler.Tests.Semantics` — PowerBasic.Compiler.Tests/Semantics/StaticAssertReflectionTests.cs:4
 - class `StaticAssertReflectionTests` — pb36 compile-time checking: $ASSERT cond [, "message"] is evaluated by the binder (emits no — PowerBasic.Compiler.Tests/Semantics/StaticAssertReflectionTests.cs:12
@@ -2870,7 +3334,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `source` — PowerBasic.Compiler.Tests/Syntax/InterpreterDialectTests.cs:141
 - field `source` — PowerBasic.Compiler.Tests/Syntax/InterpreterDialectTests.cs:154
 
-### InvalidSyntaxSurfaceTests.cs  `C#, 81 lines`
+### InvalidSyntaxSurfaceTests.cs  `C#, 82 lines`
 - namespace `PowerBasic.Compiler.Tests.Syntax` — PowerBasic.Compiler.Tests/Syntax/InvalidSyntaxSurfaceTests.cs:3
 - class `InvalidSyntaxSurfaceTests` — Syntax that belongs to no dialect. This is deliberately separate from — PowerBasic.Compiler.Tests/Syntax/InvalidSyntaxSurfaceTests.cs:13
 - record `InvalidForm` — Invalid in Bob Zale's lineage only. CALL DWORD is the case: DWORD is a TYPE keyword — PowerBasic.Compiler.Tests/Syntax/InvalidSyntaxSurfaceTests.cs:22
@@ -3100,12 +3564,38 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(sched[i].Start >= end)` — PowerBasic.Compiler/Asm/Assembler.Peephole.cs:221
 - method `if(peep[i].Start >= end)` — PowerBasic.Compiler/Asm/Assembler.Peephole.cs:227
 
+### Assembler.PostLink.cs  `C#, 116 lines`
+- namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:1
+- class `Assembler` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:2
+- method `switch(fixup.Kind)` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:31
+- method `InvalidOperationException($"Short jump to external label {fixup.Target} is not linkable.")` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:42
+- method `if` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:46
+- method `InvalidOperationException($"Label {fixup.Target} was referenced but never bound.")` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:48
+- method `if` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:49
+- method `ApplyFixup` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:52
+- method `new` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:68
+- method `if(opcode == 0xEB)` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:80
+- method `new(fixup.Position - 1, 2, AsmRelativeFixupKind.Jump, 0, target)` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:81
+- method `if(opcode is >= 0x70 and <= 0x7F)` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:82
+- method `if(opcode == 0xE8)` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:90
+- method `new(fixup.Position - 1, 3, AsmRelativeFixupKind.Call, 0, target)` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:91
+- method `if(opcode == 0xE9)` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:92
+- method `new(fixup.Position - 1, 3, AsmRelativeFixupKind.Jump, 0, target)` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:93
+- method `if(fixup.Position >= 2 && this._buffer[fixup.Position - 2] == 0x0F && o…` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:94
+- method `if(inverse is not (>= 0x70 and <= 0x7F) || this._buffer[start + 1] != 0…` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:104
+- method `InvalidOperationException("rel16 conditional-pair fixup does not describe an 8086 Jcc/JMP pair…` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:106
+- method `new(start, 5, AsmRelativeFixupKind.Conditional, (byte)((inverse & 0x0F) …` — PowerBasic.Compiler/Asm/Assembler.PostLink.cs:107
+
 ### Assembler.Schedule.cs  `C#, 188 lines`
 - namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/Assembler.Schedule.cs:2
 - class `Assembler` — PowerBasic.Compiler/Asm/Assembler.Schedule.cs:4
 - record `SchedInstr` — A recorded instruction's data dependencies: which word registers, flags, and memory it reads — PowerBasic.Compiler/Asm/Assembler.Schedule.cs:21
 - method `if(order != null)` — PowerBasic.Compiler/Asm/Assembler.Schedule.cs:128
 - method `MemMayAlias(a, b)` — PowerBasic.Compiler/Asm/Assembler.Schedule.cs:158
+
+### Assembler.Sib.cs  `C#, 81 lines`
+- namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/Assembler.Sib.cs:1
+- class `Assembler` — PowerBasic.Compiler/Asm/Assembler.Sib.cs:2
 
 ### Assembler.Simd.Ssse3Sse4.cs  `C#, 129 lines`
 - namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/Assembler.Simd.Ssse3Sse4.cs:1
@@ -3184,9 +3674,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/Label.cs:1
 - class `Label` — A position inside the code buffer that may be referenced before it is — PowerBasic.Compiler/Asm/Label.cs:7
 
-### Mem.cs  `C#, 122 lines`
+### Mem.cs  `C#, 150 lines`
 - namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/Mem.cs:1
-- struct `Mem` — A 16-bit real-mode memory operand: any legal combination of base — PowerBasic.Compiler/Asm/Mem.cs:8
+- struct `Mem` — A real-mode memory/effective-address operand: 8086 16-bit base/index forms or, when a 386 — PowerBasic.Compiler/Asm/Mem.cs:8
 
 ### OperandSize.cs  `C#, 12 lines`
 - namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/OperandSize.cs:1
@@ -3197,11 +3687,14 @@ with unrelated edits, so treat them as anchors, not gospel.
 - enum `Reg` — x86 registers usable in 16-bit real mode. The low nibble is the hardware — PowerBasic.Compiler/Asm/Reg.cs:7
 - class `RegExtensions` — Classification and encoding helpers for . — PowerBasic.Compiler/Asm/Reg.cs:27
 
-### RelocatableImage.cs  `C#, 28 lines`
+### RelocatableImage.cs  `C#, 63 lines`
 - namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/RelocatableImage.cs:1
 - enum `AsmRelocationKind` — How a recorded relocation site has to be treated by a linker. — PowerBasic.Compiler/Asm/RelocatableImage.cs:4
 - record `AsmRelocation` — One linker-visible site inside a relocatable image; is set for external kinds. — PowerBasic.Compiler/Asm/RelocatableImage.cs:16
-- record `RelocatableImage` — Result of : the image with all internal — PowerBasic.Compiler/Asm/RelocatableImage.cs:24
+- enum `AsmRelativeFixupKind` — The semantic kind of an already-resolved internal PC-relative control transfer. — PowerBasic.Compiler/Asm/RelocatableImage.cs:19
+- record `AsmRelativeFixup` — One internal PC-relative instruction retained for post-link rewriting. — PowerBasic.Compiler/Asm/RelocatableImage.cs:30
+- record `AsmBoundLabel` — A bound assembler label, including anonymous block labels that are absent from the symbol table. — PowerBasic.Compiler/Asm/RelocatableImage.cs:38
+- record `RelocatableImage` — Result of : the image with all internal — PowerBasic.Compiler/Asm/RelocatableImage.cs:46
 
 ### St.cs  `C#, 26 lines`
 - namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/St.cs:1
@@ -3487,7 +3980,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, Wr…` — PowerBasic.Compiler/Backend/InstructionSelector.Dispatch.cs:420
 - method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.Dispatch.cs:437
 
-### InstructionSelector.Idioms.cs  `C#, 509 lines`
+### InstructionSelector.Idioms.cs  `C#, 514 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:3
 - class `InstructionSelector` — The selection patterns that span more than one IR instruction: shapes the optimizer has already — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:18
 - method `switch(instr)` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:80
@@ -3497,180 +3990,193 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(first.Op == second.Op || this._consumed.Contains(second) || first.Pa…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:123
 - method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:358
 - method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:361
-- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:423
-- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:493
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:496
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: true, WritesFlags: t…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:499
+- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:428
+- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:498
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:501
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: true, WritesFlags: t…` — PowerBasic.Compiler/Backend/InstructionSelector.Idioms.cs:504
 
-### InstructionSelector.cs  `C#, 4408 lines`
+### InstructionSelector.ReciprocalDivision.cs  `C#, 100 lines`
+- namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/InstructionSelector.ReciprocalDivision.cs:3
+- class `InstructionSelector` — PowerBasic.Compiler/Backend/InstructionSelector.ReciprocalDivision.cs:5
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.ReciprocalDivision.cs:38
+
+### InstructionSelector.cs  `C#, 4595 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3
 - class `InstructionSelector` — Stage 2 of the x86-16 back end (docs/X86-BACKEND.md): selects the typed-SSA IR into the — PowerBasic.Compiler/Backend/InstructionSelector.cs:16
-- method `if(phi.Type.IsFloat)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:167
-- method `if(IsWide(phi.Type))` — edge copies below are FLD/FSTP through it — PowerBasic.Compiler/Backend/InstructionSelector.cs:170
-- method `if(instr is IrPhi)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:188
-- method `if(ReferenceEquals(instr, block.Terminator))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:190
-- method `if(ReferenceEquals(instr, folded))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:195
-- method `if(this._consumed.Contains(instr))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:197
-- method `if(!this.SelectInstruction(instr, mblock))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:199
-- method `if(IsWide(phi.Type) && phi.IncomingBlocks.Any(predecessor => dominators…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:263
-- method `IsNativeExpression` — PowerBasic.Compiler/Backend/InstructionSelector.cs:266
-- method `if(phi.Operands.Any(value => !IsNativeExpression(value)))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:279
-- method `foreach(var phi in block.Phis)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:304
-- method `if(phi.Type.IsFloat)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:306
-- method `if(IsWide(phi.Type))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:315
-- method `if(this._vregs[phi].Size == MRegSize.Dword)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:316
-- method `if(!this.TryOperandPair(value, out var lowSource, out var highSource))` — both halves of a 32-bit phi are copied on the edge, low then high — PowerBasic.Compiler/Backend/InstructionSelector.cs:323
-- method `if(!this.TryOperand(value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:329
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [], …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:342
-- method `if(!stillNeeded)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:398
-- method `if(!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:468
-- method `if(lhs is not MOperand.Register)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:470
-- method `if(rhs is MOperand.Register)` — CMP wants a register on the left, and a constant there is not a dead end: comparing the — PowerBasic.Compiler/Backend/InstructionSelector.cs:474
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: fal…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:489
-- method `if(!this.TryOperand(valued.Condition, out var condition))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:515
-- method `if(condition is not MOperand.Register)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:517
-- method `if(!this.TryOperand(indirect.Address, out var address))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:533
-- method `if(address is not MOperand.Register)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:535
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:538
-- method `foreach(var target in indirect.Targets)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:540
-- method `AddSuccessor(this._current, target.Label)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:541
-- method `new(unchecked((sbyte)value))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:675
-- method `IsQuad(load.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:731
-- method `IsQuad(store.Value.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:733
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:815
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:853
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:913
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: true, WritesFlags: t…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:916
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:995
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:998
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1008
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1055
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1058
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1061
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1089
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1093
-- method `MInstrEffect` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1101
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1105
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1109
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1113
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1169
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [0, 1] : […` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1305
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1405
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: true, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1408
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1432
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1490
-- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1546
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1549
-- method `Capture` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1559
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: true, WritesFlags: true, …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1678
-- class `AsmNameKinds` — Answers the effect analysis' questions about identifiers the same way MachineEmitter's own — PowerBasic.Compiler/Backend/InstructionSelector.cs:1722
-- method `TryResolve` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1725
-- method `IndexOf` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1732
-- method `if(names[i].Equals(name, StringComparison.OrdinalIgnoreCase))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1735
-- method `if(this.PointerMemory(store.Pointer, MRegSize.Dword) is not { } cell)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1746
-- method `MInstrEffect([], native is MOperand.Register ? [1] : [], false, false, false, Wri…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1749
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: value is MOperand.Register ? [1] : [], Re…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1774
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1861
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1888
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(left, right), ReadsFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2013
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: fal…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2047
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2068
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2071
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2161
-- method `MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, Wr…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2167
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2221
-- method `MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, Wr…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2226
-- method `if(!this.TryOperand(cast.Value, out var truth))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2261
-- method `if(IsWide(to))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2264
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2268
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2278
-- method `IsWide(to)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2283
-- method `if(cast.Op == IrCastOp.ZExt)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2288
-- method `if(!this.TryFloatOperand(cast.Value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2307
-- method `if(!this.TryOperandPair(cast.Value, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2321
-- method `if(!this.TryFloatOperand(cast.Value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2335
-- method `if(!this.TryQwordSlot(cast.Value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2345
-- method `IsQuad(to)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2351
-- method `IsQuad(to)` — An INTEGER straight into a QUAD, which `q = q * 3 + n%` asks for. There are arms for 16->32 — PowerBasic.Compiler/Backend/InstructionSelector.cs:2357
-- method `if(!this.TryOperand(cast.Value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2365
-- method `if(source is MOperand.Register word)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2367
-- method `if(!IsWide(to))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2386
-- method `if(cast.Value is IrBlockAddress blockAddress)` — CODEPTR of a label: a point in this function's own code, which is the one address no — PowerBasic.Compiler/Backend/InstructionSelector.cs:2412
-- method `if(cast.Value is IrGlobalVariable global)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2420
-- method `if(!this.TryOperand(cast.Value, out var pointer))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2430
-- method `if(pointer is not MOperand.Register held)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2432
-- method `if(!this.TryOperand(cast.Value, out var word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2440
-- method `if(word is not MOperand.Register number)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2442
-- method `IsWide(from)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2447
-- method `if(lo is not MOperand.Register low)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2450
-- method `IsQuad(to)` — ...and when the i64 is a value the program KEEPS - a FIX cell is a scaled int64, so the — PowerBasic.Compiler/Backend/InstructionSelector.cs:2465
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2582
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2590
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: source is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2690
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2710
-- method `if(call.Args.FirstOrDefault() is not IrBlockAddress unwind)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2719
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2734
-- method `if(call.Args.FirstOrDefault() is not IrBlockAddress handler)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2739
-- method `if(call.Args.ToList() is not [IrBlockAddress start, IrBlockAddress next…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2760
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2774
-- method `if(!arg.Type.IsIeeeFloat)` — the print routines take a float on ST(0) and pop it themselves — PowerBasic.Compiler/Backend/InstructionSelector.cs:2853
-- method `if(!this.TryFloatOperand(arg, out var loaded))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2855
-- method `if(arg is not IrGlobalVariable global)` — the address of the data object, not its contents - a string literal the codegen pools — PowerBasic.Compiler/Backend/InstructionSelector.cs:2862
-- method `if(!this.TryRuntimePointer(arg, callee.Name, out var source, out var se…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2871
-- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 1 }, Value…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2883
-- method `if(!this.TryWordOperand(arg, $"{callee.Name} takes a 32-bit value in a …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2887
-- method `if(!IsWide(arg.Type))` — the row claims the high half does not matter; see ArgKind.LowWord for what backs the claim — PowerBasic.Compiler/Backend/InstructionSelector.cs:2896
-- method `if(!this.TryOperandPair(arg, out var low, out _))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2898
-- method `if(!IsWide(arg.Type))` — four words into one qword cell - the value's own two, then two zeroes - and FILD it. The — PowerBasic.Compiler/Backend/InstructionSelector.cs:2908
-- method `if(!this.TryOperandPair(arg, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2910
-- method `if(IsQuad(arg.Type) && this._qslots.TryGetValue(arg, out var loaded))` — A QUAD read out of storage is already in a qword cell of its own (SelectQwordLoad), so — PowerBasic.Compiler/Backend/InstructionSelector.cs:2926
-- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 64 }, Valu…` — The machine IR does not yet carry a general four-register i64 value. An optimized QUAD — PowerBasic.Compiler/Backend/InstructionSelector.cs:2933
-- method `if(IsWide(arg.Type))` — the word into the low register, the high one cleared - "XOR DX,DX" in the direct emitter — PowerBasic.Compiler/Backend/InstructionSelector.cs:2945
-- method `if(!this.TryOperand(arg, out var word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2947
-- method `if(!IsWide(arg.Type))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2959
-- method `if(!this.TryOperandPair(arg, out var lo, out var hi))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2961
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2994
-- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3162
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3236
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: handle is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3291
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3301
-- method `return(c.Value, c.Value)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3436
-- method `IsWide(bin.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3442
-- method `if(bin.Op == IrBinaryOp.And)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3447
-- method `MaskedRange(lhs, rhs)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3448
-- method `if(lhs is not { } left || rhs is not { } right)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3449
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3549
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3765
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3796
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3887
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3912
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3985
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [.. Enumerable.Range(0, registers.Length)…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4127
-- method `IsAddressableGlobal(g)` — A global's VALUE is its ADDRESS - MOV reg, OFFSET name - which is what DataOffset is. The — PowerBasic.Compiler/Backend/InstructionSelector.cs:4245
-- method `if(this._vregs.TryGetValue(value, out var reg))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4252
+- method `if(this.UsesNativeDwordRegisters)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:159
+- method `if(phi.Type.IsFloat)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:181
+- method `if(IsWide(phi.Type))` — edge copies below are FLD/FSTP through it — PowerBasic.Compiler/Backend/InstructionSelector.cs:184
+- method `if(instr is IrPhi)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:202
+- method `if(ReferenceEquals(instr, block.Terminator))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:204
+- method `if(ReferenceEquals(instr, folded))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:209
+- method `if(this._consumed.Contains(instr))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:211
+- method `if(!this.SelectInstruction(instr, mblock))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:213
+- method `if(IsWide(phi.Type) && phi.IncomingBlocks.Any(predecessor => dominators…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:277
+- method `IsNativeExpression` — PowerBasic.Compiler/Backend/InstructionSelector.cs:280
+- method `IsWide(argument.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:283
+- method `if(phi.Operands.Any(value => !IsNativeExpression(value)))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:294
+- method `foreach(var phi in block.Phis)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:319
+- method `if(phi.Type.IsFloat)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:321
+- method `if(IsWide(phi.Type))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:330
+- method `if(this._vregs[phi].Size == MRegSize.Dword)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:331
+- method `if(!this.TryOperandPair(value, out var lowSource, out var highSource))` — both halves of a 32-bit phi are copied on the edge, low then high — PowerBasic.Compiler/Backend/InstructionSelector.cs:338
+- method `if(!this.TryOperand(value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:344
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [], …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:357
+- method `if(!stillNeeded)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:413
+- method `if(!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:483
+- method `if(lhs is not MOperand.Register)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:485
+- method `if(rhs is MOperand.Register)` — CMP wants a register on the left, and a constant there is not a dead end: comparing the — PowerBasic.Compiler/Backend/InstructionSelector.cs:489
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: fal…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:504
+- method `if(!this.TryOperand(valued.Condition, out var condition))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:530
+- method `if(condition is not MOperand.Register)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:532
+- method `if(!this.TryOperand(indirect.Address, out var address))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:548
+- method `if(address is not MOperand.Register)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:550
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:553
+- method `foreach(var target in indirect.Targets)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:555
+- method `AddSuccessor(this._current, target.Label)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:556
+- method `new(unchecked((sbyte)value))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:690
+- method `IsQuad(load.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:746
+- method `IsQuad(store.Value.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:748
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: rhs is MOperand.Register ? [0, 1] : [0],…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:830
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:868
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:928
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: true, WritesFlags: t…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:931
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1010
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1013
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1023
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1070
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1073
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1076
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1104
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1108
+- method `MInstrEffect` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1116
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1120
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1124
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1128
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1151
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1203
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [0, 1] : […` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1339
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1439
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: true, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1442
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1466
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1524
+- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1580
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1583
+- method `Capture` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1593
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: true, WritesFlags: true, …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1712
+- class `AsmNameKinds` — Answers the effect analysis' questions about identifiers the same way MachineEmitter's own — PowerBasic.Compiler/Backend/InstructionSelector.cs:1756
+- method `TryResolve` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1759
+- method `IndexOf` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1766
+- method `if(names[i].Equals(name, StringComparison.OrdinalIgnoreCase))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1769
+- method `if(this.PointerMemory(store.Pointer, MRegSize.Dword) is not { } cell)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1780
+- method `MInstrEffect([], native is MOperand.Register ? [1] : [], false, false, false, Wri…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1783
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: value is MOperand.Register ? [1] : [], Re…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1808
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1895
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:1922
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(left, right), ReadsFlags: …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2047
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: fal…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2081
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2102
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2105
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2195
+- method `MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, Wr…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2201
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2255
+- method `MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, Wr…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2260
+- method `if(!this.TryOperand(cast.Value, out var truth))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2295
+- method `if(IsWide(to))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2298
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2302
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2312
+- method `IsWide(to)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2317
+- method `if(cast.Op == IrCastOp.ZExt)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2322
+- method `if(!this.TryFloatOperand(cast.Value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2341
+- method `if(!this.TryOperandPair(cast.Value, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2355
+- method `if(!this.TryFloatOperand(cast.Value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2369
+- method `if(!this.TryQwordSlot(cast.Value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2379
+- method `IsQuad(to)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2385
+- method `IsQuad(to)` — An INTEGER straight into a QUAD, which `q = q * 3 + n%` asks for. There are arms for 16->32 — PowerBasic.Compiler/Backend/InstructionSelector.cs:2391
+- method `if(!this.TryOperand(cast.Value, out var source))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2399
+- method `if(source is MOperand.Register word)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2401
+- method `if(!IsWide(to))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2420
+- method `if(cast.Value is IrBlockAddress blockAddress)` — CODEPTR of a label: a point in this function's own code, which is the one address no — PowerBasic.Compiler/Backend/InstructionSelector.cs:2446
+- method `if(cast.Value is IrFunction function)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2454
+- method `if(cast.Value is IrGlobalVariable global)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2462
+- method `if(!this.TryOperand(cast.Value, out var pointer))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2472
+- method `if(pointer is not MOperand.Register held)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2474
+- method `if(!this.TryOperand(cast.Value, out var word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2482
+- method `if(word is not MOperand.Register number)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2484
+- method `IsWide(from)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2489
+- method `if(lo is not MOperand.Register low)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2492
+- method `IsQuad(to)` — ...and when the i64 is a value the program KEEPS - a FIX cell is a scaled int64, so the — PowerBasic.Compiler/Backend/InstructionSelector.cs:2507
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: callReadRegs, ReadsFlags: false, WritesFl…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2665
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2673
+- method `MovEffect(destination, source)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2727
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: source is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2827
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2847
+- method `if(call.Args.FirstOrDefault() is not IrBlockAddress unwind)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2856
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2871
+- method `if(call.Args.FirstOrDefault() is not IrBlockAddress handler)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2876
+- method `if(call.Args.ToList() is not [IrBlockAddress start, IrBlockAddress next…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2897
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2911
+- method `if(!arg.Type.IsIeeeFloat)` — the print routines take a float on ST(0) and pop it themselves — PowerBasic.Compiler/Backend/InstructionSelector.cs:2990
+- method `if(!this.TryFloatOperand(arg, out var loaded))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2992
+- method `if(arg is not IrGlobalVariable global)` — the address of the data object, not its contents - a string literal the codegen pools — PowerBasic.Compiler/Backend/InstructionSelector.cs:2999
+- method `if(!this.TryRuntimePointer(arg, callee.Name, out var source, out var se…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3008
+- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 1 }, Value…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3020
+- method `if(!this.TryWordOperand(arg, $"{callee.Name} takes a 32-bit value in a …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3024
+- method `if(!IsWide(arg.Type))` — the row claims the high half does not matter; see ArgKind.LowWord for what backs the claim — PowerBasic.Compiler/Backend/InstructionSelector.cs:3033
+- method `if(!this.TryOperandPair(arg, out var low, out _))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3035
+- method `if(!IsWide(arg.Type))` — four words into one qword cell - the value's own two, then two zeroes - and FILD it. The — PowerBasic.Compiler/Backend/InstructionSelector.cs:3045
+- method `if(!this.TryOperandPair(arg, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3047
+- method `if(IsQuad(arg.Type) && this._qslots.TryGetValue(arg, out var loaded))` — A QUAD read out of storage is already in a qword cell of its own (SelectQwordLoad), so — PowerBasic.Compiler/Backend/InstructionSelector.cs:3063
+- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 64 }, Valu…` — The machine IR does not yet carry a general four-register i64 value. An optimized QUAD — PowerBasic.Compiler/Backend/InstructionSelector.cs:3070
+- method `if(IsWide(arg.Type))` — the word into the low register, the high one cleared - "XOR DX,DX" in the direct emitter — PowerBasic.Compiler/Backend/InstructionSelector.cs:3082
+- method `if(!this.TryOperand(arg, out var word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3084
+- method `if(!IsWide(arg.Type))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3096
+- method `if(!this.TryOperandPair(arg, out var lo, out var hi))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3098
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3131
+- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3299
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3373
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: handle is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3428
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3438
+- method `return(c.Value, c.Value)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3573
+- method `IsWide(bin.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3579
+- method `if(bin.Op == IrBinaryOp.And)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3584
+- method `MaskedRange(lhs, rhs)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3585
+- method `if(lhs is not { } left || rhs is not { } right)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3586
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3686
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3902
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3933
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4051
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4076
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4149
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [.. Enumerable.Range(0, registers.Length)…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4300
+- method `IsAddressableGlobal(g)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4432
+- method `if(this._vregs.TryGetValue(value, out var reg))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4439
 
-### LateLoadStoreOptimization.cs  `C#, 188 lines`
+### LateLoadStoreOptimization.cs  `C#, 239 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:2
-- class `LateLoadStoreOptimization` — Local stack-slot forwarding after spilling and allocation. This is intentionally conservative: — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:11
-- method `if` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:33
-- method `if(known.TryGetValue(key, out var value))` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:36
-- method `if(value.Source is MOperand.Register { Reg: var held } && destination i…` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:38
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: value.Source is MOperand.Register ? [1] …` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:43
-- method `MarkOverlappingReads(known, key)` — A differently-sized access to the same spill slot is a real memory read. It cannot be — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:51
-- method `InvalidateOverlaps(known, key, keepExact: true)` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:55
-- method `if(known.TryGetValue(key, out var previous) && SameValue(previous.Sourc…` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:56
-- method `if(known.TryGetValue(key, out previous) && !previous.ReadSinceStore && …` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:60
-- method `foreach(var slot in original.Operands.OfType<MOperand.StackSlot>())` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:68
-- method `if` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:70
-- method `if(original.Effect.WritesMemory)` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:73
-- method `if` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:76
-- method `if` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:79
-- method `InvalidateWrittenRegisters(emitted, known, allocation)` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:81
-- record `SlotKey` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:164
-- method `Of(MOperand.StackSlot slot)` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:166
-- method `Overlaps` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:167
-- method `Bytes` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:175
-- record `KnownValue` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:185
+- class `LateLoadStoreOptimization` — Local stack-slot forwarding after spilling and allocation. This is intentionally conservative: — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:12
+- method `if` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:34
+- method `if(known.TryGetValue(key, out var value))` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:37
+- method `if(value.Source is MOperand.Register { Reg: var held } && destination i…` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:39
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: value.Source is MOperand.Register ? [1] …` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:44
+- method `MarkOverlappingReads(known, key)` — A differently-sized access to the same spill slot is a real memory read. It cannot be — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:52
+- method `InvalidateOverlaps(known, key, keepExact: true)` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:56
+- method `if(known.TryGetValue(key, out var previous) && SameValue(previous.Sourc…` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:57
+- method `if(known.TryGetValue(key, out previous) && !previous.ReadSinceStore && …` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:61
+- method `foreach(var slot in original.Operands.OfType<MOperand.StackSlot>())` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:69
+- method `if` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:71
+- method `if(original.Effect.WritesMemory)` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:74
+- method `if` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:77
+- method `if` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:80
+- method `InvalidateWrittenRegisters(emitted, known, allocation)` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:82
+- record `RegisterSlice` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:192
+- method `TryOf(Reg register, out RegisterSlice slice)` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:194
+- method `Overlaps` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:211
+- record `SlotKey` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:215
+- method `Of(MOperand.StackSlot slot)` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:217
+- method `Overlaps` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:218
+- method `Bytes` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:226
+- record `KnownValue` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:236
 
 ### LinearScanAllocator.AsmFlow.cs  `C#, 272 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/LinearScanAllocator.AsmFlow.cs:2
@@ -3752,43 +4258,54 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(index.TryGetValue(successor, out var s) && s <= b && end[b] > start[…` — PowerBasic.Compiler/Backend/LivenessAnalysis.cs:219
 - method `if(interval.Start <= head && interval.End >= tail)` — PowerBasic.Compiler/Backend/LivenessAnalysis.cs:227
 
-### MachineCombiner.cs  `C#, 106 lines`
+### MachineCombiner.cs  `C#, 274 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/MachineCombiner.cs:2
 - class `MachineCombiner` — Target-level combining after instruction selection. These patterns deliberately depend on x86 — PowerBasic.Compiler/Backend/MachineCombiner.cs:10
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: t…` — PowerBasic.Compiler/Backend/MachineCombiner.cs:35
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/MachineCombiner.cs:63
-- method `Add(memory.Base)` — PowerBasic.Compiler/Backend/MachineCombiner.cs:76
-- method `Add(memory.Index)` — PowerBasic.Compiler/Backend/MachineCombiner.cs:77
-- method `Add(memory.Segment)` — PowerBasic.Compiler/Backend/MachineCombiner.cs:78
-- method `Add` — PowerBasic.Compiler/Backend/MachineCombiner.cs:81
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/MachineCombiner.cs:64
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/MachineCombiner.cs:67
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/MachineCombiner.cs:98
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: t…` — PowerBasic.Compiler/Backend/MachineCombiner.cs:165
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/MachineCombiner.cs:193
+- method `Add(memory.Base)` — PowerBasic.Compiler/Backend/MachineCombiner.cs:206
+- method `Add(memory.Index)` — PowerBasic.Compiler/Backend/MachineCombiner.cs:207
+- method `Add(memory.Segment)` — PowerBasic.Compiler/Backend/MachineCombiner.cs:208
+- method `Add` — PowerBasic.Compiler/Backend/MachineCombiner.cs:211
+- method `Scan` — PowerBasic.Compiler/Backend/MachineCombiner.cs:233
+- method `for` — PowerBasic.Compiler/Backend/MachineCombiner.cs:237
+- method `if(instruction.Effect.ReadsFlags && !ReadsOnlyCompareTestEquivalentFlag…` — PowerBasic.Compiler/Backend/MachineCombiner.cs:240
+- method `if(OverwritesAuxiliaryFlag(instruction))` — PowerBasic.Compiler/Backend/MachineCombiner.cs:242
+- method `foreach` — PowerBasic.Compiler/Backend/MachineCombiner.cs:245
 
-### MachineEmitter.cs  `C#, 665 lines`
+### MachineEmitter.cs  `C#, 711 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/MachineEmitter.cs:2
 - class `MachineEmitter` — Stage 5 of the x86-16 back end (docs/X86-BACKEND.md): emission. Given a selected — PowerBasic.Compiler/Backend/MachineEmitter.cs:14
-- method `if(allocation.TryGetValue(virtualId, out var reg))` — PowerBasic.Compiler/Backend/MachineEmitter.cs:132
-- method `if(instr.Opcode == MOpcode.Ret)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:144
-- method `onReturn(asm)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:146
-- method `if(elideFrame)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:147
-- method `if(positions.TryGetValue(successor, out var target) && target <= index)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:187
-- method `if(cell is not null && cell != name)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:218
-- method `if(ops[0] is MOperand.Register exchangeRegister)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:245
-- method `if(this.ToSource(ops[0]) is Mem factor)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:268
-- method `if(this.ToSource(ops[1]) is Mem im)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:277
-- method `if(ops[0] is MOperand.Register incReg)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:286
-- method `if(ops[0] is MOperand.Register decReg)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:292
-- method `if(ops[0] is MOperand.Register negReg)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:300
-- method `if(ops[0] is MOperand.Register notReg)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:306
-- method `if(this.ToSource(ops[0]) is Mem divisor)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:313
-- method `if(ops[0] is MOperand.Register jumpThrough)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:332
-- method `resolve(callee)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:344
-- method `switch(this.ToSource(ops[0]))` — PowerBasic.Compiler/Backend/MachineEmitter.cs:351
-- method `BackendInvariantException("MachineEmitter.ResolveData", $"no data cell for global '{name}' - C…` — PowerBasic.Compiler/Backend/MachineEmitter.cs:553
-- method `BackendInvariantException("MachineEmitter.EmitInlineAsm", "an MOpcode.InlineAsm instruction ha…` — PowerBasic.Compiler/Backend/MachineEmitter.cs:574
-- method `BackendInvariantException("MachineEmitter.EmitInlineAsm", $"inline asm '{descriptor.Text.Trim(…` — PowerBasic.Compiler/Backend/MachineEmitter.cs:589
-- class `FrameResolver` — Answers inline-asm identifiers from what the selector paired with them - a frame cell for a — PowerBasic.Compiler/Backend/MachineEmitter.cs:600
-- method `TryResolve(string name, out AsmSymbol symbol)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:601
+- method `if(allocation.TryGetValue(virtualId, out var reg))` — PowerBasic.Compiler/Backend/MachineEmitter.cs:143
+- method `if(instr.Opcode == MOpcode.Ret)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:162
+- method `onReturn(asm)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:164
+- method `if(elideFrame)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:165
+- method `if(positions.TryGetValue(successor, out var target) && target <= index)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:204
+- method `if(cell is not null && cell != name)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:235
+- method `if(ops[0] is MOperand.Register exchangeRegister)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:262
+- method `if(this.ToSource(ops[0]) is Mem factor)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:285
+- method `if(this.ToSource(ops[1]) is Mem im)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:294
+- method `if(address.Uses32BitAddressing)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:301
+- method `if(ops[0] is MOperand.Register incReg)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:310
+- method `if(ops[0] is MOperand.Register decReg)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:316
+- method `if(ops[0] is MOperand.Register negReg)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:324
+- method `if(ops[0] is MOperand.Register notReg)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:330
+- method `if(this.ToSource(ops[0]) is Mem divisor)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:337
+- method `if(ops[0] is MOperand.Register jumpThrough)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:356
+- method `switch(ops[0])` — PowerBasic.Compiler/Backend/MachineEmitter.cs:364
+- method `BackendInvariantException("MachineEmitter.EmitInstruction", $"CALL target {ops[0]} is neither …` — PowerBasic.Compiler/Backend/MachineEmitter.cs:375
+- method `switch(this.ToSource(ops[0]))` — PowerBasic.Compiler/Backend/MachineEmitter.cs:380
+- method `resolve(name)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:587
+- method `BackendInvariantException("MachineEmitter.ResolveData", $"no data cell for global '{name}' - C…` — PowerBasic.Compiler/Backend/MachineEmitter.cs:594
+- method `BackendInvariantException("MachineEmitter.EmitInlineAsm", "an MOpcode.InlineAsm instruction ha…` — PowerBasic.Compiler/Backend/MachineEmitter.cs:615
+- method `BackendInvariantException("MachineEmitter.EmitInlineAsm", $"inline asm '{descriptor.Text.Trim(…` — PowerBasic.Compiler/Backend/MachineEmitter.cs:630
+- class `FrameResolver` — Answers inline-asm identifiers from what the selector paired with them - a frame cell for a — PowerBasic.Compiler/Backend/MachineEmitter.cs:641
+- method `TryResolve(string name, out AsmSymbol symbol)` — PowerBasic.Compiler/Backend/MachineEmitter.cs:642
 
-### MachineIr.cs  `C#, 463 lines`
+### MachineIr.cs  `C#, 470 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/MachineIr.cs:2
 - enum `MRegSize` — The target-level machine IR the x86-16 back end selects the SSA IR into (docs/X86-BACKEND.md). — PowerBasic.Compiler/Backend/MachineIr.cs:18
 - record `MReg` — A register operand: a virtual id until allocation binds it to a physical register. — PowerBasic.Compiler/Backend/MachineIr.cs:21
@@ -3809,9 +4326,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - enum `MOpcode` — The x86-16 opcodes the selector targets; each maps to an method at emission. — PowerBasic.Compiler/Backend/MachineIr.cs:230
 - class `MOpcodes` — Facts about opcodes that the scheduler and the selector both need to agree on. — PowerBasic.Compiler/Backend/MachineIr.cs:318
 - class `MBlock` — A machine basic block: a label, its instructions in order, and its successor labels. — PowerBasic.Compiler/Backend/MachineIr.cs:348
-- method `if(operand is MOperand.BlockOffset target)` — PowerBasic.Compiler/Backend/MachineIr.cs:368
-- class `MFunction` — A machine function: its blocks, the number of virtual registers selection minted, and the stack-slo… — PowerBasic.Compiler/Backend/MachineIr.cs:375
-- method `foreach(var instr in block.Instructions)` — PowerBasic.Compiler/Backend/MachineIr.cs:458
+- method `if(operand is MOperand.BlockOffset target)` — PowerBasic.Compiler/Backend/MachineIr.cs:375
+- class `MFunction` — A machine function: its blocks, the number of virtual registers selection minted, and the stack-slo… — PowerBasic.Compiler/Backend/MachineIr.cs:382
+- method `foreach(var instr in block.Instructions)` — PowerBasic.Compiler/Backend/MachineIr.cs:465
 
 ### MachineLoopRotation.cs  `C#, 81 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/MachineLoopRotation.cs:1
@@ -3822,14 +4339,14 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `MachineOptimizationState` — Carries the optimizer-on decision from selection into the late machine pipeline without baking a — PowerBasic.Compiler/Backend/MachineOptimizationState.cs:12
 - class `Marker` — PowerBasic.Compiler/Backend/MachineOptimizationState.cs:13
 
-### MachineScheduler.cs  `C#, 193 lines`
+### MachineScheduler.cs  `C#, 200 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/MachineScheduler.cs:2
 - class `MachineScheduler` — Stage 6 of the x86-16 back end (docs/X86-BACKEND.md): instruction scheduling on the machine IR. — PowerBasic.Compiler/Backend/MachineScheduler.cs:14
-- method `if(value < 0)` — PowerBasic.Compiler/Backend/MachineScheduler.cs:111
-- method `if(!first.ContainsKey(value))` — PowerBasic.Compiler/Backend/MachineScheduler.cs:113
-- method `if(mem.Base is { } b)` — PowerBasic.Compiler/Backend/MachineScheduler.cs:181
-- method `if(mem.Index is { } x)` — PowerBasic.Compiler/Backend/MachineScheduler.cs:183
-- method `if(mem.Segment is { } s)` — PowerBasic.Compiler/Backend/MachineScheduler.cs:185
+- method `if(value < 0)` — PowerBasic.Compiler/Backend/MachineScheduler.cs:118
+- method `if(!first.ContainsKey(value))` — PowerBasic.Compiler/Backend/MachineScheduler.cs:120
+- method `if(mem.Base is { } b)` — PowerBasic.Compiler/Backend/MachineScheduler.cs:188
+- method `if(mem.Index is { } x)` — PowerBasic.Compiler/Backend/MachineScheduler.cs:190
+- method `if(mem.Segment is { } s)` — PowerBasic.Compiler/Backend/MachineScheduler.cs:192
 
 ### Peephole.cs  `C#, 543 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/Peephole.cs:1
@@ -3852,31 +4369,54 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if` — PowerBasic.Compiler/Backend/Peephole.cs:501
 - method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/Peephole.cs:536
 
-### PostRegisterAllocationPeepholes.cs  `C#, 110 lines`
+### PostRegisterAllocationPeepholes.cs  `C#, 280 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:2
 - class `PostRegisterAllocationPeepholes` — Local machine-IR simplifications that require the final virtual-to-physical allocation. — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:6
-- method `if(IsSelfCopy(block.Instructions[i], allocation))` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:17
-- method `if(i + 1 < block.Instructions.Count && TryPair(block.Instructions[i], b…` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:22
-- method `if(removeFirst)` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:27
-- method `if(i > 0)` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:30
+- method `for` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:21
+- method `if(IsSelfCopy(block.Instructions[i], allocation))` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:23
+- method `if(i + 1 < block.Instructions.Count && TryPair(block.Instructions[i], b…` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:28
+- method `if(removeFirst)` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:33
+- method `if(i > 0)` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:36
+- method `if` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:75
+- method `if(immediate.Value == long.MinValue)` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:141
+- method `if(displacement is < int.MinValue or > int.MaxValue)` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:144
+- method `if(sourcePhysical?.IsDword() != true || otherPhysical?.IsDword() != tru…` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:154
+- method `if(otherPhysical == Reg.ESP)` — PowerBasic.Compiler/Backend/PostRegisterAllocationPeepholes.cs:160
 
-### RuntimeAbi.cs  `C#, 945 lines`
+### ProcedureErrorHandlerPreservation.cs  `C#, 74 lines`
+- namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/ProcedureErrorHandlerPreservation.cs:1
+- class `ProcedureErrorHandlerPreservation` — Preserves the caller's process-global ON ERROR handler around one routed procedure body. — PowerBasic.Compiler/Backend/ProcedureErrorHandlerPreservation.cs:21
+- method `if(block.Instructions[index].Opcode != MOpcode.Ret)` — PowerBasic.Compiler/Backend/ProcedureErrorHandlerPreservation.cs:45
+- method `for(var cell = 0; cell < _cells.Length; ++cell)` — PowerBasic.Compiler/Backend/ProcedureErrorHandlerPreservation.cs:48
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/ProcedureErrorHandlerPreservation.cs:66
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/ProcedureErrorHandlerPreservation.cs:71
+
+### ProfileGuidedSpillCost.cs  `C#, 38 lines`
+- namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/ProfileGuidedSpillCost.cs:1
+- class `ProfileGuidedSpillCost` — O0273's target-specific spill cost: the expected number of register reads/writes that would become — PowerBasic.Compiler/Backend/ProfileGuidedSpillCost.cs:8
+- method `foreach(var value in reads)` — PowerBasic.Compiler/Backend/ProfileGuidedSpillCost.cs:24
+- method `Add(costs, value, frequency)` — PowerBasic.Compiler/Backend/ProfileGuidedSpillCost.cs:25
+- method `foreach(var value in writes)` — PowerBasic.Compiler/Backend/ProfileGuidedSpillCost.cs:26
+- method `Add(costs, value, frequency)` — PowerBasic.Compiler/Backend/ProfileGuidedSpillCost.cs:27
+
+### RuntimeAbi.cs  `C#, 999 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:2
 - class `RuntimeAbi` — The bridge between the IR's runtime declarations and the DOS runtime the direct code generator — PowerBasic.Compiler/Backend/RuntimeAbi.cs:20
 - enum `ArgKind` — Where one IR argument goes: registers, the x87 stack, or a target address. — PowerBasic.Compiler/Backend/RuntimeAbi.cs:23
 - record `RuntimeArg` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:123
 - enum `ResultKind` — How a routine hands its answer back, when the IR's result type is not simply the register. — PowerBasic.Compiler/Backend/RuntimeAbi.cs:127
 - record `Routine` — One runtime routine: the label the direct emitter calls, where its arguments go, what it — PowerBasic.Compiler/Backend/RuntimeAbi.cs:184
-- method `new(ArgKind.Word, Reg.CX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:341
-- method `new(ArgKind.Word, Reg.BX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:400
-- method `new(ArgKind.Pointer, Reg.DI, Reg.SI)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:545
-- method `new(ArgKind.Word, Reg.CX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:691
+- method `new(ArgKind.LowWord, Reg.CX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:310
+- method `new(ArgKind.Word, Reg.CX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:377
+- method `new(ArgKind.Word, Reg.BX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:452
+- method `new(ArgKind.Pointer, Reg.DI, Reg.SI)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:597
+- method `new(ArgKind.Word, Reg.CX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:743
 
 ### SelectionTarget.cs  `C#, 41 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/SelectionTarget.cs:1
 - record `SelectionTarget` — What the instruction selector is compiling for: the CPU generation it may assume and the — PowerBasic.Compiler/Backend/SelectionTarget.cs:13
 
-### Spiller.cs  `C#, 880 lines`
+### Spiller.cs  `C#, 895 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/Spiller.cs:1
 - class `Spiller` — The x86-16 back end's spilling (docs/X86-BACKEND.md): moving a value out of the register file and — PowerBasic.Compiler/Backend/Spiller.cs:23
 - record `Progress` — How far along the spiller is, as three counts that a move must lower to be worth applying. It is — PowerBasic.Compiler/Backend/Spiller.cs:57
@@ -3923,26 +4463,26 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(ReferenceEquals(instr, definition) || !Mentions(instr, virtualId))` — PowerBasic.Compiler/Backend/Spiller.cs:497
 - method `if(LivenessAnalysis.RegistersOf(instr).Writes.Contains(virtualId))` — PowerBasic.Compiler/Backend/Spiller.cs:499
 - method `if(ReferenceEquals(block.Instructions[i], definition))` — PowerBasic.Compiler/Backend/Spiller.cs:513
-- method `if(TrySplitArgument(function, census, interval.VirtualId, function.Argu…` — PowerBasic.Compiler/Backend/Spiller.cs:609
-- method `foreach` — PowerBasic.Compiler/Backend/Spiller.cs:620
-- method `for(var i = block.Instructions.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/Backend/Spiller.cs:622
-- method `if(definitionSet.Contains(instruction) || !Mentions(instruction, interv…` — PowerBasic.Compiler/Backend/Spiller.cs:624
-- method `if(LivenessAnalysis.RegistersOf(instruction).Writes.Contains(interval.V…` — PowerBasic.Compiler/Backend/Spiller.cs:626
-- method `for(var i = block.Instructions.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/Backend/Spiller.cs:638
-- method `if(!definitionSet.Contains(instruction))` — PowerBasic.Compiler/Backend/Spiller.cs:640
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/Spiller.cs:648
-- method `if(readsOldValue)` — PowerBasic.Compiler/Backend/Spiller.cs:650
-- method `BackendInvariantException("Spiller.SplitLiveRange", $"{definitions.Count} definitions of v{int…` — PowerBasic.Compiler/Backend/Spiller.cs:659
-- method `if(!Mentions(instruction, virtualId))` — PowerBasic.Compiler/Backend/Spiller.cs:685
-- method `switch(operand)` — PowerBasic.Compiler/Backend/Spiller.cs:705
-- method `Is(memory.Base, virtualId)` — PowerBasic.Compiler/Backend/Spiller.cs:710
-- method `Is(memory.Index, virtualId)` — PowerBasic.Compiler/Backend/Spiller.cs:713
-- method `Is(memory.Segment, virtualId)` — PowerBasic.Compiler/Backend/Spiller.cs:716
-- method `if(operand is MOperand.Memory mem && ((mem.Base is { IsVirtual: true } …` — PowerBasic.Compiler/Backend/Spiller.cs:800
-- method `if(positions.Count == 0)` — PowerBasic.Compiler/Backend/Spiller.cs:838
-- method `foreach(var at in positions)` — PowerBasic.Compiler/Backend/Spiller.cs:842
+- method `if(TrySplitArgument(function, census, interval.VirtualId, function.Argu…` — PowerBasic.Compiler/Backend/Spiller.cs:616
+- method `foreach` — PowerBasic.Compiler/Backend/Spiller.cs:627
+- method `for(var i = block.Instructions.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/Backend/Spiller.cs:629
+- method `if(definitionSet.Contains(instruction) || !Mentions(instruction, interv…` — PowerBasic.Compiler/Backend/Spiller.cs:631
+- method `if(LivenessAnalysis.RegistersOf(instruction).Writes.Contains(interval.V…` — PowerBasic.Compiler/Backend/Spiller.cs:633
+- method `for(var i = block.Instructions.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/Backend/Spiller.cs:645
+- method `if(!definitionSet.Contains(instruction))` — PowerBasic.Compiler/Backend/Spiller.cs:647
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/Spiller.cs:655
+- method `if(readsOldValue)` — PowerBasic.Compiler/Backend/Spiller.cs:657
+- method `BackendInvariantException("Spiller.SplitLiveRange", $"{definitions.Count} definitions of v{int…` — PowerBasic.Compiler/Backend/Spiller.cs:666
+- method `if(!Mentions(instruction, virtualId))` — PowerBasic.Compiler/Backend/Spiller.cs:692
+- method `switch(operand)` — PowerBasic.Compiler/Backend/Spiller.cs:712
+- method `Is(memory.Base, virtualId)` — PowerBasic.Compiler/Backend/Spiller.cs:717
+- method `Is(memory.Index, virtualId)` — PowerBasic.Compiler/Backend/Spiller.cs:720
+- method `Is(memory.Segment, virtualId)` — PowerBasic.Compiler/Backend/Spiller.cs:723
+- method `if(operand is MOperand.Memory mem && ((mem.Base is { IsVirtual: true } …` — PowerBasic.Compiler/Backend/Spiller.cs:815
+- method `if(positions.Count == 0)` — PowerBasic.Compiler/Backend/Spiller.cs:853
+- method `foreach(var at in positions)` — PowerBasic.Compiler/Backend/Spiller.cs:857
 
-### SuperoptimizedPeepholes.cs  `C#, 142 lines`
+### SuperoptimizedPeepholes.cs  `C#, 153 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:1
 - class `SuperoptimizedPeepholes` — A bounded superoptimizer for small one-register x86-16 peepholes. At startup it searches a tiny — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:9
 - method `if(!FlagsDeadAfter(block, i) || instruction.Condition is not null || in…` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:20
@@ -3950,9 +4490,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `unchecked((ushort)immediate.Value)` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:35
 - method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:53
 - method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: wri…` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:64
-- method `if(cost >= bestCost || !Equivalent(source, candidate))` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:85
-- enum `SourcePattern` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:138
-- enum `Candidate` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:140
+- method `if(cost >= bestCost || !Equivalent(source, candidate))` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:97
+- enum `SourcePattern` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:149
+- enum `Candidate` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:151
 
 ### X86CallAbi.cs  `C#, 57 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/X86CallAbi.cs:3
@@ -3961,33 +4501,41 @@ with unrelated edits, so treat them as anchors, not gospel.
 - enum `X86CallDistance` — The return-address width used by a 16-bit x86 call. — PowerBasic.Compiler/Backend/X86CallAbi.cs:13
 - record `X86CallAbi` — The concrete x86-16 rules selected from a source-level calling-convention identity. Register — PowerBasic.Compiler/Backend/X86CallAbi.cs:21
 
+### X87StackOptimizer.cs  `C#, 255 lines`
+- namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/X87StackOptimizer.cs:1
+- class `X87StackOptimizer` — O0348/O0349 — conservative x87 expression-stack scheduling and value retention after instruction — PowerBasic.Compiler/Backend/X87StackOptimizer.cs:22
+- record `Subtree` — PowerBasic.Compiler/Backend/X87StackOptimizer.cs:25
+- method `if(operand is MOperand.StackSlot slot)` — PowerBasic.Compiler/Backend/X87StackOptimizer.cs:50
+- method `if(rightFirstPeak <= _X87_DEPTH && rightFirstPeak < leftFirstPeak)` — PowerBasic.Compiler/Backend/X87StackOptimizer.cs:99
+- method `if` — PowerBasic.Compiler/Backend/X87StackOptimizer.cs:105
+
 ## PowerBasic.Compiler/CodeGen/
 
-### CodeGenerator.Arrays.cs  `C#, 891 lines`
+### CodeGenerator.Arrays.cs  `C#, 938 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:5
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:7
 - method `if(coverWrite != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:105
-- method `if(fillBytes % 4 != 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:521
-- method `new(Mem.At(Reg.BP, symbol.Offset + offset), false)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:685
-- method `for` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:688
-- method `if(this.CheckBounds && !provablyInRange)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:697
-- method `if(strides[d] != 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:703
-- method `if(d > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:705
-- method `if(d < bounds.Count - 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:709
+- method `if(fillBytes % 4 != 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:568
+- method `new(Mem.At(Reg.BP, symbol.Offset + offset), false)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:732
+- method `for` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:735
+- method `if(this.CheckBounds && !provablyInRange)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:744
+- method `if(strides[d] != 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:750
+- method `if(d > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:752
+- method `if(d < bounds.Count - 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:756
 
-### CodeGenerator.Backend.cs  `C#, 974 lines`
+### CodeGenerator.Backend.cs  `C#, 1005 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:8
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:10
-- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:213
-- method `if(!f.IsDeclaration && SwitchFormation.Run(f) > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:232
-- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:245
-- method `if(CalleeNames(candidates[i].Fn) .FirstOrDefault(name => !routable.Cont…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:313
-- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:340
-- method `if(this._backendMain is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:611
-- method `if(proc.Body is not { } body || !ReferencesVariable(body, symbol.Name))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:617
-- method `if(this._backendProcs.ContainsKey(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:619
-- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:779
-- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:787
+- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:223
+- method `if(!f.IsDeclaration && SwitchFormation.Run(f) > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:242
+- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:255
+- method `if(CalleeNames(candidates[i].Fn) .FirstOrDefault(name => !routable.Cont…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:334
+- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:362
+- method `if(this._backendMain is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:631
+- method `if(proc.Body is not { } body || !ReferencesVariable(body, symbol.Name))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:637
+- method `if(this._backendProcs.ContainsKey(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:639
+- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:801
+- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:809
 
 ### CodeGenerator.Data.cs  `C#, 73 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Data.cs:3
@@ -4269,7 +4817,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `SameVector` — PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsmZeroOverhead.cs:24
 - method `IsImmediateZero` — PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsmZeroOverhead.cs:30
 
-### CodeGenerator.Intrinsics.cs  `C#, 1307 lines`
+### CodeGenerator.Intrinsics.cs  `C#, 1317 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:5
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:7
 - method `switch(argType)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:173
@@ -4278,58 +4826,59 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(this.Optimize && intrinsic.Name == "INSTR" && needle is not AnyMatch…` — O0302: INSTR([k,] s$, "c") with a single-character constant needle scans for the byte — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:282
 - method `if(hasStart)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:285
 - method `if(hasStart)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:291
-- method `if(hasStart)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:299
+- method `if(this.Optimize && intrinsic.Name == "INSTR" && needle is not AnyMatch…` — O0302: multi-byte compile-time needles bypass dynamic-string materialization too. Short — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:303
 - method `if(hasStart)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:308
-- method `if(intrinsic.Name == "VERIFY")` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:312
-- method `if(intrinsic.Name == "TALLY")` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:332
-- method `if(args[0] is not StringLiteralExpr usingFormat)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:342
-- method `if(args.Count != 2)` — runtime format: single numeric field supported via rt_usingdyn — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:344
-- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:380
-- method `if(args[1] is not IntegerLiteralExpr { Value: 1 or 2 } attribute)` — FILEATTR(n, 1) is the mode the file was opened in and FILEATTR(n, 2) its DOS handle. The — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:395
-- method `if(attribute.Value == 2)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:400
-- method `foreach(var (internalMode, basicMode) in new[] { (0, 1), (1, 2), (2, 8), (3,…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:416
-- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:432
-- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Str)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:434
-- method `if(args.Count >= 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:441
-- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:443
-- method `for(var i = 1; i < args.Count; ++i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:462
-- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:499
-- method `if(this.Optimize)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:512
-- method `if(args.Count == 2)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:513
-- method `if(haveSource)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:519
-- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:524
-- method `switch(KindOf(model.TypeOf(args[0])))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:538
-- method `if(KindOf(model.TypeOf(args[1])) == ValueKind.Str)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:572
-- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:602
-- method `if(model.Dialect.IsPbAtLeast(Dialect.Pb31))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:611
-- method `switch(KindOf(model.TypeOf(args[0])))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:657
-- method `if(this.Optimize && !this.CheckOverflow)` — O0249 branchless abs: y = (x XOR mask) - mask where mask = CWD (all-ones iff negative), — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:664
-- method `if(this.Optimize && KindOf(type) == ValueKind.Int16)` — O0108/O0249: branchless integer sign. cwd puts the sign mask (0 / -1) in DX; neg sets CF iff x != 0; — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:699
-- method `if(onFpu)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:708
-- method `if(this.Optimize && KindOf(model.TypeOf(call)) == ValueKind.Int16 && ar…` — O0108/O0248: when every argument and the result are INTEGER, fold with an integer compare instead of — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:752
-- method `if(this.Optimize && KindOf(model.TypeOf(call)) == ValueKind.Int32 && ar…` — O0108/O0248: the same fold for all-LONG arguments, over DX:AX with a 32-bit signed compare. — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:758
-- method `for(var i = 1; i < args.Count; ++i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:765
-- method `if(wantMax)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:773
-- method `if(KindOf(model.TypeOf(args[0])) != ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:836
-- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:838
-- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Float)` — an integer is already whole, whichever way the rounding would have gone — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:849
-- method `if(KindOf(model.TypeOf(args[0])) != ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:858
-- method `if(this.EmitPlace(args[0]) is { } vp32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:890
-- method `if(model.TypeOf(args[0]) is StringType or FlexType && this.EmitPlace(ar…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:898
-- method `if(args.Count == 2)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1051
-- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1065
-- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1067
-- method `switch(intrinsic.Name)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1084
-- method `if(this._rt.Target.Has32BitGeneralPurpose)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1091
-- method `if(this._rt.Target.Has32BitGeneralPurpose)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1097
-- method `if(this._rt.Target.Has32BitGeneralPurpose)` — FPTAN; FSTP ST(0) is the 387 reading - discard what was pushed, keep the tangent — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1106
-- method `if(args.Count > 0 && TryLiteralValue(args[0]) == -11)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1149
-- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1153
-- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Str)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1155
-- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1157
-- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1165
-- method `if(args.Count > 2 && this.OptFolder.TryFold(args[2]) is not { Integer: …` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1188
-- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1201
+- method `if(hasStart)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:317
+- method `if(intrinsic.Name == "VERIFY")` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:321
+- method `if(intrinsic.Name == "TALLY")` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:341
+- method `if(args[0] is not StringLiteralExpr usingFormat)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:351
+- method `if(args.Count != 2)` — runtime format: single numeric field supported via rt_usingdyn — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:353
+- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:389
+- method `if(args[1] is not IntegerLiteralExpr { Value: 1 or 2 } attribute)` — FILEATTR(n, 1) is the mode the file was opened in and FILEATTR(n, 2) its DOS handle. The — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:404
+- method `if(attribute.Value == 2)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:409
+- method `foreach(var (internalMode, basicMode) in new[] { (0, 1), (1, 2), (2, 8), (3,…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:425
+- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:441
+- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Str)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:443
+- method `if(args.Count >= 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:450
+- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:452
+- method `for(var i = 1; i < args.Count; ++i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:471
+- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:508
+- method `if(this.Optimize)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:521
+- method `if(args.Count == 2)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:522
+- method `if(haveSource)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:528
+- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:533
+- method `switch(KindOf(model.TypeOf(args[0])))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:547
+- method `if(KindOf(model.TypeOf(args[1])) == ValueKind.Str)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:581
+- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:611
+- method `if(model.Dialect.IsPbAtLeast(Dialect.Pb31))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:620
+- method `switch(KindOf(model.TypeOf(args[0])))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:666
+- method `if(this.Optimize && !this.CheckOverflow)` — O0249 branchless abs: y = (x XOR mask) - mask where mask = CWD (all-ones iff negative), — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:673
+- method `if(this.Optimize && KindOf(type) == ValueKind.Int16)` — O0108/O0249: branchless integer sign. cwd puts the sign mask (0 / -1) in DX; neg sets CF iff x != 0; — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:708
+- method `if(onFpu)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:717
+- method `if(this.Optimize && KindOf(model.TypeOf(call)) == ValueKind.Int16 && ar…` — O0108/O0248: when every argument and the result are INTEGER, fold with an integer compare instead of — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:763
+- method `if(this.Optimize && KindOf(model.TypeOf(call)) == ValueKind.Int32 && ar…` — O0108/O0248: the same fold for all-LONG arguments, over DX:AX with a 32-bit signed compare. — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:769
+- method `for(var i = 1; i < args.Count; ++i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:776
+- method `if(wantMax)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:784
+- method `if(KindOf(model.TypeOf(args[0])) != ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:847
+- method `if(args.Count > 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:849
+- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Float)` — an integer is already whole, whichever way the rounding would have gone — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:860
+- method `if(KindOf(model.TypeOf(args[0])) != ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:869
+- method `if(this.EmitPlace(args[0]) is { } vp32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:901
+- method `if(model.TypeOf(args[0]) is StringType or FlexType && this.EmitPlace(ar…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:909
+- method `if(args.Count == 2)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1062
+- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1076
+- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1078
+- method `switch(intrinsic.Name)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1095
+- method `if(this._rt.Target.Has32BitGeneralPurpose)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1102
+- method `if(this._rt.Target.Has32BitGeneralPurpose)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1108
+- method `if(this._rt.Target.Has32BitGeneralPurpose)` — FPTAN; FSTP ST(0) is the 387 reading - discard what was pushed, keep the tangent — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1117
+- method `if(args.Count > 0 && TryLiteralValue(args[0]) == -11)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1160
+- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1164
+- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Str)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1166
+- method `if(KindOf(model.TypeOf(args[0])) == ValueKind.Float)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1168
+- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1176
+- method `if(args.Count > 2 && this.OptFolder.TryFold(args[2]) is not { Integer: …` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1199
+- method `if(args.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Intrinsics.cs:1212
 
 ### CodeGenerator.Io.cs  `C#, 422 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Io.cs:4
@@ -4411,6 +4960,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `foreach(var v in values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Optimize.cs:2461
 - method `switch(acc.Type)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Optimize.cs:2465
 
+### CodeGenerator.OverflowVectorization.cs  `C#, 123 lines`
+- namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.OverflowVectorization.cs:4
+- class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.OverflowVectorization.cs:6
+
 ### CodeGenerator.Places.cs  `C#, 1367 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Places.cs:5
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Places.cs:7
@@ -4458,43 +5011,63 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(b.Op == BinaryOp.Multiply && this.TryInt16MemOperand(b.Right, PbType…` — pb36 O8: a direct-memory right operand of a multiply reads straight into the one-operand — PowerBasic.Compiler/CodeGen/CodeGenerator.Places.cs:1348
 - method `switch(b.Op)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Places.cs:1358
 
-### CodeGenerator.Procs.cs  `C#, 1194 lines`
+### CodeGenerator.PostLink.cs  `C#, 240 lines`
+- namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:5
+- class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:7
+- record `PostLinkFunctionRange` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:11
+- method `InvalidOperationException("post-link function ranges must be recorded after both labels are bo…` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:28
+- method `checked((byte)relative.EncodedLength)` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:71
+- method `new(procedure, machine, functionStart, functionEnd)` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:116
+- method `if(!blockByLabel.TryGetValue(successor, out var successorIndex))` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:167
+- method `if(!successors.Contains(successorIndex))` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:169
+- method `if` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:178
+- method `if(terminal.EncodedLength > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:190
+- method `if(tail.Length == 0 || tail[^1].InstructionOffset + tail[^1].EncodedLen…` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:200
+- method `while(firstTail > 0 && tail[firstTail - 1].InstructionOffset + tail[firstT…` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:204
+- method `if(conditional.EncodedLength == 0 || !blockByTargetOffset.TryGetValue(c…` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:210
+- method `if` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLink.cs:221
+
+### CodeGenerator.PostLinkProfile.cs  `C#, 13 lines`
+- namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLinkProfile.cs:2
+- class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLinkProfile.cs:4
+
+### CodeGenerator.Procs.cs  `C#, 1205 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:5
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:7
-- method `if(general.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:243
-- method `if(local.Type is StringType or FlexType)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:260
-- method `if(sig.ReturnType is StringType or FlexType)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:373
-- method `Visit` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:480
-- method `Visit(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:490
-- method `foreach(var (_, armBody) in i.ElseIfs)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:491
-- method `Visit(armBody)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:492
-- method `if(i.Else != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:493
-- method `Visit(i.Else)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:494
-- method `foreach(var arm in s.Arms)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:497
-- method `Visit(arm.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:498
-- method `Visit` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:515
-- method `Visit(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:529
-- method `foreach(var (_, armBody) in i.ElseIfs)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:530
-- method `Visit(armBody)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:531
-- method `if(i.Else != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:532
-- method `Visit(i.Else)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:533
-- method `foreach(var arm in s.Arms)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:536
-- method `Visit(arm.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:537
-- record `InlinableLeaf` — Emits a SUB/FUNCTION invocation: arguments pushed left to right (BYREF = — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:585
-- field `maxStatements` — every body statement must be a scalar assignment whose target is a parameter, — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:625
-- method `if(dim.Storage != StorageClass.Local || dim.SharedFlag || dim.StaticFla…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:639
-- method `foreach(var decl in dim.Variables)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:642
-- method `if(local is not { Storage: VariableStorage.Local, Type: ScalarType } ||…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:646
-- method `if(!locals.Contains(local))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:648
-- method `InlinableLeaf` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:678
-- method `ReserveSlot` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:716
-- method `if(this.EmitPlace(args[i]) is not { Far: false } refPlace)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:729
-- method `if(resultKind == ValueKind.Int32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:910
-- method `if(resultKind == ValueKind.Int32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:920
-- method `if(parameterType is BcdType { IsFixedPoint: true })` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1146
-- method `switch(size)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1150
-- method `if(type is BcdType { IsFixedPoint: true })` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1173
-- method `switch(type.Size)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1178
+- method `if(general.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:247
+- method `if(local.Type is StringType or FlexType)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:264
+- method `if(sig.ReturnType is StringType or FlexType)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:377
+- method `Visit` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:484
+- method `Visit(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:494
+- method `foreach(var (_, armBody) in i.ElseIfs)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:495
+- method `Visit(armBody)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:496
+- method `if(i.Else != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:497
+- method `Visit(i.Else)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:498
+- method `foreach(var arm in s.Arms)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:501
+- method `Visit(arm.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:502
+- method `Visit` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:519
+- method `Visit(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:533
+- method `foreach(var (_, armBody) in i.ElseIfs)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:534
+- method `Visit(armBody)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:535
+- method `if(i.Else != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:536
+- method `Visit(i.Else)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:537
+- method `foreach(var arm in s.Arms)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:540
+- method `Visit(arm.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:541
+- record `InlinableLeaf` — Emits a SUB/FUNCTION invocation: arguments pushed left to right (BYREF = — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:589
+- field `maxStatements` — every body statement must be a scalar assignment whose target is a parameter, — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:629
+- method `if(dim.Storage != StorageClass.Local || dim.SharedFlag || dim.StaticFla…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:643
+- method `foreach(var decl in dim.Variables)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:646
+- method `if(local is not { Storage: VariableStorage.Local, Type: ScalarType } ||…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:650
+- method `if(!locals.Contains(local))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:652
+- method `InlinableLeaf` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:682
+- method `ReserveSlot` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:720
+- method `if(this.EmitPlace(args[i]) is not { Far: false } refPlace)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:733
+- method `if(resultKind == ValueKind.Int32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:921
+- method `if(resultKind == ValueKind.Int32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:931
+- method `if(parameterType is BcdType { IsFixedPoint: true })` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1157
+- method `switch(size)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1161
+- method `if(type is BcdType { IsFixedPoint: true })` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1184
+- method `switch(type.Size)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1189
 
 ### CodeGenerator.RuntimeTarget.cs  `C#, 97 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.RuntimeTarget.cs:2
@@ -4503,6 +5076,17 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(meta.Arguments.Count >= 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.RuntimeTarget.cs:65
 - method `if(token is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.RuntimeTarget.cs:75
 - method `if` — PowerBasic.Compiler/CodeGen/CodeGenerator.RuntimeTarget.cs:86
+
+### CodeGenerator.Search.cs  `C#, 246 lines`
+- namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Search.cs:4
+- class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Search.cs:6
+
+### CodeGenerator.SemanticMerge.cs  `C#, 169 lines`
+- namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.SemanticMerge.cs:6
+- class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.SemanticMerge.cs:8
+- record `BackendSemanticMerge` — PowerBasic.Compiler/CodeGen/CodeGenerator.SemanticMerge.cs:10
+- method `Candidate` — PowerBasic.Compiler/CodeGen/CodeGenerator.SemanticMerge.cs:42
+- method `CallTarget` — PowerBasic.Compiler/CodeGen/CodeGenerator.SemanticMerge.cs:46
 
 ### CodeGenerator.SoftwareX87.cs  `C#, 27 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.SoftwareX87.cs:2
@@ -4522,17 +5106,17 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(Math.Abs(raw) >= limit)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Trivial.cs:106
 - method `if(type.ByteSize > 4)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Trivial.cs:110
 
-### CodeGenerator.Units.cs  `C#, 313 lines`
+### CodeGenerator.Units.cs  `C#, 324 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:6
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:8
 - record `ListingProcedure` — One procedure entry in a . — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:23
 - record `ListingSymbol` — One named offset (a bound runtime label or a module data slot) in a . — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:26
 - record `ListingInfo` — A read-only, post-emission snapshot of the compiled image for the --list — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:33
 - method `SignatureOf` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:54
-- method `if(this.IsBackendRouted(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:144
-- method `ImportOf` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:231
-- method `switch` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:247
-- method `if(value < codeLength)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:251
+- method `if(this.IsBackendRouted(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:146
+- method `ImportOf` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:242
+- method `switch` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:258
+- method `if(value < codeLength)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:262
 
 ### CodeGenerator.Vendor.cs  `C#, 409 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Vendor.cs:4
@@ -4544,7 +5128,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(scalar.ByteSize == 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Vendor.cs:63
 - method `if(scalar.ByteSize == 4)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Vendor.cs:67
 
-### CodeGenerator.cs  `C#, 4402 lines`
+### CodeGenerator.cs  `C#, 4406 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:7
 - class `CodeGenerator` — Translates a bound program into a 16-bit real-mode DOS executable. — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:19
 - class `ForRangeScope` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:136
@@ -4604,51 +5188,51 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `AddArm` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:2930
 - method `if(SameOperand(thenValue, right) && SameOperand(elseValue, left))` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3036
 - method `if(SameOperand(m, right) && SameOperand(thenValue, left))` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3046
-- method `if(constantStep is { } cs16)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3192
-- method `if(cs16 >= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3195
-- method `if(stepSign == 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3214
-- method `if(stepSign >= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3218
-- method `if(stepSign == 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3228
-- method `if(stepSign <= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3230
-- method `if(stepSign == 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3244
-- method `if(stepSign >= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3252
-- method `if(stepSign == 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3260
-- method `if(stepSign <= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3262
-- method `if(isByte)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3373
-- method `if(this.CheckNumeric)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3395
-- method `if(this.CheckNumeric)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3401
-- method `if` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3568
-- method `if(!(kind is ValueKind.Int16 or ValueKind.Int32 && this.Optimize && thi…` — O0099: an arm listing several point values in a <=16-wide window (CASE 1, 3, 5, 9) tests — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3574
-- method `foreach(var selector in arm.Selectors)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3576
-- method `if(selector.Value == null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3577
-- method `switch(kind)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3581
-- method `if(elseArm != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3630
-- method `if(sel.Value == null || sel.RangeUpper != null || sel.IsComparison != n…` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3636
-- method `if(kind == ValueKind.Int16)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3638
-- method `if(this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is …` — Int32: values must be compile-time constants in LONG range — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3644
-- method `if(elseArm != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3763
-- method `if(sel.Value == null || sel.RangeUpper != null || sel.IsComparison != n…` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3769
-- method `if(this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is …` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3771
-- method `if(elseArm != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3871
-- method `if(sel.Value == null || sel.RangeUpper != null || sel.IsComparison != n…` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3877
-- method `if(this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is …` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3879
-- method `Tree` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3906
-- method `Tree(lo, mid - 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3917
-- method `Tree(mid + 1, hi)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3919
-- method `Tree(lo, mid - 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3922
-- method `Tree(mid + 1, hi)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3925
-- method `Collect` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4054
-- method `if(name is not NameExpr n || model.IntrinsicBindings.ContainsKey(n) || …` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4060
-- method `if(keyVar == null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4064
-- method `if(!model.VariableBindings.TryGetValue(keyVar, out var ksym) || !Refere…` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4066
-- method `if(this.OptFolder.TryFold(valueExpr) is not { Integer: { } v } || v is …` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4068
-- method `CompareSubjectWith` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4143
-- method `if(id.Increment)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4303
-- method `if(id.Increment)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4310
-- method `if(net == 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4333
-- method `if(net == -1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4335
-- method `if(net != 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4337
-- method `if(id.Increment)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4366
+- method `if(constantStep is { } cs16)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3196
+- method `if(cs16 >= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3199
+- method `if(stepSign == 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3218
+- method `if(stepSign >= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3222
+- method `if(stepSign == 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3232
+- method `if(stepSign <= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3234
+- method `if(stepSign == 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3248
+- method `if(stepSign >= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3256
+- method `if(stepSign == 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3264
+- method `if(stepSign <= 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3266
+- method `if(isByte)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3377
+- method `if(this.CheckNumeric)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3399
+- method `if(this.CheckNumeric)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3405
+- method `if` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3572
+- method `if(!(kind is ValueKind.Int16 or ValueKind.Int32 && this.Optimize && thi…` — O0099: an arm listing several point values in a <=16-wide window (CASE 1, 3, 5, 9) tests — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3578
+- method `foreach(var selector in arm.Selectors)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3580
+- method `if(selector.Value == null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3581
+- method `switch(kind)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3585
+- method `if(elseArm != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3634
+- method `if(sel.Value == null || sel.RangeUpper != null || sel.IsComparison != n…` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3640
+- method `if(kind == ValueKind.Int16)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3642
+- method `if(this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is …` — Int32: values must be compile-time constants in LONG range — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3648
+- method `if(elseArm != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3767
+- method `if(sel.Value == null || sel.RangeUpper != null || sel.IsComparison != n…` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3773
+- method `if(this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is …` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3775
+- method `if(elseArm != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3875
+- method `if(sel.Value == null || sel.RangeUpper != null || sel.IsComparison != n…` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3881
+- method `if(this.OptFolder.TryFold(sel.Value) is not { Integer: { } v } || v is …` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3883
+- method `Tree` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3910
+- method `Tree(lo, mid - 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3921
+- method `Tree(mid + 1, hi)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3923
+- method `Tree(lo, mid - 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3926
+- method `Tree(mid + 1, hi)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:3929
+- method `Collect` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4058
+- method `if(name is not NameExpr n || model.IntrinsicBindings.ContainsKey(n) || …` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4064
+- method `if(keyVar == null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4068
+- method `if(!model.VariableBindings.TryGetValue(keyVar, out var ksym) || !Refere…` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4070
+- method `if(this.OptFolder.TryFold(valueExpr) is not { Integer: { } v } || v is …` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4072
+- method `CompareSubjectWith` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4147
+- method `if(id.Increment)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4307
+- method `if(id.Increment)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4314
+- method `if(net == 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4337
+- method `if(net == -1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4339
+- method `if(net != 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4341
+- method `if(id.Increment)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:4370
 
 ### InlineAsmCanonicalizer.cs  `C#, 46 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/InlineAsmCanonicalizer.cs:2
@@ -5070,9 +5654,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `foreach(var item in items)` — PowerBasic.Compiler/CodeGen/OptReachability.cs:104
 - method `PushFlattened(stack, item)` — PowerBasic.Compiler/CodeGen/OptReachability.cs:105
 
-### OptRegParm.cs  `C#, 50 lines`
+### OptRegParm.cs  `C#, 105 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/OptRegParm.cs:3
-- class `OptRegParm` — pb36 $OPTIMIZE SPEED - internal register parameter passing. For a procedure the — PowerBasic.Compiler/CodeGen/OptRegParm.cs:23
+- class `OptRegParm` — pb36 $OPTIMIZE SPEED - private calling-convention specialization for procedures whose complete — PowerBasic.Compiler/CodeGen/OptRegParm.cs:28
 
 ### RuntimeTrimmer.cs  `C#, 100 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/RuntimeTrimmer.cs:3
@@ -5090,7 +5674,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if` — PowerBasic.Compiler/CodeGen/RuntimeTrimmer.cs:90
 - method `new` — PowerBasic.Compiler/CodeGen/RuntimeTrimmer.cs:96
 
-### TargetCost.cs  `C#, 207 lines`
+### TargetCost.cs  `C#, 250 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/TargetCost.cs:1
 - enum `CpuTier` — The microarchitecture floor a program is compiled for (the $CPU family). — PowerBasic.Compiler/CodeGen/TargetCost.cs:10
 - enum `CostObjective` — What the optimizer is being asked to minimise (the $OPTIMIZE SIZE|SPEED objective). — PowerBasic.Compiler/CodeGen/TargetCost.cs:20
@@ -5288,7 +5872,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 
 ## PowerBasic.Compiler/Emit/
 
-### IrBasicWriter.cs  `C#, 861 lines`
+### IrBasicWriter.cs  `C#, 898 lines`
 - namespace `PowerBasic.Compiler.Emit` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:5
 - class `IrBasicWriterException` — Raised when the IR contains something this writer cannot render as PowerBASIC. — PowerBasic.Compiler/Emit/IrBasicWriter.cs:9
 - class `IrBasicWriter` — Renders an back to PowerBASIC source - a back end that targets BASIC itself. — PowerBasic.Compiler/Emit/IrBasicWriter.cs:41
@@ -5300,30 +5884,31 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `IrBasicWriterException("a phi with no entry for one of its predecessors")` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:484
 - method `IrBasicWriterException("an alloca holding more than one element used without a subscript")` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:539
 - method `IrBasicWriterException("an alloca whose address is itself stored")` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:543
-- method `IrBasicWriterException( $"a TYPE field read at two widths ({field.Type} and {type}) - overl…` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:761
-- method `IrBasicWriterException("an indirect call")` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:819
-- method `IrBasicWriterException($"a call to the runtime routine {callee.Name}")` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:853
+- method `IrBasicWriterException( $"a TYPE field read at two widths ({field.Type} and {type}) - overl…` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:789
+- method `IrBasicWriterException("an indirect call")` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:847
+- method `IrBasicWriterException($"a call to the runtime routine {callee.Name}")` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:890
 
-### Linker.cs  `C#, 189 lines`
+### Linker.cs  `C#, 226 lines`
 - namespace `PowerBasic.Compiler.Emit` — PowerBasic.Compiler/Emit/Linker.cs:1
 - record `LinkedImage` — One linked artifact ready for the MZ writer. — PowerBasic.Compiler/Emit/Linker.cs:4
-- class `LinkException` — Raised when symbol resolution fails or signatures mismatch. — PowerBasic.Compiler/Emit/Linker.cs:7
-- class `Linker` — Resolves a main image's imports against explicitly linked units and — PowerBasic.Compiler/Emit/Linker.cs:15
-- method `if(!bySensitive.TryAdd(export.Name, (unit, export)))` — PowerBasic.Compiler/Emit/Linker.cs:47
-- method `if(!unit.Foreign && !byInsensitive.TryAdd(export.Name, (unit, export)))` — PowerBasic.Compiler/Emit/Linker.cs:49
-- method `if(Resolve(import.Name) != null)` — PowerBasic.Compiler/Emit/Linker.cs:66
-- method `if(provider == null)` — foreign OMF .LIBs resolve lazily: convert only the member that defines the symbol — PowerBasic.Compiler/Emit/Linker.cs:71
-- method `if(provider == null && !this._crtSupportPulled && this._omfLibraries.Co…` — last resort: a C-startup-provided symbol a linked CRT routine references but never — PowerBasic.Compiler/Emit/Linker.cs:76
-- method `if(provider == null)` — PowerBasic.Compiler/Emit/Linker.cs:80
-- method `Index(provider)` — PowerBasic.Compiler/Emit/Linker.cs:83
-- method `if(Resolve(import.Name) is not { } found)` — PowerBasic.Compiler/Emit/Linker.cs:91
-- method `if(found.Export.SignatureHash != import.SignatureHash && found.Export.S…` — hash 0 on either side = unchecked (runtime symbols and asm-level references) — PowerBasic.Compiler/Emit/Linker.cs:100
-- method `LinkException($"signature mismatch for {import.Name}: {unit.Name} expects a differ…` — PowerBasic.Compiler/Emit/Linker.cs:101
-- method `switch(fixup.Kind)` — PowerBasic.Compiler/Emit/Linker.cs:143
-- method `if(fixup.Target >= unit.Imports.Count)` — PowerBasic.Compiler/Emit/Linker.cs:157
-- method `LinkException($"fixup in {unit.Name} references import #{fixup.Target} of {unit.Im…` — PowerBasic.Compiler/Emit/Linker.cs:158
-- method `if(fixup.Kind == PbuFixupKind.ImportOffset)` — PowerBasic.Compiler/Emit/Linker.cs:162
-- method `LinkException($"unknown fixup kind {fixup.Kind} in {unit.Name}")` — PowerBasic.Compiler/Emit/Linker.cs:171
+- class `LinkException` — Raised when symbol resolution fails or signatures mismatch. — PowerBasic.Compiler/Emit/Linker.cs:10
+- class `Linker` — Resolves a main image's imports against explicitly linked units and — PowerBasic.Compiler/Emit/Linker.cs:18
+- method `if(!bySensitive.TryAdd(export.Name, (unit, export)))` — PowerBasic.Compiler/Emit/Linker.cs:58
+- method `if(!unit.Foreign && !byInsensitive.TryAdd(export.Name, (unit, export)))` — PowerBasic.Compiler/Emit/Linker.cs:60
+- method `if(Resolve(import.Name) != null)` — PowerBasic.Compiler/Emit/Linker.cs:77
+- method `if(provider == null)` — foreign OMF .LIBs resolve lazily: convert only the member that defines the symbol — PowerBasic.Compiler/Emit/Linker.cs:82
+- method `if(provider == null && !this._crtSupportPulled && this._omfLibraries.Co…` — last resort: a C-startup-provided symbol a linked CRT routine references but never — PowerBasic.Compiler/Emit/Linker.cs:87
+- method `if(provider == null)` — PowerBasic.Compiler/Emit/Linker.cs:91
+- method `Index(provider)` — PowerBasic.Compiler/Emit/Linker.cs:94
+- method `if(Resolve(import.Name) is not { } found)` — PowerBasic.Compiler/Emit/Linker.cs:102
+- method `if(found.Export.SignatureHash != import.SignatureHash && found.Export.S…` — hash 0 on either side = unchecked (runtime symbols and asm-level references) — PowerBasic.Compiler/Emit/Linker.cs:111
+- method `LinkException($"signature mismatch for {import.Name}: {unit.Name} expects a differ…` — PowerBasic.Compiler/Emit/Linker.cs:112
+- method `Index(unit)` — PowerBasic.Compiler/Emit/Linker.cs:128
+- method `switch(fixup.Kind)` — PowerBasic.Compiler/Emit/Linker.cs:170
+- method `if(fixup.Target >= unit.Imports.Count)` — PowerBasic.Compiler/Emit/Linker.cs:184
+- method `LinkException($"fixup in {unit.Name} references import #{fixup.Target} of {unit.Im…` — PowerBasic.Compiler/Emit/Linker.cs:185
+- method `if(fixup.Kind == PbuFixupKind.ImportOffset)` — PowerBasic.Compiler/Emit/Linker.cs:189
+- method `LinkException($"unknown fixup kind {fixup.Kind} in {unit.Name}")` — PowerBasic.Compiler/Emit/Linker.cs:198
 
 ### Listing.cs  `C#, 111 lines`
 - namespace `PowerBasic.Compiler.Emit` — PowerBasic.Compiler/Emit/Listing.cs:6
@@ -5342,7 +5927,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `InvalidDataException("not a PBL1 library file")` — PowerBasic.Compiler/Emit/PblFile.cs:56
 - method `InvalidDataException($"unsupported PBL version {version}")` — PowerBasic.Compiler/Emit/PblFile.cs:59
 
-### PbuFile.cs  `C#, 152 lines`
+### PbuFile.cs  `C#, 268 lines`
 - namespace `PowerBasic.Compiler.Emit` — PowerBasic.Compiler/Emit/PbuFile.cs:2
 - enum `PbuExportKind` — Export kind inside a compiled unit. — PowerBasic.Compiler/Emit/PbuFile.cs:6
 - enum `PbuFixupKind` — Relocation kinds inside a unit's code image (see docs/FORMATS.md). — PowerBasic.Compiler/Emit/PbuFile.cs:9
@@ -5351,10 +5936,115 @@ with unrelated edits, so treat them as anchors, not gospel.
 - record `PbuCommonBlock` — PowerBasic.Compiler/Emit/PbuFile.cs:25
 - record `PbuFixup` — A relocation in a unit's image. is relative to the unit's — PowerBasic.Compiler/Emit/PbuFile.cs:35
 - enum `PbuCpuFlags` — CPU/feature requirement flags of a unit. — PowerBasic.Compiler/Emit/PbuFile.cs:38
-- class `PbuFile` — A compiled unit ($COMPILE UNIT) in PB-Compiler's own documented — PowerBasic.Compiler/Emit/PbuFile.cs:46
-- method `InvalidDataException("not a PBU1 unit file")` — PowerBasic.Compiler/Emit/PbuFile.cs:117
-- method `InvalidDataException($"unsupported PBU version {version}")` — PowerBasic.Compiler/Emit/PbuFile.cs:120
-- method `InvalidDataException($"name too long: {value}")` — PowerBasic.Compiler/Emit/PbuFile.cs:145
+- enum `PbuFragmentControlKind` — The semantic control transfer that closes a relocatable basic-block fragment. — PowerBasic.Compiler/Emit/PbuFile.cs:42
+- record `PbuFragment` — O0360 block metadata carried through PBU. / name — PowerBasic.Compiler/Emit/PbuFile.cs:57
+- enum `PbuRelativeFixupKind` — Semantic kind of one already-resolved internal PC-relative instruction retained in PBU2. — PowerBasic.Compiler/Emit/PbuFile.cs:70
+- record `PbuRelativeFixup` — An internal relative instruction from the assembled unit. Terminal block transfers may be replaced — PowerBasic.Compiler/Emit/PbuFile.cs:77
+- class `PbuFile` — A compiled unit ($COMPILE UNIT) in PB-Compiler's own documented — PowerBasic.Compiler/Emit/PbuFile.cs:89
+- method `WriteNonNegative(w, successor, "fragment successor id")` — PowerBasic.Compiler/Emit/PbuFile.cs:172
+- method `InvalidDataException("not a PBU1 unit file")` — PowerBasic.Compiler/Emit/PbuFile.cs:188
+- method `InvalidDataException($"unsupported PBU version {version}")` — PowerBasic.Compiler/Emit/PbuFile.cs:191
+- method `InvalidDataException($"too many {what}: {count}")` — PowerBasic.Compiler/Emit/PbuFile.cs:241
+- method `InvalidDataException($"{what} cannot be negative: {value}")` — PowerBasic.Compiler/Emit/PbuFile.cs:247
+- method `InvalidDataException($"{what} cannot be negative: {value}")` — PowerBasic.Compiler/Emit/PbuFile.cs:254
+- method `InvalidDataException($"name too long: {value}")` — PowerBasic.Compiler/Emit/PbuFile.cs:261
+
+### PostLinkLayout.cs  `C#, 751 lines`
+- namespace `PowerBasic.Compiler.Emit` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:1
+- record `PostLinkBlockId` — Stable identity of one linker-visible basic block. — PowerBasic.Compiler/Emit/PostLinkLayout.cs:4
+- record `PostLinkEdgeId` — Stable identity of one directed linker-visible CFG edge. — PowerBasic.Compiler/Emit/PostLinkLayout.cs:9
+- record `PostLinkIpSample` — One sampled instruction pointer in the linked code image. — PowerBasic.Compiler/Emit/PostLinkLayout.cs:12
+- record `LinkedFragment` — One final linked fragment. Offsets are relative to ; block IDs remain — PowerBasic.Compiler/Emit/PostLinkLayout.cs:18
+- class `PostLinkProfile` — Sample/profile data consumed by O0276. Counts use stable block identities rather than addresses; — PowerBasic.Compiler/Emit/PostLinkLayout.cs:30
+- class `PostLinkSampleAttribution` — O0405 address attribution for point samples. Samples that hit opaque runtime/direct-emitter code — PowerBasic.Compiler/Emit/PostLinkLayout.cs:58
+- method `InvalidDataException("linked fragment map contains overlapping ranges")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:67
+- method `ArgumentOutOfRangeException(nameof(samples), sample.Offset, "sample offset lies outside the link…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:74
+- method `if(count == 0 || source.Successors.Count == 0)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:109
+- method `foreach(var successor in successors)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:113
+- method `InvalidDataException($"linked fragment {sourceId} names missing successor {successor}")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:115
+- method `if` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:116
+- method `foreach(var successor in successors)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:123
+- method `for(var index = 0; index < successors.Length; ++index)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:127
+- method `if(index == successors.Length - 1)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:130
+- method `if(successorHeat == 0)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:132
+- method `if(share > remaining)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:138
+- method `if(share != 0)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:141
+- class `PostLinkLayoutPlanner` — Builds the profile-guided block orders consumed by the binary rewriter. — PowerBasic.Compiler/Emit/PostLinkLayout.cs:150
+- method `LinkException($"fragment function {function.Key} has no entry block #0")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:163
+- method `if(!string.Equals(edge.Source.Function, function.Key, StringComparison.…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:170
+- method `if(!string.Equals(edge.Source.Function, function.Key, StringComparison.…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:173
+- method `LinkException($"stale post-link profile edge {edge.Source} -> {edge.Target}")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:178
+- method `if(count != 0)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:179
+- method `foreach` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:189
+- method `if(ReferenceEquals(fromChain, toChain) || fromChain.Blocks[^1] != edge.…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:196
+- method `foreach(var block in toChain.Blocks)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:202
+- method `Heat` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:206
+- method `foreach(var block in chain.Blocks)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:209
+- method `foreach(var (edge, count) in weights)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:211
+- class `Chain` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:244
+- class `PostLinkLayoutRewriter` — O0360/O0382 linker-side fragment rewriter. It moves only code whose machine-block metadata is — PowerBasic.Compiler/Emit/PostLinkLayout.cs:256
+- method `LinkException($"overlapping post-link fragment functions {functionGroups[index - 1…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:271
+- method `CopyOpaque(source.Code, oldCursor, region.Start - oldCursor, output, map)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:293
+- method `if` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:294
+- method `CopyOpaque(source.Code, region.Start, region.End - region.Start, output, map)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:297
+- method `foreach(var fragment in region.Fragments)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:298
+- method `foreach(var span in built.BodySpans)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:305
+- method `foreach(var point in built.BlockStarts)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:307
+- method `foreach(var fragment in built.Fragments)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:309
+- method `if(fixup.Kind == PbuFixupKind.NearCode)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:327
+- method `LinkException` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:359
+- method `LinkException($"fragment {fragment.Function}#{fragment.BlockId} body exceeds unit …` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:400
+- method `LinkException($"fragment control references missing target block {targetBlockId}")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:462
+- method `if(!FitsSByte(displacement))` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:491
+- method `LinkException($"unsupported conditional encoding length {length}")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:509
+- method `if(!FitsSByte(displacement))` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:517
+- method `LinkException($"unsupported jump encoding length {length}")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:528
+- method `if(code[start] != 0xE8)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:537
+- method `LinkException($"relative CALL record at {start:X4} does not point at E8")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:538
+- method `if(code[start] != 0xEB)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:542
+- method `LinkException($"relative short-JMP record at {start:X4} does not point at EB")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:543
+- method `if(!FitsSByte(displacement))` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:545
+- method `if(code[start] != 0xE9)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:551
+- method `LinkException($"relative near-JMP record at {start:X4} does not point at E9")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:552
+- method `if(code[start] is not (>= 0x70 and <= 0x7F))` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:556
+- method `LinkException($"relative short-Jcc record at {start:X4} does not point at Jcc")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:557
+- method `if(!FitsSByte(displacement))` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:559
+- method `if(code[start] != 0x0F || code[start + 1] is not (>= 0x80 and <= 0x8F))` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:565
+- method `LinkException($"relative near-Jcc record at {start:X4} does not point at 0F 8x")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:566
+- method `if(code[start] is not (>= 0x70 and <= 0x7F) || code[start + 1] != 0x03 …` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:570
+- method `LinkException($"relative 8086 long-Jcc record at {start:X4} is malformed")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:571
+- method `LinkException($"unsupported retained relative fixup {fixup.Kind}/{fixup.EncodedLen…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:575
+- method `LinkException($"post-link order for {region.Name} must contain every block exactly…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:602
+- method `LinkException($"post-link order for {region.Name} must keep entry block #0 first")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:604
+- method `LinkException($"{what} {value:X} does not fit the 16-bit code model")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:623
+- method `LinkException($"16-bit fixup site {site:X4} lies outside its image")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:629
+- method `LinkException($"16-bit fixup site {site:X4} lies outside its image")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:635
+- class `ControlState` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:646
+- method `Create` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:654
+- class `FragmentBuild` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:687
+- record `FunctionBuild` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:693
+- record `BodySpan` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:700
+- record `BlockStartMap` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:702
+- record `FunctionRegion` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:703
+- method `Create(string name, PbuFragment[] fragments)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:705
+- method `LinkException($"fragment function {name} is empty")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:707
+- method `if(!ids.Add(fragment.BlockId))` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:712
+- method `LinkException($"fragment function {name} repeats block #{fragment.BlockId}")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:713
+- method `if(fragment.BodyLength > fragment.Length)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:714
+- method `LinkException($"fragment {name}#{fragment.BlockId} body exceeds its byte range")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:715
+- method `if(fragment.Control == PbuFragmentControlKind.Preserve && fragment.Body…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:716
+- method `LinkException($"preserved fragment {name}#{fragment.BlockId} must retain its compl…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:717
+- method `if(index > 0 && ordered[index - 1].Offset + ordered[index - 1].Length !…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:718
+- method `LinkException($"fragment function {name} does not form one contiguous code region")` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:719
+- method `new(name, ordered[0].Offset, checked(ordered[^1].Offset + ordered[^1].Le…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:721
+- class `OffsetMap` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:725
+- method `AddSpan` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:730
+- method `AddPoint` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:735
+- method `SetNewEnd(uint value)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:737
+- method `Map` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:738
+- method `if(oldOffset >= span.OldStart && oldOffset < span.OldStart + span.Lengt…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:745
+- method `checked(span.NewStart + oldOffset - span.OldStart)` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:746
+- method `LinkException($"{what} points into layout-dependent terminal bytes at {oldOffset:X…` — PowerBasic.Compiler/Emit/PostLinkLayout.cs:747
 
 ### PowerBasic35Emitter.cs  `C#, 1275 lines`
 - namespace `PowerBasic.Compiler.Emit` — PowerBasic.Compiler/Emit/PowerBasic35Emitter.cs:5
@@ -5427,7 +6117,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 
 ## PowerBasic.Compiler/Ir/
 
-### CEmitter.cs  `C#, 590 lines`
+### CEmitter.cs  `C#, 613 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/CEmitter.cs:3
 - class `CEmitter` — Emits portable C99 from the optimized IR - the second consumer of the middle end, alongside — PowerBasic.Compiler/Ir/CEmitter.cs:28
 - method `Emit(module)` — PowerBasic.Compiler/Ir/CEmitter.cs:96
@@ -5435,23 +6125,29 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(inst is not IrPhi && !(inst is IrCmp ic && this._inlinedCmps.Contain…` — PowerBasic.Compiler/Ir/CEmitter.cs:274
 - method `if(inst is IrAlloca a)` — PowerBasic.Compiler/Ir/CEmitter.cs:284
 - method `if(inst.Type.Kind != IrTypeKind.Void && !(inst is IrCmp ic && this._inl…` — PowerBasic.Compiler/Ir/CEmitter.cs:287
-- method `if(_notInTheCRuntime.Contains(callee))` — PowerBasic.Compiler/Ir/CEmitter.cs:350
-- method `EmitDeclinedException( $"C emission: a call to {callee}, which runtime/pbc_rt.c has no ent…` — PowerBasic.Compiler/Ir/CEmitter.cs:351
-- method `if(callee is "memcpy" or "memset" && args.Count == 4)` — PowerBasic.Compiler/Ir/CEmitter.cs:354
-- method `if(!ReferenceEquals(b.Target, this._nextBlock))` — PowerBasic.Compiler/Ir/CEmitter.cs:367
-- method `ReferenceEquals` — PowerBasic.Compiler/Ir/CEmitter.cs:370
-- method `ReferenceEquals` — PowerBasic.Compiler/Ir/CEmitter.cs:378
-- method `foreach(var (value, target) in s.Cases)` — PowerBasic.Compiler/Ir/CEmitter.cs:397
+- method `if(_notInTheCRuntime.Contains(callee))` — PowerBasic.Compiler/Ir/CEmitter.cs:354
+- method `EmitDeclinedException( $"C emission: a call to {callee}, which runtime/pbc_rt.c has no ent…` — PowerBasic.Compiler/Ir/CEmitter.cs:355
+- method `if(callee is "memcpy" or "memset" && args.Count == 4)` — PowerBasic.Compiler/Ir/CEmitter.cs:358
+- method `if(!ReferenceEquals(b.Target, this._nextBlock))` — PowerBasic.Compiler/Ir/CEmitter.cs:371
+- method `ReferenceEquals` — PowerBasic.Compiler/Ir/CEmitter.cs:374
+- method `ReferenceEquals` — PowerBasic.Compiler/Ir/CEmitter.cs:382
+- method `foreach(var (value, target) in s.Cases)` — PowerBasic.Compiler/Ir/CEmitter.cs:401
+- method `EmitDeclinedException($"C emission: invalid raw bitcast from {from} to {to}")` — PowerBasic.Compiler/Ir/CEmitter.cs:432
 
 ### EmitDeclinedException.cs  `C#, 43 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/EmitDeclinedException.cs:1
 - class `EmitDeclinedException` — A construct one of the IR back ends (, ) has no — PowerBasic.Compiler/Ir/EmitDeclinedException.cs:25
 
+### FpMath.cs  `C#, 68 lines`
+- namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/FpMath.cs:1
+- enum `IrFpMathFunction` — Canonical math operations shared by fast-math annotation and range specialization. — PowerBasic.Compiler/Ir/FpMath.cs:4
+- class `IrFpMath` — PowerBasic.Compiler/Ir/FpMath.cs:15
+
 ### IrArgument.cs  `C#, 17 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrArgument.cs:1
 - class `IrArgument` — A formal parameter of an , usable as an operand inside its body. — PowerBasic.Compiler/Ir/IrArgument.cs:4
 
-### IrBasicBlock.cs  `C#, 81 lines`
+### IrBasicBlock.cs  `C#, 88 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrBasicBlock.cs:1
 - class `IrBasicBlock` — A maximal straight-line run of instructions ending in exactly one terminator. — PowerBasic.Compiler/Ir/IrBasicBlock.cs:8
 
@@ -5459,10 +6155,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrBuilder.cs:1
 - class `IrBuilder` — A cursor that appends instructions to a basic block. It keeps construction — PowerBasic.Compiler/Ir/IrBuilder.cs:8
 
-### IrCloner.cs  `C#, 149 lines`
+### IrCloner.cs  `C#, 151 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrCloner.cs:1
 - class `IrCloner` — Deep-clones a connected set of basic blocks into a function, remapping every — PowerBasic.Compiler/Ir/IrCloner.cs:25
-- method `if(operand is IrBlockAddress)` — PowerBasic.Compiler/Ir/IrCloner.cs:106
+- method `if(operand is IrBlockAddress)` — PowerBasic.Compiler/Ir/IrCloner.cs:108
 
 ### IrConstFold.cs  `C#, 217 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrConstFold.cs:1
@@ -5490,25 +6186,35 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `IrBlockAddress` — The address of a basic block - LLVM's blockaddress. PB needs one for exactly one reason: — PowerBasic.Compiler/Ir/IrConstant.cs:53
 - class `IrUndef` — An undefined value of a given type. Reading it yields an arbitrary bit pattern; — PowerBasic.Compiler/Ir/IrConstant.cs:62
 
-### IrDominators.cs  `C#, 128 lines`
+### IrDominators.cs  `C#, 145 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrDominators.cs:1
 - class `IrDominators` — Dominator tree and dominance frontiers over an 's CFG, — PowerBasic.Compiler/Ir/IrDominators.cs:9
-- method `if(visited.Add(next))` — PowerBasic.Compiler/Ir/IrDominators.cs:64
-- method `foreach(var pred in block.Predecessors)` — PowerBasic.Compiler/Ir/IrDominators.cs:86
-- method `if(newIdom is not null && (!this._idom.TryGetValue(block, out var cur) …` — PowerBasic.Compiler/Ir/IrDominators.cs:91
-- method `while(!ReferenceEquals(runner, idom))` — PowerBasic.Compiler/Ir/IrDominators.cs:120
+- method `if(visited.Add(next))` — PowerBasic.Compiler/Ir/IrDominators.cs:81
+- method `foreach(var pred in block.Predecessors)` — PowerBasic.Compiler/Ir/IrDominators.cs:103
+- method `if(newIdom is not null && (!this._idom.TryGetValue(block, out var cur) …` — PowerBasic.Compiler/Ir/IrDominators.cs:108
+- method `while(!ReferenceEquals(runner, idom))` — PowerBasic.Compiler/Ir/IrDominators.cs:137
 
-### IrFunction.cs  `C#, 167 lines`
+### IrFastMath.cs  `C#, 25 lines`
+- namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrFastMath.cs:1
+- enum `IrFastMathFlags` — Numerical freedoms granted to one floating-point IR instruction. The vocabulary and bit layout — PowerBasic.Compiler/Ir/IrFastMath.cs:8
+
+### IrFunction.cs  `C#, 215 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrFunction.cs:1
 - class `IrFunction` — A function: a signature plus a list of basic blocks. The first block is the entry — PowerBasic.Compiler/Ir/IrFunction.cs:9
-- method `if(operand is IrBlockAddress address)` — PowerBasic.Compiler/Ir/IrFunction.cs:154
+- method `if(operand is IrBlockAddress address)` — PowerBasic.Compiler/Ir/IrFunction.cs:190
 
-### IrGlobalValue.cs  `C#, 32 lines`
+### IrGlobalValue.cs  `C#, 42 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrGlobalValue.cs:1
 - class `IrGlobalValue` — A symbol with a fixed address: a global variable or a function. Its IR value is — PowerBasic.Compiler/Ir/IrGlobalValue.cs:8
 - class `IrGlobalVariable` — A module-level variable. is the type stored at its address. — PowerBasic.Compiler/Ir/IrGlobalValue.cs:19
 
-### IrInstruction.cs  `C#, 75 lines`
+### IrIndirectCallProfile.cs  `C#, 69 lines`
+- namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrIndirectCallProfile.cs:2
+- record `IrIndirectCallTarget` — One observed target of an indirect call and the number of executions that reached it. — PowerBasic.Compiler/Ir/IrIndirectCallProfile.cs:6
+- class `IrIndirectCallProfile` — Value-profile data for one indirect . The total count includes executions of — PowerBasic.Compiler/Ir/IrIndirectCallProfile.cs:12
+- class `IrCallProfileExtensions` — Profile metadata attached to IR calls without making runtime emitters understand profiling data. — PowerBasic.Compiler/Ir/IrIndirectCallProfile.cs:51
+
+### IrInstruction.cs  `C#, 82 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrInstruction.cs:1
 - class `IrInstruction` — The base of every IR instruction. An instruction is itself a value (its result), — PowerBasic.Compiler/Ir/IrInstruction.cs:8
 
@@ -5555,7 +6261,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `IrLoweringException($"{symbol.ArrayClass} array rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.PagedArrays.cs:218
 - method `IrLoweringException($"element of {symbol.Name} before its DIM was lowered")` — PowerBasic.Compiler/Ir/IrLowering.PagedArrays.cs:222
 
-### IrLowering.cs  `C#, 5073 lines`
+### IrLowering.cs  `C#, 5099 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrLowering.cs:4
 - class `IrLowering` — Lowers a bound program into the IR in clang-style alloca/load/store form: every — PowerBasic.Compiler/Ir/IrLowering.cs:18
 - record `DataLayout` — PowerBasic.Compiler/Ir/IrLowering.cs:64
@@ -5657,96 +6363,114 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `IrLoweringException("REDIM rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.cs:2566
 - method `if(r.Preserve)` — PowerBasic.Compiler/Ir/IrLowering.cs:2571
 - method `IrLoweringException($"REDIM PRESERVE on the {symbol.ArrayClass} array {v.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:2572
-- method `IrConstantInt(IrType.I32, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:2606
-- method `IrLoweringException("ERASE of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2634
-- method `IrLoweringException($"ERASE of the ABSOLUTE array {symbol.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:2638
-- record `SortArray` — The three things the sort/scan parameter block needs to know about an array: where its elements — PowerBasic.Compiler/Ir/IrLowering.cs:2675
-- method `IrLoweringException("ARRAY SORT/SCAN of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2685
-- method `IrLoweringException("ARRAY SORT/SCAN of an array parameter")` — PowerBasic.Compiler/Ir/IrLowering.cs:2687
-- method `IrLoweringException("ARRAY SORT/SCAN of a dynamic array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2689
-- method `IrLoweringException("ARRAY SORT/SCAN of a multi-dimensional array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2691
-- method `IrConstantInt` — PowerBasic.Compiler/Ir/IrLowering.cs:2717
-- method `IrLoweringException($"ARRAY SORT/SCAN over {shape.Type.Element} elements")` — PowerBasic.Compiler/Ir/IrLowering.cs:2763
-- method `IrLoweringException("FROM/TO range on a non-string ARRAY SORT/SCAN")` — PowerBasic.Compiler/Ir/IrLowering.cs:2765
-- method `IrLoweringException("ARRAY SORT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2807
-- method `IrLoweringException("COLLATE on an ARRAY SORT")` — PowerBasic.Compiler/Ir/IrLowering.cs:2809
-- method `IrLoweringException("ARRAY SORT TAGARRAY on a string array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2813
-- method `IrLoweringException("ARRAY SCAN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2830
-- method `IrLoweringException("COLLATE on an ARRAY SCAN")` — PowerBasic.Compiler/Ir/IrLowering.cs:2832
-- method `IrLoweringException("FIELD target that is not a dynamic string")` — PowerBasic.Compiler/Ir/IrLowering.cs:2877
-- method `IrLoweringException("CHAIN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2956
-- method `IrLoweringException("COMMON array across CHAIN")` — PowerBasic.Compiler/Ir/IrLowering.cs:3013
-- method `IrLoweringException($"COMMON {symbol.Type} across CHAIN")` — PowerBasic.Compiler/Ir/IrLowering.cs:3024
-- method `IrLoweringException("DIM AT without the ABSOLUTE class")` — PowerBasic.Compiler/Ir/IrLowering.cs:3049
-- method `IrLoweringException($"DIM {d.Class} array class")` — PowerBasic.Compiler/Ir/IrLowering.cs:3056
-- method `IrLoweringException("DIM rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.cs:3074
-- method `IrLoweringException("DIM AT a segment that is not a compile-time constant")` — PowerBasic.Compiler/Ir/IrLowering.cs:3103
-- method `IrLoweringException($"DIM {v.Name} AT without array bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:3107
-- method `IrLoweringException($"DIM AT: no array symbol for {v.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3109
-- method `IrLoweringException("DIM AT rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.cs:3111
-- method `IrLoweringException("DIM AT over a dynamic-string element type")` — PowerBasic.Compiler/Ir/IrLowering.cs:3115
-- method `IrConstantInt(IrType.I32, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:3121
-- method `IrLoweringException("INCR/DECR on float")` — PowerBasic.Compiler/Ir/IrLowering.cs:3152
-- method `IrConstantInt(ty, 1)` — PowerBasic.Compiler/Ir/IrLowering.cs:3155
-- method `IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:3169
-- method `IrLoweringException($"{cmd.Keyword} of a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:3171
-- method `IrLoweringException("LOCATE with a cursor-shape argument")` — PowerBasic.Compiler/Ir/IrLowering.cs:3198
-- method `IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:3216
-- method `IrLoweringException($"{cmd.Keyword} of a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:3218
-- method `IrLoweringException($"{cmd.Keyword} by a runtime count")` — PowerBasic.Compiler/Ir/IrLowering.cs:3220
-- method `IrLoweringException($"{cmd.Keyword} by {n} over a {width}-bit value")` — PowerBasic.Compiler/Ir/IrLowering.cs:3225
-- method `IrLoweringException($"FOR over a {ty} counter")` — PowerBasic.Compiler/Ir/IrLowering.cs:3300
-- method `IrLoweringException("FOR with a runtime STEP over an unsigned counter")` — PowerBasic.Compiler/Ir/IrLowering.cs:3315
-- method `foreach(var loop in this._loops)` — PowerBasic.Compiler/Ir/IrLowering.cs:3475
-- method `IrLoweringException($"EXIT {e.Kind} outside a matching loop")` — PowerBasic.Compiler/Ir/IrLowering.cs:3482
-- method `IrLoweringException($"call to unsupported procedure {c.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3497
-- method `IrLoweringException("SELECT CASE on a non-scalar subject")` — PowerBasic.Compiler/Ir/IrLowering.cs:3506
-- method `if(type is BcdType bcd)` — A FIX literal is not a float value with a float type. Its CELL holds the number scaled by — PowerBasic.Compiler/Ir/IrLowering.cs:3642
-- method `IrLoweringException($"unknown equate {nc.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3688
-- method `IrLoweringException("non-numeric equate")` — PowerBasic.Compiler/Ir/IrLowering.cs:3690
-- method `IrLoweringException($"call to {proc.Name} outside the modelled subset")` — PowerBasic.Compiler/Ir/IrLowering.cs:3699
-- method `IrLoweringException("SUB used in expression position")` — PowerBasic.Compiler/Ir/IrLowering.cs:3701
-- method `IrLoweringException($"unbound name {name.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3707
-- method `IrLoweringException($"{name} requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3768
-- method `IrLoweringException($"{name} of an unknown label {labelName}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3855
-- method `IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:3875
-- method `IrConstantInt(IrType.I16, Math.Max(this._model.TypeOf(call.Arguments[0]).Size, 1))` — PowerBasic.Compiler/Ir/IrLowering.cs:3910
-- method `IrLoweringException("POS requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3956
-- method `IrLoweringException("intrinsic PEEK takes one or two arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:3975
-- method `IrConstantInt(IrType.I32, 1)` — PowerBasic.Compiler/Ir/IrLowering.cs:4016
-- method `IrLoweringException("LBOUND/UBOUND of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4051
-- method `IrLoweringException("LBOUND/UBOUND dimension out of range")` — PowerBasic.Compiler/Ir/IrLowering.cs:4056
-- method `IrLoweringException("static array without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:4061
-- method `IrLoweringException($"INSTR with {call.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:4094
-- method `IrLoweringException($"EXTRACT$ with {ci.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:4168
-- method `Num(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:4218
-- method `Num(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:4229
-- method `IrLoweringException("STR$ of a non-numeric value")` — PowerBasic.Compiler/Ir/IrLowering.cs:4256
-- method `IrLoweringException($"{fn} on a non-float result")` — PowerBasic.Compiler/Ir/IrLowering.cs:4288
-- method `IrLoweringException("LEN of an ASCIIZ expression that is not storage")` — PowerBasic.Compiler/Ir/IrLowering.cs:4334
-- method `IrLoweringException("LEN of a non-string")` — PowerBasic.Compiler/Ir/IrLowering.cs:4345
-- method `IrLoweringException("UDT comparison of non-UDT")` — PowerBasic.Compiler/Ir/IrLowering.cs:4378
-- method `IrLoweringException($"unsupported call/index {call.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4505
-- method `IrLoweringException("SUB used in expression position")` — PowerBasic.Compiler/Ir/IrLowering.cs:4507
-- method `if(!address.Type.IsFarPointer)` — PowerBasic.Compiler/Ir/IrLowering.cs:4526
-- method `if(address.Type.IsFarPointer)` — PowerBasic.Compiler/Ir/IrLowering.cs:4588
-- method `IrLoweringException("far pointer passed BYREF to a near parameter")` — PowerBasic.Compiler/Ir/IrLowering.cs:4589
-- method `if(!resultTy.IsFloat)` — PowerBasic.Compiler/Ir/IrLowering.cs:4672
-- method `IrLoweringException("integer exponentiation")` — PowerBasic.Compiler/Ir/IrLowering.cs:4673
-- method `IrLoweringException( "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integ…` — PowerBasic.Compiler/Ir/IrLowering.cs:4763
-- method `IrLoweringException($"$ERROR {arm} ON arms a runtime trap the IR lowering does not emit")` — PowerBasic.Compiler/Ir/IrLowering.cs:4881
-- method `IrLoweringException($"metastatement ${meta.Command}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4883
-- method `IrLoweringException("comparison of non-scalar operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:4914
-- method `IrLoweringException("coercion between non-scalar types")` — PowerBasic.Compiler/Ir/IrLowering.cs:5010
+- method `IrConstantInt(IrType.I32, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:2619
+- method `if` — PowerBasic.Compiler/Ir/IrLowering.cs:2621
+- method `IrLoweringException("ERASE of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2660
+- method `IrLoweringException($"ERASE of the ABSOLUTE array {symbol.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:2664
+- record `SortArray` — The three things the sort/scan parameter block needs to know about an array: where its elements — PowerBasic.Compiler/Ir/IrLowering.cs:2701
+- method `IrLoweringException("ARRAY SORT/SCAN of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2711
+- method `IrLoweringException("ARRAY SORT/SCAN of an array parameter")` — PowerBasic.Compiler/Ir/IrLowering.cs:2713
+- method `IrLoweringException("ARRAY SORT/SCAN of a dynamic array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2715
+- method `IrLoweringException("ARRAY SORT/SCAN of a multi-dimensional array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2717
+- method `IrConstantInt` — PowerBasic.Compiler/Ir/IrLowering.cs:2743
+- method `IrLoweringException($"ARRAY SORT/SCAN over {shape.Type.Element} elements")` — PowerBasic.Compiler/Ir/IrLowering.cs:2789
+- method `IrLoweringException("FROM/TO range on a non-string ARRAY SORT/SCAN")` — PowerBasic.Compiler/Ir/IrLowering.cs:2791
+- method `IrLoweringException("ARRAY SORT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2833
+- method `IrLoweringException("COLLATE on an ARRAY SORT")` — PowerBasic.Compiler/Ir/IrLowering.cs:2835
+- method `IrLoweringException("ARRAY SORT TAGARRAY on a string array")` — PowerBasic.Compiler/Ir/IrLowering.cs:2839
+- method `IrLoweringException("ARRAY SCAN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2856
+- method `IrLoweringException("COLLATE on an ARRAY SCAN")` — PowerBasic.Compiler/Ir/IrLowering.cs:2858
+- method `IrLoweringException("FIELD target that is not a dynamic string")` — PowerBasic.Compiler/Ir/IrLowering.cs:2903
+- method `IrLoweringException("CHAIN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2982
+- method `IrLoweringException("COMMON array across CHAIN")` — PowerBasic.Compiler/Ir/IrLowering.cs:3039
+- method `IrLoweringException($"COMMON {symbol.Type} across CHAIN")` — PowerBasic.Compiler/Ir/IrLowering.cs:3050
+- method `IrLoweringException("DIM AT without the ABSOLUTE class")` — PowerBasic.Compiler/Ir/IrLowering.cs:3075
+- method `IrLoweringException($"DIM {d.Class} array class")` — PowerBasic.Compiler/Ir/IrLowering.cs:3082
+- method `IrLoweringException("DIM rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.cs:3100
+- method `IrLoweringException("DIM AT a segment that is not a compile-time constant")` — PowerBasic.Compiler/Ir/IrLowering.cs:3129
+- method `IrLoweringException($"DIM {v.Name} AT without array bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:3133
+- method `IrLoweringException($"DIM AT: no array symbol for {v.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3135
+- method `IrLoweringException("DIM AT rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.cs:3137
+- method `IrLoweringException("DIM AT over a dynamic-string element type")` — PowerBasic.Compiler/Ir/IrLowering.cs:3141
+- method `IrConstantInt(IrType.I32, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:3147
+- method `IrLoweringException("INCR/DECR on float")` — PowerBasic.Compiler/Ir/IrLowering.cs:3178
+- method `IrConstantInt(ty, 1)` — PowerBasic.Compiler/Ir/IrLowering.cs:3181
+- method `IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:3195
+- method `IrLoweringException($"{cmd.Keyword} of a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:3197
+- method `IrLoweringException("LOCATE with a cursor-shape argument")` — PowerBasic.Compiler/Ir/IrLowering.cs:3224
+- method `IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:3242
+- method `IrLoweringException($"{cmd.Keyword} of a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:3244
+- method `IrLoweringException($"{cmd.Keyword} by a runtime count")` — PowerBasic.Compiler/Ir/IrLowering.cs:3246
+- method `IrLoweringException($"{cmd.Keyword} by {n} over a {width}-bit value")` — PowerBasic.Compiler/Ir/IrLowering.cs:3251
+- method `IrLoweringException($"FOR over a {ty} counter")` — PowerBasic.Compiler/Ir/IrLowering.cs:3326
+- method `IrLoweringException("FOR with a runtime STEP over an unsigned counter")` — PowerBasic.Compiler/Ir/IrLowering.cs:3341
+- method `foreach(var loop in this._loops)` — PowerBasic.Compiler/Ir/IrLowering.cs:3501
+- method `IrLoweringException($"EXIT {e.Kind} outside a matching loop")` — PowerBasic.Compiler/Ir/IrLowering.cs:3508
+- method `IrLoweringException($"call to unsupported procedure {c.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3523
+- method `IrLoweringException("SELECT CASE on a non-scalar subject")` — PowerBasic.Compiler/Ir/IrLowering.cs:3532
+- method `if(type is BcdType bcd)` — A FIX literal is not a float value with a float type. Its CELL holds the number scaled by — PowerBasic.Compiler/Ir/IrLowering.cs:3668
+- method `IrLoweringException($"unknown equate {nc.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3714
+- method `IrLoweringException("non-numeric equate")` — PowerBasic.Compiler/Ir/IrLowering.cs:3716
+- method `IrLoweringException($"call to {proc.Name} outside the modelled subset")` — PowerBasic.Compiler/Ir/IrLowering.cs:3725
+- method `IrLoweringException("SUB used in expression position")` — PowerBasic.Compiler/Ir/IrLowering.cs:3727
+- method `IrLoweringException($"unbound name {name.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3733
+- method `IrLoweringException($"{name} requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3794
+- method `IrLoweringException($"{name} of an unknown label {labelName}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3881
+- method `IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:3901
+- method `IrConstantInt(IrType.I16, Math.Max(this._model.TypeOf(call.Arguments[0]).Size, 1))` — PowerBasic.Compiler/Ir/IrLowering.cs:3936
+- method `IrLoweringException("POS requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3982
+- method `IrLoweringException("intrinsic PEEK takes one or two arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:4001
+- method `IrConstantInt(IrType.I32, 1)` — PowerBasic.Compiler/Ir/IrLowering.cs:4042
+- method `IrLoweringException("LBOUND/UBOUND of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4077
+- method `IrLoweringException("LBOUND/UBOUND dimension out of range")` — PowerBasic.Compiler/Ir/IrLowering.cs:4082
+- method `IrLoweringException("static array without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:4087
+- method `IrLoweringException($"INSTR with {call.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:4120
+- method `IrLoweringException($"EXTRACT$ with {ci.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:4194
+- method `Num(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:4244
+- method `Num(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:4255
+- method `IrLoweringException("STR$ of a non-numeric value")` — PowerBasic.Compiler/Ir/IrLowering.cs:4282
+- method `IrLoweringException($"{fn} on a non-float result")` — PowerBasic.Compiler/Ir/IrLowering.cs:4314
+- method `IrLoweringException("LEN of an ASCIIZ expression that is not storage")` — PowerBasic.Compiler/Ir/IrLowering.cs:4360
+- method `IrLoweringException("LEN of a non-string")` — PowerBasic.Compiler/Ir/IrLowering.cs:4371
+- method `IrLoweringException("UDT comparison of non-UDT")` — PowerBasic.Compiler/Ir/IrLowering.cs:4404
+- method `IrLoweringException($"unsupported call/index {call.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4531
+- method `IrLoweringException("SUB used in expression position")` — PowerBasic.Compiler/Ir/IrLowering.cs:4533
+- method `if(!address.Type.IsFarPointer)` — PowerBasic.Compiler/Ir/IrLowering.cs:4552
+- method `if(address.Type.IsFarPointer)` — PowerBasic.Compiler/Ir/IrLowering.cs:4614
+- method `IrLoweringException("far pointer passed BYREF to a near parameter")` — PowerBasic.Compiler/Ir/IrLowering.cs:4615
+- method `if(!resultTy.IsFloat)` — PowerBasic.Compiler/Ir/IrLowering.cs:4698
+- method `IrLoweringException("integer exponentiation")` — PowerBasic.Compiler/Ir/IrLowering.cs:4699
+- method `IrLoweringException( "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integ…` — PowerBasic.Compiler/Ir/IrLowering.cs:4789
+- method `IrLoweringException($"$ERROR {arm} ON arms a runtime trap the IR lowering does not emit")` — PowerBasic.Compiler/Ir/IrLowering.cs:4907
+- method `IrLoweringException($"metastatement ${meta.Command}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4909
+- method `IrLoweringException("comparison of non-scalar operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:4940
+- method `IrLoweringException("coercion between non-scalar types")` — PowerBasic.Compiler/Ir/IrLowering.cs:5036
 
-### IrModule.cs  `C#, 80 lines`
-- namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrModule.cs:2
-- class `IrModule` — A translation unit: the globals and functions produced from one bound program. — PowerBasic.Compiler/Ir/IrModule.cs:9
+### IrModule.cs  `C#, 120 lines`
+- namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrModule.cs:3
+- class `IrModule` — A translation unit: the globals and functions produced from one bound program. — PowerBasic.Compiler/Ir/IrModule.cs:10
+- field `prefix` — PowerBasic.Compiler/Ir/IrModule.cs:111
+
+### IrModuleLinker.cs  `C#, 148 lines`
+- namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrModuleLinker.cs:1
+- class `IrLinkException` — Raised when target-neutral IR modules cannot be combined into one whole-program module. — PowerBasic.Compiler/Ir/IrModuleLinker.cs:4
+- class `IrModuleLinker` — Combines target-neutral instances before the middle-end runs. — PowerBasic.Compiler/Ir/IrModuleLinker.cs:21
+- method `IrLinkException( $"cannot link IR module '{module.Name}' using runtime dialect {modu…` — PowerBasic.Compiler/Ir/IrModuleLinker.cs:36
+- method `if(!functionGroups.TryGetValue(function.Name, out var group))` — PowerBasic.Compiler/Ir/IrModuleLinker.cs:49
+- method `if(!SameSignature(representative, candidate))` — PowerBasic.Compiler/Ir/IrModuleLinker.cs:63
+- method `IrLinkException( $"signature mismatch for IR symbol '{name}' between '{owners[repres…` — PowerBasic.Compiler/Ir/IrModuleLinker.cs:64
+- method `IrLinkException( $"duplicate IR definition for '{name}' in '{owners[defined[0]]}' an…` — PowerBasic.Compiler/Ir/IrModuleLinker.cs:69
 
 ### IrPrinter.cs  `C#, 153 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrPrinter.cs:3
 - class `IrPrinter` — Renders the IR to an LLVM-like textual form. The output is deterministic — PowerBasic.Compiler/Ir/IrPrinter.cs:11
 - method `if(!inst.Type.IsVoid)` — PowerBasic.Compiler/Ir/IrPrinter.cs:65
+
+### IrProfileMetadata.cs  `C#, 106 lines`
+- namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrProfileMetadata.cs:2
+- class `IrLoopTripCountProfile` — Observed execution counts for one loop, keyed by the number of body iterations completed on an — PowerBasic.Compiler/Ir/IrProfileMetadata.cs:11
+- class `IrProfileMetadata` — Side metadata attached to IR identities. Profiles are deliberately not operands and do not take — PowerBasic.Compiler/Ir/IrProfileMetadata.cs:69
+- class `Box` — PowerBasic.Compiler/Ir/IrProfileMetadata.cs:70
 
 ### IrSwitchQueries.cs  `C#, 49 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrSwitchQueries.cs:1
@@ -5788,14 +6512,35 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(!sel.Condition.Type.IsBool)` — PowerBasic.Compiler/Ir/IrVerifier.cs:214
 - method `if(!sel.IfTrue.Type.SameStorage(sel.IfFalse.Type) || !sel.Type.SameStor…` — PowerBasic.Compiler/Ir/IrVerifier.cs:216
 
-### LlvmEmitter.cs  `C#, 272 lines`
+### LlvmEmitter.cs  `C#, 338 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:3
 - class `LlvmEmitter` — Emits strictly-valid textual LLVM IR (a .ll module) that the real LLVM — PowerBasic.Compiler/Ir/LlvmEmitter.cs:14
 - method `Emit(module, targetTriple)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:35
-- method `if(!inst.Type.IsVoid)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:105
-- method `Ty(call.Type)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:163
+- method `if(g.FloatingValues is { } values)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:58
+- method `EmitFloatingGlobal(sb, g, values)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:59
+- method `if(!inst.Type.IsVoid)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:125
+- method `IsFloatPred(c.Pred)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:147
+- field `required` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:199
+- method `Ty(call.Type)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:229
 
 ## PowerBasic.Compiler/Ir/Analysis/
+
+### FpDomainAnalysis.cs  `C#, 242 lines`
+- namespace `PowerBasic.Compiler.Ir.Analysis` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:1
+- class `FpDomainAnalysis` — A deliberately small floating domain derived from facts the integer SSA range analysis can prove. — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:9
+- record `Domain` — A closed finite interval plus the IEEE classification facts implied by its provenance. — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:12
+- record `DiscreteDomain` — A finite integer-backed FP domain. is retained instead of collapsing its — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:25
+- method `TryValueAt(long sourceValue, out double value)` — Evaluates one table-domain member with the IR's precision at every operation. — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:29
+- record `Affine` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:126
+- method `Finite(affine)` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:143
+- method `Finite(affine)` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:146
+- method `Finite(affine)` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:149
+- method `Finite(affine)` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:152
+- method `Finite(affine)` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:155
+- method `Finite(affine)` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:159
+- method `if(ReferenceEquals(cast.Value, source))` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:179
+- method `if(cast.Value is IrConstantInt constant)` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:181
+- method `if(binary.Op == IrBinaryOp.FDiv && right == 0.0)` — PowerBasic.Compiler/Ir/Analysis/FpDomainAnalysis.cs:203
 
 ### IrAliasAnalysis.cs  `C#, 169 lines`
 - namespace `PowerBasic.Compiler.Ir.Analysis` — PowerBasic.Compiler/Ir/Analysis/IrAliasAnalysis.cs:1
@@ -5844,6 +6589,26 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(!TryAdd(second.Constant, secondByte, out var secondAt) || !TryAdd(fi…` — PowerBasic.Compiler/Ir/Analysis/IrLoopDependenceAnalysis.cs:328
 - method `if(!CouldHaveIntegerSolution(first.Stride, second.Stride, rhs, trips))` — PowerBasic.Compiler/Ir/Analysis/IrLoopDependenceAnalysis.cs:332
 
+### IrMemorySsa.cs  `C#, 269 lines`
+- namespace `PowerBasic.Compiler.Ir.Analysis` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:1
+- class `IrMemoryAccess` — A node in the function-local SSA graph for the whole memory state. — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:4
+- class `IrMemoryLiveOnEntry` — The initial memory version visible when control enters a function. — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:13
+- class `IrMemoryInstructionAccess` — A memory access attached to an IR instruction and the memory version reaching it. — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:18
+- class `IrMemoryUse` — A read of memory which does not create a new memory version. — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:34
+- class `IrMemoryDef` — A write/barrier which creates a new version of the whole memory state. — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:40
+- record `IrMemoryIncoming` — One incoming memory version on a CFG edge. — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:46
+- class `IrMemoryPhi` — A merge of memory versions at a control-flow join. — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:49
+- class `IrMemorySsa` — Function-local Memory SSA overlay. — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:95
+- record `MemoryLocation` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:101
+- method `DefinitionMayClobber(definition, location)` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:180
+- method `if(!activePhis.Add(phi))` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:185
+- method `foreach(var incoming in phi.Incoming)` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:189
+- method `if(clobber is null)` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:191
+- method `if(common is null)` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:193
+- method `if(!ReferenceEquals(common, clobber))` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:195
+- method `if(!this._phis.TryAdd(frontier, new IrMemoryPhi(frontier)))` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:221
+- method `if(queued.Add(frontier))` — PowerBasic.Compiler/Ir/Analysis/IrMemorySsa.cs:223
+
 ### IrRangeAnalysis.cs  `C#, 509 lines`
 - namespace `PowerBasic.Compiler.Ir.Analysis` — PowerBasic.Compiler/Ir/Analysis/IrRangeAnalysis.cs:1
 - class `IrRangeAnalysis` — What interval an integer SSA value is provably confined to - the IR's answer to the direct — PowerBasic.Compiler/Ir/Analysis/IrRangeAnalysis.cs:39
@@ -5866,43 +6631,112 @@ with unrelated edits, so treat them as anchors, not gospel.
 
 ## PowerBasic.Compiler/Ir/Passes/
 
-### AggregateBlockScalarization.cs  `C#, 308 lines`
+### AggregateBlockScalarization.cs  `C#, 322 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:1
 - class `AggregateBlockScalarization` — Decomposes fixed-size whole-record copies and equality tests into scalar memory operations when — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:31
 - record `Region` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:35
-- method `if(!TryAccessRegion(user, alloca, 0, alloca.Count, out var direct))` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:223
-- method `if(gep.Users.Count == 0)` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:229
-- method `foreach(var indexed in gep.Users)` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:231
-- method `IsExactWholeObjectCall` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:237
-- method `if(distinct[i] != distinct[j])` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:248
-- method `ReferenceEquals(load.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:276
+- method `if(!TryAccessRegion(user, alloca, 0, alloca.Count, out var direct))` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:237
+- method `if(gep.Users.Count == 0)` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:243
+- method `foreach(var indexed in gep.Users)` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:245
+- method `IsExactWholeObjectCall` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:251
+- method `if(distinct[i] != distinct[j])` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:262
+- method `ReferenceEquals(load.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/AggregateBlockScalarization.cs:290
 
-### BitsetSubstitution.cs  `C#, 151 lines`
-- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:1
-- class `BitsetSubstitution` — O0331 — packs a non-escaping zero-initialized global INTEGER Boolean array into one bit per — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:8
-- record `Access` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:11
-- method `RewriteLoad(load, replacement, access.Index)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:38
-- method `RewriteStore(store, replacement, access.Index)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:41
-- method `foreach(var indexed in gep.Users.ToList())` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:66
-- method `ReferenceEquals(load.Pointer, global)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:71
-- method `ReferenceEquals(store.Pointer, global)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:74
-- method `ReferenceEquals(load.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:88
-- method `ReferenceEquals(store.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:91
-- method `IrConstantInt(index.Type, (long)(element >> 3))` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:137
+### AllocationSinking.cs  `C#, 155 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/AllocationSinking.cs:1
+- class `AllocationSinking` — Sinks a string-literal allocation into the single-entry conditional arm that is its only reader. — PowerBasic.Compiler/Ir/Passes/AllocationSinking.cs:26
+- method `if(block.Terminator is not IrCondBr branch)` — PowerBasic.Compiler/Ir/Passes/AllocationSinking.cs:42
+- method `foreach(var allocation in block.Instructions.OfType<IrCall>().Reverse().ToAr…` — Work backwards. If several allocations precede one IF, moving a later one can expose the — PowerBasic.Compiler/Ir/Passes/AllocationSinking.cs:47
+- method `if(progress)` — PowerBasic.Compiler/Ir/Passes/AllocationSinking.cs:54
 
-### ConversionRangeCheckElim.cs  `C#, 110 lines`
+### ArrayBaseAlignment.cs  `C#, 110 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ArrayBaseAlignment.cs:2
+- class `ArrayBaseAlignment` — O0325 — aligns the base pointer of private scalar arrays to the target vector width. — PowerBasic.Compiler/Ir/Passes/ArrayBaseAlignment.cs:13
+- method `IrConstantInt` — PowerBasic.Compiler/Ir/Passes/ArrayBaseAlignment.cs:57
+- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/ArrayBaseAlignment.cs:85
+- method `ReferenceEquals(load.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/ArrayBaseAlignment.cs:90
+- method `ReferenceEquals(store.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/ArrayBaseAlignment.cs:92
+
+### ArrayZeroFillElision.cs  `C#, 312 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:1
+- class `ArrayZeroFillElision` — O0068: replaces the zero-filling dynamic numeric-array allocator with its no-zero twin when the — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:24
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:38
+- method `switch(instruction)` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:92
+- method `PointerFromAllocation(load.Pointer, allocation, dataCell)` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:95
+- method `PointerFromAllocation(store.Pointer, allocation, dataCell)` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:97
+- record `Loop` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:117
+- method `foreach(var successor in terminator.Successors)` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:158
+- method `ValueFromSlot(add.Lhs, counterSlot)` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:172
+- method `if(add.Rhs is IrConstantInt { Value: 1 })` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:236
+- method `ReferenceEquals(al.Pointer, bl.Pointer)` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:294
+- method `Equivalent(ac.Value, bc.Value)` — PowerBasic.Compiler/Ir/Passes/ArrayZeroFillElision.cs:298
+
+### BasicBlockVersioning.cs  `C#, 620 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:2
+- class `BasicBlockVersioning` — O0305 — static basic-block versioning for profitable path contexts at a reconvergence. — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:30
+- method `Version` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:57
+- record `IncomingEdge` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:63
+- record `ComparisonFact` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:65
+- record `Candidate` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:67
+- record `VersionCopy` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:80
+- record `ScalarComparison` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:85
+- record `AlignmentCheck` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:87
+- method `if(!ReferenceEquals(trueJoin, falseJoin))` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:98
+- method `if(ReferenceEquals(join, guard) || ReferenceEquals(trueEdge.From, false…` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:102
+- method `if(!predecessors.Any(p => ReferenceEquals(p, trueEdge.From)) || !predec…` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:107
+- method `if(predecessors.Any(predecessor => dominators.Dominates(join, predecess…` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:110
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:112
+- method `if(!versionTrue && !versionFalse)` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:120
+- method `if(escaping.Count > 0 && (mergeExit = FindMergeExit(region, escaping, d…` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:125
+- method `new` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:128
+- method `if(user.Parent is not { } block || inside.Contains(block) || IsBoundary…` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:238
+- method `if(user is not IrPhi phi)` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:240
+- method `if(ReferenceEquals(phi.GetOperand(i), value) && !dominators.Dominates(e…` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:246
+- method `if(!inside.Contains(successor) && !seen.Add(successor))` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:258
+- method `DecideAlignment(branchComparison, comparison, outcome)` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:289
+- method `Decide(candidate.Pred, pathRange.Value, candidateConstant.Value)` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:324
+- method `new(comparison.Lhs, comparison.Pred, right)` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:332
+- method `if(!inside.Contains(successor))` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:529
+- method `foreach(var phi in successor.Phis.ToList())` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:531
+- method `InvalidOperationException("prechecked boundary phi is missing its source predecessor")` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:533
+- method `InvalidOperationException("prechecked escaping SSA values have no merge exit")` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:541
+- method `if(!copy.Values.TryGetValue(original, out var mapped))` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:552
+- method `InvalidOperationException("cloned region did not map an escaping definition")` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:553
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:556
+- method `if(!inside.Contains(successor))` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:570
+- method `InvalidOperationException("prechecked versioning edge is no longer an unconditional branch")` — PowerBasic.Compiler/Ir/Passes/BasicBlockVersioning.cs:585
+
+### BitsetSubstitution.cs  `C#, 207 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:2
+- class `BitsetSubstitution` — O0331 — packs a non-escaping zero-initialized global INTEGER Boolean array into one bit per — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:10
+- record `Access` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:14
+- method `RewriteLoad(load, replacement, access.Index)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:41
+- method `RewriteStore(store, replacement, access.Index)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:44
+- method `foreach(var indexed in gep.Users.ToList())` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:75
+- method `ReferenceEquals(load.Pointer, global)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:80
+- method `ReferenceEquals(store.Pointer, global)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:83
+- method `WholeArrayZero(call, global)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:86
+- method `ReferenceEquals(load.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:101
+- method `ReferenceEquals(store.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:104
+- method `IrConstantInt(index.Type, (long)(element >> 3))` — PowerBasic.Compiler/Ir/Passes/BitsetSubstitution.cs:193
+
+### ConstantDataMerging.cs  `C#, 204 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:1
+- class `ConstantDataMerging` — O0285 — merges identical, contained, and prefix/suffix-overlapping read-only byte blobs. — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:21
+- method `if(TryPlan(candidates[i], candidates[j], out var candidate) && (best is…` — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:50
+- method `ReferenceEquals(load.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:76
+- method `ReferenceEquals(gep.BasePtr, pointer)` — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:78
+- method `InvalidOperationException("constant-data merge encountered a detached global use")` — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:189
+- record `MergePlan` — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:195
+
+### ConversionRangeCheckElim.cs  `C#, 105 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:2
-- class `ConversionRangeCheckElim` — Removes floating-point range guards around narrowing conversions when the floating value is — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:18
-- method `if(cmp.HasNoUsers || cmp.Pred is not (IrCmpPred.Foeq or IrCmpPred.Fone …` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:31
-- method `if(TryRange(cmp.Lhs, block, integers, _MAX_DEPTH, []) is not { } lhs ||…` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:34
-- method `if(Decide(cmp.Pred, lhs, rhs) is { } outcome)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:37
-- record `FloatRange` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:45
-- method `Join(FloatRange other)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:47
-- method `new(constant.Value, constant.Value)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:57
-- method `if(source.IsEmpty || source.IsTop)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:61
-- method `Ordered((double)(float)source.Lo, (double)(float)source.Hi)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:64
-- method `TryRange(cast.Value, block, integers, depth - 1, active)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:68
-- method `foreach(var incoming in phi.Operands)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:77
+- class `ConversionRangeCheckElim` — O0352 — folds ordered floating range guards when the shared FP domain proves their outcome. — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:16
+- method `if(cmp.HasNoUsers || cmp.Pred is not (IrCmpPred.Foeq or IrCmpPred.Fone …` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:29
+- method `if(TryDomain(cmp.Lhs, block, domains, _MAX_JOIN_DEPTH, []) is not { } l…` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:32
+- method `if(Decide(cmp.Pred, lhs, rhs) is { } outcome)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:35
+- method `TryDomain(cast.Value, block, domains, depth - 1, active)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:59
+- method `foreach(var incoming in phi.Operands)` — PowerBasic.Compiler/Ir/Passes/ConversionRangeCheckElim.cs:68
 
 ### CorrelatedValueProp.cs  `C#, 54 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/CorrelatedValueProp.cs:1
@@ -5916,89 +6750,127 @@ with unrelated edits, so treat them as anchors, not gospel.
 - record `CountedLoop` — A loop that runs a known number of times: the blocks it occupies, the counter it turns, and the — PowerBasic.Compiler/Ir/Passes/CountedLoop.cs:15
 - method `if(ReferenceEquals(successor, header))` — PowerBasic.Compiler/Ir/Passes/CountedLoop.cs:67
 
-### DataLayoutTransforms.cs  `C#, 1058 lines`
+### DataLayoutTransforms.cs  `C#, 1415 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:2
 - record `IrDataLayoutTarget` — Target facts required by storage transforms whose profitability/correct representation is target-de… — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:6
-- class `ArrayOfStructsToStructOfArrays` — O0320 — converts private arrays of packed scalar records into one scalar array per used field. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:13
-- class `FieldReordering` — O0321 — reorders private packed-record fields by static access frequency. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:18
-- class `HotColdFieldSplitting` — O0322 — splits infrequently accessed fields out of private packed-record arrays. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:23
-- class `StructurePackingByRange` — O0323 — narrows private integer record fields when every stored value fits a smaller integer storag… — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:28
-- class `PointerCompression` — O0324 — stores same-region pointers as 16-bit element indices when the target pointer is wider. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:33
-- class `ArrayPaddingAlignment` — O0325 — rounds private scalar-array storage to a complete target vector. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:38
-- class `CacheConflictPadding` — O0326 — pads two-dimensional row strides that are exact cache-size multiples. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:43
-- class `DataTransposition` — O0327 — transposes private two-dimensional arrays when the innermost loop walks the strided dimensi… — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:49
-- class `TemporaryArrayFusion` — O0328 — forwards a pure producer expression into a single same-index consumer and removes the tempo… — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:54
-- class `ArrayContraction` — O0329 — contracts a one-element sliding-window array recurrence to a loop-carried SSA value. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:59
-- class `DataLayoutTransformCore` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:62
-- enum `RecordMode` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:64
-- class `Linear` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:66
-- constructor `Linear` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:70
-- method `Clone` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:72
-- method `Add` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:79
-- method `foreach(var (value, coefficient) in other.Terms)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:83
-- method `if(next == 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:85
-- method `Scale` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:95
-- method `foreach(var key in this.Terms.Keys.ToArray())` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:99
-- method `if(coefficient == 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:101
-- method `DivideExact` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:111
-- method `SameAs` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:120
-- record `Access` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:125
-- record `Field` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:130
-- record `RecordShape` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:136
-- method `if(!field.Type.IsInteger || field.Type.Bits <= 8 || field.Accesses.All(…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:165
-- method `foreach(var store in stores)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:171
-- method `if(store.Parent is null)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:172
-- method `foreach(var user in gep.Users)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:204
-- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:205
-- method `if(store.Value is IrNullPtr)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:208
-- method `if(store.Value is not IrGep target || target.ElementType is null)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:210
-- method `if(store.Parent is null)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:214
-- method `if(range.IsTop || range.IsEmpty || range.Lo < 0 || range.Hi >= ushort.M…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:216
-- method `ReferenceEquals(load.Pointer, gep)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:219
-- method `foreach(var user in gep.Users.ToList())` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:232
-- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:233
-- method `if(store.Value is IrNullPtr)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:236
-- method `if(gep.HasNoUsers)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:260
-- method `if(!logical.DivideExact(elementBytes) || !logical.Terms.TryGetValue(row…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:316
-- method `if(!elements.DivideExact(elementBytes) || !elements.Terms.TryGetValue(r…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:361
-- method `if(other.Key is null)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:366
-- method `if(insideStores.Count != 1 || insideLoads.Count != 1 || outsideStores.C…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:454
-- method `if(!TryCounterProgression(loop, out var firstCounter, out var step) || …` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:456
-- method `if(current is null || previous is null || current.Value - previous.Valu…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:460
-- method `if(!ConstantElement(outsideStores[0], elementBytes, out var initialInde…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:462
-- method `if(initialIndex != expectedInitial || finalIndex != expectedFinal)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:473
-- method `if(seedStore.Parent is null || recurrenceStore.Parent is null || finalL…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:479
-- method `CleanupDeadGeps(root)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:494
-- method `if(root.HasNoUsers)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:496
-- method `if(!index.DivideExact(shape.Stride) || BuildLinear(access.Instruction.P…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:524
-- method `SetPointer(access.Instruction, pointer)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:527
-- method `if(!index.DivideExact(shape.Stride) || TryScaleCopy(index, shape.Stride…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:552
-- method `if(!index.DivideExact(shape.Stride))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:587
-- method `if(cold.Contains(field))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:589
-- method `if(TryScaleCopy(index, hotStride) is not { } bytes)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:592
-- method `if(cold.Contains(field))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:605
-- method `SetPointer(access.Instruction, pointer)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:609
-- method `if(!index.DivideExact(shape.Stride) || TryScaleCopy(index, stride) is n…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:635
-- method `if(BuildLinear(access.Instruction.Parent!, access.Instruction, rewritte…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:644
-- method `if(access.Instruction is IrLoad load)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:648
-- method `if(storedType.SameStorage(store.Value.Type))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:660
-- method `if(coefficient != 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:701
-- method `if(coefficient % stride != 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:711
-- method `if(field.Size != access.BytesWide || !field.Type.SameStorage(access.Val…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:715
-- method `if(ordered[j].Offset < ordered[i].Offset + ordered[i].Size)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:722
-- method `TryPointerLinear(load.Pointer, root, out var bytes)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:744
-- method `TryPointerLinear(store.Pointer, root, out var bytes)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:750
-- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:766
-- method `ReferenceEquals(load.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:770
-- method `ReferenceEquals(store.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:772
-- method `if(IrAliasAnalysis.StorageBytes(element) is not { } elementBytes || !pa…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:788
-- method `if(!TryLinear(binary.Lhs, out var left, depth + 1) || !TryLinear(binary…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:807
-- method `TryLinear(cast.Value, out expression, depth + 1)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:818
-- method `if(seen.Add(gep))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:895
-- method `if(candidate != stride || !ReferenceEquals(candidateTerm, strided.Key))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:940
-- method `Clone` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1009
-- method `ClonePointer` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1043
-- method `IrGep(basePtr!, offset!, et)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1052
+- class `ArrayOfStructsToStructOfArrays` — O0320 — converts private arrays of packed scalar records into one scalar array per used field. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:14
+- class `FieldReordering` — O0321 — reorders private packed-record fields by estimated access frequency. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:19
+- class `HotColdFieldSplitting` — O0322 — splits infrequently accessed fields out of private packed-record arrays. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:24
+- class `StructurePackingByRange` — O0323 — packs private integer record fields to the smallest proven byte or sub-byte representation. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:29
+- class `PointerCompression` — O0324 — stores same-region pointers as 16-bit encoded element indices when the target pointer is wi… — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:34
+- class `ArrayPaddingAlignment` — O0325 — rounds private scalar-array storage to a complete target vector. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:39
+- class `CacheConflictPadding` — O0326 — pads two-dimensional row strides that alias one cache set across all ways. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:44
+- class `DataTransposition` — O0327 — transposes private two-dimensional arrays when the innermost loop walks the strided dimensi… — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:50
+- class `TemporaryArrayFusion` — O0328 — forwards a pure producer expression into a single same-index consumer and removes the tempo… — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:55
+- class `ArrayContraction` — O0329 — contracts a fixed-width sliding-window array recurrence to loop-carried SSA values. — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:60
+- class `DataLayoutTransformCore` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:63
+- enum `RecordMode` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:65
+- class `Linear` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:67
+- constructor `Linear` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:71
+- method `Clone` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:73
+- method `Add` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:80
+- method `foreach(var (value, coefficient) in other.Terms)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:84
+- method `if(next == 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:86
+- method `Scale` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:96
+- method `foreach(var key in this.Terms.Keys.ToArray())` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:100
+- method `if(coefficient == 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:102
+- method `DivideExact` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:112
+- method `SameAs` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:121
+- record `Access` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:126
+- record `Field` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:131
+- record `RecordShape` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:137
+- record `BitField` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:139
+- method `if(!field.Type.IsInteger || field.Accesses.All(a => !a.IsStore))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:172
+- method `foreach(var store in stores)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:178
+- method `if(store.Parent is null)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:179
+- method `if(subByteWidth > 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:186
+- method `foreach(var user in gep.Users)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:217
+- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:218
+- method `if(store.Value is IrNullPtr)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:221
+- method `if(store.Value is not IrGep target || target.ElementType is null)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:223
+- method `if(store.Parent is null)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:227
+- method `if(range.IsTop || range.IsEmpty || range.Lo < 0 || range.Hi >= ushort.M…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:229
+- method `ReferenceEquals(load.Pointer, gep)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:232
+- method `foreach(var user in gep.Users.ToList())` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:245
+- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:246
+- method `if(store.Value is IrNullPtr)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:249
+- method `if(!index.Type.SameStorage(IrType.U16))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:254
+- method `if(gep.HasNoUsers)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:278
+- method `if(!logical.DivideExact(elementBytes) || !logical.Terms.TryGetValue(row…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:335
+- method `if(scaled is null || !CanBuildLinear(scaled) || access.Instruction.Pare…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:343
+- method `if(!elements.DivideExact(elementBytes) || !elements.Terms.TryGetValue(r…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:393
+- method `if(other.Key is null)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:398
+- method `if(IrLoopDependenceAnalysis.Analyze(fn, loop.Header) is not { IsComplet…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:480
+- method `if(insideStores.Count != 1 || insideLoads.Count == 0 || outsideLoads.Co…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:487
+- method `if(!TryCounterProgression(loop, out var firstCounter, out var step) || …` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:489
+- method `if(current is null)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:493
+- method `foreach(var access in insideLoads)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:498
+- method `if(previous is null || distance <= 0 || distance > root.Count)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:507
+- method `if(!valid || width == 0 || outsideStores.Count != width)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:515
+- method `if(firstCurrent < width || lastCurrent < firstCurrent || lastCurrent >=…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:526
+- method `foreach(var access in outsideStores)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:530
+- method `if(distance is < 1 || distance > width)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:542
+- method `if(seeds[slot] is not null || store.Parent is null || !dom.Dominates(st…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:548
+- method `if(!valid || seeds.Any(seed => seed is null))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:554
+- method `foreach(var access in outsideLoads)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:558
+- method `if(distance is < 1 || distance > width || load.Parent is null || !dom.D…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:571
+- method `if(!valid)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:577
+- method `if(recurrenceStore.Parent is null || !dom.Dominates(recurrenceStore.Par…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:581
+- method `for(var slot = 0; slot < history.Length; ++slot)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:585
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:591
+- method `foreach(var (load, distance) in finalLoads)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:596
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:598
+- method `foreach(var (load, _) in finalLoads)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:601
+- method `foreach(var seed in seeds)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:603
+- method `CleanupDeadGeps(root)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:606
+- method `if(root.HasNoUsers)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:608
+- method `if(access.Instruction.Parent is not { } block || !LinearizedPointerIsEx…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:626
+- method `if(!index.DivideExact(shape.Stride) || !CanBuildLinearExactly(index, ra…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:635
+- method `SetPointer(access.Instruction, pointer)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:656
+- method `if(!index.DivideExact(shape.Stride) || TryScaleCopy(index, shape.Stride…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:684
+- method `checked(left * right)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:721
+- method `checked(left + right)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:729
+- method `if(!index.DivideExact(shape.Stride))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:758
+- method `if(cold.Contains(field))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:760
+- method `if(TryScaleCopy(index, hotStride) is not { } bytes)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:763
+- method `if(cold.Contains(field))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:776
+- method `SetPointer(access.Instruction, pointer)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:780
+- method `if(withinByte + bitField.Width > 8)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:797
+- method `if(!index.DivideExact(shape.Stride) || TryScaleCopy(index, stride) is n…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:820
+- method `if(BuildLinear(access.Instruction.Parent!, access.Instruction, rewritte…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:829
+- method `if(bitFields.TryGetValue(field, out var bitField))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:832
+- method `RewriteBitFieldAccess(access, pointer, bitOffset[field], bitField)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:833
+- method `if(access.Instruction is IrLoad load)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:838
+- method `if(storedType.SameStorage(store.Value.Type))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:850
+- method `if(bitOffset != 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:872
+- method `if(bitField.Signed)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:875
+- method `if(load.Type.Bits > 8)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:880
+- method `if(load.Type.Bits < 8)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:882
+- method `if(value.Type.Bits > 8)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:891
+- method `if(value.Type.Bits < 8)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:893
+- method `if(bitOffset != 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:896
+- method `if(range.Lo >= -limit && range.Hi < limit)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:916
+- method `if(coefficient != 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:948
+- method `if(coefficient % stride != 0)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:961
+- method `if(field.Size != access.BytesWide || !field.Type.SameStorage(access.Val…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:965
+- method `if(ordered[j].Offset < ordered[i].Offset + ordered[i].Size)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:972
+- method `TryPointerLinear(load.Pointer, root, out var bytes)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:994
+- method `TryPointerLinear(store.Pointer, root, out var bytes)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1000
+- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1016
+- method `ReferenceEquals(load.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1020
+- method `ReferenceEquals(store.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1022
+- method `if(IrAliasAnalysis.StorageBytes(element) is not { } elementBytes || !pa…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1038
+- method `if(!TryLinear(binary.Lhs, out var left, depth + 1) || !TryLinear(binary…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1057
+- method `TryLinear(cast.Value, out expression, depth + 1)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1068
+- method `if(!LinearizedValueIsExact(binary.Lhs, ranges, block, depth + 1) || !Li…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1111
+- method `FitsExactly(mathematical, binary.Type)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1117
+- method `if(!LinearizedValueIsExact(binary.Lhs, ranges, block, depth + 1) || !Li…` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1122
+- method `FitsExactly(mathematical, binary.Type)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1126
+- method `if(seen.Add(gep))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1240
+- method `if(candidate != stride || !ReferenceEquals(candidateTerm, strided.Key))` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1285
+- method `Clone` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1367
+- method `ClonePointer` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1401
+- method `IrGep(basePtr!, offset!, et)` — PowerBasic.Compiler/Ir/Passes/DataLayoutTransforms.cs:1410
 
 ### Dce.cs  `C#, 32 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/Dce.cs:1
@@ -6015,11 +6887,14 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(ReferenceEquals(conditional.IfTrue, header))` — PowerBasic.Compiler/Ir/Passes/DeadLoopElimination.cs:145
 - method `if(ReferenceEquals(conditional.IfFalse, header))` — PowerBasic.Compiler/Ir/Passes/DeadLoopElimination.cs:147
 
-### DeadStoreElim.cs  `C#, 43 lines`
+### DeadStoreElim.cs  `C#, 116 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:2
-- class `DeadStoreElim` — Intra-block dead-store elimination for memory: a store is dead if a later store in — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:12
-- method `foreach` — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:18
-- method `switch(inst)` — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:20
+- class `DeadStoreElim` — Dead-store elimination for memory. O0065 first removes writes to unread byte ranges of — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:11
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:17
+- method `switch(inst)` — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:19
+- method `ReferenceEquals(load.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:96
+- method `ReferenceEquals(store.Pointer, pointer)` — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:98
+- method `ReferenceEquals(gep.BasePtr, pointer)` — PowerBasic.Compiler/Ir/Passes/DeadStoreElim.cs:101
 
 ### DemandedBits.cs  `C#, 88 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/DemandedBits.cs:1
@@ -6027,28 +6902,28 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if` — PowerBasic.Compiler/Ir/Passes/DemandedBits.cs:17
 - method `if` — PowerBasic.Compiler/Ir/Passes/DemandedBits.cs:22
 
-### EqualitySaturation.cs  `C#, 272 lines`
+### EqualitySaturation.cs  `C#, 283 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:1
-- class `EqualitySaturation` — Bounded equality saturation for pure integer expression trees. Instead of committing to the first — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:9
-- method `foreach(var candidate in RewriteEverywhere(expression, context))` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:44
-- method `if(!seen.Add(normalized))` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:48
-- method `if(Better(normalized, best, context))` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:51
-- method `if(seen.Count >= _candidateBudget)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:54
-- method `Constant(type, folded)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:80
-- method `if(b.Left is Binary { Op: IrBinaryOp.Add } addLeft)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:93
-- method `if(b.Left is Binary { Op: IrBinaryOp.Xor } xorLeft)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:127
-- method `if(b.Right is Binary { Op: IrBinaryOp.Xor } xorRight)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:131
-- method `if(common.Equals(otherCommon))` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:156
-- method `return(expression.Right, expression.Left)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:165
-- record `Expr` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:231
-- record `Leaf` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:233
-- record `Constant` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:234
-- record `Binary` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:235
-- class `Context` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:236
-- method `Import` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:240
-- method `Key` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:250
-- method `Materialize` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:257
-- method `Insert` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:264
+- class `EqualitySaturation` — Bounded equality saturation for pure integer expression trees. Instead of committing to the first — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:11
+- method `foreach(var candidate in RewriteEverywhere(expression, context))` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:46
+- method `if(!seen.Add(normalized))` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:50
+- method `if(Better(normalized, best, context))` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:53
+- method `if(seen.Count >= _candidateBudget)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:56
+- method `Constant(type, folded)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:82
+- method `if(b.Left is Binary { Op: IrBinaryOp.Add } addLeft)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:95
+- method `if(b.Left is Binary { Op: IrBinaryOp.Xor } xorLeft)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:129
+- method `if(b.Right is Binary { Op: IrBinaryOp.Xor } xorRight)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:133
+- method `if(common.Equals(otherCommon))` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:149
+- method `return(expression.Right, expression.Left)` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:158
+- record `Expr` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:242
+- record `Leaf` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:244
+- record `Constant` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:245
+- record `Binary` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:246
+- class `Context` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:247
+- method `Import` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:251
+- method `Key` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:261
+- method `Materialize` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:268
+- method `Insert` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:275
 
 ### FloatDemotion.cs  `C#, 202 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/FloatDemotion.cs:1
@@ -6056,9 +6931,55 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(phi.Parent is not null && phi.Type.IsIeeeFloat && Demote(phi))` — PowerBasic.Compiler/Ir/Passes/FloatDemotion.cs:37
 - method `ReferenceEquals(phi.IncomingFrom(predecessor), step)` — PowerBasic.Compiler/Ir/Passes/FloatDemotion.cs:133
 
-### FrameElision.cs  `C#, 29 lines`
+### FormattedPrintSpecialization.cs  `C#, 107 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/FormattedPrintSpecialization.cs:3
+- class `FormattedPrintSpecialization` — O0303 — specializes formatted output whose scaled numeric field and packed USING specification are — PowerBasic.Compiler/Ir/Passes/FormattedPrintSpecialization.cs:12
+- method `Declare(module, _FILE_PRINT_STRING, IrType.I32, IrType.Ptr, IrType.I32)` — PowerBasic.Compiler/Ir/Passes/FormattedPrintSpecialization.cs:51
+- method `IrConstantInt(IrType.I32, bytes.Length)` — PowerBasic.Compiler/Ir/Passes/FormattedPrintSpecialization.cs:54
+
+### FpDomainSpecialization.cs  `C#, 173 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/FpDomainSpecialization.cs:2
+- class `FpDomainSpecialization` — O0343/O0332 composition — SPEED-only transcendental specialization driven by the same SSA ranges — PowerBasic.Compiler/Ir/Passes/FpDomainSpecialization.cs:24
+- method `if(call.Parent is null || call.Type.Bits is not (32 or 64) || call.Args…` — PowerBasic.Compiler/Ir/Passes/FpDomainSpecialization.cs:41
+- method `if((allowLookupTables && TryLookup(module, call, kind, domains)) || Try…` — PowerBasic.Compiler/Ir/Passes/FpDomainSpecialization.cs:44
+
+### FpFastMath.cs  `C#, 314 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:1
+- class `FpFastMath` — O0340-O0345 — transformations legal only under the floating freedoms granted by — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:8
+- record `SignedValue` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:13
+- method `if(root.Parent is null || !root.Type.IsIeeeFloat)` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:35
+- method `if` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:37
+- method `if(!FlattenProduct(root, block, leaves, nodes, isRoot: true) || leaves.…` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:43
+- method `ReplaceTree(root, replacement, nodes)` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:49
+- method `if` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:53
+- method `if(!FlattenSum(root, block, signedLeaves, sumNodes, negative: false, al…` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:58
+- method `ReplaceTree(root, signedReplacement.Value, sumNodes)` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:66
+- method `FlattenProduct(inner.Lhs, block, leaves, nodes)` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:90
+- method `FlattenSum(inner.Rhs, block, leaves, nodes, rhsNegative, allowSubtraction)` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:107
+- method `Flush()` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:169
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:175
+- method `if(instruction is IrCall)` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:177
+- method `Flush()` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:178
+- method `if(instruction is not IrBinary { Op: IrBinaryOp.FDiv, Type.IsIeeeFloat:…` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:181
+- method `if(!groups.TryGetValue(division.Rhs, out var values))` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:183
+- method `if` — PowerBasic.Compiler/Ir/Passes/FpFastMath.cs:209
+
+### FpSimplify.cs  `C#, 308 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/FpSimplify.cs:2
+- class `FpSimplify` — O0346/O0347 — strict floating classification simplification and proven mixed-precision narrowing. — PowerBasic.Compiler/Ir/Passes/FpSimplify.cs:12
+- record `Facts` — PowerBasic.Compiler/Ir/Passes/FpSimplify.cs:13
+- method `new(true, true, true, unsignedValue == 0, unsignedValue != 0, false, uns…` — PowerBasic.Compiler/Ir/Passes/FpSimplify.cs:233
+- method `new(true, true, signedValue >= 0, signedValue <= 0, signedValue > 0, sig…` — PowerBasic.Compiler/Ir/Passes/FpSimplify.cs:236
+- method `new(true, true, true, false, false, false, false)` — PowerBasic.Compiler/Ir/Passes/FpSimplify.cs:240
+
+### FrameElision.cs  `C#, 30 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/FrameElision.cs:1
-- class `FrameElision` — O0070 — stack-frame elision eligibility. — PowerBasic.Compiler/Ir/Passes/FrameElision.cs:19
+- class `FrameElision` — O0070 — stack-frame elision eligibility. — PowerBasic.Compiler/Ir/Passes/FrameElision.cs:20
+
+### FsmCompilation.cs  `C#, 103 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/FsmCompilation.cs:1
+- class `FsmCompilation` — O0336 — compiles a dense byte-valued dispatch into a 256-entry class table followed by a compact — PowerBasic.Compiler/Ir/Passes/FsmCompilation.cs:23
+- method `if(targets.Count >= _DOMAIN_SIZE)` — PowerBasic.Compiler/Ir/Passes/FsmCompilation.cs:59
 
 ### FunctionSummaries.cs  `C#, 191 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/FunctionSummaries.cs:1
@@ -6077,19 +6998,44 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `GlobalDce` — Module-level global dead-code elimination (LLVM's globaldce): removes functions and global — PowerBasic.Compiler/Ir/Passes/GlobalDce.cs:12
 - method `if(function.HasNoUsers && !IsEntry(function))` — PowerBasic.Compiler/Ir/Passes/GlobalDce.cs:22
 
-### Gvn.cs  `C#, 110 lines`
-- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:2
-- class `Gvn` — Global value numbering by dominator-tree scoped hashing: two pure instructions — PowerBasic.Compiler/Ir/Passes/Gvn.cs:14
-- class `Context` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:37
-- method `Visit` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:43
-- method `if(key is null)` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:48
-- method `if(this._table.TryGetValue(key, out var leader))` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:50
-- method `if` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:59
-- method `foreach` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:63
-- method `KeyOf` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:67
-- method `Pair` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:81
-- method `Operand` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:87
-- method `IdOf` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:95
+### GuardedSpecialization.cs  `C#, 343 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:1
+- record `GuardedSpecializationResult` — The CFG and SSA objects created by . — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:4
+- class `GuardedSpecialization` — O0304 — guarded specialization. Duplicates a single-entry/single-exit region behind runtime — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:29
+- method `Dictionary` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:43
+- record `RegionShape` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:102
+- record `LiveOut` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:109
+- method `ArgumentException( "every specialization assumption must preserve the value's storage …` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:137
+- method `if(region.Contains(successor) && seen.Add(successor))` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:195
+- method `if(user.Parent is not { } useBlock)` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:236
+- method `Fail(out liveOuts)` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:237
+- method `if(shape.Blocks.Contains(useBlock))` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:238
+- method `if(user is IrPhi && ReferenceEquals(useBlock, shape.Exit))` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:240
+- method `if(user is IrPhi || (!ReferenceEquals(useBlock, shape.Exit) && !dominat…` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:242
+- method `Fail(out liveOuts)` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:244
+- method `if` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:247
+- method `Fail(out liveOuts)` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:251
+- method `Fail(out liveOuts)` — PowerBasic.Compiler/Ir/Passes/GuardedSpecialization.cs:254
+
+### Gvn.cs  `C#, 125 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:3
+- class `Gvn` — Global value numbering by dominator-tree scoped hashing: two pure instructions — PowerBasic.Compiler/Ir/Passes/Gvn.cs:16
+- class `Context` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:39
+- method `Visit` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:48
+- method `if(key is null)` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:53
+- method `if(this._table.TryGetValue(key, out var leader))` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:55
+- method `if` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:64
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:68
+- method `KeyOf` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:72
+- method `MemoryVersion` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:87
+- method `Pair` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:96
+- method `Operand` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:102
+- method `IdOf` — PowerBasic.Compiler/Ir/Passes/Gvn.cs:110
+
+### HandleOwnershipElision.cs  `C#, 124 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/HandleOwnershipElision.cs:1
+- class `HandleOwnershipElision` — Eliminates balanced string-handle ownership copies whose lifetime is completely visible in one — PowerBasic.Compiler/Ir/Passes/HandleOwnershipElision.cs:26
+- method `if` — PowerBasic.Compiler/Ir/Passes/HandleOwnershipElision.cs:58
 
 ### IfConversion.cs  `C#, 118 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IfConversion.cs:1
@@ -6098,13 +7044,26 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(vt is null || ve is null)` — PowerBasic.Compiler/Ir/Passes/IfConversion.cs:36
 - method `foreach(var inst in dead.Instructions.ToList())` — PowerBasic.Compiler/Ir/Passes/IfConversion.cs:47
 
-### Inliner.cs  `C#, 110 lines`
+### IndirectCallPromotion.cs  `C#, 122 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IndirectCallPromotion.cs:1
+- class `IndirectCallPromotion` — O0271 — promotes the hottest profiled target of an indirect call to a guarded direct call. — PowerBasic.Compiler/Ir/Passes/IndirectCallPromotion.cs:9
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/IndirectCallPromotion.cs:23
+- method `Promote(call, target, function)` — PowerBasic.Compiler/Ir/Passes/IndirectCallPromotion.cs:27
+
+### InductionVariableSimplification.cs  `C#, 240 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/InductionVariableSimplification.cs:1
+- class `InductionVariableSimplification` — O0062 — replace a repeated affine expression of a counted-loop induction variable by its own — PowerBasic.Compiler/Ir/Passes/InductionVariableSimplification.cs:30
+- record `Affine` — PowerBasic.Compiler/Ir/Passes/InductionVariableSimplification.cs:33
+- method `if(root.Parent is null || root.HasNoUsers || root.Users.Any(user => use…` — A larger affine root may have been rewritten first and erased, dropping the only use of one — PowerBasic.Compiler/Ir/Passes/InductionVariableSimplification.cs:73
+- method `Rewrite` — PowerBasic.Compiler/Ir/Passes/InductionVariableSimplification.cs:75
+
+### Inliner.cs  `C#, 146 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/Inliner.cs:1
 - class `Inliner` — Function inlining for direct calls to non-recursive defined callees within a size — PowerBasic.Compiler/Ir/Passes/Inliner.cs:11
-- method `if(call.Parent is not null && call.Callee is IrFunction callee && !call…` — PowerBasic.Compiler/Ir/Passes/Inliner.cs:38
-- method `InlineCall(call, callee, fn, inlined)` — PowerBasic.Compiler/Ir/Passes/Inliner.cs:40
-- method `if(ret.HasValue)` — PowerBasic.Compiler/Ir/Passes/Inliner.cs:87
-- method `foreach(var (value, from) in returns)` — PowerBasic.Compiler/Ir/Passes/Inliner.cs:100
+- method `if(call.Parent is not null && call.Callee is IrFunction callee && !call…` — PowerBasic.Compiler/Ir/Passes/Inliner.cs:50
+- method `InlineCall(call, callee, fn, inlined)` — PowerBasic.Compiler/Ir/Passes/Inliner.cs:53
+- method `if(ret.HasValue)` — PowerBasic.Compiler/Ir/Passes/Inliner.cs:123
+- method `foreach(var (value, from) in returns)` — PowerBasic.Compiler/Ir/Passes/Inliner.cs:136
 
 ### InstCombine.cs  `C#, 323 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/InstCombine.cs:2
@@ -6139,22 +7098,26 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if` — PowerBasic.Compiler/Ir/Passes/IpConstantProp.cs:108
 - method `if(!IsConstant(value) || (agreed is not null && !Same(agreed, value)))` — PowerBasic.Compiler/Ir/Passes/IpConstantProp.cs:127
 
-### IrPassManager.cs  `C#, 286 lines`
+### IrPassManager.cs  `C#, 405 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:1
 - class `IrVerificationException` — Raised when is on and a pass leaves the IR malformed. — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:4
 - class `IrPassManager` — Runs an ordered set of function passes, once or to a fixpoint. Each pass reports — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:17
-- method `if(errors.Count > 0)` — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:55
-- method `IrVerificationException(name, errors)` — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:56
-- method `RunFunctions()` — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:88
-- method `RunFunctions` — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:90
+- method `if(errors.Count > 0)` — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:72
+- method `IrVerificationException(name, errors)` — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:73
+- method `RunFunctions()` — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:109
+- method `RunFunctions` — PowerBasic.Compiler/Ir/Passes/IrPassManager.cs:111
 
-### LibraryCallRecognition.cs  `C#, 130 lines`
+### LibraryCallRecognition.cs  `C#, 185 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:1
 - class `LibraryCallRecognition` — O0330 — recognizes canonical counted byte fill/copy loops and replaces them with the existing LLVM — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:9
 - method `if(header.Parent is null || CountedLoop.Match(function, header) is not …` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:22
 - method `if(TryReplace(module, function, loop))` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:24
-- method `Start(loop, sourceBase!, initial)` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:74
-- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:121
+- method `Start(loop, sourceBase!, initial)` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:81
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:106
+- method `if(ReferenceEquals(block, loop.Latch) && ReferenceEquals(successor, loo…` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:113
+- method `if(!loop.Region.Contains(successor) || ReferenceEquals(block, loop.Latc…` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:128
+- method `if(--indegree[successor] == 0)` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:131
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler/Ir/Passes/LibraryCallRecognition.cs:176
 
 ### Licm.cs  `C#, 129 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/Licm.cs:1
@@ -6167,12 +7130,15 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(!AllOperandsOutside(inst, body))` — PowerBasic.Compiler/Ir/Passes/Licm.cs:76
 - method `foreach(var inst in block.Instructions)` — PowerBasic.Compiler/Ir/Passes/Licm.cs:94
 
-### LocalizeGlobals.cs  `C#, 87 lines`
+### LocalizeGlobals.cs  `C#, 123 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LocalizeGlobals.cs:1
-- class `LocalizeGlobals` — O0278 — global variable localization. A DIM SHARED that only one procedure ever touches is — PowerBasic.Compiler/Ir/Passes/LocalizeGlobals.cs:22
-- method `Localize` — PowerBasic.Compiler/Ir/Passes/LocalizeGlobals.cs:36
+- class `LocalizeGlobals` — O0278 — global variable localization. A DIM SHARED that only one procedure ever touches is — PowerBasic.Compiler/Ir/Passes/LocalizeGlobals.cs:29
+- method `Localize` — PowerBasic.Compiler/Ir/Passes/LocalizeGlobals.cs:43
+- method `if(call.Callee is not IrFunction callee)` — PowerBasic.Compiler/Ir/Passes/LocalizeGlobals.cs:92
+- method `if(ReferenceEquals(callee, function))` — PowerBasic.Compiler/Ir/Passes/LocalizeGlobals.cs:94
+- method `if(!callee.IsDeclaration && seen.Add(callee))` — PowerBasic.Compiler/Ir/Passes/LocalizeGlobals.cs:96
 
-### LookupTableElimination.cs  `C#, 115 lines`
+### LookupTableElimination.cs  `C#, 133 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LookupTableElimination.cs:1
 - class `LookupTableElimination` — O0333 — removes 256-byte read-only tables when every possible byte index follows a cheaper exact — PowerBasic.Compiler/Ir/Passes/LookupTableElimination.cs:8
 - enum `FormulaKind` — PowerBasic.Compiler/Ir/Passes/LookupTableElimination.cs:9
@@ -6181,14 +7147,30 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(indexed.Parent?.Parent is { HasErrorHandler: true } or { HasInlineAs…` — PowerBasic.Compiler/Ir/Passes/LookupTableElimination.cs:51
 - method `IrConstantInt(load.Type, formula.Constant)` — PowerBasic.Compiler/Ir/Passes/LookupTableElimination.cs:80
 
-### LookupTableGeneration.cs  `C#, 184 lines`
-- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:1
-- class `LookupTableGeneration` — O0332 — evaluates a sufficiently expensive pure one-byte function over all 256 input patterns and — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:8
-- method `IrConstantInt(IrType.I16, (long)constant.ZeroExtended)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:65
-- method `TryBinary(binary, values, out var binaryValue)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:83
-- method `TryCompare(compare, values, out var comparison)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:86
-- method `TryCast(cast, values, out var castValue)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:89
-- method `ValueOf(select.Condition, values, out var condition)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:92
+### LookupTableGeneration.cs  `C#, 392 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:2
+- class `LookupTableGeneration` — O0332 — evaluates a sufficiently expensive pure integer function over a small proven input domain — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:10
+- record `CallSite` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:16
+- record `Domain` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:18
+- method `FullByteDomain(parameterType, out domain)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:109
+- method `if` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:110
+- method `FullByteDomain(parameterType, out domain)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:118
+- method `FullByteDomain(parameterType, out domain)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:122
+- method `FullByteDomain(parameterType, out domain)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:129
+- method `if(predecessor is null || phi.IncomingFrom(predecessor) is not { } valu…` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:210
+- method `if(instruction is IrPhi)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:220
+- method `if(++steps > _MAX_EVAL_STEPS)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:222
+- method `switch` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:224
+- method `TryCompare(compare, values, out var comparison)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:229
+- method `TryCast(cast, values, out var castValue)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:232
+- method `ValueOf(select.Condition, values, out var condition)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:235
+- method `ValueOf(branch.Condition, values, out var condition)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:242
+- method `if` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:254
+- method `if` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:258
+- method `if(divisor == 0 || dividend == SignedMinimum(bits) && divisor == -1)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:285
+- method `if(divisor == 0 || dividend == SignedMinimum(bits) && divisor == -1)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:293
+- method `if(divisor == 0)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:300
+- method `if(divisor == 0)` — PowerBasic.Compiler/Ir/Passes/LookupTableGeneration.cs:307
 
 ### LoopInterchange.cs  `C#, 593 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LoopInterchange.cs:2
@@ -6221,14 +7203,14 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `IrBinary(IrBinaryOp.Add, newInnerCounter, nest.OuterCounter.StepConstant)` — PowerBasic.Compiler/Ir/Passes/LoopInterchange.cs:462
 - method `IrBinary(IrBinaryOp.Add, newOuterCounter, nest.InnerCounter.StepConstant)` — PowerBasic.Compiler/Ir/Passes/LoopInterchange.cs:465
 
-### LoopUnroll.cs  `C#, 217 lines`
+### LoopUnroll.cs  `C#, 235 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:1
-- class `LoopUnroll` — Full unrolling of a counted loop whose trip count is known at compile time - the first of the — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:26
-- record `Loop` — A recognized counted loop: the blocks that make it and the counter's constant progression. — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:46
-- method `foreach(var successor in outside.Successors)` — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:102
-- method `foreach(var user in instruction.Users)` — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:119
-- method `new` — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:127
-- method `Retarget(previousLatch, clones[loop.Body[0]])` — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:186
+- class `LoopUnroll` — Full unrolling of a counted loop whose trip count is known at compile time - the first of the — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:28
+- record `Loop` — A recognized counted loop: the blocks that make it and the counter's constant progression. — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:52
+- method `foreach(var successor in outside.Successors)` — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:109
+- method `foreach(var user in instruction.Users)` — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:126
+- method `new` — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:134
+- method `Retarget(previousLatch, clones[loop.Body[0]])` — PowerBasic.Compiler/Ir/Passes/LoopUnroll.cs:201
 
 ### LoopUnswitch.cs  `C#, 188 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LoopUnswitch.cs:1
@@ -6240,31 +7222,132 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `new` — PowerBasic.Compiler/Ir/Passes/LoopUnswitch.cs:133
 - method `foreach` — PowerBasic.Compiler/Ir/Passes/LoopUnswitch.cs:170
 
-### Mem2Reg.cs  `C#, 181 lines`
+### LoopVersioning.cs  `C#, 943 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:1
+- class `LoopVersioning` — O0306 — loop versioning. Runtime predicates are collected in one preheader guard and select a — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:7
+- enum `Direction` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:11
+- enum `BoundKind` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:17
+- record `LinearTerm` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:22
+- record `LinearForm` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:24
+- record `Bound` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:29
+- record `BoundsCheck` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:31
+- record `OverflowCheck` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:33
+- record `MemoryAccess` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:35
+- record `MemoryRoot` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:37
+- record `MemoryPlan` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:39
+- record `Loop` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:41
+- record `LoopTest` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:56
+- method `if(latch is not null)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:90
+- method `switch` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:122
+- method `if(ReferenceEquals(branch.Target, exit))` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:129
+- method `if(ReferenceEquals(branch.IfTrue, exit) || ReferenceEquals(branch.IfFal…` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:134
+- method `foreach(var successor in block.Successors)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:172
+- method `if` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:185
+- method `if(CollectBounds(boundsCondition, counter, region, bounds) && bounds.Co…` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:188
+- method `if` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:192
+- method `new( counter, limit, null, simple.Pred == IrCmpPred.Sle ? Direction.Asce…` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:214
+- method `TryRuntimeLoopTest` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:222
+- method `CollectBounds(disjunction.Lhs, counter, region, result)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:314
+- method `Add` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:323
+- method `CanEvaluateWide(form, counter.Type)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:443
+- method `CanEvaluateWide(form, counter.Type)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:449
+- method `CanEvaluateWide(form, counter.Type)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:453
+- method `CanEvaluateWide(form, counter.Type)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:458
+- method `checked(left.CounterCoefficient + checked(right.CounterCoefficient * rightSi…` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:471
+- method `AddTerms` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:478
+- method `checked(value.CounterCoefficient * scale)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:489
+- method `switch(instruction)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:526
+- method `StorageBytes(store.Value.Type)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:531
+- method `new` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:554
+- method `if(StorageBytes(elementType) is not { } elementBytes || !TryScale(displ…` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:602
+- method `TryCombine(baseOffset, displacement, 1, out offset)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:606
+- method `foreach(var endpoint in new[] { loop.Initial, loop.Limit })` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:635
+- method `if(TryEvaluateLinearConstant(check.Expression, endpoint, out var value)…` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:643
+- method `Dictionary` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:701
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:730
+- method `if(fastValues.GetValueOrDefault(access.Instruction) is IrInstruction cl…` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:757
+- method `if(root.Alignment > 1)` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:759
+- method `foreach(var endpoint in new[] { loop.Initial, loop.Limit })` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:770
+- method `IrBinary(IrBinaryOp.Sub, new IrConstantInt(IrType.I64, SignedMax(loop.Counter…` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:814
+- method `IrBinary(IrBinaryOp.Sub, new IrConstantInt(IrType.I64, SignedMin(loop.Counter…` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:817
+- method `if` — PowerBasic.Compiler/Ir/Passes/LoopVersioning.cs:879
+
+### LoopVersioningMemoryFacts.cs  `C#, 51 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/LoopVersioningMemoryFacts.cs:2
+- class `LoopVersioningMemoryFacts` — Guard-proven memory facts attached to instructions in a loop-versioned fast clone. — PowerBasic.Compiler/Ir/Passes/LoopVersioningMemoryFacts.cs:13
+- class `Facts` — PowerBasic.Compiler/Ir/Passes/LoopVersioningMemoryFacts.cs:14
+
+### Mem2Reg.cs  `C#, 189 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:1
-- class `Mem2Reg` — Promotes stack slots to SSA registers: an alloca whose only uses are direct, — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:21
-- method `ReferenceEquals(load.Pointer, a)` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:71
-- method `ReferenceEquals(store.Pointer, a)` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:73
-- method `if(user is IrStore store && store.Parent is { } b && dom.IsReachable(b))` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:90
-- method `foreach` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:92
-- method `if(!perBlock.ContainsKey(alloca))` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:96
-- method `if(idf.Add(y))` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:112
-- method `foreach(var (alloca, phi) in succPhis)` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:173
-- method `Rename(child, dom, children, allocas, phis, reaching, deadMemoryOps)` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:178
+- class `Mem2Reg` — Promotes stack slots to SSA registers: an alloca whose only uses are direct, — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:26
+- method `ReferenceEquals(load.Pointer, a)` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:79
+- method `ReferenceEquals(store.Pointer, a)` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:81
+- method `if(user is IrStore store && store.Parent is { } b && dom.IsReachable(b))` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:98
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:100
+- method `if(!perBlock.ContainsKey(alloca))` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:104
+- method `if(idf.Add(y))` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:120
+- method `foreach(var (alloca, phi) in succPhis)` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:181
+- method `Rename(child, dom, children, allocas, phis, reaching, deadMemoryOps)` — PowerBasic.Compiler/Ir/Passes/Mem2Reg.cs:186
 
-### MemoryRoutineSpecialization.cs  `C#, 81 lines`
-- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/MemoryRoutineSpecialization.cs:1
-- class `MemoryRoutineSpecialization` — O0339 — specializes tiny constant-size LLVM memory intrinsics into straight-line byte accesses. — PowerBasic.Compiler/Ir/Passes/MemoryRoutineSpecialization.cs:9
+### MemoryRoutineSpecialization.cs  `C#, 141 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/MemoryRoutineSpecialization.cs:2
+- class `MemoryRoutineSpecialization` — O0339 — specializes small constant-size LLVM memory intrinsics into straight-line scalar accesses. — PowerBasic.Compiler/Ir/Passes/MemoryRoutineSpecialization.cs:11
+- record `Access` — PowerBasic.Compiler/Ir/Passes/MemoryRoutineSpecialization.cs:18
 
-### OverflowCheckCoalescing.cs  `C#, 106 lines`
+### OverflowCheckCoalescing.cs  `C#, 126 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:1
-- class `OverflowCheckCoalescing` — Coalesces consecutive Error 6 branches when the code made speculative by delaying the first — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:25
-- method `if(!TryMatchGuard(block, out var first))` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:40
-- method `if(!TryMatchGuard(middle, out var second))` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:43
-- method `if(ErrorCode(first.Trap, middle) != _OVERFLOW_ERROR || ErrorCode(second…` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:45
-- method `if(!SafeToSpeculate(middle, second.Branch))` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:48
-- record `Guard` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:65
-- method `checked((int)code.Value)` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:90
+- class `OverflowCheckCoalescing` — Coalesces consecutive Error 6 branches when the code made speculative by delaying the first — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:26
+- method `if(!TryMatchGuard(block, out var first))` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:41
+- method `if(!TryMatchGuard(middle, out var second))` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:44
+- method `if(ErrorCode(first.Trap, middle) != _OVERFLOW_ERROR || ErrorCode(second…` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:46
+- method `if(!HasExactlyPredecessors(first.Trap, block) || !HasExactlyPredecessor…` — firstOverflow is only meaningful on executions that passed through this guard. If either — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:53
+- method `if(!SafeToSpeculate(middle, second.Branch))` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:56
+- method `foreach(var phi in middle.Phis)` — The first trap is now unreachable. Phi nodes model only reachable predecessor edges in this — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:68
+- record `Guard` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:79
+- method `checked((int)code.Value)` — PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs:104
+
+### OwnershipBatching.cs  `C#, 305 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:1
+- class `OwnershipBatching` — Batches redundant dynamic-string ownership traffic. — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:32
+- method `foreach(var second in block.Instructions.OfType<IrCall>().ToList())` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:60
+- method `if(secondAt < 0 || secondAt + 1 >= block.Instructions.Count)` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:64
+- method `if(block.Instructions[secondAt + 1] is not IrCall free || !IsFree(free,…` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:66
+- method `if(previous is not IrCall first || !IsDup(first, out var firstSource) |…` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:68
+- method `if(first.Users.Count != 1 || !ReferenceEquals(first.Users[0], free))` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:71
+- method `if(firstAt < 0 || firstAt >= secondAt)` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:74
+- method `if(!StraightLineSourceRemainsStable(block, firstAt, secondAt, source))` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:76
+- method `if(!HasOnlyOwnershipUses(second))` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:78
+- method `if(IsDup(call, out _))` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:105
+- method `if(IsFree(call, out var released) && !ReferenceEquals(released, source))` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:107
+- method `if(loop.Region.Contains(successor) && !(ReferenceEquals(outside, loop.P…` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:195
+- method `Visit` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:261
+- method `if(IsDupOf(user, current) || IsFreeOf(user, current))` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:266
+- method `if(user is IrPhi phi && Visit(phi))` — PowerBasic.Compiler/Ir/Passes/OwnershipBatching.cs:268
+
+### ParallelLoopVersioning.cs  `C#, 227 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:2
+- class `ParallelLoopVersioning` — O0311 — versions a large, proven-independent counted loop with a hosted parallel path. — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:29
+- record `Candidate` — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:33
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:53
+- method `if(dependence is not { IsComplete: true, HasLoopCarriedDependence: fals…` — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:59
+- method `Apply(candidate, helper, shouldRun, parallelFor)` — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:67
+- method `if(!IsAvailableInOutlinedBody(operand, loop.Counter, bodySet))` — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:125
+- method `new` — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:127
+- method `IrConstantInt(IrType.I64, Signed(candidate.Start))` — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:196
+- method `IrArgument` — PowerBasic.Compiler/Ir/Passes/ParallelLoopVersioning.cs:213
+
+### ParallelPrefixScan.cs  `C#, 166 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ParallelPrefixScan.cs:2
+- class `ParallelPrefixScan` — O0313 — recognizes an inclusive integer prefix scan and carries its previous result in SSA. — PowerBasic.Compiler/Ir/Passes/ParallelPrefixScan.cs:29
+- method `IsAffineAddressOp(binary.Op)` — PowerBasic.Compiler/Ir/Passes/ParallelPrefixScan.cs:125
+- method `MaterializeInPreheader(gep.BasePtr, loop, initial, cache)` — PowerBasic.Compiler/Ir/Passes/ParallelPrefixScan.cs:145
+
+### ParallelReduction.cs  `C#, 134 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ParallelReduction.cs:1
+- record `IrParallelReduction` — A loop-carried integer reduction that may be split into worker-private partial results once a — PowerBasic.Compiler/Ir/Passes/ParallelReduction.cs:17
+- class `ParallelReduction` — O0312 — recognizes reductions that a hosted parallel-loop lowering may safely privatize and — PowerBasic.Compiler/Ir/Passes/ParallelReduction.cs:45
+- method `foreach(var phi in header.Instructions.OfType<IrPhi>())` — PowerBasic.Compiler/Ir/Passes/ParallelReduction.cs:56
+- method `new` — PowerBasic.Compiler/Ir/Passes/ParallelReduction.cs:82
 
 ### PhiCongruence.cs  `C#, 233 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/PhiCongruence.cs:1
@@ -6287,18 +7370,61 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `PointerCheckElim` — Eliminates a pointer/handle null test whose result is already established by an explicit — PowerBasic.Compiler/Ir/Passes/PointerCheckElim.cs:21
 - method `if(cmp.HasNoUsers || !TryNullTest(cmp, out var value, out var trueMeans…` — PowerBasic.Compiler/Ir/Passes/PointerCheckElim.cs:32
 - method `if(KnownNullness(value, block, dom) is not { } isNull)` — PowerBasic.Compiler/Ir/Passes/PointerCheckElim.cs:34
-- method `if(dom.Dominates(branch.IfTrue, block))` — PowerBasic.Compiler/Ir/Passes/PointerCheckElim.cs:50
-- method `if(dom.Dominates(branch.IfFalse, block))` — PowerBasic.Compiler/Ir/Passes/PointerCheckElim.cs:52
+- method `if(dom.EdgeDominates(at, branch.IfTrue, block))` — PowerBasic.Compiler/Ir/Passes/PointerCheckElim.cs:50
+- method `if(dom.EdgeDominates(at, branch.IfFalse, block))` — PowerBasic.Compiler/Ir/Passes/PointerCheckElim.cs:52
 
-### PolynomialEvaluation.cs  `C#, 135 lines`
+### PolynomialEvaluation.cs  `C#, 261 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:1
-- class `PolynomialEvaluation` — O0337 — rewrites integer polynomials in one value into Horner form when doing so removes — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:8
-- method `if(!TryRead(binary.Lhs, type, ref variable, out var left) || !TryRead(b…` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:67
-- method `if(!value.Type.SameStorage(type))` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:77
-- method `if(variable is null)` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:79
-- method `if(!ReferenceEquals(variable, value))` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:81
-- method `if(IsZero(right[j], type))` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:101
-- method `if(i + j > _MAX_DEGREE)` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:103
+- class `PolynomialEvaluation` — O0337 — rewrites profitable one-variable integer polynomials into Horner or Estrin form. Integer — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:8
+- record `Plan` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:11
+- record `ConstantPlan` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:13
+- record `ValuePlan` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:14
+- record `BinaryPlan` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:15
+- record `PlanCost` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:16
+- method `if(!removable.Contains(instruction) && instruction.Users.All(removable.…` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:88
+- method `ConstantPlan(0)` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:132
+- method `Visit` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:147
+- method `Emit(binary.Lhs, type, block, anchor, emitted)` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:177
+- method `if(!TryRead(binary.Lhs, type, ref variable, region, out var left) || !T…` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:195
+- method `if(!value.Type.SameStorage(type))` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:205
+- method `if(variable is null)` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:207
+- method `if(!ReferenceEquals(variable, value))` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:209
+- method `if(IsZero(right[j], type))` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:229
+- method `if(i + j > _MAX_DEGREE)` — PowerBasic.Compiler/Ir/Passes/PolynomialEvaluation.cs:231
+
+### PostLinkOptimization.cs  `C#, 187 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:1
+- record `IrPostLinkBlockId` — The stable identity O0276 carries from the IR into post-link layout metadata: procedure name plus — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:7
+- record `IrPostLinkEdgeSample` — A sampled execution count for one CFG edge in a post-link profile. — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:12
+- record `IrPostLinkFragment` — One independently placeable block descriptor. The ID and successor IDs are deliberately separate — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:19
+- record `IrPostLinkLayoutPlan` — A profile-guided fragment order proposed for the eventual post-link rewriter. — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:25
+- class `PostLinkOptimization` — O0276 — builds the target-neutral layout contract consumed by a post-link fragment rewriter. — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:56
+- method `ArgumentException( $"profile edge {sample.From} -> {sample.To} is not present in the c…` — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:84
+- method `BuildPlan(fn, blocks, indexOf, originalOrder, 0, 0, 0)` — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:96
+- method `ArgumentException($"profile block {id} does not identify a block in function {fn.Name}…` — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:158
+- class `Chain` — PowerBasic.Compiler/Ir/Passes/PostLinkOptimization.cs:181
+
+### ProfileGuidedCodeLayout.cs  `C#, 144 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedCodeLayout.cs:1
+- record `IrProfileEdgeCount` — An observed execution count for one current CFG edge. O0268 is responsible for resolving stable — PowerBasic.Compiler/Ir/Passes/ProfileGuidedCodeLayout.cs:7
+- class `ProfileGuidedCodeLayout` — O0274 — profile-guided code layout. Reorders an 's physical basic-block — PowerBasic.Compiler/Ir/Passes/ProfileGuidedCodeLayout.cs:20
+- method `Heat` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedCodeLayout.cs:55
+- method `EdgeWeight` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedCodeLayout.cs:58
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedCodeLayout.cs:72
+- method `if(idom is null || !placed.Contains(idom))` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedCodeLayout.cs:77
+- method `if(best is not null && (edge < bestEdge || edge == bestEdge && heat < b…` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedCodeLayout.cs:83
+- method `InvalidOperationException("reachable CFG does not admit a dominance-preserving block order")` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedCodeLayout.cs:98
+
+### ProfileGuidedLoopOptimization.cs  `C#, 206 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedLoopOptimization.cs:1
+- class `ProfileGuidedLoopOptimization` — O0272 — consumes a loop trip-count histogram and specializes a canonical hot small-trip loop by — PowerBasic.Compiler/Ir/Passes/ProfileGuidedLoopOptimization.cs:16
+- method `PeelPrefix` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedLoopOptimization.cs:35
+- method `and(int)` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedLoopOptimization.cs:52
+- record `Loop` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedLoopOptimization.cs:56
+- method `foreach(var successor in terminator.Successors)` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedLoopOptimization.cs:114
+- method `new` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedLoopOptimization.cs:121
+- method `Retarget(previousLatch, guard)` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedLoopOptimization.cs:155
+- method `MapHeaderValue` — PowerBasic.Compiler/Ir/Passes/ProfileGuidedLoopOptimization.cs:167
 
 ### RangeCheckElim.cs  `C#, 66 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/RangeCheckElim.cs:2
@@ -6310,11 +7436,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `ReadOnlyGlobals` — O0165 — read-only global propagation. A module-level variable that nothing ever writes is a — PowerBasic.Compiler/Ir/Passes/ReadOnlyGlobals.cs:27
 - method `foreach` — PowerBasic.Compiler/Ir/Passes/ReadOnlyGlobals.cs:37
 
-### Reassociate.cs  `C#, 162 lines`
+### Reassociate.cs  `C#, 184 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/Reassociate.cs:1
 - class `Reassociate` — O0061 — reassociation of associative, commutative integer chains into a canonical shape, so that — PowerBasic.Compiler/Ir/Passes/Reassociate.cs:26
 - method `if(instruction is IrBinary root && instruction.Parent is not null && Is…` — PowerBasic.Compiler/Ir/Passes/Reassociate.cs:43
 - method `if(!Flatten(inner, leaves))` — PowerBasic.Compiler/Ir/Passes/Reassociate.cs:75
+- method `if(!instruction.Type.IsVoid)` — PowerBasic.Compiler/Ir/Passes/Reassociate.cs:112
 
 ### ReciprocalSequenceReuse.cs  `C#, 77 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ReciprocalSequenceReuse.cs:1
@@ -6334,6 +7461,26 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(stored.TryGetValue(p, out var sv) && sv.Type.Equals(load.Type))` — PowerBasic.Compiler/Ir/Passes/RedundantMemory.cs:26
 - method `Invalidate(stored, p, store.Value.Type)` — PowerBasic.Compiler/Ir/Passes/RedundantMemory.cs:41
 - method `Invalidate(loaded, p, store.Value.Type)` — PowerBasic.Compiler/Ir/Passes/RedundantMemory.cs:42
+
+### ReturnStructureReduction.cs  `C#, 265 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:1
+- class `ReturnStructureReduction` — O0281 — removes writes to scalar regions of a hidden structure-return buffer that no known caller — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:28
+- record `Region` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:31
+- method `Overlaps` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:34
+- record `Write` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:37
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:55
+- method `if(resultSize != alloca.Count)` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:117
+- method `Walk` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:138
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:142
+- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:144
+- method `ReferenceEquals` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:151
+- method `ReferenceEquals` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:157
+- method `ReferenceEquals` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:162
+- method `Walk` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:204
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:208
+- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:210
+- method `ReferenceEquals` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:217
+- method `ReferenceEquals` — PowerBasic.Compiler/Ir/Passes/ReturnStructureReduction.cs:223
 
 ### ScalarReplaceAggregates.cs  `C#, 183 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ScalarReplaceAggregates.cs:1
@@ -6406,6 +7553,68 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Meet` — PowerBasic.Compiler/Ir/Passes/Sccp.cs:248
 - method `ConstEquals` — PowerBasic.Compiler/Ir/Passes/Sccp.cs:255
 
+### SemanticFunctionMerging.Thunks.cs  `C#, 159 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:1
+- class `SemanticFunctionMerging` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:2
+- record `EntryThunkMergeResult` — The ABI-preserving form of O0284. Source-visible functions keep their original signature and — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:11
+- method `for` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:49
+- method `if(!TryFindSingleDifference(representative, candidate, out var differen…` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:52
+- method `if(IsCallTargetDifference(representative, difference.Location))` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:54
+- method `if(callTargetFilter is not null && (difference.RepresentativeValue is n…` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:57
+- method `if` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:64
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:69
+- method `if(bodyInstructions < minimumBodyInstructions)` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:76
+- method `if(saving <= 0 || best is not null && best.EstimatedSaving >= saving)` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.Thunks.cs:84
+
+### SemanticFunctionMerging.cs  `C#, 327 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:1
+- class `SemanticFunctionMerging` — O0284 — merges structurally congruent internal functions that differ in exactly one materializable — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:22
+- record `DifferenceLocation` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:25
+- record `Difference` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:27
+- record `Variant` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:28
+- record `MergePlan` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:29
+- method `for` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:62
+- method `if(!TryFindSingleDifference(representative, candidate, out var differen…` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:65
+- method `if` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:67
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:72
+- method `if(!TryFindSingleDifference(representative, variants[0].Function, out v…` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:76
+- method `if(bodyInstructions < minimumBodyInstructions)` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:80
+- method `if(saving <= 0 || best is not null && best.EstimatedSaving >= saving)` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:89
+- method `if(!SameInstructionShape(left, right, map) || left.Operands.Count != ri…` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:167
+- method `for` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:169
+- method `if(SameOperand(leftOperand, rightOperand, map))` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:173
+- method `if(++differences > 1 || !CanParameterize(left, operandIndex, leftOperan…` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:175
+- method `DifferenceLocation(blockIndex, instructionIndex, operandIndex)` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:178
+- method `ReferenceEquals(mapped, right)` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:242
+- method `if(owner is not null && duplicates.Contains(owner))` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:303
+- method `Redirect(call, representative, variant.ContextValue)` — PowerBasic.Compiler/Ir/Passes/SemanticFunctionMerging.cs:305
+
+### SideExitDeoptimization.cs  `C#, 425 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:1
+- class `SideExitDeoptimization` — O0310 — explicit-CFG side exits for speculative loop versions. — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:20
+- record `Version` — The concrete version produced for a consumer. The maps let the producer find the fast copy of an — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:29
+- method `Dictionary(ReferenceEqualityComparer.Instance)` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:118
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:181
+- method `if(user is IrPhi phi && exitPhiSet.Contains(phi))` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:185
+- method `if(reachable.Add(successor))` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:215
+- method `foreach(var phi in block.Phis.ToList())` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:227
+- record `Loop` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:242
+- method `if` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:268
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:271
+- method `if(ReferenceEquals(successor, header))` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:275
+- method `new` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:304
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:318
+- method `if(!loop.Region.Contains(successor))` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:322
+- method `for` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:341
+- method `foreach(var predecessor in sourcePhi.IncomingBlocks.ToList())` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:345
+- method `if(ReferenceEquals(sourceBlock, entry) && ReferenceEquals(predecessor, …` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:348
+- method `if(!ReferenceEquals(successor, fastHeader) && allowed.Contains(successo…` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:368
+- method `Visit` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:378
+- method `Visit` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:380
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:385
+- method `if(visiting.Contains(successor) || !visited.Contains(successor) && Visi…` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:389
+- method `if(region.Contains(predecessor) && reaching.Add(predecessor))` — PowerBasic.Compiler/Ir/Passes/SideExitDeoptimization.cs:405
+
 ### SimplifyCfg.cs  `C#, 326 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/SimplifyCfg.cs:1
 - class `SimplifyCfg` — Control-flow graph cleanup. Safe, high-value canonicalizations tighten the many trivial blocks — PowerBasic.Compiler/Ir/Passes/SimplifyCfg.cs:10
@@ -6433,14 +7642,91 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `InvalidOperationException("prechecked forwarding edge cannot be retargeted")` — PowerBasic.Compiler/Ir/Passes/SimplifyCfg.cs:282
 - method `foreach(var phi in after.Phis)` — PowerBasic.Compiler/Ir/Passes/SimplifyCfg.cs:316
 
-### StaticSearchRecognition.cs  `C#, 190 lines`
+### SpeculativeDevirtualization.cs  `C#, 146 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/SpeculativeDevirtualization.cs:1
+- class `SpeculativeDevirtualization` — O0307 speculative devirtualization. Versions an indirect call around one statically likely target: — PowerBasic.Compiler/Ir/Passes/SpeculativeDevirtualization.cs:7
+
+### SpeculativeIntegerNarrowing.cs  `C#, 393 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:2
+- class `SpeculativeIntegerNarrowing` — O0309 — speculative integer narrowing. A cheap loop-invariant scalar range guard versions a — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:9
+- method `Version(fn, plan, ranges)` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:25
+- record `Loop` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:31
+- record `NarrowingPlan` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:41
+- method `ReferenceEquals(branch.Target, header)` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:64
+- method `ReferenceEquals` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:69
+- method `if(ReferenceEquals(branch.IfTrue, header) || ReferenceEquals(branch.IfF…` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:78
+- method `new` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:114
+- method `if(guardSet.Add(value))` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:138
+- method `new` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:150
+- method `if(RangeUnderGuard(binary.Lhs, binary.Parent!, loop, region, ranges, ca…` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:166
+- method `RangeUnderGuard(cmp.Lhs, cmp.Parent!, loop, region, ranges, candidateGuards, guardSe…` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:177
+- method `if(ReferenceEquals(phi.IncomingBlocks[i], loop.Header))` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:296
+- method `InvalidOperationException("speculative narrowing preheader lost its terminator")` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:329
+- method `if` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:335
+- method `if` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:339
+- method `InvalidOperationException("speculative narrowing plan has no runtime guard")` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:347
+- method `InvalidOperationException("cannot narrow a detached binary instruction")` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:363
+- method `IrCast(binary.Type.Signed ? IrCastOp.SExt : IrCastOp.ZExt, narrow, binary.T…` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:369
+- method `InvalidOperationException("cannot narrow a detached comparison")` — PowerBasic.Compiler/Ir/Passes/SpeculativeIntegerNarrowing.cs:379
+
+### SpeculativeOverflowElimination.cs  `C#, 331 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:2
+- class `SpeculativeOverflowElimination` — O0308 — speculative overflow-check elimination. When a checked integer operation in a counted — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:26
+- record `OverflowCheck` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:33
+- record `SafeInterval` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:40
+- method `if(TrySafeInterval(loop, check, ranges) is not { } safe)` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:75
+- method `if(intervals.TryGetValue(safe.Invariant, out var previous))` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:77
+- method `if(lo > hi)` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:80
+- method `if(!sourceInside && targetInside && !(ReferenceEquals(block, loop.Prehe…` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:114
+- method `if(sourceInside && !targetInside && !(ReferenceEquals(block, loop.Heade…` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:117
+- method `checked((int)code.Value)` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:148
+- method `TryMatchMask` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:164
+- method `if(user.Parent is { } where && !loop.Region.Contains(where) && !(Refere…` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:291
+- method `IrCmp(IrCmpPred.Sge, interval.Invariant, new IrConstantInt(interval.Invari…` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:304
+- method `IrCmp(IrCmpPred.Sle, interval.Invariant, new IrConstantInt(interval.Invari…` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:310
+- method `InvalidOperationException("O0308 selected a loop without a runtime safety condition")` — PowerBasic.Compiler/Ir/Passes/SpeculativeOverflowElimination.cs:319
+
+### StaticSearchRecognition.cs  `C#, 274 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:1
 - class `StaticSearchRecognition` — O0334/O0335 — recognizes a counted linear search over a read-only constant integer table. A — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:9
-- record `Search` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:13
-- method `if(header.Parent is null || CountedLoop.Match(function, header) is not …` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:24
-- method `Rewrite(function, loop, search)` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:27
-- method `if(regionBlock.Terminator is { } terminator)` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:63
-- method `if(indexed is not IrLoad load || !ReferenceEquals(load.Pointer, gep))` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:116
+- record `SearchResult` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:13
+- record `Search` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:15
+- method `if(header.Parent is null || CountedLoop.Match(function, header) is not …` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:25
+- method `Rewrite(function, loop, search)` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:28
+- method `if(regionBlock.Terminator is { } terminator)` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:66
+- method `if(ReferenceEquals(successor, loop.Exit))` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:116
+- method `if(!ReferenceEquals(successor, loop.Header) && !loop.Region.Contains(su…` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:122
+- method `if(indexed is not IrLoad load || !ReferenceEquals(load.Pointer, gep))` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:168
+- method `IrCast(search.Unsigned ? IrCastOp.ZExt : IrCastOp.SExt, search.Key, type)` — PowerBasic.Compiler/Ir/Passes/StaticSearchRecognition.cs:222
+
+### StringAllocationCoalescing.cs  `C#, 233 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:1
+- class `StringAllocationCoalescing` — Coalesces several bounded, straight-line string allocations into one preflighted DOS heap region. — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:39
+- record `Candidate` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:65
+- record `Region` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:73
+- method `FindRegions(block, regions)` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:90
+- method `IrCall(IrType.Void, begin, [new IrConstantInt(IrType.I16, region.Capacity)])` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:103
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:106
+- method `if` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:112
+- method `Flush` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:140
+- method `Add` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:147
+- method `Flush(candidate.Start)` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:150
+- method `if` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:160
+- method `Flush(instruction)` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:163
+- method `if` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:166
+- method `Add(candidate)` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:168
+- method `if` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:171
+- method `Flush` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:174
+- method `Candidate(call, borrow, bytes + _BLOCK_HEADER_BYTES, borrowedReplacement, borr…` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:199
+- method `Candidate` — PowerBasic.Compiler/Ir/Passes/StringAllocationCoalescing.cs:201
+
+### StringAllocationElimination.cs  `C#, 121 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringAllocationElimination.cs:2
+- class `StringAllocationElimination` — Eliminates single-use substring allocations whose only consumer asks for their length. — PowerBasic.Compiler/Ir/Passes/StringAllocationElimination.cs:22
+- method `if(function.IsDeclaration || function.HasErrorHandler || function.HasIn…` — PowerBasic.Compiler/Ir/Passes/StringAllocationElimination.cs:39
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/StringAllocationElimination.cs:41
+- method `if(length.GetOperand(1) is not IrCall { Parent: not null, Callee: IrFun…` — PowerBasic.Compiler/Ir/Passes/StringAllocationElimination.cs:45
+- method `if(expectedArgs == 0 || slice.ArgCount != expectedArgs)` — PowerBasic.Compiler/Ir/Passes/StringAllocationElimination.cs:55
 
 ### StringAppendInPlace.cs  `C#, 171 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringAppendInPlace.cs:1
@@ -6448,42 +7734,64 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(call.Parent is null || call.Callee is not IrFunction { Name: _CONCAT…` — PowerBasic.Compiler/Ir/Passes/StringAppendInPlace.cs:74
 - method `if(touched)` — PowerBasic.Compiler/Ir/Passes/StringAppendInPlace.cs:78
 
-### StringByteRead.cs  `C#, 78 lines`
+### StringBuilderRecognition.cs  `C#, 233 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:1
+- class `StringBuilderRecognition` — O0294: recognizes a loop-carried string accumulator before a multi-concatenation chain is collapsed — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:31
+- record `AppendStep` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:39
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:53
+- method `if(header is null)` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:57
+- method `for` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:59
+- method `if(!dominators.Dominates(header, latch) || !latch.Successors.Any(succes…` — A predecessor edge is a natural-loop backedge only when its header dominates the latch. — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:63
+- method `if(accumulator.GetOperand(i) is not IrCall root || !IsConcat(root))` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:66
+- method `if(!TryMatch(root, accumulator, loop, out var accumulatorBorrow, out va…` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:70
+- method `Rewrite` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:72
+- method `if(!dominators.IsReachable(predecessor) || !dominators.Dominates(header…` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:93
+- method `if(result.Add(predecessor) && !ReferenceEquals(predecessor, header))` — PowerBasic.Compiler/Ir/Passes/StringBuilderRecognition.cs:95
+
+### StringByteRead.cs  `C#, 82 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringByteRead.cs:1
 - class `StringByteRead` — Reads one character of a string as a BYTE instead of building a one-character string and asking — PowerBasic.Compiler/Ir/Passes/StringByteRead.cs:29
-- method `if(call.Parent is null || call.Callee is not IrFunction { Name: _ASC } …` — PowerBasic.Compiler/Ir/Passes/StringByteRead.cs:44
-- method `if(SingleCharacterSource(call.GetOperand(1)) is not var (substring, sou…` — PowerBasic.Compiler/Ir/Passes/StringByteRead.cs:46
+- method `if(call.Parent is null || call.Callee is not IrFunction { Name: _ASC } …` — PowerBasic.Compiler/Ir/Passes/StringByteRead.cs:48
+- method `if(SingleCharacterSource(call.GetOperand(1)) is not var (substring, sou…` — PowerBasic.Compiler/Ir/Passes/StringByteRead.cs:50
 
-### StringCapacityHoisting.cs  `C#, 215 lines`
+### StringCapacityHoisting.cs  `C#, 179 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringCapacityHoisting.cs:1
 - class `StringCapacityHoisting` — Removes the per-iteration growth checks from a side-effect-free counted string-build loop by — PowerBasic.Compiler/Ir/Passes/StringCapacityHoisting.cs:26
 - method `if(Match(header) is not { } loop || !TryRewrite(module, loop))` — PowerBasic.Compiler/Ir/Passes/StringCapacityHoisting.cs:43
 - record `Loop` — PowerBasic.Compiler/Ir/Passes/StringCapacityHoisting.cs:50
-- method `foreach(var successor in block.Successors)` — PowerBasic.Compiler/Ir/Passes/StringCapacityHoisting.cs:136
-- method `new` — PowerBasic.Compiler/Ir/Passes/StringCapacityHoisting.cs:139
+- method `foreach(var successor in block.Successors)` — PowerBasic.Compiler/Ir/Passes/StringCapacityHoisting.cs:87
+- method `new` — PowerBasic.Compiler/Ir/Passes/StringCapacityHoisting.cs:132
 
-### StringCompareEquality.cs  `C#, 70 lines`
+### StringCompareEquality.cs  `C#, 72 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringCompareEquality.cs:1
-- class `StringCompareEquality` — Routes a string comparison whose answer is only ever tested against zero to the runtime's — PowerBasic.Compiler/Ir/Passes/StringCompareEquality.cs:31
-- method `if(call.Callee is not IrFunction { Name: _GENERAL } || call.ArgCount !=…` — PowerBasic.Compiler/Ir/Passes/StringCompareEquality.cs:48
-- method `if(call.Users.Count == 0 || !call.Users.All(IsEqualityTest))` — PowerBasic.Compiler/Ir/Passes/StringCompareEquality.cs:50
+- class `StringCompareEquality` — Routes a string comparison whose answer is only ever tested against zero to the runtime's — PowerBasic.Compiler/Ir/Passes/StringCompareEquality.cs:33
+- method `if(call.Callee is not IrFunction { Name: _GENERAL } || call.ArgCount !=…` — PowerBasic.Compiler/Ir/Passes/StringCompareEquality.cs:50
+- method `if(!call.Users.All(IsEqualityTest))` — PowerBasic.Compiler/Ir/Passes/StringCompareEquality.cs:52
 
-### StringConcatChain.cs  `C#, 119 lines`
+### StringConcatChain.cs  `C#, 125 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:1
-- class `StringConcatChain` — Builds a chain of three or more string concatenations with ONE allocation instead of one per — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:39
-- method `if(call.Parent is null || !IsConcat(call))` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:57
-- method `if(IsInnerNode(call))` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:59
-- method `if(Flatten(call) is not { } leaves)` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:61
-- method `Collapse(module, call, leaves)` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:63
-- method `Collect` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:84
-- method `Erase` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:108
-- method `if(operand is IrCall child && IsConcat(child) && child.HasNoUsers)` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:114
-- method `Erase(child)` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:115
+- class `StringConcatChain` — Builds a chain of three or more string concatenations with ONE allocation instead of one per — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:45
+- method `if(call.Parent is null || !IsConcat(call))` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:63
+- method `if(IsInnerNode(call))` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:65
+- method `if(Flatten(call) is not { } leaves)` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:67
+- method `Collapse(module, call, leaves)` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:69
+- method `Collect` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:90
+- method `Erase` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:114
+- method `if(operand is IrCall child && IsConcat(child) && child.HasNoUsers)` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:120
+- method `Erase(child)` — PowerBasic.Compiler/Ir/Passes/StringConcatChain.cs:121
 
-### StringConstantFold.cs  `C#, 194 lines`
+### StringConstantFold.cs  `C#, 325 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringConstantFold.cs:1
-- class `StringConstantFold` — Answers at compile time the string operations whose operands are literals, and drops the ones — PowerBasic.Compiler/Ir/Passes/StringConstantFold.cs:38
-- method `if(changes == 0)` — PowerBasic.Compiler/Ir/Passes/StringConstantFold.cs:58
+- class `StringConstantFold` — Answers at compile time the string operations whose operands are literals, drops the ones whose — PowerBasic.Compiler/Ir/Passes/StringConstantFold.cs:58
+- method `if(changes == 0)` — PowerBasic.Compiler/Ir/Passes/StringConstantFold.cs:85
+- method `if(FoldAsciiCase(module, call, toUpper))` — PowerBasic.Compiler/Ir/Passes/StringConstantFold.cs:101
+- method `if(module.AsciiOnly)` — PowerBasic.Compiler/Ir/Passes/StringConstantFold.cs:105
+- method `if(!toUpper && value is >= (byte)'A' and <= (byte)'Z')` — PowerBasic.Compiler/Ir/Passes/StringConstantFold.cs:148
+
+### StringCopyOnWriteElision.cs  `C#, 133 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringCopyOnWriteElision.cs:1
+- class `StringCopyOnWriteElision` — O0293 — removes an eager string duplicate when two SSA names can share one immutable handle until — PowerBasic.Compiler/Ir/Passes/StringCopyOnWriteElision.cs:31
+- method `if(release is not null)` — PowerBasic.Compiler/Ir/Passes/StringCopyOnWriteElision.cs:99
 
 ### StringEmptinessTest.cs  `C#, 111 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringEmptinessTest.cs:1
@@ -6495,49 +7803,162 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(literalIndex == 0)` — PowerBasic.Compiler/Ir/Passes/StringEmptinessTest.cs:88
 - method `if(Borrowed(answer.GetOperand(literalIndex == 2 ? 1 : 2)) is not { } co…` — PowerBasic.Compiler/Ir/Passes/StringEmptinessTest.cs:90
 
-### SwitchFormation.cs  `C#, 357 lines`
+### StringMove.cs  `C#, 180 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringMove.cs:1
+- class `StringMove` — O0296 — transfers a dynamic-string handle instead of duplicating it when the source variable's — PowerBasic.Compiler/Ir/Passes/StringMove.cs:22
+- record `State` — PowerBasic.Compiler/Ir/Passes/StringMove.cs:26
+- method `ReferenceEquals(load.Pointer, slot)` — PowerBasic.Compiler/Ir/Passes/StringMove.cs:89
+- method `ReferenceEquals(store.Pointer, slot)` — PowerBasic.Compiler/Ir/Passes/StringMove.cs:91
+- method `ReferenceEquals(load.Pointer, sourceSlot)` — PowerBasic.Compiler/Ir/Passes/StringMove.cs:116
+- method `if(!IsTerminalDestructorLoad(load, sourceSlot))` — PowerBasic.Compiler/Ir/Passes/StringMove.cs:118
+- method `ReferenceEquals(store.Pointer, sourceSlot)` — PowerBasic.Compiler/Ir/Passes/StringMove.cs:122
+- method `ReferenceEquals(otherLoad.Pointer, sourceSlot)` — PowerBasic.Compiler/Ir/Passes/StringMove.cs:166
+
+### StringSliceLength.cs  `C#, 125 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringSliceLength.cs:1
+- class `StringSliceLength` — O0297: measures a read-only substring without materializing the substring. — PowerBasic.Compiler/Ir/Passes/StringSliceLength.cs:28
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/StringSliceLength.cs:43
+- method `if(lengthCall.GetOperand(1) is not IrCall { Callee: IrFunction sliceFn …` — PowerBasic.Compiler/Ir/Passes/StringSliceLength.cs:47
+- method `if(replacement is null)` — PowerBasic.Compiler/Ir/Passes/StringSliceLength.cs:60
+
+### StringSliceView.cs  `C#, 278 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:1
+- class `StringSliceView` — O0297: consumes read-only LEFT$/RIGHT$/MID$ results as expression-local string views instead of — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:28
+- enum `SliceKind` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:45
+- record `SliceCandidate` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:47
+- record `View` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:55
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:82
+- method `if(callee.Name is _COMPARE or _COMPARE_EQ && call.ArgCount == 2)` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:86
+- method `if(callee.Name == _PRINT && call.ArgCount == 1)` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:88
+- method `if(callee.Name == _FPRINT && call.ArgCount == 2)` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:90
+- method `IrArgument(IrType.Ptr, 0)` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:108
+- method `IrFunction(name, IrType.Void, [ new IrArgument(IrType.Ptr, 0), new IrArgument(I…` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:139
+- method `new(candidate.Base, one, length, candidate)` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:225
+- method `new(candidate.Base, start, length, candidate)` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:231
+- method `ClampCount(block, slice, candidate.Second!, remaining, zero)` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:245
+- method `new(candidate.Base, start, length, candidate)` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:247
+- method `InvalidOperationException("unknown string slice kind")` — PowerBasic.Compiler/Ir/Passes/StringSliceView.cs:250
+
+### SwitchFormation.cs  `C#, 359 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:1
 - class `SwitchFormation` — Recovers the DISPATCH a chain of comparisons is: a run of blocks that each test one integer value — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:60
-- method `if(claimed.Add(value))` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:124
-- method `if(!ReferenceEquals(user.Parent, block))` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:179
-- method `AgainstZero(wrapper)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:196
-- method `Leaf(compare, ref subject)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:199
-- method `Evaluate(widened.Value, ref subject)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:201
-- method `Combine(either, ref subject, union: true)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:203
-- method `Combine(both, ref subject, union: false)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:205
-- class `ValueSet` — A set of subject values as sorted, disjoint, non-adjacent closed intervals over the subject's — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:280
-- constructor `ValueSet` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:284
-- method `Empty` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:289
-- method `Of` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:291
-- method `Count()` — How many values the set holds, saturated - a whole-domain set must not overflow a count. — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:296
-- method `if(total > _MAX_VALUES)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:300
-- method `Values` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:305
-- method `for(var value = lo; ; ++value)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:308
-- method `if(value == hi)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:310
-- method `Union` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:314
-- method `Intersect` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:316
-- method `foreach(var (otherLo, otherHi) in other._intervals)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:320
-- method `if(low <= high)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:323
-- method `Complement` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:328
-- method `if(lo > next)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:334
-- method `if(next > max)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:337
-- method `new(this._bits, result)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:338
-- method `new(this._bits, result)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:341
-- method `if(merged.Count > 0 && lo <= merged[^1].Hi + 1)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:349
+- method `if(claimed.Add(value))` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:126
+- method `if(!ReferenceEquals(user.Parent, block))` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:181
+- method `AgainstZero(wrapper)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:198
+- method `Leaf(compare, ref subject)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:201
+- method `Evaluate(widened.Value, ref subject)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:203
+- method `Combine(either, ref subject, union: true)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:205
+- method `Combine(both, ref subject, union: false)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:207
+- class `ValueSet` — A set of subject values as sorted, disjoint, non-adjacent closed intervals over the subject's — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:282
+- constructor `ValueSet` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:286
+- method `Empty` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:291
+- method `Of` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:293
+- method `Count()` — How many values the set holds, saturated - a whole-domain set must not overflow a count. — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:298
+- method `if(total > _MAX_VALUES)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:302
+- method `Values` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:307
+- method `for(var value = lo; ; ++value)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:310
+- method `if(value == hi)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:312
+- method `Union` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:316
+- method `Intersect` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:318
+- method `foreach(var (otherLo, otherHi) in other._intervals)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:322
+- method `if(low <= high)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:325
+- method `Complement` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:330
+- method `if(lo > next)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:336
+- method `if(next > max)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:339
+- method `new(this._bits, result)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:340
+- method `new(this._bits, result)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:343
+- method `if(merged.Count > 0 && lo <= merged[^1].Hi + 1)` — PowerBasic.Compiler/Ir/Passes/SwitchFormation.cs:351
 
 ### TailRecursion.cs  `C#, 159 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/TailRecursion.cs:1
 - class `TailRecursion` — Turns a function that calls ITSELF in tail position into a loop, so the recursion runs in constant — PowerBasic.Compiler/Ir/Passes/TailRecursion.cs:49
 - method `if(next.Instructions.Any(i => !i.IsTerminator))` — PowerBasic.Compiler/Ir/Passes/TailRecursion.cs:140
 
-### VerifiedArithmeticLowering.cs  `C#, 175 lines`
+### ValueProfileSpecialization.cs  `C#, 270 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:1
+- class `ValueProfileSpecialization` — O0270 — profile-guided specialization of hot procedure arguments. — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:18
+- record `ValueCount` — One observed value and its execution count. — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:21
+- record `ArgumentProfile` — A value histogram for one zero-based formal argument. — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:24
+- record `Options` — The profitability/code-growth policy for specialization. — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:32
+- record `Candidate` — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:44
+- method `if(RewriteCall(call, specialized, candidate.ArgumentIndex, candidate.Va…` — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:94
+- method `if` — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:96
+- method `if(observed.Value is null || observed.Count <= 0 || observed.Count > pr…` — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:135
+- method `Candidate` — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:142
+- method `IrCall(call.Type, specialized, specializedArguments, call.Convention)` — PowerBasic.Compiler/Ir/Passes/ValueProfileSpecialization.cs:239
+
+### VerifiedArithmeticLowering.cs  `C#, 284 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:1
 - class `VerifiedArithmeticLowering` — Strength-reduces 16-bit constant arithmetic only after the candidate formula has been exhaustively — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:8
-- method `if(cached is { } candidate && !VerifyMultiply(factor, candidate))` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:90
-- method `new(shift, Subtract: false, Negate: factor < 0)` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:109
-- method `new(shift, Subtract: true, Negate: factor < 0)` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:111
-- method `unchecked((ushort)(shifted - x))` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:121
-- record `MultiplyPlan` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:172
+- method `LowerSignedPowerOfTwo(binary, divisor, shift, negative, remainder)` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:67
+- method `if(cached is { } candidate && !VerifyMultiply(factor, candidate))` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:130
+- method `new(shift, Subtract: false, Negate: factor < 0)` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:149
+- method `new(shift, Subtract: true, Negate: factor < 0)` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:151
+- method `unchecked((ushort)(shifted - x))` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:161
+- method `if(cached is { } candidate && !VerifySignedReciprocal(divisor, candidat…` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:216
+- field `width` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:233
+- field `two15` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:235
+- record `MultiplyPlan` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:280
+- record `ReciprocalPlan` — PowerBasic.Compiler/Ir/Passes/VerifiedArithmeticLowering.cs:282
+
+### WholeProgramDevirtualization.cs  `C#, 209 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:1
+- class `WholeProgramDevirtualization` — O0279 — whole-program devirtualization for indirect calls whose complete target set contains one — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:22
+- method `foreach` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:33
+- method `if(target is null || !SignatureMatches(call, target))` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:38
+- class `TargetResolver` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:66
+- method `ResolveUnique` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:74
+- method `Resolve` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:81
+- method `ResolveCore` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:93
+- method `ResolveArgument` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:104
+- method `if(argument.Index >= call.ArgCount)` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:118
+- method `ResolveClosedLocalLoad(IrLoad load)` — A local pointer cell is exact when its address never escapes and every access is a compatible — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:132
+- method `switch(user)` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:141
+- method `ReferenceEquals(store.Pointer, storage)` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:146
+- method `if` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:155
+- method `Dominates` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:160
+- method `foreach(var instruction in definitionBlock.Instructions)` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:165
+- method `if(ReferenceEquals(instruction, use))` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:168
+- method `if` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:173
+- class `TargetSet` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:181
+- method `For` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:190
+- method `Union` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:193
+- method `if(!set.IsComplete)` — PowerBasic.Compiler/Ir/Passes/WholeProgramDevirtualization.cs:200
+
+## PowerBasic.Compiler/Ir/Profiling/
+
+### IrProfile.cs  `C#, 318 lines`
+- namespace `PowerBasic.Compiler.Ir.Profiling` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:2
+- record `IrProfileBlockKey` — A stable identity for one basic-block execution counter. — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:6
+- record `IrProfileEdgeKey` — A stable identity for one directed control-flow edge counter. — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:9
+- record `IrProfileCallKey` — A stable identity for one direct-call edge. The ordinal counts only calls in the containing block, — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:15
+- class `IrProfile` — Versioned execution counts consumed by profile-guided IR passes. The profile is intentionally — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:22
+- method `InvalidDataException("invalid profile JSON", exception)` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:192
+- method `InvalidDataException("profile root must be an object")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:198
+- method `InvalidDataException("not a PB IR profile")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:200
+- method `InvalidDataException($"unsupported PB IR profile version {version}")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:203
+- method `if(!profile._blockCounts.TryAdd(key, count))` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:209
+- method `InvalidDataException($"duplicate block profile entry {key.FunctionName}:{key.BlockId}")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:210
+- method `foreach` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:212
+- method `if(!profile._edgeCounts.TryAdd(key, count))` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:217
+- method `InvalidDataException( $"duplicate edge profile entry {key.FunctionName}:{key.SourceBlockI…` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:218
+- method `foreach` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:221
+- method `if(!profile._callCounts.TryAdd(key, count))` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:226
+- method `InvalidDataException( $"duplicate call profile entry {key.CallerName}:{key.BlockId}/{key.…` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:227
+- method `ArgumentException("profiled block is not attached to a function", paramName)` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:238
+- method `ArgumentException("profiled block has no stable profile id", paramName)` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:240
+- method `ArgumentException("profiled call is not attached to a block", paramName)` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:247
+- method `ArgumentException("only direct calls have a call-edge profile identity", paramName)` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:250
+- method `IrProfileCallKey(caller.Name, blockId, ordinal, callee.Name)` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:257
+- method `ArgumentException` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:260
+- method `ArgumentException("profile function names cannot be empty", paramName)` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:269
+- method `ArgumentOutOfRangeException(paramName, id, "profile ids cannot be negative")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:274
+- method `InvalidDataException($"profile entry is missing '{name}'")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:279
+- method `InvalidDataException($"profile field '{name}' must be a non-empty string")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:286
+- method `InvalidDataException($"profile field '{name}' must be a 32-bit integer")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:293
+- method `InvalidDataException($"profile field '{name}' cannot be negative")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:300
+- method `InvalidDataException($"profile field '{name}' must be an unsigned 64-bit integer")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:307
+- method `InvalidDataException($"profile field '{name}' must be an array")` — PowerBasic.Compiler/Ir/Profiling/IrProfile.cs:314
 
 ## PowerBasic.Compiler/Numerics/
 
@@ -6598,11 +8019,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Chain.cs:2
 - class `DosRuntime` — CHAIN / RUN support. COMMON variables travel through the temp file — PowerBasic.Compiler/Runtime/DosRuntime.Chain.cs:18
 
-### DosRuntime.Core.cs  `C#, 399 lines`
+### DosRuntime.Core.cs  `C#, 400 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Core.cs:3
 - class `DosRuntime` — Emits the DOS runtime kernel into the program image. Register conventions — PowerBasic.Compiler/Runtime/DosRuntime.Core.cs:26
-- method `InvalidOperationException($"runtime label {property.Name} was never assigned")` — PowerBasic.Compiler/Runtime/DosRuntime.Core.cs:291
-- method `InvalidOperationException($"runtime label {property.Name} was never assigned")` — PowerBasic.Compiler/Runtime/DosRuntime.Core.cs:314
+- method `InvalidOperationException($"runtime label {property.Name} was never assigned")` — PowerBasic.Compiler/Runtime/DosRuntime.Core.cs:292
+- method `InvalidOperationException($"runtime label {property.Name} was never assigned")` — PowerBasic.Compiler/Runtime/DosRuntime.Core.cs:315
 
 ### DosRuntime.CpuState.cs  `C#, 13 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.CpuState.cs:2
@@ -6612,7 +8033,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Ems.cs:2
 - class `DosRuntime` — HUGE (DOS 48h conventional memory) and VIRTUAL (EMS, int 67h) array support. — PowerBasic.Compiler/Runtime/DosRuntime.Ems.cs:17
 
-### DosRuntime.Extras.cs  `C#, 305 lines`
+### DosRuntime.Extras.cs  `C#, 306 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Extras.cs:2
 - class `DosRuntime` — PB 3.x surface helpers added with the dialect/pointer wave. Conventions — PowerBasic.Compiler/Runtime/DosRuntime.Extras.cs:19
 
@@ -6669,6 +8090,17 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(notLeftFirst)` — PowerBasic.Compiler/Runtime/DosRuntime.Quad.cs:33
 - method `if(notResult)` — PowerBasic.Compiler/Runtime/DosRuntime.Quad.cs:37
 - method `EmitNegate` — PowerBasic.Compiler/Runtime/DosRuntime.Quad.cs:64
+
+### DosRuntime.StringCoalescing.cs  `C#, 373 lines`
+- namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.StringCoalescing.cs:2
+- class `DosRuntime` — O0289's DOS runtime half: one worst-case heap preflight followed by cheap carving of ordinary — PowerBasic.Compiler/Runtime/DosRuntime.StringCoalescing.cs:11
+- method `EmitRight` — PowerBasic.Compiler/Runtime/DosRuntime.StringCoalescing.cs:241
+- method `EmitMid` — PowerBasic.Compiler/Runtime/DosRuntime.StringCoalescing.cs:254
+- method `if` — PowerBasic.Compiler/Runtime/DosRuntime.StringCoalescing.cs:311
+
+### DosRuntime.StringViews.cs  `C#, 205 lines`
+- namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.StringViews.cs:2
+- class `DosRuntime` — PowerBasic.Compiler/Runtime/DosRuntime.StringViews.cs:4
 
 ### DosRuntime.Strings.cs  `C#, 2074 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Strings.cs:3
@@ -6783,7 +8215,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 
 ## PowerBasic.Compiler/Semantics/
 
-### Binder.cs  `C#, 4760 lines`
+### Binder.cs  `C#, 4762 lines`
 - namespace `PowerBasic.Compiler.Semantics` — PowerBasic.Compiler/Semantics/Binder.cs:3
 - class `Binder` — Binds a parsed compilation unit: resolves every name to a symbol, types every — PowerBasic.Compiler/Semantics/Binder.cs:11
 - method `foreach(var v in redim.Variables)` — PowerBasic.Compiler/Semantics/Binder.cs:189
@@ -6914,143 +8346,144 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `foreach(var v in redim.Variables)` — PowerBasic.Compiler/Semantics/Binder.cs:2566
 - method `if(symbol == null)` — PowerBasic.Compiler/Semantics/Binder.cs:2573
 - method `if(created != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2576
-- method `foreach(var array in erase.Arrays)` — PowerBasic.Compiler/Semantics/Binder.cs:2589
-- method `if(arraySymbol == null)` — PowerBasic.Compiler/Semantics/Binder.cs:2591
-- method `foreach(var (condition, body) in i.ElseIfs)` — PowerBasic.Compiler/Semantics/Binder.cs:2603
-- method `if(i.Else != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2607
-- method `foreach(var arm in sel.Arms)` — PowerBasic.Compiler/Semantics/Binder.cs:2613
-- method `foreach(var selector in arm.Selectors)` — PowerBasic.Compiler/Semantics/Binder.cs:2614
-- method `if(selector.RangeUpper != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2617
-- method `if(counter is not ScalarType)` — PowerBasic.Compiler/Semantics/Binder.cs:2626
-- method `if(f.Step != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2630
-- method `if(d.PreCondition != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2637
-- method `if(d.PostCondition != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2639
-- method `foreach(var target in og.Targets)` — PowerBasic.Compiler/Semantics/Binder.cs:2666
-- method `if(t.Catch != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2678
-- method `if(t.Finally != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2680
-- method `if(ev.Index != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2693
-- method `if(ec.Index != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2700
-- method `if(id.Target is NameExpr incrTarget && scope.Proc?.CoroutineCaptures is…` — pb36 coroutine: INCR/DECR of a captured generator parameter/local persists across resumes — PowerBasic.Compiler/Semantics/Binder.cs:2708
-- method `if(id.Amount != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2717
-- method `if(this.BindAssignTarget(replace.Target, scope) is not (StringType or F…` — PowerBasic.Compiler/Semantics/Binder.cs:2730
-- method `if(targetType is not ScalarType { IsFloat: false })` — PowerBasic.Compiler/Semantics/Binder.cs:2737
-- method `if(sort.TagArray != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2752
-- method `if(mid.Length != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2765
-- method `if(targetType is not (StringType or FixedStringType or AsciizType or Fl…` — PowerBasic.Compiler/Semantics/Binder.cs:2772
-- method `if(asc.Index != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2774
-- method `if(so.Value != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2781
-- method `if(si.Count != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2786
-- method `if(this.BindAssignTarget(si.Target, scope) is not (StringType or FlexTy…` — PowerBasic.Compiler/Semantics/Binder.cs:2788
-- method `if(p.FileNumber != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2798
-- method `if(p.UsingFormat != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2800
-- method `foreach(var item in p.Items)` — PowerBasic.Compiler/Semantics/Binder.cs:2802
-- method `if(write.FileNumber != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2808
-- method `foreach(var item in write.Items)` — PowerBasic.Compiler/Semantics/Binder.cs:2810
-- method `if(input.FileNumber != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2823
-- method `foreach(var target in input.Targets)` — PowerBasic.Compiler/Semantics/Binder.cs:2825
-- method `if(open.RecordLength != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2832
-- method `foreach(var n in close.FileNumbers)` — PowerBasic.Compiler/Semantics/Binder.cs:2837
-- method `if(gp.RecordNumber != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2843
-- method `if(gp.Variable != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2845
-- method `foreach(var (width, target) in field.Fields)` — PowerBasic.Compiler/Semantics/Binder.cs:2856
-- method `foreach(var target in read.Targets)` — PowerBasic.Compiler/Semantics/Binder.cs:2863
-- method `if(this.BindExpression(chain.Target, scope) is not (StringType or Fixed…` — PowerBasic.Compiler/Semantics/Binder.cs:2872
-- method `if(seg.Segment != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2885
-- method `foreach(var argument in cmd.Arguments)` — PowerBasic.Compiler/Semantics/Binder.cs:2890
-- method `foreach(var e in new[] { line.From?.X, line.From?.Y, line.To.X, line.To.Y, l…` — PowerBasic.Compiler/Semantics/Binder.cs:2899
-- method `foreach(var e in new[] { circle.Center.X, circle.Center.Y, circle.Radius, ci…` — PowerBasic.Compiler/Semantics/Binder.cs:2905
-- method `if(pset.Color != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2913
-- method `if(gg.To != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2920
-- method `if(this._dialect == Dialect.Pb30 && !this._warnedAsm30)` — QUIRK 2.21 (FAQ): 3.0 resolved inline-asm variable operands differently — PowerBasic.Compiler/Semantics/Binder.cs:2931
-- method `if(!DialectFacts.IsAvailable(LanguageFeature.NestedProcedures, this._di…` — PowerBasic.Compiler/Semantics/Binder.cs:2950
-- method `if(scope.Proc != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2960
-- method `if(this._folder.TryFold(sa.Condition)?.Integer is not { } truth)` — PowerBasic.Compiler/Semantics/Binder.cs:2967
-- method `if(truth == 0)` — PowerBasic.Compiler/Semantics/Binder.cs:2969
-- method `if(scope.Proc != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2975
-- method `foreach(var (lower, upper) in v.ArrayBounds ?? [])` — PowerBasic.Compiler/Semantics/Binder.cs:3017
-- method `if(lower != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3029
-- method `if(!this._model.ModuleVariables.TryGetValue(key, out var moduleVar))` — SHARED inside a proc aliases the module-level variable — PowerBasic.Compiler/Semantics/Binder.cs:3042
-- method `if(created == null)` — PowerBasic.Compiler/Semantics/Binder.cs:3044
-- method `if(dim.Class == ArrayClass.Stack)` — PowerBasic.Compiler/Semantics/Binder.cs:3055
-- method `if(symbol != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3058
-- method `if(symbol == null)` — PowerBasic.Compiler/Semantics/Binder.cs:3066
-- method `if(dim.Class == ArrayClass.Stack)` — pb36 STACK array: frame-resident, so it needs a real frame (Local, not STATIC) — PowerBasic.Compiler/Semantics/Binder.cs:3070
-- method `if(symbol.Type is not ArrayType { StaticBounds: not null })` — PowerBasic.Compiler/Semantics/Binder.cs:3073
-- method `if(scope.Proc.Variables.TryGetValue(key, out var existing) && !Equals(e…` — PowerBasic.Compiler/Semantics/Binder.cs:3076
-- method `if(this._folder.TryFold(re.Lo)?.Integer is not { } lo || this._folder.T…` — PowerBasic.Compiler/Semantics/Binder.cs:3161
-- method `if(se.Source is not NameExpr src || this.LookupArrayVariable(src.Name, …` — PowerBasic.Compiler/Semantics/Binder.cs:3169
-- method `ResolveBound(Expression? bound, long fallback)` — slice bounds: constant expressions, a from-end ^n (= UBOUND - n + 1), or omitted — PowerBasic.Compiler/Semantics/Binder.cs:3177
-- method `if(bound is FromEndExpr fe)` — PowerBasic.Compiler/Semantics/Binder.cs:3180
-- method `if(sliceLo is not { } lo2 || sliceHi is not { } hi2)` — PowerBasic.Compiler/Semantics/Binder.cs:3186
-- method `if(lo2 < dimBound.Item1 || hi2 > dimBound.Item2 || lo2 > hi2)` — PowerBasic.Compiler/Semantics/Binder.cs:3190
-- method `for(var j = lo2; j <= hi2; ++j)` — PowerBasic.Compiler/Semantics/Binder.cs:3194
-- method `if(this.PbTypeToTypeName(valueType, nu.Position) is not { } tn)` — PowerBasic.Compiler/Semantics/Binder.cs:3243
-- method `if((c.Arguments.Count < proc.RequiredParameters || c.Arguments.Count > …` — PowerBasic.Compiler/Semantics/Binder.cs:3336
-- method `if(sym.Storage == VariableStorage.Captured && ReferenceEquals(lifted.Ca…` — PowerBasic.Compiler/Semantics/Binder.cs:3425
-- method `if(assign.Value is NameExpr src && this._model.VariableBindings.TryGetV…` — PowerBasic.Compiler/Semantics/Binder.cs:3464
-- method `foreach(var nested in AssignmentsIn(block))` — PowerBasic.Compiler/Semantics/Binder.cs:3493
-- method `foreach(var (_, arm) in i.ElseIfs)` — PowerBasic.Compiler/Semantics/Binder.cs:3503
-- method `if(i.Else != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3505
-- method `foreach(var arm in sel.Arms)` — PowerBasic.Compiler/Semantics/Binder.cs:3509
-- method `if(t.Catch != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3523
-- method `if(t.Finally != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3525
-- method `if(pi < 0)` — PowerBasic.Compiler/Semantics/Binder.cs:3554
-- method `if(slots[pi] != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3558
-- method `if(proc.Parameters[i].DefaultValue is { } d)` — PowerBasic.Compiler/Semantics/Binder.cs:3578
-- method `if(!Equals(lambda.Parameters[i].Type, sig.ParameterTypes[i]))` — PowerBasic.Compiler/Semantics/Binder.cs:3613
-- method `if(!this._model.Equates.TryGetValue(c.Name, out var value))` — PowerBasic.Compiler/Semantics/Binder.cs:3696
-- method `if(scope.Proc?.CoroutineCaptures is { } captures && captures.TryGetValu…` — pb36 coroutine: inside MoveNext, a captured generator parameter reads as THIS.$param — PowerBasic.Compiler/Semantics/Binder.cs:3709
-- method `if(n.Suffix == TypeSuffix.None && scope.Proc?.BackingField is { } backi…` — pb36 property accessor: FIELD reads the compiler-generated backing field (THIS.$Prop) — PowerBasic.Compiler/Semantics/Binder.cs:3716
-- method `if(symbol == null && n.Suffix == TypeSuffix.None && this._model.EnumMem…` — a bare name with no matching variable may be a PB 3.6 ENUM member (its own — PowerBasic.Compiler/Semantics/Binder.cs:3727
-- method `if(symbol == null && this._model.Procedures.TryGetValue(n.Name, out var…` — a bare name may be a parameterless FUNCTION call (PB allows omitting "()") — PowerBasic.Compiler/Semantics/Binder.cs:3733
-- method `if(symbol == null)` — ... or a parameterless intrinsic (FREEFILE, TIMER, ERR, INKEY$, ...) — PowerBasic.Compiler/Semantics/Binder.cs:3739
-- method `if((Intrinsics.TryGet(intrinsicName, out var intrinsic) || Intrinsics.T…` — PowerBasic.Compiler/Semantics/Binder.cs:3741
-- method `if(DialectFacts.IntrinsicGate(intrinsic.Name) is { } gate)` — PowerBasic.Compiler/Semantics/Binder.cs:3743
-- method `if(this.TryBindDottedVariable(m, scope) is { } flatType)` — QB-style dotted variable names: when the chain root is not a UDT-typed — PowerBasic.Compiler/Semantics/Binder.cs:3761
-- method `if(targetType is not UdtType udt)` — PowerBasic.Compiler/Semantics/Binder.cs:3765
-- method `if(this.BitFieldOf(udt, m.Member) is { } bf)` — pb36 bit-field read: o.bf -> (o.$storage >>> offset) AND ((1 << width) - 1), minimized: no — PowerBasic.Compiler/Semantics/Binder.cs:3772
-- method `if(bf.Offset > 0)` — PowerBasic.Compiler/Semantics/Binder.cs:3774
-- method `if(bf.Offset + bf.Width < bf.ContainerBits)` — PowerBasic.Compiler/Semantics/Binder.cs:3776
-- method `if(field != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3783
-- method `if(member != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3789
-- method `if(inner is not (StringType or FixedStringType or FlexType or AsciizTyp…` — PowerBasic.Compiler/Semantics/Binder.cs:3801
-- method `if(ix.Target is MemberExpr method && this.TryBindMemberCall(ix, method,…` — pb36: o.Method(args) parses as IndexExpr(MemberExpr(o,Method), args); when the — PowerBasic.Compiler/Semantics/Binder.cs:3809
-- method `foreach(var index in ix.Arguments)` — PowerBasic.Compiler/Semantics/Binder.cs:3814
-- method `if(deref.Index != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3821
-- method `if(pointerType is not PointerType ptr)` — PowerBasic.Compiler/Semantics/Binder.cs:3823
-- method `if(operand is BcdType)` — PowerBasic.Compiler/Semantics/Binder.cs:3835
-- method `if(operand is not ScalarType)` — PowerBasic.Compiler/Semantics/Binder.cs:3837
-- method `if(u.Op == UnaryOp.Not)` — PowerBasic.Compiler/Semantics/Binder.cs:3839
-- method `IntegralOf(operand)` — PowerBasic.Compiler/Semantics/Binder.cs:3840
-- method `if(u.Op == UnaryOp.Negate && this._dialect.IsPbAtLeast(Dialect.Pb20) &&…` — PB computes integral negation in floating point too: with N% = -32768, — PowerBasic.Compiler/Semantics/Binder.cs:3843
-- method `foreach(var element in tup.Elements)` — a tuple literal is only meaningful as an assignment / destructuring right-hand side, which the — PowerBasic.Compiler/Semantics/Binder.cs:3854
-- method `if(coalesce.Value is NullConditionalExpr ncLeft)` — pb36 null-coalescing: v ?? d -> IF(v.HasValue, v.Value, d). A null-conditional access on the — PowerBasic.Compiler/Semantics/Binder.cs:3871
-- method `if(!this.IsNullableType(valueType))` — PowerBasic.Compiler/Semantics/Binder.cs:3878
-- method `MemberExpr(coalesce.Position, coalesce.Value, "HasValue", TypeSuffix.None)` — PowerBasic.Compiler/Semantics/Binder.cs:3881
-- method `IntegerLiteralExpr(pos, dim + 1, TypeSuffix.None)` — PowerBasic.Compiler/Semantics/Binder.cs:4230
-- method `BinaryExpr(pos, BinaryOp.Subtract, ubound, fromEnd.Index)` — PowerBasic.Compiler/Semantics/Binder.cs:4234
-- method `Append` — PowerBasic.Compiler/Semantics/Binder.cs:4251
-- method `ParamsOf` — PowerBasic.Compiler/Semantics/Binder.cs:4306
-- method `if(tn == null)` — PowerBasic.Compiler/Semantics/Binder.cs:4312
-- method `BuildThunk` — PowerBasic.Compiler/Semantics/Binder.cs:4318
-- method `if(bound.Count >= target.VisibleParameterCount)` — PowerBasic.Compiler/Semantics/Binder.cs:4336
-- method `foreach(var b in bound)` — PowerBasic.Compiler/Semantics/Binder.cs:4341
-- method `StringLiteralExpr(b.Position, txt)` — PowerBasic.Compiler/Semantics/Binder.cs:4347
-- method `if(pars == null)` — PowerBasic.Compiler/Semantics/Binder.cs:4352
-- method `if(f.VisibleParameterCount != 1 || g.VisibleParameterCount != 1)` — PowerBasic.Compiler/Semantics/Binder.cs:4364
-- method `if(pars == null)` — PowerBasic.Compiler/Semantics/Binder.cs:4369
-- method `if(this.ReflectedUdt(call.Arguments[0], scope) is { } udt)` — PowerBasic.Compiler/Semantics/Binder.cs:4412
-- method `if(this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.Refle…` — PowerBasic.Compiler/Semantics/Binder.cs:4422
-- method `if(this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.Refle…` — PowerBasic.Compiler/Semantics/Binder.cs:4432
-- method `if(this._folder.TryFold(selector)?.Integer is { } i && i >= 1 && i <= u…` — PowerBasic.Compiler/Semantics/Binder.cs:4471
-- method `if(call.Arguments[d] is FromEndExpr fromEnd)` — PowerBasic.Compiler/Semantics/Binder.cs:4520
-- method `if` — PowerBasic.Compiler/Semantics/Binder.cs:4564
-- method `if(arraySymbol == null)` — PowerBasic.Compiler/Semantics/Binder.cs:4583
-- method `if(this._model.Procedures.TryGetValue(procRef.Name, out var target))` — PowerBasic.Compiler/Semantics/Binder.cs:4599
-- method `if(this._model.Labels.TryGetValue(scope.LabelKey, out var labels) && la…` — PowerBasic.Compiler/Semantics/Binder.cs:4604
-- method `if(call.Arguments.Count < proc.RequiredParameters || call.Arguments.Cou…` — PowerBasic.Compiler/Semantics/Binder.cs:4652
-- method `if(!(captured.Storage == VariableStorage.Local || (captured.Storage == …` — PowerBasic.Compiler/Semantics/Binder.cs:4726
-- method `VariableSymbol(name, type, VariableStorage.Global)` — PowerBasic.Compiler/Semantics/Binder.cs:4749
+- method `if(symbol.Type is ArrayType array && (v.ArrayBounds?.Count ?? 0) != arr…` — PowerBasic.Compiler/Semantics/Binder.cs:2583
+- method `foreach(var array in erase.Arrays)` — PowerBasic.Compiler/Semantics/Binder.cs:2591
+- method `if(arraySymbol == null)` — PowerBasic.Compiler/Semantics/Binder.cs:2593
+- method `foreach(var (condition, body) in i.ElseIfs)` — PowerBasic.Compiler/Semantics/Binder.cs:2605
+- method `if(i.Else != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2609
+- method `foreach(var arm in sel.Arms)` — PowerBasic.Compiler/Semantics/Binder.cs:2615
+- method `foreach(var selector in arm.Selectors)` — PowerBasic.Compiler/Semantics/Binder.cs:2616
+- method `if(selector.RangeUpper != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2619
+- method `if(counter is not ScalarType)` — PowerBasic.Compiler/Semantics/Binder.cs:2628
+- method `if(f.Step != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2632
+- method `if(d.PreCondition != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2639
+- method `if(d.PostCondition != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2641
+- method `foreach(var target in og.Targets)` — PowerBasic.Compiler/Semantics/Binder.cs:2668
+- method `if(t.Catch != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2680
+- method `if(t.Finally != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2682
+- method `if(ev.Index != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2695
+- method `if(ec.Index != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2702
+- method `if(id.Target is NameExpr incrTarget && scope.Proc?.CoroutineCaptures is…` — pb36 coroutine: INCR/DECR of a captured generator parameter/local persists across resumes — PowerBasic.Compiler/Semantics/Binder.cs:2710
+- method `if(id.Amount != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2719
+- method `if(this.BindAssignTarget(replace.Target, scope) is not (StringType or F…` — PowerBasic.Compiler/Semantics/Binder.cs:2732
+- method `if(targetType is not ScalarType { IsFloat: false })` — PowerBasic.Compiler/Semantics/Binder.cs:2739
+- method `if(sort.TagArray != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2754
+- method `if(mid.Length != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2767
+- method `if(targetType is not (StringType or FixedStringType or AsciizType or Fl…` — PowerBasic.Compiler/Semantics/Binder.cs:2774
+- method `if(asc.Index != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2776
+- method `if(so.Value != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2783
+- method `if(si.Count != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2788
+- method `if(this.BindAssignTarget(si.Target, scope) is not (StringType or FlexTy…` — PowerBasic.Compiler/Semantics/Binder.cs:2790
+- method `if(p.FileNumber != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2800
+- method `if(p.UsingFormat != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2802
+- method `foreach(var item in p.Items)` — PowerBasic.Compiler/Semantics/Binder.cs:2804
+- method `if(write.FileNumber != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2810
+- method `foreach(var item in write.Items)` — PowerBasic.Compiler/Semantics/Binder.cs:2812
+- method `if(input.FileNumber != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2825
+- method `foreach(var target in input.Targets)` — PowerBasic.Compiler/Semantics/Binder.cs:2827
+- method `if(open.RecordLength != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2834
+- method `foreach(var n in close.FileNumbers)` — PowerBasic.Compiler/Semantics/Binder.cs:2839
+- method `if(gp.RecordNumber != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2845
+- method `if(gp.Variable != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2847
+- method `foreach(var (width, target) in field.Fields)` — PowerBasic.Compiler/Semantics/Binder.cs:2858
+- method `foreach(var target in read.Targets)` — PowerBasic.Compiler/Semantics/Binder.cs:2865
+- method `if(this.BindExpression(chain.Target, scope) is not (StringType or Fixed…` — PowerBasic.Compiler/Semantics/Binder.cs:2874
+- method `if(seg.Segment != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2887
+- method `foreach(var argument in cmd.Arguments)` — PowerBasic.Compiler/Semantics/Binder.cs:2892
+- method `foreach(var e in new[] { line.From?.X, line.From?.Y, line.To.X, line.To.Y, l…` — PowerBasic.Compiler/Semantics/Binder.cs:2901
+- method `foreach(var e in new[] { circle.Center.X, circle.Center.Y, circle.Radius, ci…` — PowerBasic.Compiler/Semantics/Binder.cs:2907
+- method `if(pset.Color != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2915
+- method `if(gg.To != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2922
+- method `if(this._dialect == Dialect.Pb30 && !this._warnedAsm30)` — QUIRK 2.21 (FAQ): 3.0 resolved inline-asm variable operands differently — PowerBasic.Compiler/Semantics/Binder.cs:2933
+- method `if(!DialectFacts.IsAvailable(LanguageFeature.NestedProcedures, this._di…` — PowerBasic.Compiler/Semantics/Binder.cs:2952
+- method `if(scope.Proc != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2962
+- method `if(this._folder.TryFold(sa.Condition)?.Integer is not { } truth)` — PowerBasic.Compiler/Semantics/Binder.cs:2969
+- method `if(truth == 0)` — PowerBasic.Compiler/Semantics/Binder.cs:2971
+- method `if(scope.Proc != null)` — PowerBasic.Compiler/Semantics/Binder.cs:2977
+- method `foreach(var (lower, upper) in v.ArrayBounds ?? [])` — PowerBasic.Compiler/Semantics/Binder.cs:3019
+- method `if(lower != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3031
+- method `if(!this._model.ModuleVariables.TryGetValue(key, out var moduleVar))` — SHARED inside a proc aliases the module-level variable — PowerBasic.Compiler/Semantics/Binder.cs:3044
+- method `if(created == null)` — PowerBasic.Compiler/Semantics/Binder.cs:3046
+- method `if(dim.Class == ArrayClass.Stack)` — PowerBasic.Compiler/Semantics/Binder.cs:3057
+- method `if(symbol != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3060
+- method `if(symbol == null)` — PowerBasic.Compiler/Semantics/Binder.cs:3068
+- method `if(dim.Class == ArrayClass.Stack)` — pb36 STACK array: frame-resident, so it needs a real frame (Local, not STATIC) — PowerBasic.Compiler/Semantics/Binder.cs:3072
+- method `if(symbol.Type is not ArrayType { StaticBounds: not null })` — PowerBasic.Compiler/Semantics/Binder.cs:3075
+- method `if(scope.Proc.Variables.TryGetValue(key, out var existing) && !Equals(e…` — PowerBasic.Compiler/Semantics/Binder.cs:3078
+- method `if(this._folder.TryFold(re.Lo)?.Integer is not { } lo || this._folder.T…` — PowerBasic.Compiler/Semantics/Binder.cs:3163
+- method `if(se.Source is not NameExpr src || this.LookupArrayVariable(src.Name, …` — PowerBasic.Compiler/Semantics/Binder.cs:3171
+- method `ResolveBound(Expression? bound, long fallback)` — slice bounds: constant expressions, a from-end ^n (= UBOUND - n + 1), or omitted — PowerBasic.Compiler/Semantics/Binder.cs:3179
+- method `if(bound is FromEndExpr fe)` — PowerBasic.Compiler/Semantics/Binder.cs:3182
+- method `if(sliceLo is not { } lo2 || sliceHi is not { } hi2)` — PowerBasic.Compiler/Semantics/Binder.cs:3188
+- method `if(lo2 < dimBound.Item1 || hi2 > dimBound.Item2 || lo2 > hi2)` — PowerBasic.Compiler/Semantics/Binder.cs:3192
+- method `for(var j = lo2; j <= hi2; ++j)` — PowerBasic.Compiler/Semantics/Binder.cs:3196
+- method `if(this.PbTypeToTypeName(valueType, nu.Position) is not { } tn)` — PowerBasic.Compiler/Semantics/Binder.cs:3245
+- method `if((c.Arguments.Count < proc.RequiredParameters || c.Arguments.Count > …` — PowerBasic.Compiler/Semantics/Binder.cs:3338
+- method `if(sym.Storage == VariableStorage.Captured && ReferenceEquals(lifted.Ca…` — PowerBasic.Compiler/Semantics/Binder.cs:3427
+- method `if(assign.Value is NameExpr src && this._model.VariableBindings.TryGetV…` — PowerBasic.Compiler/Semantics/Binder.cs:3466
+- method `foreach(var nested in AssignmentsIn(block))` — PowerBasic.Compiler/Semantics/Binder.cs:3495
+- method `foreach(var (_, arm) in i.ElseIfs)` — PowerBasic.Compiler/Semantics/Binder.cs:3505
+- method `if(i.Else != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3507
+- method `foreach(var arm in sel.Arms)` — PowerBasic.Compiler/Semantics/Binder.cs:3511
+- method `if(t.Catch != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3525
+- method `if(t.Finally != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3527
+- method `if(pi < 0)` — PowerBasic.Compiler/Semantics/Binder.cs:3556
+- method `if(slots[pi] != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3560
+- method `if(proc.Parameters[i].DefaultValue is { } d)` — PowerBasic.Compiler/Semantics/Binder.cs:3580
+- method `if(!Equals(lambda.Parameters[i].Type, sig.ParameterTypes[i]))` — PowerBasic.Compiler/Semantics/Binder.cs:3615
+- method `if(!this._model.Equates.TryGetValue(c.Name, out var value))` — PowerBasic.Compiler/Semantics/Binder.cs:3698
+- method `if(scope.Proc?.CoroutineCaptures is { } captures && captures.TryGetValu…` — pb36 coroutine: inside MoveNext, a captured generator parameter reads as THIS.$param — PowerBasic.Compiler/Semantics/Binder.cs:3711
+- method `if(n.Suffix == TypeSuffix.None && scope.Proc?.BackingField is { } backi…` — pb36 property accessor: FIELD reads the compiler-generated backing field (THIS.$Prop) — PowerBasic.Compiler/Semantics/Binder.cs:3718
+- method `if(symbol == null && n.Suffix == TypeSuffix.None && this._model.EnumMem…` — a bare name with no matching variable may be a PB 3.6 ENUM member (its own — PowerBasic.Compiler/Semantics/Binder.cs:3729
+- method `if(symbol == null && this._model.Procedures.TryGetValue(n.Name, out var…` — a bare name may be a parameterless FUNCTION call (PB allows omitting "()") — PowerBasic.Compiler/Semantics/Binder.cs:3735
+- method `if(symbol == null)` — ... or a parameterless intrinsic (FREEFILE, TIMER, ERR, INKEY$, ...) — PowerBasic.Compiler/Semantics/Binder.cs:3741
+- method `if((Intrinsics.TryGet(intrinsicName, out var intrinsic) || Intrinsics.T…` — PowerBasic.Compiler/Semantics/Binder.cs:3743
+- method `if(DialectFacts.IntrinsicGate(intrinsic.Name) is { } gate)` — PowerBasic.Compiler/Semantics/Binder.cs:3745
+- method `if(this.TryBindDottedVariable(m, scope) is { } flatType)` — QB-style dotted variable names: when the chain root is not a UDT-typed — PowerBasic.Compiler/Semantics/Binder.cs:3763
+- method `if(targetType is not UdtType udt)` — PowerBasic.Compiler/Semantics/Binder.cs:3767
+- method `if(this.BitFieldOf(udt, m.Member) is { } bf)` — pb36 bit-field read: o.bf -> (o.$storage >>> offset) AND ((1 << width) - 1), minimized: no — PowerBasic.Compiler/Semantics/Binder.cs:3774
+- method `if(bf.Offset > 0)` — PowerBasic.Compiler/Semantics/Binder.cs:3776
+- method `if(bf.Offset + bf.Width < bf.ContainerBits)` — PowerBasic.Compiler/Semantics/Binder.cs:3778
+- method `if(field != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3785
+- method `if(member != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3791
+- method `if(inner is not (StringType or FixedStringType or FlexType or AsciizTyp…` — PowerBasic.Compiler/Semantics/Binder.cs:3803
+- method `if(ix.Target is MemberExpr method && this.TryBindMemberCall(ix, method,…` — pb36: o.Method(args) parses as IndexExpr(MemberExpr(o,Method), args); when the — PowerBasic.Compiler/Semantics/Binder.cs:3811
+- method `foreach(var index in ix.Arguments)` — PowerBasic.Compiler/Semantics/Binder.cs:3816
+- method `if(deref.Index != null)` — PowerBasic.Compiler/Semantics/Binder.cs:3823
+- method `if(pointerType is not PointerType ptr)` — PowerBasic.Compiler/Semantics/Binder.cs:3825
+- method `if(operand is BcdType)` — PowerBasic.Compiler/Semantics/Binder.cs:3837
+- method `if(operand is not ScalarType)` — PowerBasic.Compiler/Semantics/Binder.cs:3839
+- method `if(u.Op == UnaryOp.Not)` — PowerBasic.Compiler/Semantics/Binder.cs:3841
+- method `IntegralOf(operand)` — PowerBasic.Compiler/Semantics/Binder.cs:3842
+- method `if(u.Op == UnaryOp.Negate && this._dialect.IsPbAtLeast(Dialect.Pb20) &&…` — PB computes integral negation in floating point too: with N% = -32768, — PowerBasic.Compiler/Semantics/Binder.cs:3845
+- method `foreach(var element in tup.Elements)` — a tuple literal is only meaningful as an assignment / destructuring right-hand side, which the — PowerBasic.Compiler/Semantics/Binder.cs:3856
+- method `if(coalesce.Value is NullConditionalExpr ncLeft)` — pb36 null-coalescing: v ?? d -> IF(v.HasValue, v.Value, d). A null-conditional access on the — PowerBasic.Compiler/Semantics/Binder.cs:3873
+- method `if(!this.IsNullableType(valueType))` — PowerBasic.Compiler/Semantics/Binder.cs:3880
+- method `MemberExpr(coalesce.Position, coalesce.Value, "HasValue", TypeSuffix.None)` — PowerBasic.Compiler/Semantics/Binder.cs:3883
+- method `IntegerLiteralExpr(pos, dim + 1, TypeSuffix.None)` — PowerBasic.Compiler/Semantics/Binder.cs:4232
+- method `BinaryExpr(pos, BinaryOp.Subtract, ubound, fromEnd.Index)` — PowerBasic.Compiler/Semantics/Binder.cs:4236
+- method `Append` — PowerBasic.Compiler/Semantics/Binder.cs:4253
+- method `ParamsOf` — PowerBasic.Compiler/Semantics/Binder.cs:4308
+- method `if(tn == null)` — PowerBasic.Compiler/Semantics/Binder.cs:4314
+- method `BuildThunk` — PowerBasic.Compiler/Semantics/Binder.cs:4320
+- method `if(bound.Count >= target.VisibleParameterCount)` — PowerBasic.Compiler/Semantics/Binder.cs:4338
+- method `foreach(var b in bound)` — PowerBasic.Compiler/Semantics/Binder.cs:4343
+- method `StringLiteralExpr(b.Position, txt)` — PowerBasic.Compiler/Semantics/Binder.cs:4349
+- method `if(pars == null)` — PowerBasic.Compiler/Semantics/Binder.cs:4354
+- method `if(f.VisibleParameterCount != 1 || g.VisibleParameterCount != 1)` — PowerBasic.Compiler/Semantics/Binder.cs:4366
+- method `if(pars == null)` — PowerBasic.Compiler/Semantics/Binder.cs:4371
+- method `if(this.ReflectedUdt(call.Arguments[0], scope) is { } udt)` — PowerBasic.Compiler/Semantics/Binder.cs:4414
+- method `if(this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.Refle…` — PowerBasic.Compiler/Semantics/Binder.cs:4424
+- method `if(this.ReflectedUdt(call.Arguments[0], scope) is { } udt && this.Refle…` — PowerBasic.Compiler/Semantics/Binder.cs:4434
+- method `if(this._folder.TryFold(selector)?.Integer is { } i && i >= 1 && i <= u…` — PowerBasic.Compiler/Semantics/Binder.cs:4473
+- method `if(call.Arguments[d] is FromEndExpr fromEnd)` — PowerBasic.Compiler/Semantics/Binder.cs:4522
+- method `if` — PowerBasic.Compiler/Semantics/Binder.cs:4566
+- method `if(arraySymbol == null)` — PowerBasic.Compiler/Semantics/Binder.cs:4585
+- method `if(this._model.Procedures.TryGetValue(procRef.Name, out var target))` — PowerBasic.Compiler/Semantics/Binder.cs:4601
+- method `if(this._model.Labels.TryGetValue(scope.LabelKey, out var labels) && la…` — PowerBasic.Compiler/Semantics/Binder.cs:4606
+- method `if(call.Arguments.Count < proc.RequiredParameters || call.Arguments.Cou…` — PowerBasic.Compiler/Semantics/Binder.cs:4654
+- method `if(!(captured.Storage == VariableStorage.Local || (captured.Storage == …` — PowerBasic.Compiler/Semantics/Binder.cs:4728
+- method `VariableSymbol(name, type, VariableStorage.Global)` — PowerBasic.Compiler/Semantics/Binder.cs:4751
 
 ### ConstantFolder.cs  `C#, 142 lines`
 - namespace `PowerBasic.Compiler.Semantics` — PowerBasic.Compiler/Semantics/ConstantFolder.cs:3
@@ -7130,7 +8563,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - record `ArrayType` — Array of ; static arrays have compile-time bounds, dynamic ones a descriptor. — PowerBasic.Compiler/Semantics/PbType.cs:152
 - record `AnyType` — Parameter-only wildcard (AS ANY). — PowerBasic.Compiler/Semantics/PbType.cs:164
 
-### SemanticModel.cs  `C#, 143 lines`
+### SemanticModel.cs  `C#, 153 lines`
 - namespace `PowerBasic.Compiler.Semantics` — PowerBasic.Compiler/Semantics/SemanticModel.cs:3
 - class `SemanticModel` — Result of binding a compilation unit: every name resolved to a symbol, every — PowerBasic.Compiler/Semantics/SemanticModel.cs:11
 
@@ -7316,7 +8749,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if` — PowerBasic.Compiler/Syntax/Parser.RuntimeTargetMeta.cs:93
 - method `if` — PowerBasic.Compiler/Syntax/Parser.RuntimeTargetMeta.cs:101
 
-### Parser.cs  `C#, 795 lines`
+### Parser.cs  `C#, 805 lines`
 - namespace `PowerBasic.Compiler.Syntax` — PowerBasic.Compiler/Syntax/Parser.cs:2
 - class `Parser` — Recursive-descent parser turning a (preprocessor-expanded) token stream into a — PowerBasic.Compiler/Syntax/Parser.cs:11
 - record `StatementGroup` — Parser-only marker: a WITH body whose statements ParseBody splices inline (never reaches the binder… — PowerBasic.Compiler/Syntax/Parser.cs:62
@@ -7346,11 +8779,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(arguments is not [{ Kind: TokenKind.Identifier } dialect] || !Dialec…` — PowerBasic.Compiler/Syntax/Parser.cs:605
 - method `ParserException("$COMPAT requires one known dialect name", command.Position)` — PowerBasic.Compiler/Syntax/Parser.cs:607
 - method `ParserException($"unknown or malformed metastatement '${command.Text}'", command.Pos…` — PowerBasic.Compiler/Syntax/Parser.cs:620
-- method `if(args.Count != duCase.Fields.Count)` — PowerBasic.Compiler/Syntax/Parser.cs:750
-- method `AssignStmt(target.Position, new MemberExpr(target.Position, target, "$tag", Typ…` — PowerBasic.Compiler/Syntax/Parser.cs:753
-- method `MemberExpr(target.Position, new MemberExpr(target.Position, target, "$" + duCas…` — PowerBasic.Compiler/Syntax/Parser.cs:758
-- method `StatementGroup(target.Position, group)` — PowerBasic.Compiler/Syntax/Parser.cs:760
-- class `ParserException` — Raised when the token stream violates PowerBASIC 3.5 grammar. — PowerBasic.Compiler/Syntax/Parser.cs:792
+- method `if(!this._dialect.IsPbAtLeast(Dialect.Pb36))` — PowerBasic.Compiler/Syntax/Parser.cs:665
+- method `if(args.Count != duCase.Fields.Count)` — PowerBasic.Compiler/Syntax/Parser.cs:760
+- method `AssignStmt(target.Position, new MemberExpr(target.Position, target, "$tag", Typ…` — PowerBasic.Compiler/Syntax/Parser.cs:763
+- method `MemberExpr(target.Position, new MemberExpr(target.Position, target, "$" + duCas…` — PowerBasic.Compiler/Syntax/Parser.cs:768
+- method `StatementGroup(target.Position, group)` — PowerBasic.Compiler/Syntax/Parser.cs:770
+- class `ParserException` — Raised when the token stream violates PowerBASIC 3.5 grammar. — PowerBasic.Compiler/Syntax/Parser.cs:802
 
 ### Preprocessor.cs  `C#, 370 lines`
 - namespace `PowerBasic.Compiler.Syntax` — PowerBasic.Compiler/Syntax/Preprocessor.cs:1
@@ -7562,50 +8996,62 @@ with unrelated edits, so treat them as anchors, not gospel.
 
 ## pbc/
 
-### Driver.cs  `C#, 442 lines`
+### Driver.cs  `C#, 498 lines`
 - namespace `PowerBasic.Compiler.Cli` — pbc/Driver.cs:7
 - class `Driver` — Command-line front end for the PowerBASIC 3.5 compiler. — pbc/Driver.cs:11
 - method `RunLib(args[1..], stdout, stderr)` — pbc/Driver.cs:20
-- method `if(!DialectFacts.TryParse(name, out dialect))` — pbc/Driver.cs:50
-- method `if(source != null)` — pbc/Driver.cs:94
-- method `if` — pbc/Driver.cs:116
-- method `foreach(var error in model.Errors)` — pbc/Driver.cs:133
-- method `if` — pbc/Driver.cs:141
-- method `if(optimize ?? (dialect == Dialect.Pb36))` — pbc/Driver.cs:150
-- method `if(output != null)` — pbc/Driver.cs:155
-- method `if` — pbc/Driver.cs:163
-- method `if(module is null)` — pbc/Driver.cs:166
-- method `foreach(var f in module.Functions)` — PB computes integral +/-/* in floating point (for PRINT precision); where the result is — pbc/Driver.cs:176
-- method `foreach(var f in module.Functions)` — pbc/Driver.cs:182
-- method `if(verifyErrors.Count > 0)` — pbc/Driver.cs:188
-- method `foreach(var e in verifyErrors)` — pbc/Driver.cs:190
-- method `if(text is null)` — pbc/Driver.cs:204
-- method `if(output != null)` — pbc/Driver.cs:209
-- method `if` — pbc/Driver.cs:229
-- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:235
-- method `if` — pbc/Driver.cs:246
-- method `if(IsUnitCompile(model))` — pbc/Driver.cs:251
-- method `if(!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out va…` — pbc/Driver.cs:255
-- method `if(image.Length == 0 && generator.Errors.Count == 0)` — pbc/Driver.cs:258
-- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:261
-- method `if(!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out va…` — pbc/Driver.cs:282
-- method `if` — pbc/Driver.cs:290
-- method `if(path.EndsWith(".OBJ", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:331
-- method `if(path.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:336
-- method `foreach(var module in Emit.Omf.OmfReader.ReadLibrary(File.ReadAllBytes(path)…` — pbc/Driver.cs:340
-- method `if(path.EndsWith(".PBL", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:346
-- method `foreach(var file in unitFiles)` — pbc/Driver.cs:366
-- method `if(output.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase))` — a .LIB output is a foreign-consumable Intel OMF archive; anything else is our own .PBL — pbc/Driver.cs:375
-- method `if(file.EndsWith(".PBU", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:389
-- method `foreach(var unit in PblFile.Read(stream).Units)` — pbc/Driver.cs:393
-- method `DescribeUnit(unit, stdout)` — pbc/Driver.cs:394
+- method `if(!DialectFacts.TryParse(name, out dialect))` — pbc/Driver.cs:51
+- method `if(source != null)` — pbc/Driver.cs:98
+- method `if` — pbc/Driver.cs:124
+- method `foreach(var error in model.Errors)` — pbc/Driver.cs:141
+- method `if` — pbc/Driver.cs:149
+- method `if(optimize ?? (dialect == Dialect.Pb36))` — pbc/Driver.cs:158
+- method `if(output != null)` — pbc/Driver.cs:163
+- method `if` — pbc/Driver.cs:171
+- method `if(module is null)` — pbc/Driver.cs:174
+- method `if(optimizeMetas.Count > 1)` — pbc/Driver.cs:187
+- method `if(optimizeMetas.FirstOrDefault()?.Arguments is [{ } mode, ..])` — pbc/Driver.cs:196
+- method `if(parallelLoops && !hostedOptimize)` — pbc/Driver.cs:201
+- method `if(parallelLoops)` — O0311 needs the original counted-loop/memory graph, but its dependence proof wants SSA. — pbc/Driver.cs:214
+- method `if(parallelLoops)` — pbc/Driver.cs:218
+- method `if` — pbc/Driver.cs:221
+- method `foreach(var f in module.Functions)` — PB computes integral +/-/* in floating point (for PRINT precision); where the result is — pbc/Driver.cs:227
+- method `foreach(var f in module.Functions)` — pbc/Driver.cs:233
+- method `if(verifyErrors.Count > 0)` — pbc/Driver.cs:241
+- method `foreach(var e in verifyErrors)` — pbc/Driver.cs:243
+- method `if(text is null)` — pbc/Driver.cs:257
+- method `if(output != null)` — pbc/Driver.cs:262
+- method `if` — pbc/Driver.cs:282
+- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:288
+- method `if` — pbc/Driver.cs:299
+- method `if(IsUnitCompile(model))` — pbc/Driver.cs:304
+- method `if(!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out va…` — pbc/Driver.cs:308
+- method `if(image.Length == 0 && generator.Errors.Count == 0)` — pbc/Driver.cs:311
+- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:314
+- method `if(!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out va…` — pbc/Driver.cs:335
+- method `if` — pbc/Driver.cs:343
+- method `if(path.EndsWith(".OBJ", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:384
+- method `if(path.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:389
+- method `foreach(var module in Emit.Omf.OmfReader.ReadLibrary(File.ReadAllBytes(path)…` — pbc/Driver.cs:393
+- method `if(path.EndsWith(".PBL", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:399
+- method `foreach(var file in unitFiles)` — pbc/Driver.cs:419
+- method `if(output.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase))` — a .LIB output is a foreign-consumable Intel OMF archive; anything else is our own .PBL — pbc/Driver.cs:428
+- method `if(file.EndsWith(".PBU", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:442
+- method `foreach(var unit in PblFile.Read(stream).Units)` — pbc/Driver.cs:446
+- method `DescribeUnit(unit, stdout)` — pbc/Driver.cs:447
 
 ### Program.cs  `C#, 4 lines`
 - (no top-level symbols found)
 
 ## runtime/
 
-### pbc_rt.c  `C, 865 lines`
+### pbc_parallel.c  `C, 46 lines`
+> ==========================================================================
+- macro `PBC_PARALLEL_MIN_TRIPS` — runtime/pbc_parallel.c:20
+- function `rt_parallel_should_run(int64_t trips)` — runtime/pbc_parallel.c:22
+- function `rt_parallel_for(int64_t first, int64_t step, int64_t trips, ...)` — runtime/pbc_parallel.c:31
+
+### pbc_rt.c  `C, 890 lines`
 > ==========================================================================
 - function `rt_xalloc(size_t n)` — runtime/pbc_rt.c:24
 - function `rt_new(int32_t len)` — runtime/pbc_rt.c:33
@@ -7640,136 +9086,154 @@ with unrelated edits, so treat them as anchors, not gospel.
 - function `rt_rnd(void)` — runtime/pbc_rt.c:263
 - function `rt_rnd_range(int32_t lower, int32_t upper)` — RND(a, z): a LONG in [a, z] inclusive - a different answer from the bare RND's fraction. — runtime/pbc_rt.c:266
 - function `rt_str_chr(int32_t code)` — runtime/pbc_rt.c:273
-- function `rt_str_asc(void *s)` — runtime/pbc_rt.c:278
-- function `rt_str_char_at(void *s, int32_t index)` — ASC(MID$(s$, i, 1)) as one read, matching the DOS rt_charat at both ends: the start clamps to 1 — runtime/pbc_rt.c:286
-- function `rt_radix_packed(int32_t v, int32_t packed)` — HEX$/OCT$/BIN$, all one routine, matching the DOS rt_radix exactly. — runtime/pbc_rt.c:300
-- function `rt_str_radix(int32_t v, int32_t packed)` — runtime/pbc_rt.c:318
-- function `rt_str_hex(int32_t v)` — runtime/pbc_rt.c:319
-- function `rt_str_oct(int32_t v)` — runtime/pbc_rt.c:320
-- function `rt_str_bin(int32_t v)` — runtime/pbc_rt.c:321
-- function `rt_str_instr(void *hay, void *needle)` — runtime/pbc_rt.c:323
-- function `rt_str_instr_start(int32_t start, void *hay, void *needle)` — runtime/pbc_rt.c:325
-- function `rt_str_val(void *s)` — runtime/pbc_rt.c:336
-- function `rt_str_to_fixed(void *dst, int32_t n, void *src)` — runtime/pbc_rt.c:345
-- function `rt_str_to_fixed_r(void *dst, int32_t n, void *src)` — RSET into a fixed field: blank the whole width, then land the value against its right edge. — runtime/pbc_rt.c:356
-- function `rt_str_from_fixed(void *src, int32_t n)` — runtime/pbc_rt.c:364
-- function `rt_str_justify(void *target, void *value, int16_t right)` — LSET/RSET into a DYNAMIC string: the target keeps its handle AND its length - that is what makes — runtime/pbc_rt.c:369
-- function `rt_strip_leading_zero(char *b)` — PB prints a fraction without its leading zero (".0001", not "0.0001"). — runtime/pbc_rt.c:382
-- function `rt_fmt_float(char *buf, size_t cap, long double v, int digits)` — runtime/pbc_rt.c:389
-- function `rt_str_num(const char *text)` — runtime/pbc_rt.c:394
-- function `rt_str_int(long long v)` — runtime/pbc_rt.c:407
-- function `rt_str_from_i8(int8_t v)` — runtime/pbc_rt.c:413
-- function `rt_str_from_u8(uint8_t v)` — runtime/pbc_rt.c:414
-- function `rt_str_from_i16(int16_t v)` — runtime/pbc_rt.c:415
-- function `rt_str_from_u16(uint16_t v)` — runtime/pbc_rt.c:416
-- function `rt_str_from_i32(int32_t v)` — runtime/pbc_rt.c:417
-- function `rt_str_from_u32(uint32_t v)` — runtime/pbc_rt.c:418
-- function `rt_str_from_i64(int64_t v)` — runtime/pbc_rt.c:419
-- function `rt_str_from_single(long double v)` — Both take a long double, for the reason rt_print_single does: the value arrives at the x87's own — runtime/pbc_rt.c:423
-- function `rt_str_from_double(long double v)` — runtime/pbc_rt.c:424
-- function `rt_str_from_ext(long double v)` — runtime/pbc_rt.c:425
-- function `rt_str_mkbyt(int16_t v)` — runtime/pbc_rt.c:429
-- function `rt_str_mki(int16_t v)` — runtime/pbc_rt.c:430
-- function `rt_str_mkl(int32_t v)` — runtime/pbc_rt.c:431
-- function `rt_str_mkdwd(int32_t v)` — runtime/pbc_rt.c:432
-- function `rt_str_mks(float v)` — runtime/pbc_rt.c:433
-- function `rt_str_mkd(double v)` — runtime/pbc_rt.c:434
-- function `rt_cv(void *s, void *out, int32_t n)` — runtime/pbc_rt.c:436
-- function `rt_str_cvi(void *s)` — runtime/pbc_rt.c:442
-- function `rt_str_cvbyt(void *s)` — runtime/pbc_rt.c:443
-- function `rt_str_cvwrd(void *s)` — runtime/pbc_rt.c:444
-- function `rt_str_cvl(void *s)` — runtime/pbc_rt.c:445
-- function `rt_str_cvdwd(void *s)` — runtime/pbc_rt.c:446
-- function `rt_str_cvs(void *s)` — runtime/pbc_rt.c:447
-- function `rt_str_cvd(void *s)` — runtime/pbc_rt.c:448
-- function `rt_str_cve(void *s)` — runtime/pbc_rt.c:449
-- function `rt_out(const char *bytes, int32_t len)` — runtime/pbc_rt.c:456
-- function `rt_out_num(const char *text)` — PB gives every numeric a sign slot in front and a trailing space behind. — runtime/pbc_rt.c:465
-- function `rt_out_int(long long v)` — runtime/pbc_rt.c:477
-- function `rt_print_str(void *bytes, int32_t len)` — runtime/pbc_rt.c:483
-- function `rt_print_strvar(void *s)` — runtime/pbc_rt.c:484
-- function `rt_print_nl(void)` — runtime/pbc_rt.c:485
-- function `rt_print_i8(int8_t v)` — runtime/pbc_rt.c:487
-- function `rt_print_u8(uint8_t v)` — runtime/pbc_rt.c:488
-- function `rt_print_i16(int16_t v)` — runtime/pbc_rt.c:489
-- function `rt_print_u16(uint16_t v)` — runtime/pbc_rt.c:490
-- function `rt_print_i32(int32_t v)` — runtime/pbc_rt.c:491
-- function `rt_print_u32(uint32_t v)` — runtime/pbc_rt.c:492
-- function `rt_print_i64(int64_t v)` — runtime/pbc_rt.c:493
-- function `rt_print_single(long double v)` — runtime/pbc_rt.c:495
-- function `rt_print_double(long double v)` — runtime/pbc_rt.c:496
-- function `rt_print_ext(long double v)` — runtime/pbc_rt.c:497
-- function `rt_print_comma(void)` — The PRINT comma separator: advance to the next 14-column zone. Sitting exactly on a boundary — runtime/pbc_rt.c:502
-- function `rt_csrlin(void)` — CSRLIN, and whether the standard handles are a console. The DOS runtime asks the BIOS and DOS; — runtime/pbc_rt.c:511
-- function `rt_consin(void)` — runtime/pbc_rt.c:512
-- function `rt_consout(void)` — runtime/pbc_rt.c:513
-- function `rt_defseg_reset(void)` — runtime/pbc_rt.c:518
-- function `rt_print_tab(int32_t column)` — runtime/pbc_rt.c:520
-- function `rt_print_spc(int32_t count)` — runtime/pbc_rt.c:526
-- function `rt_print_zone(void)` — PB's comma separator advances to the next 14-column print zone. — runtime/pbc_rt.c:531
-- function `rt_getfield(char *buf, size_t cap, int wholeLine)` — PB reads one comma-separated field per INPUT variable; a LINE INPUT takes the — runtime/pbc_rt.c:541
-- function `rt_input_num(void)` — runtime/pbc_rt.c:565
-- function `rt_input_prompt(void *bytes, int32_t len)` — runtime/pbc_rt.c:571
-- function `rt_input_i8(void)` — runtime/pbc_rt.c:573
-- function `rt_input_u8(void)` — runtime/pbc_rt.c:574
-- function `rt_input_i16(void)` — runtime/pbc_rt.c:575
-- function `rt_input_u16(void)` — runtime/pbc_rt.c:576
-- function `rt_input_i32(void)` — runtime/pbc_rt.c:577
-- function `rt_input_u32(void)` — runtime/pbc_rt.c:578
-- function `rt_input_i64(void)` — runtime/pbc_rt.c:579
-- function `rt_input_single(void)` — runtime/pbc_rt.c:580
-- function `rt_input_double(void)` — runtime/pbc_rt.c:581
-- function `rt_input_ext(void)` — runtime/pbc_rt.c:582
-- function `rt_input_str(void)` — runtime/pbc_rt.c:584
-- function `rt_input_line(void)` — runtime/pbc_rt.c:590
-- macro `RT_FILES` — runtime/pbc_rt.c:608
-- function `rt_file_of(int32_t n)` — runtime/pbc_rt.c:613
-- function `rt_file_open(int32_t n, void *name, int32_t mode, int32_t reclen)` — runtime/pbc_rt.c:619
-- function `rt_file_close(int32_t n)` — runtime/pbc_rt.c:648
-- function `rt_file_close_all(void)` — runtime/pbc_rt.c:656
-- function `rt_freefile(void)` — runtime/pbc_rt.c:662
-- function `rt_eof(int16_t n)` — PB's EOF is TRUE only once the last byte has been read, so it peeks rather than trusting feof, — runtime/pbc_rt.c:673
-- function `rt_kill(void *name)` — runtime/pbc_rt.c:682
-- function `rt_fout(int32_t n, const char *bytes, int32_t len)` — runtime/pbc_rt.c:694
-- function `rt_fout_int(int32_t n, long long v)` — runtime/pbc_rt.c:703
-- function `rt_fprint_str(int32_t n, void *bytes, int32_t len)` — runtime/pbc_rt.c:712
-- function `rt_fprint_strvar(int32_t n, void *s)` — runtime/pbc_rt.c:713
-- function `rt_fprint_nl(int32_t n)` — runtime/pbc_rt.c:714
-- function `rt_fprint_comma(int32_t n)` — runtime/pbc_rt.c:715
-- function `rt_fprint_i8(int32_t n, int8_t v)` — runtime/pbc_rt.c:721
-- function `rt_fprint_u8(int32_t n, uint8_t v)` — runtime/pbc_rt.c:722
-- function `rt_fprint_i16(int32_t n, int16_t v)` — runtime/pbc_rt.c:723
-- function `rt_fprint_u16(int32_t n, uint16_t v)` — runtime/pbc_rt.c:724
-- function `rt_fprint_i32(int32_t n, int32_t v)` — runtime/pbc_rt.c:725
-- function `rt_fprint_u32(int32_t n, uint32_t v)` — runtime/pbc_rt.c:726
-- function `rt_fprint_i64(int32_t n, int64_t v)` — runtime/pbc_rt.c:727
-- function `rt_fprint_single(int32_t n, long double v)` — runtime/pbc_rt.c:728
-- function `rt_fprint_double(int32_t n, long double v)` — runtime/pbc_rt.c:729
-- function `rt_file_seek_record(int32_t n, int32_t record, int32_t size)` — GET #n, rec, var / PUT #n, rec, var - one fixed-size value at a record position. The record — runtime/pbc_rt.c:734
-- function `rt_file_put(int32_t n, int32_t record, void *value, int32_t size)` — runtime/pbc_rt.c:740
-- function `rt_file_get(int32_t n, int32_t record, void *value, int32_t size)` — runtime/pbc_rt.c:745
-- function `rt_file_length(int32_t n)` — runtime/pbc_rt.c:754
-- function `rt_file_pos(int32_t n)` — runtime/pbc_rt.c:763
-- function `rt_file_seek(int32_t n, int32_t position)` — SEEK #n, p. Only the sequential modes are open here, so this is the BINARY reading: a 0-based — runtime/pbc_rt.c:768
-- function `rt_fput_str(int32_t n, void *s)` — PUT$ / GET$ - raw bytes, no terminator and no record structure. A GET$ that reaches end of file — runtime/pbc_rt.c:775
-- function `rt_fget_str(int32_t n, int32_t count)` — runtime/pbc_rt.c:780
-- function `rt_finput_line(int32_t n)` — LINE INPUT #n: the rest of the line, without its terminator. — runtime/pbc_rt.c:789
-- function `rt_arr_alloc(int32_t bytes)` — The allocation family speaks BYTES, because the element size of an array is a compile-time — runtime/pbc_rt.c:806
-- function `rt_arr_alloc_ptr(int32_t count)` — runtime/pbc_rt.c:813
-- function `rt_arr_realloc(void *p, int32_t oldBytes, int32_t newBytes)` — REDIM PRESERVE. Allocate-copy-free rather than realloc(): PB's grown tail reads as ZERO, and — runtime/pbc_rt.c:820
-- function `rt_arr_realloc_ptr(void *p, int32_t oldCount, int32_t newCount)` — runtime/pbc_rt.c:830
-- function `rt_arr_free(void *p, int32_t bytes)` — The byte count is what a bump allocator needs to give a block back; a malloc/free runtime has no — runtime/pbc_rt.c:837
-- function `rt_arr_free_ptr(void *p, int32_t count)` — runtime/pbc_rt.c:838
-- function `rt_mem_copy(void *dst, void *src, int32_t n)` — runtime/pbc_rt.c:840
-- function `rt_mem_compare(void *a, void *b, int32_t n)` — runtime/pbc_rt.c:842
-- function `rt_error(int32_t code)` — A BASIC run-time error. ON ERROR is not modelled by the C emitter (docs/BACKENDS.md), so there is — runtime/pbc_rt.c:850
-- function `rt_unreachable(void)` — runtime/pbc_rt.c:855
-- function `main(void)` — runtime/pbc_rt.c:860
+- function `rt_str_coalesce_begin(int16_t capacity)` — O0289 is a DOS heap-layout optimization. The hosted runtime already allocates each result through — runtime/pbc_rt.c:283
+- function `rt_str_coalesce_end(void)` — runtime/pbc_rt.c:284
+- function `rt_str_left_coalesced(void *s, int32_t n)` — runtime/pbc_rt.c:286
+- function `rt_str_right_coalesced(void *s, int32_t n)` — runtime/pbc_rt.c:287
+- function `rt_str_mid_coalesced(void *s, int32_t start, int32_t len)` — runtime/pbc_rt.c:288
+- function `rt_str_left_borrow_coalesced(void *s, int32_t n)` — runtime/pbc_rt.c:289
+- function `rt_str_right_borrow_coalesced(void *s, int32_t n)` — runtime/pbc_rt.c:290
+- function `rt_str_mid_borrow_coalesced(void *s, int32_t start, int32_t len)` — runtime/pbc_rt.c:291
+- function `rt_str_space_coalesced(int32_t n)` — runtime/pbc_rt.c:292
+- function `rt_str_string_coalesced(int32_t n, int32_t ch)` — runtime/pbc_rt.c:293
+- function `rt_str_chr_coalesced(int32_t code)` — runtime/pbc_rt.c:294
+- function `rt_str_asc(void *s)` — runtime/pbc_rt.c:296
+- function `rt_str_char_at(void *s, int32_t index)` — ASC(MID$(s$, i, 1)) as one read, matching the DOS rt_charat at both ends: the start clamps to 1 — runtime/pbc_rt.c:304
+- function `rt_radix_packed(int32_t v, int32_t packed)` — HEX$/OCT$/BIN$, all one routine, matching the DOS rt_radix exactly. — runtime/pbc_rt.c:318
+- function `rt_str_radix(int32_t v, int32_t packed)` — runtime/pbc_rt.c:336
+- function `rt_str_hex(int32_t v)` — runtime/pbc_rt.c:337
+- function `rt_str_oct(int32_t v)` — runtime/pbc_rt.c:338
+- function `rt_str_bin(int32_t v)` — runtime/pbc_rt.c:339
+- function `rt_str_instr(void *hay, void *needle)` — runtime/pbc_rt.c:341
+- function `rt_str_instr_start(int32_t start, void *hay, void *needle)` — runtime/pbc_rt.c:343
+- function `rt_str_val(void *s)` — runtime/pbc_rt.c:354
+- function `rt_str_to_fixed(void *dst, int32_t n, void *src)` — runtime/pbc_rt.c:363
+- function `rt_str_to_fixed_r(void *dst, int32_t n, void *src)` — RSET into a fixed field: blank the whole width, then land the value against its right edge. — runtime/pbc_rt.c:374
+- function `rt_str_from_fixed(void *src, int32_t n)` — runtime/pbc_rt.c:382
+- function `rt_str_justify(void *target, void *value, int16_t right)` — LSET/RSET into a DYNAMIC string: the target keeps its handle AND its length - that is what makes — runtime/pbc_rt.c:387
+- function `rt_strip_leading_zero(char *b)` — PB prints a fraction without its leading zero (".0001", not "0.0001"). — runtime/pbc_rt.c:400
+- function `rt_fmt_float(char *buf, size_t cap, long double v, int digits)` — runtime/pbc_rt.c:407
+- function `rt_str_num(const char *text)` — runtime/pbc_rt.c:412
+- function `rt_str_int(long long v)` — runtime/pbc_rt.c:425
+- function `rt_str_from_i8(int8_t v)` — runtime/pbc_rt.c:431
+- function `rt_str_from_u8(uint8_t v)` — runtime/pbc_rt.c:432
+- function `rt_str_from_i16(int16_t v)` — runtime/pbc_rt.c:433
+- function `rt_str_from_u16(uint16_t v)` — runtime/pbc_rt.c:434
+- function `rt_str_from_i32(int32_t v)` — runtime/pbc_rt.c:435
+- function `rt_str_from_u32(uint32_t v)` — runtime/pbc_rt.c:436
+- function `rt_str_from_i64(int64_t v)` — runtime/pbc_rt.c:437
+- function `rt_str_from_single(long double v)` — Both take a long double, for the reason rt_print_single does: the value arrives at the x87's own — runtime/pbc_rt.c:441
+- function `rt_str_from_double(long double v)` — runtime/pbc_rt.c:442
+- function `rt_str_from_ext(long double v)` — runtime/pbc_rt.c:443
+- function `rt_str_mkbyt(int16_t v)` — runtime/pbc_rt.c:447
+- function `rt_str_mki(int16_t v)` — runtime/pbc_rt.c:448
+- function `rt_str_mkl(int32_t v)` — runtime/pbc_rt.c:449
+- function `rt_str_mkdwd(int32_t v)` — runtime/pbc_rt.c:450
+- function `rt_str_mks(float v)` — runtime/pbc_rt.c:451
+- function `rt_str_mkd(double v)` — runtime/pbc_rt.c:452
+- function `rt_cv(void *s, void *out, int32_t n)` — runtime/pbc_rt.c:454
+- function `rt_str_cvi(void *s)` — runtime/pbc_rt.c:460
+- function `rt_str_cvbyt(void *s)` — runtime/pbc_rt.c:461
+- function `rt_str_cvwrd(void *s)` — runtime/pbc_rt.c:462
+- function `rt_str_cvl(void *s)` — runtime/pbc_rt.c:463
+- function `rt_str_cvdwd(void *s)` — runtime/pbc_rt.c:464
+- function `rt_str_cvs(void *s)` — runtime/pbc_rt.c:465
+- function `rt_str_cvd(void *s)` — runtime/pbc_rt.c:466
+- function `rt_str_cve(void *s)` — runtime/pbc_rt.c:467
+- function `rt_out(const char *bytes, int32_t len)` — runtime/pbc_rt.c:474
+- function `rt_out_num(const char *text)` — PB gives every numeric a sign slot in front and a trailing space behind. — runtime/pbc_rt.c:483
+- function `rt_out_int(long long v)` — runtime/pbc_rt.c:495
+- function `rt_print_str(void *bytes, int32_t len)` — runtime/pbc_rt.c:501
+- function `rt_print_strvar(void *s)` — runtime/pbc_rt.c:502
+- function `rt_print_nl(void)` — runtime/pbc_rt.c:503
+- function `rt_print_i8(int8_t v)` — runtime/pbc_rt.c:505
+- function `rt_print_u8(uint8_t v)` — runtime/pbc_rt.c:506
+- function `rt_print_i16(int16_t v)` — runtime/pbc_rt.c:507
+- function `rt_print_u16(uint16_t v)` — runtime/pbc_rt.c:508
+- function `rt_print_i32(int32_t v)` — runtime/pbc_rt.c:509
+- function `rt_print_u32(uint32_t v)` — runtime/pbc_rt.c:510
+- function `rt_print_i64(int64_t v)` — runtime/pbc_rt.c:511
+- function `rt_print_single(long double v)` — runtime/pbc_rt.c:513
+- function `rt_print_double(long double v)` — runtime/pbc_rt.c:514
+- function `rt_print_ext(long double v)` — runtime/pbc_rt.c:515
+- function `rt_print_comma(void)` — The PRINT comma separator: advance to the next 14-column zone. Sitting exactly on a boundary — runtime/pbc_rt.c:520
+- function `rt_csrlin(void)` — CSRLIN, and whether the standard handles are a console. The DOS runtime asks the BIOS and DOS; — runtime/pbc_rt.c:529
+- function `rt_consin(void)` — runtime/pbc_rt.c:530
+- function `rt_consout(void)` — runtime/pbc_rt.c:531
+- function `rt_defseg_reset(void)` — runtime/pbc_rt.c:536
+- function `rt_print_tab(int32_t column)` — runtime/pbc_rt.c:538
+- function `rt_print_spc(int32_t count)` — runtime/pbc_rt.c:544
+- function `rt_print_zone(void)` — PB's comma separator advances to the next 14-column print zone. — runtime/pbc_rt.c:549
+- function `rt_getfield(char *buf, size_t cap, int wholeLine)` — PB reads one comma-separated field per INPUT variable; a LINE INPUT takes the — runtime/pbc_rt.c:559
+- function `rt_input_num(void)` — runtime/pbc_rt.c:582
+- function `rt_input_prompt(void *bytes, int32_t len)` — runtime/pbc_rt.c:588
+- function `rt_input_i8(void)` — runtime/pbc_rt.c:590
+- function `rt_input_u8(void)` — runtime/pbc_rt.c:591
+- function `rt_input_i16(void)` — runtime/pbc_rt.c:592
+- function `rt_input_u16(void)` — runtime/pbc_rt.c:593
+- function `rt_input_i32(void)` — runtime/pbc_rt.c:594
+- function `rt_input_u32(void)` — runtime/pbc_rt.c:595
+- function `rt_input_i64(void)` — runtime/pbc_rt.c:596
+- function `rt_input_single(void)` — runtime/pbc_rt.c:597
+- function `rt_input_double(void)` — runtime/pbc_rt.c:598
+- function `rt_input_ext(void)` — runtime/pbc_rt.c:599
+- function `rt_input_str(void)` — runtime/pbc_rt.c:601
+- function `rt_input_line(void)` — runtime/pbc_rt.c:607
+- macro `RT_FILES` — runtime/pbc_rt.c:625
+- function `rt_file_of(int32_t n)` — runtime/pbc_rt.c:630
+- function `rt_file_open(int32_t n, void *name, int32_t mode, int32_t reclen)` — runtime/pbc_rt.c:636
+- function `rt_file_close(int32_t n)` — runtime/pbc_rt.c:665
+- function `rt_file_close_all(void)` — runtime/pbc_rt.c:673
+- function `rt_freefile(void)` — runtime/pbc_rt.c:679
+- function `rt_eof(int16_t n)` — PB's EOF is TRUE only once the last byte has been read, so it peeks rather than trusting feof, — runtime/pbc_rt.c:690
+- function `rt_kill(void *name)` — runtime/pbc_rt.c:699
+- function `rt_fout(int32_t n, const char *bytes, int32_t len)` — runtime/pbc_rt.c:711
+- function `rt_fout_int(int32_t n, long long v)` — runtime/pbc_rt.c:720
+- function `rt_fprint_str(int32_t n, void *bytes, int32_t len)` — runtime/pbc_rt.c:729
+- function `rt_fprint_strvar(int32_t n, void *s)` — runtime/pbc_rt.c:730
+- function `rt_fprint_nl(int32_t n)` — runtime/pbc_rt.c:731
+- function `rt_fprint_comma(int32_t n)` — runtime/pbc_rt.c:732
+- function `rt_fprint_i8(int32_t n, int8_t v)` — runtime/pbc_rt.c:738
+- function `rt_fprint_u8(int32_t n, uint8_t v)` — runtime/pbc_rt.c:739
+- function `rt_fprint_i16(int32_t n, int16_t v)` — runtime/pbc_rt.c:740
+- function `rt_fprint_u16(int32_t n, uint16_t v)` — runtime/pbc_rt.c:741
+- function `rt_fprint_i32(int32_t n, int32_t v)` — runtime/pbc_rt.c:742
+- function `rt_fprint_u32(int32_t n, uint32_t v)` — runtime/pbc_rt.c:743
+- function `rt_fprint_i64(int32_t n, int64_t v)` — runtime/pbc_rt.c:744
+- function `rt_fprint_single(int32_t n, long double v)` — runtime/pbc_rt.c:745
+- function `rt_fprint_double(int32_t n, long double v)` — runtime/pbc_rt.c:746
+- function `rt_file_seek_record(int32_t n, int32_t record, int32_t size)` — GET #n, rec, var / PUT #n, rec, var - one fixed-size value at a record position. The record — runtime/pbc_rt.c:751
+- function `rt_file_put(int32_t n, int32_t record, void *value, int32_t size)` — runtime/pbc_rt.c:757
+- function `rt_file_get(int32_t n, int32_t record, void *value, int32_t size)` — runtime/pbc_rt.c:762
+- function `rt_file_length(int32_t n)` — runtime/pbc_rt.c:771
+- function `rt_file_pos(int32_t n)` — runtime/pbc_rt.c:780
+- function `rt_file_seek(int32_t n, int32_t position)` — SEEK #n, p. Only the sequential modes are open here, so this is the BINARY reading: a 0-based — runtime/pbc_rt.c:785
+- function `rt_fput_str(int32_t n, void *s)` — PUT$ / GET$ - raw bytes, no terminator and no record structure. A GET$ that reaches end of file — runtime/pbc_rt.c:792
+- function `rt_fget_str(int32_t n, int32_t count)` — runtime/pbc_rt.c:797
+- function `rt_finput_line(int32_t n)` — LINE INPUT #n: the rest of the line, without its terminator. — runtime/pbc_rt.c:806
+- function `rt_arr_alloc(int32_t bytes)` — The allocation family speaks BYTES, because the element size of an array is a compile-time — runtime/pbc_rt.c:823
+- function `rt_arr_alloc_nz(int32_t bytes)` — O0068 has already proved every requested byte is overwritten before any read. Keep the same — runtime/pbc_rt.c:833
+- function `rt_arr_alloc_ptr(int32_t count)` — runtime/pbc_rt.c:838
+- function `rt_arr_realloc(void *p, int32_t oldBytes, int32_t newBytes)` — REDIM PRESERVE. Allocate-copy-free rather than realloc(): PB's grown tail reads as ZERO, and — runtime/pbc_rt.c:845
+- function `rt_arr_realloc_ptr(void *p, int32_t oldCount, int32_t newCount)` — runtime/pbc_rt.c:855
+- function `rt_arr_free(void *p, int32_t bytes)` — The byte count is what a bump allocator needs to give a block back; a malloc/free runtime has no — runtime/pbc_rt.c:862
+- function `rt_arr_free_ptr(void *p, int32_t count)` — runtime/pbc_rt.c:863
+- function `rt_mem_copy(void *dst, void *src, int32_t n)` — runtime/pbc_rt.c:865
+- function `rt_mem_compare(void *a, void *b, int32_t n)` — runtime/pbc_rt.c:867
+- function `rt_error(int32_t code)` — A BASIC run-time error. ON ERROR is not modelled by the C emitter (docs/BACKENDS.md), so there is — runtime/pbc_rt.c:875
+- function `rt_unreachable(void)` — runtime/pbc_rt.c:880
+- function `main(void)` — runtime/pbc_rt.c:885
 
-### pbc_rt.h  `C, 200 lines`
+### pbc_rt.h  `C, 281 lines`
 > ==========================================================================
 - macro `PBC_RT_H` — runtime/pbc_rt.h:15
 - type `len` — A string handle. The IR treats it as an opaque pointer, so its shape is — runtime/pbc_rt.h:25
+- function `rt_str_len_borrow(void *s)` — O0297 expression-local string views. The optimized IR carries a stable handle plus a 1-based — runtime/pbc_rt.h:199
+- function `pbc_rt_string_view(void *s, int32_t start, int32_t len, const unsigned char **data, int…` — runtime/pbc_rt.h:203
+- function `rt_str_compare_view(void *a, int32_t a_start, int32_t a_len, void *b, int32_t b_start, i…` — runtime/pbc_rt.h:220
+- function `rt_str_compare_eq_view(void *a, int32_t a_start, int32_t a_len, void *b, int32_t b_start, i…` — runtime/pbc_rt.h:233
+- function `rt_print_strview(void *s, int32_t start, int32_t len)` — runtime/pbc_rt.h:245
+- function `rt_fprint_strview(int32_t file, void *s, int32_t start, int32_t len)` — runtime/pbc_rt.h:252
 
 ## scripts/
 
@@ -7862,4 +9326,3222 @@ with unrelated edits, so treat them as anchors, not gospel.
 - const `TOOLS` — scripts/lib/pds_layout.py:15
 - function `kind(path)` — Whether this executable runs under DOS, decided by its DOS stub. — scripts/lib/pds_layout.py:18
 - function `main(argv)` — scripts/lib/pds_layout.py:53
+
+## tools/bcc31/INCLUDE/
+
+### ALLOC.H  `C, 120 lines`
+> alloc.h
+- macro `__ALLOC_H` — if !defined(__ALLOC_H) — tools/bcc31/INCLUDE/ALLOC.H:10
+- macro `_HEAPEMPTY` — tools/bcc31/INCLUDE/ALLOC.H:20
+- macro `_HEAPOK` — define _HEAPEMPTY 1 — tools/bcc31/INCLUDE/ALLOC.H:21
+- macro `_FREEENTRY` — define _HEAPEMPTY 1 — tools/bcc31/INCLUDE/ALLOC.H:22
+- macro `_USEDENTRY` — define _HEAPEMPTY 1 — tools/bcc31/INCLUDE/ALLOC.H:23
+- macro `_HEAPEND` — define _HEAPEMPTY 1 — tools/bcc31/INCLUDE/ALLOC.H:24
+- macro `_HEAPCORRUPT` — define _HEAPEMPTY 1 — tools/bcc31/INCLUDE/ALLOC.H:25
+- macro `_BADNODE` — define _HEAPEMPTY 1 — tools/bcc31/INCLUDE/ALLOC.H:26
+- macro `_BADVALUE` — define _HEAPEMPTY 1 — tools/bcc31/INCLUDE/ALLOC.H:27
+- macro `_STDDEF` — ifndef _STDDEF — tools/bcc31/INCLUDE/ALLOC.H:30
+- macro `_PTRDIFF_T` — ifndef _STDDEF — tools/bcc31/INCLUDE/ALLOC.H:32
+- type `ptrdiff_t` — ifndef _STDDEF — tools/bcc31/INCLUDE/ALLOC.H:34
+- type `ptrdiff_t` — else — tools/bcc31/INCLUDE/ALLOC.H:36
+- macro `_SIZE_T` — endif — tools/bcc31/INCLUDE/ALLOC.H:40
+- type `size_t` — endif — tools/bcc31/INCLUDE/ALLOC.H:41
+- macro `heapinfo` — else — tools/bcc31/INCLUDE/ALLOC.H:62
+
+### ASSERT.H  `C, 40 lines`
+> assert.h
+- (no top-level symbols found)
+
+### BCD.H  `C, 363 lines`
+> bcd.h
+- macro `__BCD_H` — if !defined(__BCD_H) — tools/bcc31/INCLUDE/BCD.H:15
+- macro `_BcdMaxDecimals` — tools/bcc31/INCLUDE/BCD.H:34
+- function `real(bcd& z)` — tools/bcc31/INCLUDE/BCD.H:168
+- function `abs(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:333
+- function `acos(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:334
+- function `asin(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:335
+- function `atan(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:336
+- function `cos(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:337
+- function `cosh(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:338
+- function `exp(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:339
+- function `log(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:340
+- function `log10(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:341
+- function `sin(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:342
+- function `sinh(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:343
+- function `sqrt(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:344
+- function `tan(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:345
+- function `tanh(bcd& a)` — tools/bcc31/INCLUDE/BCD.H:346
+- function `pow(bcd& a, bcd& b)` — tools/bcc31/INCLUDE/BCD.H:348
+- function `pow10(int n, bcd& a)` — tools/bcc31/INCLUDE/BCD.H:349
+
+### BIOS.H  `C, 149 lines`
+> bios.h
+- macro `__BIOS_H` — if !defined(__BIOS_H) — tools/bcc31/INCLUDE/BIOS.H:10
+- macro `_DISK_RESET` — tools/bcc31/INCLUDE/BIOS.H:25
+- macro `_DISK_STATUS` — define _DISK_RESET 0 /* controller hard reset — tools/bcc31/INCLUDE/BIOS.H:26
+- macro `_DISK_READ` — define _DISK_RESET 0 /* controller hard reset — tools/bcc31/INCLUDE/BIOS.H:27
+- macro `_DISK_WRITE` — define _DISK_RESET 0 /* controller hard reset — tools/bcc31/INCLUDE/BIOS.H:28
+- macro `_DISK_VERIFY` — define _DISK_RESET 0 /* controller hard reset — tools/bcc31/INCLUDE/BIOS.H:29
+- macro `_DISK_FORMAT` — define _DISK_RESET 0 /* controller hard reset — tools/bcc31/INCLUDE/BIOS.H:30
+- macro `_KEYBRD_READ` — tools/bcc31/INCLUDE/BIOS.H:34
+- macro `_NKEYBRD_READ` — define _KEYBRD_READ 0 /* read key — tools/bcc31/INCLUDE/BIOS.H:35
+- macro `_KEYBRD_READY` — define _KEYBRD_READ 0 /* read key — tools/bcc31/INCLUDE/BIOS.H:36
+- macro `_NKEYBRD_READY` — define _KEYBRD_READ 0 /* read key — tools/bcc31/INCLUDE/BIOS.H:37
+- macro `_KEYBRD_SHIFTSTATUS` — define _KEYBRD_READ 0 /* read key — tools/bcc31/INCLUDE/BIOS.H:38
+- macro `_NKEYBRD_SHIFTSTATUS` — define _KEYBRD_READ 0 /* read key — tools/bcc31/INCLUDE/BIOS.H:39
+- macro `_PRINTER_WRITE` — tools/bcc31/INCLUDE/BIOS.H:43
+- macro `_PRINTER_INIT` — define _PRINTER_WRITE 0 /* send a byte to printer — tools/bcc31/INCLUDE/BIOS.H:44
+- macro `_PRINTER_STATUS` — define _PRINTER_WRITE 0 /* send a byte to printer — tools/bcc31/INCLUDE/BIOS.H:45
+- macro `_COM_INIT` — tools/bcc31/INCLUDE/BIOS.H:49
+- macro `_COM_SEND` — define _COM_INIT 0 /* set communication parms to a byte — tools/bcc31/INCLUDE/BIOS.H:50
+- macro `_COM_RECEIVE` — define _COM_INIT 0 /* set communication parms to a byte — tools/bcc31/INCLUDE/BIOS.H:51
+- macro `_COM_STATUS` — define _COM_INIT 0 /* set communication parms to a byte — tools/bcc31/INCLUDE/BIOS.H:52
+- macro `_COM_CHR7` — tools/bcc31/INCLUDE/BIOS.H:56
+- macro `_COM_CHR8` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:57
+- macro `_COM_STOP1` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:58
+- macro `_COM_STOP2` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:59
+- macro `_COM_NOPARITY` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:60
+- macro `_COM_EVENPARITY` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:61
+- macro `_COM_ODDPARITY` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:62
+- macro `_COM_110` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:63
+- macro `_COM_150` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:64
+- macro `_COM_300` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:65
+- macro `_COM_600` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:66
+- macro `_COM_1200` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:67
+- macro `_COM_2400` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:68
+- macro `_COM_4800` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:69
+- macro `_COM_9600` — define _COM_CHR7 0x02 /* 7 data bits — tools/bcc31/INCLUDE/BIOS.H:70
+- macro `_TIME_GETCLOCK` — tools/bcc31/INCLUDE/BIOS.H:74
+- macro `_TIME_SETCLOCK` — define _TIME_GETCLOCK 0 /* get clock count — tools/bcc31/INCLUDE/BIOS.H:75
+- macro `_REG_DEFS` — ifndef _REG_DEFS — tools/bcc31/INCLUDE/BIOS.H:80
+
+### COMPLEX.H  `C, 277 lines`
+> complex.h
+- macro `__COMPLEX_H` — if !defined(__COMPLEX_H) — tools/bcc31/INCLUDE/COMPLEX.H:27
+- function `real(complex _FAR & __z)` — tools/bcc31/INCLUDE/COMPLEX.H:187
+- function `imag(complex _FAR & __z)` — tools/bcc31/INCLUDE/COMPLEX.H:192
+- function `conj(complex _FAR & __z)` — tools/bcc31/INCLUDE/COMPLEX.H:197
+- function `polar(double __mag, double __angle)` — tools/bcc31/INCLUDE/COMPLEX.H:202
+
+### CONIO.H  `C, 156 lines`
+> conio.h
+- macro `__CONIO_H` — if !defined(__CONIO_H) — tools/bcc31/INCLUDE/CONIO.H:10
+- macro `_NOCURSOR` — tools/bcc31/INCLUDE/CONIO.H:18
+- macro `_SOLIDCURSOR` — define _NOCURSOR 0 — tools/bcc31/INCLUDE/CONIO.H:19
+- macro `_NORMALCURSOR` — define _NOCURSOR 0 — tools/bcc31/INCLUDE/CONIO.H:20
+- macro `__COLORS` — if !defined(__COLORS) — tools/bcc31/INCLUDE/CONIO.H:39
+- macro `BLINK` — tools/bcc31/INCLUDE/CONIO.H:61
+- macro `_PORT_DEFS` — ifndef _PORT_DEFS — tools/bcc31/INCLUDE/CONIO.H:127
+- macro `inportb(__portid)` — tools/bcc31/INCLUDE/CONIO.H:137
+- macro `outportb(__portid, __value)` — define inportb(__portid) __inportb__(__portid) — tools/bcc31/INCLUDE/CONIO.H:138
+- macro `inport(__portid)` — define inportb(__portid) __inportb__(__portid) — tools/bcc31/INCLUDE/CONIO.H:139
+- macro `outport(__portid, __value)` — define inportb(__portid) __inportb__(__portid) — tools/bcc31/INCLUDE/CONIO.H:140
+- macro `inp(__portid)` — MSC-compatible macros for port I/O — tools/bcc31/INCLUDE/CONIO.H:143
+- macro `outp(__portid, __value)` — MSC-compatible macros for port I/O — tools/bcc31/INCLUDE/CONIO.H:144
+- macro `inpw(__portid)` — MSC-compatible macros for port I/O — tools/bcc31/INCLUDE/CONIO.H:145
+- macro `outpw(__portid, __value)` — MSC-compatible macros for port I/O — tools/bcc31/INCLUDE/CONIO.H:146
+
+### CONSTREA.H  `C, 266 lines`
+> constrea.h
+- macro `__CONSTREA_H` — if !defined(__CONSTREA_H) — tools/bcc31/INCLUDE/CONSTREA.H:11
+
+### CTYPE.H  `C, 77 lines`
+> ctype.h
+- macro `__CTYPE_H` — ifndef __CTYPE_H — tools/bcc31/INCLUDE/CTYPE.H:10
+- macro `_IS_SP` — tools/bcc31/INCLUDE/CTYPE.H:16
+- macro `_IS_DIG` — define _IS_SP 1 /* is space — tools/bcc31/INCLUDE/CTYPE.H:17
+- macro `_IS_UPP` — define _IS_SP 1 /* is space — tools/bcc31/INCLUDE/CTYPE.H:18
+- macro `_IS_LOW` — define _IS_SP 1 /* is space — tools/bcc31/INCLUDE/CTYPE.H:19
+- macro `_IS_HEX` — define _IS_SP 1 /* is space — tools/bcc31/INCLUDE/CTYPE.H:20
+- macro `_IS_CTL` — define _IS_SP 1 /* is space — tools/bcc31/INCLUDE/CTYPE.H:21
+- macro `_IS_PUN` — define _IS_SP 1 /* is space — tools/bcc31/INCLUDE/CTYPE.H:22
+- macro `isalnum(c)` — tools/bcc31/INCLUDE/CTYPE.H:45
+- macro `isalpha(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:46
+- macro `isascii(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:47
+- macro `iscntrl(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:48
+- macro `isdigit(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:49
+- macro `isgraph(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:50
+- macro `islower(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:51
+- macro `isprint(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:52
+- macro `ispunct(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:53
+- macro `isspace(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:54
+- macro `isupper(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:55
+- macro `isxdigit(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/bcc31/INCLUDE/CTYPE.H:56
+- macro `toascii(c)` — tools/bcc31/INCLUDE/CTYPE.H:58
+- macro `_toupper(c)` — if !__STDC__ — tools/bcc31/INCLUDE/CTYPE.H:61
+- macro `_tolower(c)` — if !__STDC__ — tools/bcc31/INCLUDE/CTYPE.H:62
+
+### DIR.H  `C, 79 lines`
+> dir.h
+- macro `__DIR_H` — if !defined(__DIR_H) — tools/bcc31/INCLUDE/DIR.H:11
+- macro `_FFBLK_DEF` — ifndef _FFBLK_DEF — tools/bcc31/INCLUDE/DIR.H:18
+- macro `WILDCARDS` — tools/bcc31/INCLUDE/DIR.H:29
+- macro `EXTENSION` — define WILDCARDS 0x01 — tools/bcc31/INCLUDE/DIR.H:30
+- macro `FILENAME` — define WILDCARDS 0x01 — tools/bcc31/INCLUDE/DIR.H:31
+- macro `DIRECTORY` — define WILDCARDS 0x01 — tools/bcc31/INCLUDE/DIR.H:32
+- macro `DRIVE` — define WILDCARDS 0x01 — tools/bcc31/INCLUDE/DIR.H:33
+- macro `MAXPATH` — tools/bcc31/INCLUDE/DIR.H:35
+- macro `MAXDRIVE` — define MAXPATH 80 — tools/bcc31/INCLUDE/DIR.H:36
+- macro `MAXDIR` — define MAXPATH 80 — tools/bcc31/INCLUDE/DIR.H:37
+- macro `MAXFILE` — define MAXPATH 80 — tools/bcc31/INCLUDE/DIR.H:38
+- macro `MAXEXT` — define MAXPATH 80 — tools/bcc31/INCLUDE/DIR.H:39
+
+### DIRECT.H  `C, 26 lines`
+> direct.h
+- (no top-level symbols found)
+
+### DIRENT.H  `C, 56 lines`
+> dirent.h
+- macro `__DIRENT_H` — ifndef __DIRENT_H — tools/bcc31/INCLUDE/DIRENT.H:10
+
+### DOS.H  `C, 520 lines`
+> dos.h
+- macro `__DOS_H` — / — tools/bcc31/INCLUDE/DOS.H:10
+- macro `errno(*__getErrno())` — tools/bcc31/INCLUDE/DOS.H:30
+- macro `_doserrno(*__getDOSErrno())` — define errno (*__getErrno()) — tools/bcc31/INCLUDE/DOS.H:31
+- macro `FA_NORMAL` — tools/bcc31/INCLUDE/DOS.H:54
+- macro `FA_RDONLY` — define FA_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:55
+- macro `FA_HIDDEN` — define FA_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:56
+- macro `FA_SYSTEM` — define FA_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:57
+- macro `FA_LABEL` — define FA_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:58
+- macro `FA_DIREC` — define FA_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:59
+- macro `FA_ARCH` — define FA_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:60
+- macro `_A_NORMAL` — tools/bcc31/INCLUDE/DOS.H:64
+- macro `_A_RDONLY` — define _A_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:65
+- macro `_A_HIDDEN` — define _A_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:66
+- macro `_A_SYSTEM` — define _A_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:67
+- macro `_A_VOLID` — define _A_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:68
+- macro `_A_SUBDIR` — define _A_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:69
+- macro `_A_ARCH` — define _A_NORMAL 0x00 /* Normal file, no attributes — tools/bcc31/INCLUDE/DOS.H:70
+- macro `NFDS` — tools/bcc31/INCLUDE/DOS.H:72
+- macro `_REG_DEFS` — ifndef _REG_DEFS — tools/bcc31/INCLUDE/DOS.H:182
+- type `ds_drive` — endif /* _REG_DEFS — tools/bcc31/INCLUDE/DOS.H:210
+- macro `_FFBLK_DEF` — ifndef _FFBLK_DEF — tools/bcc31/INCLUDE/DOS.H:224
+- macro `_find_t` — ifdef __MSC — tools/bcc31/INCLUDE/DOS.H:246
+- macro `_HARDERR_IGNORE` — tools/bcc31/INCLUDE/DOS.H:251
+- macro `_HARDERR_RETRY` — define _HARDERR_IGNORE 0 /* ignore error — tools/bcc31/INCLUDE/DOS.H:252
+- macro `_HARDERR_ABORT` — define _HARDERR_IGNORE 0 /* ignore error — tools/bcc31/INCLUDE/DOS.H:253
+- macro `_HARDERR_FAIL` — define _HARDERR_IGNORE 0 /* ignore error — tools/bcc31/INCLUDE/DOS.H:254
+- macro `SEEK_CUR` — tools/bcc31/INCLUDE/DOS.H:256
+- macro `SEEK_END` — define SEEK_CUR 1 — tools/bcc31/INCLUDE/DOS.H:257
+- macro `SEEK_SET` — define SEEK_CUR 1 — tools/bcc31/INCLUDE/DOS.H:258
+- macro `disable( )` — tools/bcc31/INCLUDE/DOS.H:438
+- macro `_disable( )` — define disable( ) __emit__( (char )( 0xfa ) ) — tools/bcc31/INCLUDE/DOS.H:439
+- macro `enable( )` — define disable( ) __emit__( (char )( 0xfa ) ) — tools/bcc31/INCLUDE/DOS.H:440
+- macro `_enable( )` — define disable( ) __emit__( (char )( 0xfa ) ) — tools/bcc31/INCLUDE/DOS.H:441
+- macro `geninterrupt( i )` — tools/bcc31/INCLUDE/DOS.H:443
+- macro `_PORT_DEFS` — ifndef _PORT_DEFS — tools/bcc31/INCLUDE/DOS.H:446
+- macro `inportb(__portid)` — tools/bcc31/INCLUDE/DOS.H:453
+- macro `outportb(__portid, __value)` — define inportb(__portid) __inportb__(__portid) — tools/bcc31/INCLUDE/DOS.H:454
+- macro `inport(__portid)` — define inportb(__portid) __inportb__(__portid) — tools/bcc31/INCLUDE/DOS.H:455
+- macro `outport(__portid, __value)` — define inportb(__portid) __inportb__(__portid) — tools/bcc31/INCLUDE/DOS.H:456
+- macro `inp(__portid)` — MSC-compatible macros for port I/O — tools/bcc31/INCLUDE/DOS.H:459
+- macro `outp(__portid, __value)` — MSC-compatible macros for port I/O — tools/bcc31/INCLUDE/DOS.H:460
+- macro `inpw(__portid)` — MSC-compatible macros for port I/O — tools/bcc31/INCLUDE/DOS.H:461
+- macro `outpw(__portid, __value)` — MSC-compatible macros for port I/O — tools/bcc31/INCLUDE/DOS.H:462
+- macro `MK_FP( seg,ofs )` — tools/bcc31/INCLUDE/DOS.H:477
+- macro `FP_SEG( fp )` — define MK_FP( seg,ofs )( (void _seg * )( seg ) +( void near * )( ofs )) — tools/bcc31/INCLUDE/DOS.H:478
+- macro `FP_OFF( fp )` — define MK_FP( seg,ofs )( (void _seg * )( seg ) +( void near * )( ofs )) — tools/bcc31/INCLUDE/DOS.H:479
+- function `peek( unsigned __segment, unsigned __offset )` — tools/bcc31/INCLUDE/DOS.H:489
+- function `peekb( unsigned __segment, unsigned __offset )` — tools/bcc31/INCLUDE/DOS.H:491
+- function `poke( unsigned __segment, unsigned __offset, int __value )` — tools/bcc31/INCLUDE/DOS.H:493
+- function `pokeb( unsigned __segment, unsigned __offset, char __value )` — tools/bcc31/INCLUDE/DOS.H:495
+- macro `peek( a,b )` — tools/bcc31/INCLUDE/DOS.H:505
+- macro `peekb( a,b )` — define peek( a,b )( *( (int far* )MK_FP( (a ),( b )) )) — tools/bcc31/INCLUDE/DOS.H:506
+- macro `poke( a,b,c )` — define peek( a,b )( *( (int far* )MK_FP( (a ),( b )) )) — tools/bcc31/INCLUDE/DOS.H:507
+- macro `pokeb( a,b,c )` — define peek( a,b )( *( (int far* )MK_FP( (a ),( b )) )) — tools/bcc31/INCLUDE/DOS.H:508
+
+### ERRNO.H  `C, 98 lines`
+> errno.h
+- macro `__ERRNO_H` — ifndef __ERRNO_H — tools/bcc31/INCLUDE/ERRNO.H:12
+- macro `EZERO` — tools/bcc31/INCLUDE/ERRNO.H:20
+- macro `EINVFNC` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:21
+- macro `ENOFILE` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:22
+- macro `ENOPATH` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:23
+- macro `ECONTR` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:24
+- macro `EINVMEM` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:25
+- macro `EINVENV` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:26
+- macro `EINVFMT` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:27
+- macro `EINVACC` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:28
+- macro `EINVDAT` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:29
+- macro `EINVDRV` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:30
+- macro `ECURDIR` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:31
+- macro `ENOTSAM` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:32
+- macro `ENMFILE` — define EZERO 0 /* Error 0 — tools/bcc31/INCLUDE/ERRNO.H:33
+- macro `ENOENT` — tools/bcc31/INCLUDE/ERRNO.H:35
+- macro `EMFILE` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:36
+- macro `EACCES` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:37
+- macro `EBADF` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:38
+- macro `ENOMEM` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:39
+- macro `EFAULT` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:40
+- macro `ENODEV` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:41
+- macro `EINVAL` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:42
+- macro `E2BIG` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:43
+- macro `ENOEXEC` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:44
+- macro `EXDEV` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:45
+- macro `ENFILE` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:46
+- macro `ECHILD` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:47
+- macro `ENOTTY` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:48
+- macro `ETXTBSY` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:49
+- macro `EFBIG` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:50
+- macro `ENOSPC` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:51
+- macro `ESPIPE` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:52
+- macro `EROFS` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:53
+- macro `EMLINK` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:54
+- macro `EPIPE` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:55
+- macro `EDOM` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:56
+- macro `ERANGE` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:57
+- macro `EEXIST` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:58
+- macro `EDEADLOCK` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:59
+- macro `EPERM` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:60
+- macro `ESRCH` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:61
+- macro `EINTR` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:62
+- macro `EIO` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:63
+- macro `ENXIO` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:64
+- macro `EAGAIN` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:65
+- macro `ENOTBLK` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:66
+- macro `EBUSY` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:67
+- macro `ENOTDIR` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:68
+- macro `EISDIR` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:69
+- macro `EUCLEAN` — define ENOENT 2 /* No such file or directory — tools/bcc31/INCLUDE/ERRNO.H:70
+- macro `errno(*__getErrno())` — endif — tools/bcc31/INCLUDE/ERRNO.H:85
+- macro `_sys_nerr` — if !__STDC__ — tools/bcc31/INCLUDE/ERRNO.H:94
+
+### FCNTL.H  `C, 59 lines`
+> fcntl.h
+- macro `__FCNTL_H` — if !defined(__FCNTL_H) — tools/bcc31/INCLUDE/FCNTL.H:10
+- macro `O_RDONLY` — tools/bcc31/INCLUDE/FCNTL.H:20
+- macro `O_WRONLY` — define O_RDONLY 1 — tools/bcc31/INCLUDE/FCNTL.H:21
+- macro `O_RDWR` — define O_RDONLY 1 — tools/bcc31/INCLUDE/FCNTL.H:22
+- macro `O_CREAT` — tools/bcc31/INCLUDE/FCNTL.H:26
+- macro `O_TRUNC` — define O_CREAT 0x0100 /* create and open file — tools/bcc31/INCLUDE/FCNTL.H:27
+- macro `O_EXCL` — define O_CREAT 0x0100 /* create and open file — tools/bcc31/INCLUDE/FCNTL.H:28
+- macro `_O_RUNFLAGS` — The "open flags" defined above are not needed after open, hence they — tools/bcc31/INCLUDE/FCNTL.H:34
+- macro `_O_WRITABLE` — / — tools/bcc31/INCLUDE/FCNTL.H:35
+- macro `_O_EOF` — / — tools/bcc31/INCLUDE/FCNTL.H:36
+- macro `O_APPEND` — a file in append mode may be written to only at its end. — tools/bcc31/INCLUDE/FCNTL.H:40
+- macro `O_CHANGED` — tools/bcc31/INCLUDE/FCNTL.H:44
+- macro `O_DEVICE` — define O_CHANGED 0x1000 /* user may read these bits, but — tools/bcc31/INCLUDE/FCNTL.H:45
+- macro `O_TEXT` — define O_CHANGED 0x1000 /* user may read these bits, but — tools/bcc31/INCLUDE/FCNTL.H:46
+- macro `O_BINARY` — define O_CHANGED 0x1000 /* user may read these bits, but — tools/bcc31/INCLUDE/FCNTL.H:47
+- macro `O_NOINHERIT` — tools/bcc31/INCLUDE/FCNTL.H:51
+- macro `O_DENYALL` — define O_NOINHERIT 0x80 — tools/bcc31/INCLUDE/FCNTL.H:52
+- macro `O_DENYWRITE` — define O_NOINHERIT 0x80 — tools/bcc31/INCLUDE/FCNTL.H:53
+- macro `O_DENYREAD` — define O_NOINHERIT 0x80 — tools/bcc31/INCLUDE/FCNTL.H:54
+- macro `O_DENYNONE` — define O_NOINHERIT 0x80 — tools/bcc31/INCLUDE/FCNTL.H:55
+
+### FLOAT.H  `C, 146 lines`
+> float.h
+- macro `__FLOAT_H` — ifndef __FLOAT_H — tools/bcc31/INCLUDE/FLOAT.H:11
+- macro `FLT_RADIX` — tools/bcc31/INCLUDE/FLOAT.H:17
+- macro `FLT_ROUNDS` — define FLT_RADIX 2 — tools/bcc31/INCLUDE/FLOAT.H:18
+- macro `FLT_GUARD` — define FLT_RADIX 2 — tools/bcc31/INCLUDE/FLOAT.H:19
+- macro `FLT_NORMALIZE` — define FLT_RADIX 2 — tools/bcc31/INCLUDE/FLOAT.H:20
+- macro `DBL_DIG` — tools/bcc31/INCLUDE/FLOAT.H:22
+- macro `FLT_DIG` — define DBL_DIG 15 — tools/bcc31/INCLUDE/FLOAT.H:23
+- macro `LDBL_DIG` — define DBL_DIG 15 — tools/bcc31/INCLUDE/FLOAT.H:24
+- macro `DBL_MANT_DIG` — tools/bcc31/INCLUDE/FLOAT.H:26
+- macro `FLT_MANT_DIG` — define DBL_MANT_DIG 53 — tools/bcc31/INCLUDE/FLOAT.H:27
+- macro `LDBL_MANT_DIG` — define DBL_MANT_DIG 53 — tools/bcc31/INCLUDE/FLOAT.H:28
+- macro `DBL_EPSILON` — tools/bcc31/INCLUDE/FLOAT.H:30
+- macro `FLT_EPSILON` — define DBL_EPSILON 2.2204460492503131E-16 — tools/bcc31/INCLUDE/FLOAT.H:31
+- macro `LDBL_EPSILON` — define DBL_EPSILON 2.2204460492503131E-16 — tools/bcc31/INCLUDE/FLOAT.H:32
+- macro `DBL_MIN` — smallest positive IEEE normal numbers — tools/bcc31/INCLUDE/FLOAT.H:35
+- macro `FLT_MIN` — smallest positive IEEE normal numbers — tools/bcc31/INCLUDE/FLOAT.H:36
+- macro `LDBL_MIN` — smallest positive IEEE normal numbers — tools/bcc31/INCLUDE/FLOAT.H:37
+- macro `DBL_MAX` — tools/bcc31/INCLUDE/FLOAT.H:39
+- macro `FLT_MAX` — define DBL_MAX _huge_dble — tools/bcc31/INCLUDE/FLOAT.H:40
+- macro `LDBL_MAX` — define DBL_MAX _huge_dble — tools/bcc31/INCLUDE/FLOAT.H:41
+- macro `DBL_MAX_EXP` — tools/bcc31/INCLUDE/FLOAT.H:43
+- macro `FLT_MAX_EXP` — define DBL_MAX_EXP +1024 — tools/bcc31/INCLUDE/FLOAT.H:44
+- macro `LDBL_MAX_EXP` — define DBL_MAX_EXP +1024 — tools/bcc31/INCLUDE/FLOAT.H:45
+- macro `DBL_MAX_10_EXP` — tools/bcc31/INCLUDE/FLOAT.H:47
+- macro `FLT_MAX_10_EXP` — define DBL_MAX_10_EXP +308 — tools/bcc31/INCLUDE/FLOAT.H:48
+- macro `LDBL_MAX_10_EXP` — define DBL_MAX_10_EXP +308 — tools/bcc31/INCLUDE/FLOAT.H:49
+- macro `DBL_MIN_10_EXP` — tools/bcc31/INCLUDE/FLOAT.H:51
+- macro `FLT_MIN_10_EXP` — define DBL_MIN_10_EXP -307 — tools/bcc31/INCLUDE/FLOAT.H:52
+- macro `LDBL_MIN_10_EXP` — define DBL_MIN_10_EXP -307 — tools/bcc31/INCLUDE/FLOAT.H:53
+- macro `DBL_MIN_EXP` — tools/bcc31/INCLUDE/FLOAT.H:55
+- macro `FLT_MIN_EXP` — define DBL_MIN_EXP -1021 — tools/bcc31/INCLUDE/FLOAT.H:56
+- macro `LDBL_MIN_EXP` — define DBL_MIN_EXP -1021 — tools/bcc31/INCLUDE/FLOAT.H:57
+- macro `SW_INVALID` — tools/bcc31/INCLUDE/FLOAT.H:79
+- macro `SW_DENORMAL` — define SW_INVALID 0x0001 /* Invalid operation — tools/bcc31/INCLUDE/FLOAT.H:80
+- macro `SW_ZERODIVIDE` — define SW_INVALID 0x0001 /* Invalid operation — tools/bcc31/INCLUDE/FLOAT.H:81
+- macro `SW_OVERFLOW` — define SW_INVALID 0x0001 /* Invalid operation — tools/bcc31/INCLUDE/FLOAT.H:82
+- macro `SW_UNDERFLOW` — define SW_INVALID 0x0001 /* Invalid operation — tools/bcc31/INCLUDE/FLOAT.H:83
+- macro `SW_INEXACT(Inexact result)` — define SW_INVALID 0x0001 /* Invalid operation — tools/bcc31/INCLUDE/FLOAT.H:84
+- macro `MCW_EM` — tools/bcc31/INCLUDE/FLOAT.H:88
+- macro `EM_INVALID` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/bcc31/INCLUDE/FLOAT.H:89
+- macro `EM_DENORMAL` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/bcc31/INCLUDE/FLOAT.H:90
+- macro `EM_ZERODIVIDE` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/bcc31/INCLUDE/FLOAT.H:91
+- macro `EM_OVERFLOW` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/bcc31/INCLUDE/FLOAT.H:92
+- macro `EM_UNDERFLOW` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/bcc31/INCLUDE/FLOAT.H:93
+- macro `EM_INEXACT(precision)` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/bcc31/INCLUDE/FLOAT.H:94
+- macro `MCW_IC` — tools/bcc31/INCLUDE/FLOAT.H:96
+- macro `IC_AFFINE` — define MCW_IC 0x1000 /* Infinity Control — tools/bcc31/INCLUDE/FLOAT.H:97
+- macro `IC_PROJECTIVE` — define MCW_IC 0x1000 /* Infinity Control — tools/bcc31/INCLUDE/FLOAT.H:98
+- macro `MCW_RC` — tools/bcc31/INCLUDE/FLOAT.H:100
+- macro `RC_CHOP` — define MCW_RC 0x0c00 /* Rounding Control — tools/bcc31/INCLUDE/FLOAT.H:101
+- macro `RC_UP` — define MCW_RC 0x0c00 /* Rounding Control — tools/bcc31/INCLUDE/FLOAT.H:102
+- macro `RC_DOWN` — define MCW_RC 0x0c00 /* Rounding Control — tools/bcc31/INCLUDE/FLOAT.H:103
+- macro `RC_NEAR` — define MCW_RC 0x0c00 /* Rounding Control — tools/bcc31/INCLUDE/FLOAT.H:104
+- macro `MCW_PC` — tools/bcc31/INCLUDE/FLOAT.H:106
+- macro `PC_24` — define MCW_PC 0x0300 /* Precision Control — tools/bcc31/INCLUDE/FLOAT.H:107
+- macro `PC_53` — define MCW_PC 0x0300 /* Precision Control — tools/bcc31/INCLUDE/FLOAT.H:108
+- macro `PC_64` — define MCW_PC 0x0300 /* Precision Control — tools/bcc31/INCLUDE/FLOAT.H:109
+- macro `CW_DEFAULT` — tools/bcc31/INCLUDE/FLOAT.H:114
+- macro `FPE_INTOVFLOW` — SIGFPE signal error types (for integer & float exceptions). — tools/bcc31/INCLUDE/FLOAT.H:120
+- macro `FPE_INTDIV0` — / — tools/bcc31/INCLUDE/FLOAT.H:121
+- macro `FPE_INVALID` — tools/bcc31/INCLUDE/FLOAT.H:123
+- macro `FPE_ZERODIVIDE` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/bcc31/INCLUDE/FLOAT.H:124
+- macro `FPE_OVERFLOW` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/bcc31/INCLUDE/FLOAT.H:125
+- macro `FPE_UNDERFLOW` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/bcc31/INCLUDE/FLOAT.H:126
+- macro `FPE_INEXACT` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/bcc31/INCLUDE/FLOAT.H:127
+- macro `FPE_STACKFAULT` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/bcc31/INCLUDE/FLOAT.H:128
+- macro `FPE_EXPLICITGEN()` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/bcc31/INCLUDE/FLOAT.H:129
+- macro `SEGV_BOUND(SIGSEGV)` — SIGSEGV signal error types. — tools/bcc31/INCLUDE/FLOAT.H:134
+- macro `SEGV_EXPLICITGEN()` — / — tools/bcc31/INCLUDE/FLOAT.H:135
+- macro `ILL_EXECUTION` — SIGILL signal error types. — tools/bcc31/INCLUDE/FLOAT.H:140
+- macro `ILL_EXPLICITGEN()` — / — tools/bcc31/INCLUDE/FLOAT.H:141
+
+### FSTREAM.H  `C, 201 lines`
+> fstream.h -- class filebuf and fstream declarations
+- macro `__FSTREAM_H` — ifndef __FSTREAM_H — tools/bcc31/INCLUDE/FSTREAM.H:12
+
+### GENERIC.H  `C, 49 lines`
+> generic.h -- for faking generic class declarations
+- macro `__GENERIC_H` — ifndef __GENERIC_H — tools/bcc31/INCLUDE/GENERIC.H:14
+- macro `_Paste2(z, y)` — token-pasting macros; ANSI requires an extra level of indirection — tools/bcc31/INCLUDE/GENERIC.H:21
+- macro `_Paste2_x(z, y)` — token-pasting macros; ANSI requires an extra level of indirection — tools/bcc31/INCLUDE/GENERIC.H:22
+- macro `_Paste3(z, y, x)` — token-pasting macros; ANSI requires an extra level of indirection — tools/bcc31/INCLUDE/GENERIC.H:23
+- macro `_Paste3_x(z, y, x)` — token-pasting macros; ANSI requires an extra level of indirection — tools/bcc31/INCLUDE/GENERIC.H:24
+- macro `_Paste4(z, y, x, w)` — token-pasting macros; ANSI requires an extra level of indirection — tools/bcc31/INCLUDE/GENERIC.H:25
+- macro `_Paste4_x(z, y, x, w)` — token-pasting macros; ANSI requires an extra level of indirection — tools/bcc31/INCLUDE/GENERIC.H:26
+- macro `name2` — macros for declaring and implementing classes — tools/bcc31/INCLUDE/GENERIC.H:29
+- macro `declare(z, y)` — macros for declaring and implementing classes — tools/bcc31/INCLUDE/GENERIC.H:30
+- macro `implement(z, y)` — macros for declaring and implementing classes — tools/bcc31/INCLUDE/GENERIC.H:31
+- macro `declare2(z, y, x)` — macros for declaring and implementing classes — tools/bcc31/INCLUDE/GENERIC.H:32
+- macro `implement2(z, y, x)` — macros for declaring and implementing classes — tools/bcc31/INCLUDE/GENERIC.H:33
+- macro `set_handler(gen, tp, z)` — tools/bcc31/INCLUDE/GENERIC.H:38
+- macro `errorhandler(gen, tp)` — define set_handler(gen, tp, z) _Paste4(set_, tp, gen, _handler)(z) — tools/bcc31/INCLUDE/GENERIC.H:39
+- macro `callerror(gen, tp, z, y)` — define set_handler(gen, tp, z) _Paste4(set_, tp, gen, _handler)(z) — tools/bcc31/INCLUDE/GENERIC.H:40
+
+### GRAPHICS.H  `C, 395 lines`
+> graphics.h
+- macro `__GRAPHICS_H` — if !defined(__GRAPHICS_H) — tools/bcc31/INCLUDE/GRAPHICS.H:14
+- macro `_Cdecl` — tools/bcc31/INCLUDE/GRAPHICS.H:20
+- macro `__COLORS` — if !defined(__COLORS) — tools/bcc31/INCLUDE/GRAPHICS.H:83
+- macro `HORIZ_DIR` — tools/bcc31/INCLUDE/GRAPHICS.H:170
+- macro `VERT_DIR` — define HORIZ_DIR 0 /* left to right — tools/bcc31/INCLUDE/GRAPHICS.H:171
+- macro `USER_CHAR_SIZE` — tools/bcc31/INCLUDE/GRAPHICS.H:173
+- macro `MAXCOLORS` — tools/bcc31/INCLUDE/GRAPHICS.H:211
+
+### IO.H  `C, 107 lines`
+> io.h
+- macro `__IO_H` — ifndef __IO_H — tools/bcc31/INCLUDE/IO.H:10
+- macro `HANDLE_MAX(_NFILE_)` — tools/bcc31/INCLUDE/IO.H:20
+- macro `SEEK_CUR` — tools/bcc31/INCLUDE/IO.H:33
+- macro `SEEK_END` — define SEEK_CUR 1 — tools/bcc31/INCLUDE/IO.H:34
+- macro `SEEK_SET` — define SEEK_CUR 1 — tools/bcc31/INCLUDE/IO.H:35
+- macro `_dup(h)` — ifdef __MSC — tools/bcc31/INCLUDE/IO.H:99
+
+### IOMANIP.H  `C, 136 lines`
+> iomanip.h -- streams I/O manipulator declarations
+- macro `__IOMANIP_H` — ifndef __IOMANIP_H — tools/bcc31/INCLUDE/IOMANIP.H:12
+- macro `SMANIP(typ)` — tools/bcc31/INCLUDE/IOMANIP.H:31
+- macro `SAPP(typ)` — define SMANIP(typ) _Paste2(smanip_, typ) — tools/bcc31/INCLUDE/IOMANIP.H:32
+- macro `IMANIP(typ)` — define SMANIP(typ) _Paste2(smanip_, typ) — tools/bcc31/INCLUDE/IOMANIP.H:33
+- macro `OMANIP(typ)` — define SMANIP(typ) _Paste2(smanip_, typ) — tools/bcc31/INCLUDE/IOMANIP.H:34
+- macro `IOMANIP(typ)` — define SMANIP(typ) _Paste2(smanip_, typ) — tools/bcc31/INCLUDE/IOMANIP.H:35
+- macro `IAPP(typ)` — define SMANIP(typ) _Paste2(smanip_, typ) — tools/bcc31/INCLUDE/IOMANIP.H:36
+- macro `OAPP(typ)` — define SMANIP(typ) _Paste2(smanip_, typ) — tools/bcc31/INCLUDE/IOMANIP.H:37
+- macro `IOAPP(typ)` — define SMANIP(typ) _Paste2(smanip_, typ) — tools/bcc31/INCLUDE/IOMANIP.H:38
+- macro `IOMANIPdeclare(typ)` — tools/bcc31/INCLUDE/IOMANIP.H:40
+- function `SMANIP(typ)` — define IOMANIPdeclare(typ) \ — tools/bcc31/INCLUDE/IOMANIP.H:41
+- function `SAPP(typ)` — tools/bcc31/INCLUDE/IOMANIP.H:51
+- function `IMANIP(typ)` — tools/bcc31/INCLUDE/IOMANIP.H:57
+- function `IAPP(typ)` — tools/bcc31/INCLUDE/IOMANIP.H:66
+- function `OMANIP(typ)` — tools/bcc31/INCLUDE/IOMANIP.H:73
+- function `OAPP(typ)` — tools/bcc31/INCLUDE/IOMANIP.H:82
+- function `IOMANIP(typ)` — tools/bcc31/INCLUDE/IOMANIP.H:89
+- function `IOAPP(typ)` — tools/bcc31/INCLUDE/IOMANIP.H:100
+
+### IOSTREAM.H  `C, 726 lines`
+> iostream.h -- basic stream I/O declarations
+- macro `__IOSTREAM_H` — ifndef __IOSTREAM_H — tools/bcc31/INCLUDE/IOSTREAM.H:23
+- macro `EOF(-1)` — Definition of EOF must match the one in — tools/bcc31/INCLUDE/IOSTREAM.H:39
+- macro `zapeof(i)` — extract a char from int i, ensuring that zapeof(EOF) != EOF — tools/bcc31/INCLUDE/IOSTREAM.H:42
+- type `streampos` — extract a char from int i, ensuring that zapeof(EOF) != EOF — tools/bcc31/INCLUDE/IOSTREAM.H:43
+- type `streamoff` — tools/bcc31/INCLUDE/IOSTREAM.H:45
+
+### LIMITS.H  `C, 45 lines`
+> limits.h
+- macro `__LIMITS_H` — ifndef __LIMITS_H — tools/bcc31/INCLUDE/LIMITS.H:10
+- macro `CHAR_BIT` — tools/bcc31/INCLUDE/LIMITS.H:16
+- macro `CHAR_MAX` — if ('\x80' < 0) — tools/bcc31/INCLUDE/LIMITS.H:19
+- macro `CHAR_MIN(-128)` — if ('\x80' < 0) — tools/bcc31/INCLUDE/LIMITS.H:20
+- macro `CHAR_MAX` — if ('\x80' < 0) — tools/bcc31/INCLUDE/LIMITS.H:22
+- macro `CHAR_MIN` — if ('\x80' < 0) — tools/bcc31/INCLUDE/LIMITS.H:23
+- macro `SCHAR_MAX` — tools/bcc31/INCLUDE/LIMITS.H:26
+- macro `SCHAR_MIN(-128)` — define SCHAR_MAX 127 — tools/bcc31/INCLUDE/LIMITS.H:27
+- macro `UCHAR_MAX` — define SCHAR_MAX 127 — tools/bcc31/INCLUDE/LIMITS.H:28
+- macro `SHRT_MAX` — tools/bcc31/INCLUDE/LIMITS.H:30
+- macro `SHRT_MIN((int)0x8000)` — define SHRT_MAX 0x7FFF — tools/bcc31/INCLUDE/LIMITS.H:31
+- macro `USHRT_MAX` — define SHRT_MAX 0x7FFF — tools/bcc31/INCLUDE/LIMITS.H:32
+- macro `INT_MAX` — tools/bcc31/INCLUDE/LIMITS.H:34
+- macro `INT_MIN((int)0x8000)` — define INT_MAX 0x7FFF — tools/bcc31/INCLUDE/LIMITS.H:35
+- macro `UINT_MAX` — define INT_MAX 0x7FFF — tools/bcc31/INCLUDE/LIMITS.H:36
+- macro `LONG_MAX` — tools/bcc31/INCLUDE/LIMITS.H:38
+- macro `LONG_MIN((long)0x80000000L)` — define LONG_MAX 0x7FFFFFFFL — tools/bcc31/INCLUDE/LIMITS.H:39
+- macro `ULONG_MAX` — define LONG_MAX 0x7FFFFFFFL — tools/bcc31/INCLUDE/LIMITS.H:40
+- macro `MB_LEN_MAX` — tools/bcc31/INCLUDE/LIMITS.H:42
+
+### LOCALE.H  `C, 57 lines`
+> locale.h
+- macro `__LOCALE_H` — ifndef __LOCALE_H — tools/bcc31/INCLUDE/LOCALE.H:8
+- macro `LC_ALL` — tools/bcc31/INCLUDE/LOCALE.H:18
+- macro `LC_COLLATE` — define LC_ALL 0 — tools/bcc31/INCLUDE/LOCALE.H:19
+- macro `LC_CTYPE` — define LC_ALL 0 — tools/bcc31/INCLUDE/LOCALE.H:20
+- macro `LC_MONETARY` — define LC_ALL 0 — tools/bcc31/INCLUDE/LOCALE.H:21
+- macro `LC_NUMERIC` — define LC_ALL 0 — tools/bcc31/INCLUDE/LOCALE.H:22
+- macro `LC_TIME` — define LC_ALL 0 — tools/bcc31/INCLUDE/LOCALE.H:23
+
+### LOCKING.H  `C, 19 lines`
+> locking.h
+- macro `__LOCKING_H` — if !defined(__LOCKING_H) — tools/bcc31/INCLUDE/LOCKING.H:10
+- macro `LK_UNLCK` — tools/bcc31/INCLUDE/LOCKING.H:12
+- macro `LK_LOCK` — define LK_UNLCK 0 /* unlock file region — tools/bcc31/INCLUDE/LOCKING.H:13
+- macro `LK_NBLCK` — define LK_UNLCK 0 /* unlock file region — tools/bcc31/INCLUDE/LOCKING.H:14
+- macro `LK_RLCK` — define LK_UNLCK 0 /* unlock file region — tools/bcc31/INCLUDE/LOCKING.H:15
+- macro `LK_NBRLCK` — define LK_UNLCK 0 /* unlock file region — tools/bcc31/INCLUDE/LOCKING.H:16
+
+### MALLOC.H  `C, 49 lines`
+> malloc.h
+- macro `_nmalloc(size)` — tools/bcc31/INCLUDE/MALLOC.H:15
+- macro `_nfree(block)` — define _nmalloc(size) malloc(size) — tools/bcc31/INCLUDE/MALLOC.H:16
+- macro `_nrealloc(block,size)` — define _nmalloc(size) malloc(size) — tools/bcc31/INCLUDE/MALLOC.H:17
+- macro `_ncalloc(num,size)` — define _nmalloc(size) malloc(size) — tools/bcc31/INCLUDE/MALLOC.H:18
+- macro `_nheapmin()` — define _nmalloc(size) malloc(size) — tools/bcc31/INCLUDE/MALLOC.H:19
+- macro `_memavl()` — define _nmalloc(size) malloc(size) — tools/bcc31/INCLUDE/MALLOC.H:20
+- macro `_fmalloc(size)` — tools/bcc31/INCLUDE/MALLOC.H:26
+- macro `_ffree(block)` — define _fmalloc(size) farmalloc((unsigned long)(size)) — tools/bcc31/INCLUDE/MALLOC.H:27
+- macro `_frealloc(block,size)` — define _fmalloc(size) farmalloc((unsigned long)(size)) — tools/bcc31/INCLUDE/MALLOC.H:28
+- macro `_fcalloc(num,size)` — define _fmalloc(size) farmalloc((unsigned long)(size)) — tools/bcc31/INCLUDE/MALLOC.H:29
+- macro `halloc(num,size)` — define _fmalloc(size) farmalloc((unsigned long)(size)) — tools/bcc31/INCLUDE/MALLOC.H:30
+- macro `hfree(block)` — define _fmalloc(size) farmalloc((unsigned long)(size)) — tools/bcc31/INCLUDE/MALLOC.H:31
+- macro `_heapmin()` — define _fmalloc(size) farmalloc((unsigned long)(size)) — tools/bcc31/INCLUDE/MALLOC.H:32
+- macro `_fheapmin()` — define _fmalloc(size) farmalloc((unsigned long)(size)) — tools/bcc31/INCLUDE/MALLOC.H:33
+- macro `alloca` — if defined(__BCOPT__ ) && !defined(_Windows) — tools/bcc31/INCLUDE/MALLOC.H:43
+
+### MATH.H  `C, 163 lines`
+> math.h
+- macro `__MATH_H` — ifndef __MATH_H — tools/bcc31/INCLUDE/MATH.H:10
+- macro `HUGE_VAL` — tools/bcc31/INCLUDE/MATH.H:16
+- macro `_LHUGE_VAL` — tools/bcc31/INCLUDE/MATH.H:18
+- type `_mexcep` — tools/bcc31/INCLUDE/MATH.H:70
+- macro `cabs(z)` — tools/bcc31/INCLUDE/MATH.H:133
+- macro `cabsl(z)` — define cabs(z) (hypot ((z).x, (z).y)) — tools/bcc31/INCLUDE/MATH.H:134
+- macro `M_E` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:142
+- macro `M_LOG2E` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:143
+- macro `M_LOG10E` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:144
+- macro `M_LN2` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:145
+- macro `M_LN10` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:146
+- macro `M_PI` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:147
+- macro `M_PI_2` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:148
+- macro `M_PI_4` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:149
+- macro `M_1_PI` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:150
+- macro `M_2_PI` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:151
+- macro `M_1_SQRTPI` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:152
+- macro `M_2_SQRTPI` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:153
+- macro `M_SQRT2` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:154
+- macro `M_SQRT_2` — Constants rounded for 21 decimals. — tools/bcc31/INCLUDE/MATH.H:155
+- macro `EDOM` — tools/bcc31/INCLUDE/MATH.H:157
+- macro `ERANGE` — define EDOM 33 /* Math argument — tools/bcc31/INCLUDE/MATH.H:158
+
+### MEM.H  `C, 92 lines`
+> mem.h
+- macro `__MEM_H` — if !defined(__MEM_H) — tools/bcc31/INCLUDE/MEM.H:10
+- macro `_STDDEF` — ifndef _STDDEF — tools/bcc31/INCLUDE/MEM.H:21
+- macro `_PTRDIFF_T` — ifndef _STDDEF — tools/bcc31/INCLUDE/MEM.H:23
+- type `ptrdiff_t` — ifndef _STDDEF — tools/bcc31/INCLUDE/MEM.H:25
+- type `ptrdiff_t` — else — tools/bcc31/INCLUDE/MEM.H:27
+- macro `_SIZE_T` — endif — tools/bcc31/INCLUDE/MEM.H:31
+- type `size_t` — endif — tools/bcc31/INCLUDE/MEM.H:32
+
+### MEMORY.H  `C, 10 lines`
+> memory.h
+- (no top-level symbols found)
+
+### NEW.H  `C, 34 lines`
+> new.h
+- macro `__NEW_H` — if !defined(__NEW_H) — tools/bcc31/INCLUDE/NEW.H:10
+- macro `_set_new_handler(f)` — ifdef __MSC — tools/bcc31/INCLUDE/NEW.H:27
+
+### PROCESS.H  `C, 67 lines`
+> process.h
+- macro `__PROCESS_H` — if !defined(__PROCESS_H) — tools/bcc31/INCLUDE/PROCESS.H:10
+- macro `P_WAIT` — tools/bcc31/INCLUDE/PROCESS.H:18
+- macro `P_NOWAIT` — define P_WAIT 0 /* child runs separately, parent waits until exit — tools/bcc31/INCLUDE/PROCESS.H:19
+- macro `P_OVERLAY` — define P_WAIT 0 /* child runs separately, parent waits until exit — tools/bcc31/INCLUDE/PROCESS.H:20
+- macro `P_NOWAITO` — tools/bcc31/INCLUDE/PROCESS.H:22
+- macro `P_DETACH` — define P_NOWAITO 3 /* ASYNCH, toss RC — tools/bcc31/INCLUDE/PROCESS.H:23
+- macro `WAIT_CHILD` — tools/bcc31/INCLUDE/PROCESS.H:25
+- macro `WAIT_GRANDCHILD` — define WAIT_CHILD 0 — tools/bcc31/INCLUDE/PROCESS.H:26
+- macro `getpid()` — tools/bcc31/INCLUDE/PROCESS.H:34
+
+### SEARCH.H  `C, 40 lines`
+> search.h
+- macro `__SEARCH_H` — ifndef __SEARCH_H — tools/bcc31/INCLUDE/SEARCH.H:10
+- macro `_SIZE_T` — ifndef _SIZE_T — tools/bcc31/INCLUDE/SEARCH.H:17
+- type `size_t` — ifndef _SIZE_T — tools/bcc31/INCLUDE/SEARCH.H:18
+
+### SETJMP.H  `C, 47 lines`
+> setjmp.h
+- macro `__SETJMP_H` — ifndef __SETJMP_H — tools/bcc31/INCLUDE/SETJMP.H:10
+- type `j_sp` — if !defined(___DEFS_H) — tools/bcc31/INCLUDE/SETJMP.H:15
+
+### SHARE.H  `C, 27 lines`
+> share.h
+- macro `__SHARE_H` — if !defined(__SHARE_H) — tools/bcc31/INCLUDE/SHARE.H:11
+- macro `SH_COMPAT` — tools/bcc31/INCLUDE/SHARE.H:17
+- macro `SH_DENYRW` — define SH_COMPAT 0x0000 — tools/bcc31/INCLUDE/SHARE.H:18
+- macro `SH_DENYWR` — define SH_COMPAT 0x0000 — tools/bcc31/INCLUDE/SHARE.H:19
+- macro `SH_DENYRD` — define SH_COMPAT 0x0000 — tools/bcc31/INCLUDE/SHARE.H:20
+- macro `SH_DENYNONE` — define SH_COMPAT 0x0000 — tools/bcc31/INCLUDE/SHARE.H:21
+- macro `SH_DENYNO` — tools/bcc31/INCLUDE/SHARE.H:23
+
+### SIGNAL.H  `C, 42 lines`
+> signal.h
+- macro `__SIGNAL_H` — ifndef __SIGNAL_H — tools/bcc31/INCLUDE/SIGNAL.H:10
+- type `sig_atomic_t` — if !defined(___DEFS_H) — tools/bcc31/INCLUDE/SIGNAL.H:15
+- macro `SIG_DFL((_CatcherPTR)0)` — tools/bcc31/INCLUDE/SIGNAL.H:19
+- macro `SIG_IGN((_CatcherPTR)1)` — define SIG_DFL ((_CatcherPTR)0) /* Default action — tools/bcc31/INCLUDE/SIGNAL.H:20
+- macro `SIG_ERR((_CatcherPTR)-1)` — define SIG_DFL ((_CatcherPTR)0) /* Default action — tools/bcc31/INCLUDE/SIGNAL.H:21
+- macro `SIGABRT` — tools/bcc31/INCLUDE/SIGNAL.H:23
+- macro `SIGFPE` — define SIGABRT 22 — tools/bcc31/INCLUDE/SIGNAL.H:24
+- macro `SIGILL` — define SIGABRT 22 — tools/bcc31/INCLUDE/SIGNAL.H:25
+- macro `SIGINT` — define SIGABRT 22 — tools/bcc31/INCLUDE/SIGNAL.H:26
+- macro `SIGSEGV` — define SIGABRT 22 — tools/bcc31/INCLUDE/SIGNAL.H:27
+- macro `SIGTERM` — define SIGABRT 22 — tools/bcc31/INCLUDE/SIGNAL.H:28
+
+### STAT.H  `C, 71 lines`
+> stat.h
+- macro `__STAT_H` — ifndef __STAT_H — tools/bcc31/INCLUDE/STAT.H:10
+- macro `S_IFMT` — tools/bcc31/INCLUDE/STAT.H:16
+- macro `S_IFDIR` — define S_IFMT 0xF000 /* file type mask — tools/bcc31/INCLUDE/STAT.H:17
+- macro `S_IFIFO` — define S_IFMT 0xF000 /* file type mask — tools/bcc31/INCLUDE/STAT.H:18
+- macro `S_IFCHR` — define S_IFMT 0xF000 /* file type mask — tools/bcc31/INCLUDE/STAT.H:19
+- macro `S_IFBLK` — define S_IFMT 0xF000 /* file type mask — tools/bcc31/INCLUDE/STAT.H:20
+- macro `S_IFREG` — define S_IFMT 0xF000 /* file type mask — tools/bcc31/INCLUDE/STAT.H:21
+- macro `S_IREAD` — define S_IFMT 0xF000 /* file type mask — tools/bcc31/INCLUDE/STAT.H:22
+- macro `S_IWRITE` — define S_IFMT 0xF000 /* file type mask — tools/bcc31/INCLUDE/STAT.H:23
+- macro `S_IEXEC` — define S_IFMT 0xF000 /* file type mask — tools/bcc31/INCLUDE/STAT.H:24
+- macro `_fstat(h,b)` — ifdef __MSC — tools/bcc31/INCLUDE/STAT.H:48
+- macro `_stat(p,b)` — ifdef __MSC — tools/bcc31/INCLUDE/STAT.H:49
+
+### STDARG.H  `C, 39 lines`
+> stdarg.h
+- macro `__STDARG_H` — ifndef __STDARG_H — tools/bcc31/INCLUDE/STDARG.H:11
+- type `va_list` — if !defined(___DEFS_H) — tools/bcc31/INCLUDE/STDARG.H:20
+- macro `__size(x)` — tools/bcc31/INCLUDE/STDARG.H:23
+- macro `va_start(ap, parmN)` — if defined(__cplusplus) && !defined(__STDC__) — tools/bcc31/INCLUDE/STDARG.H:26
+- macro `va_start(ap, parmN)` — if defined(__cplusplus) && !defined(__STDC__) — tools/bcc31/INCLUDE/STDARG.H:28
+- macro `va_arg(ap, type)` — tools/bcc31/INCLUDE/STDARG.H:31
+- macro `va_end(ap)` — define va_arg(ap, type) (*(type _FAR *)(((*(char _FAR *_FAR *)&(ap))+=__size(type))-(__size(type)))) — tools/bcc31/INCLUDE/STDARG.H:32
+- macro `_va_ptr(...)` — if !__STDC__ — tools/bcc31/INCLUDE/STDARG.H:35
+
+### STDDEF.H  `C, 42 lines`
+> stddef.h
+- macro `__STDDEF_H` — ifndef __STDDEF_H — tools/bcc31/INCLUDE/STDDEF.H:10
+- macro `_PTRDIFF_T` — ifndef _PTRDIFF_T — tools/bcc31/INCLUDE/STDDEF.H:21
+- type `ptrdiff_t` — ifndef _PTRDIFF_T — tools/bcc31/INCLUDE/STDDEF.H:23
+- type `ptrdiff_t` — else — tools/bcc31/INCLUDE/STDDEF.H:25
+- macro `_SIZE_T` — ifndef _SIZE_T — tools/bcc31/INCLUDE/STDDEF.H:30
+- type `size_t` — ifndef _SIZE_T — tools/bcc31/INCLUDE/STDDEF.H:31
+- macro `offsetof( s_name, m_name )` — tools/bcc31/INCLUDE/STDDEF.H:34
+- macro `_WCHAR_T` — ifndef _WCHAR_T — tools/bcc31/INCLUDE/STDDEF.H:37
+- type `wchar_t` — ifndef _WCHAR_T — tools/bcc31/INCLUDE/STDDEF.H:38
+
+### STDIO.H  `C, 249 lines`
+> stdio.h
+- macro `__STDIO_H` — ifndef __STDIO_H — tools/bcc31/INCLUDE/STDIO.H:10
+- macro `_SIZE_T` — ifndef _SIZE_T — tools/bcc31/INCLUDE/STDIO.H:25
+- type `size_t` — ifndef _SIZE_T — tools/bcc31/INCLUDE/STDIO.H:26
+- type `fpos_t` — Definition of the file position type — tools/bcc31/INCLUDE/STDIO.H:31
+- type `level` — Definition of the control structure for streams — tools/bcc31/INCLUDE/STDIO.H:36
+- macro `_IOFBF` — Bufferisation type to be used as 3rd argument for "setvbuf" function — tools/bcc31/INCLUDE/STDIO.H:50
+- macro `_IOLBF` — Bufferisation type to be used as 3rd argument for "setvbuf" function — tools/bcc31/INCLUDE/STDIO.H:51
+- macro `_IONBF` — Bufferisation type to be used as 3rd argument for "setvbuf" function — tools/bcc31/INCLUDE/STDIO.H:52
+- macro `_F_RDWR` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:56
+- macro `_F_READ` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:57
+- macro `_F_WRIT` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:58
+- macro `_F_BUF` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:59
+- macro `_F_LBUF` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:60
+- macro `_F_ERR` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:61
+- macro `_F_EOF` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:62
+- macro `_F_BIN` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:63
+- macro `_F_IN` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:64
+- macro `_F_OUT` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:65
+- macro `_F_TERM` — "flags" bits definitions — tools/bcc31/INCLUDE/STDIO.H:66
+- macro `EOF(-1)` — End-of-file constant definition — tools/bcc31/INCLUDE/STDIO.H:70
+- macro `FOPEN_MAX(_NFILE_ - 2)` — Number of files that can be open simultaneously — tools/bcc31/INCLUDE/STDIO.H:75
+- macro `FOPEN_MAX(_NFILE_)` — Number of files that can be open simultaneously — tools/bcc31/INCLUDE/STDIO.H:77
+- macro `SYS_OPEN(_NFILE_)` — Number of files that can be open simultaneously — tools/bcc31/INCLUDE/STDIO.H:78
+- macro `FILENAME_MAX` — tools/bcc31/INCLUDE/STDIO.H:81
+- macro `BUFSIZ` — Default buffer size use by "setbuf" function — tools/bcc31/INCLUDE/STDIO.H:85
+- macro `L_ctermid` — Size of an arry large enough to hold a temporary file name string — tools/bcc31/INCLUDE/STDIO.H:89
+- macro `P_tmpdir` — Size of an arry large enough to hold a temporary file name string — tools/bcc31/INCLUDE/STDIO.H:90
+- macro `L_tmpnam` — Size of an arry large enough to hold a temporary file name string — tools/bcc31/INCLUDE/STDIO.H:91
+- macro `SEEK_CUR` — Constants to be used as 3rd argument for "fseek" function — tools/bcc31/INCLUDE/STDIO.H:95
+- macro `SEEK_END` — Constants to be used as 3rd argument for "fseek" function — tools/bcc31/INCLUDE/STDIO.H:96
+- macro `SEEK_SET` — Constants to be used as 3rd argument for "fseek" function — tools/bcc31/INCLUDE/STDIO.H:97
+- macro `TMP_MAX` — Number of unique file names that shall be generated by "tmpnam" function — tools/bcc31/INCLUDE/STDIO.H:101
+- macro `stdin(&_streams[0])` — tools/bcc31/INCLUDE/STDIO.H:110
+- macro `stdout(&_streams[1])` — define stdin (&_streams[0]) — tools/bcc31/INCLUDE/STDIO.H:111
+- macro `stderr(&_streams[2])` — define stdin (&_streams[0]) — tools/bcc31/INCLUDE/STDIO.H:112
+- macro `stdaux(&_streams[3])` — if !__STDC__ — tools/bcc31/INCLUDE/STDIO.H:115
+- macro `stdprn(&_streams[4])` — if !__STDC__ — tools/bcc31/INCLUDE/STDIO.H:116
+- macro `stdin(0)` — tools/bcc31/INCLUDE/STDIO.H:129
+- macro `stdout(1)` — define stdin __getStream(0) — tools/bcc31/INCLUDE/STDIO.H:130
+- macro `stderr(2)` — define stdin __getStream(0) — tools/bcc31/INCLUDE/STDIO.H:131
+- macro `stdaux(3)` — define stdin __getStream(0) — tools/bcc31/INCLUDE/STDIO.H:132
+- macro `stdprn(4)` — define stdin __getStream(0) — tools/bcc31/INCLUDE/STDIO.H:133
+- macro `fileno(f)` — tools/bcc31/INCLUDE/STDIO.H:213
+- macro `_fileno(f)` — define fileno(f) ((f)->fd) — tools/bcc31/INCLUDE/STDIO.H:215
+- macro `ferror(f)` — tools/bcc31/INCLUDE/STDIO.H:231
+- macro `feof(f)` — define ferror(f) ((f)->flags & _F_ERR) — tools/bcc31/INCLUDE/STDIO.H:232
+- macro `getc(f)` — tools/bcc31/INCLUDE/STDIO.H:234
+- macro `putc(c,f)` — tools/bcc31/INCLUDE/STDIO.H:238
+- macro `getchar()` — tools/bcc31/INCLUDE/STDIO.H:242
+- macro `putchar(c)` — define getchar() getc(stdin) — tools/bcc31/INCLUDE/STDIO.H:243
+- macro `ungetc(c,f)` — tools/bcc31/INCLUDE/STDIO.H:245
+
+### STDIOSTR.H  `C, 73 lines`
+> stdiostream.h -- class stdiobuf and stdiostream declarations
+- macro `__STDSTREAM_H` — ifndef __STDSTREAM_H — tools/bcc31/INCLUDE/STDIOSTR.H:15
+
+### STDLIB.H  `C, 266 lines`
+> stdlib.h
+- macro `__STDLIB_H` — ifndef __STDLIB_H — tools/bcc31/INCLUDE/STDLIB.H:10
+- macro `_SIZE_T` — ifndef _SIZE_T — tools/bcc31/INCLUDE/STDLIB.H:21
+- type `size_t` — ifndef _SIZE_T — tools/bcc31/INCLUDE/STDLIB.H:22
+- macro `_DIV_T` — ifndef _DIV_T — tools/bcc31/INCLUDE/STDLIB.H:26
+- type `quot` — ifndef _DIV_T — tools/bcc31/INCLUDE/STDLIB.H:27
+- macro `_LDIV_T` — ifndef _LDIV_T — tools/bcc31/INCLUDE/STDLIB.H:34
+- type `quot` — ifndef _LDIV_T — tools/bcc31/INCLUDE/STDLIB.H:35
+- macro `_WCHAR_T` — ifndef _WCHAR_T — tools/bcc31/INCLUDE/STDLIB.H:42
+- type `wchar_t` — ifndef _WCHAR_T — tools/bcc31/INCLUDE/STDLIB.H:43
+- macro `RAND_MAX` — Maximum value returned by "rand" function — tools/bcc31/INCLUDE/STDLIB.H:52
+- macro `EXIT_SUCCESS` — tools/bcc31/INCLUDE/STDLIB.H:54
+- macro `EXIT_FAILURE` — define EXIT_SUCCESS 0 — tools/bcc31/INCLUDE/STDLIB.H:55
+- macro `MB_CUR_MAX` — tools/bcc31/INCLUDE/STDLIB.H:57
+- function `abs(int __x)` — ifdef __cplusplus — tools/bcc31/INCLUDE/STDLIB.H:66
+- macro `errno(*__getErrno())` — tools/bcc31/INCLUDE/STDLIB.H:128
+- macro `_doserrno(*__getDOSErrno())` — define errno (*__getErrno()) — tools/bcc31/INCLUDE/STDLIB.H:129
+- macro `DOS_MODE` — These 2 constants are defined in MS's stdlib.h. Rather than defining them — tools/bcc31/INCLUDE/STDLIB.H:144
+- macro `OS2_MODE` — / — tools/bcc31/INCLUDE/STDLIB.H:145
+- macro `sys_errlist()` — tools/bcc31/INCLUDE/STDLIB.H:166
+- macro `sys_nerr()` — define sys_errlist __get_sys_errlist() — tools/bcc31/INCLUDE/STDLIB.H:167
+- macro `_MAX_PATH` — tools/bcc31/INCLUDE/STDLIB.H:178
+- macro `_MAX_DRIVE` — define _MAX_PATH 80 — tools/bcc31/INCLUDE/STDLIB.H:179
+- macro `_MAX_DIR` — define _MAX_PATH 80 — tools/bcc31/INCLUDE/STDLIB.H:180
+- macro `_MAX_FNAME` — define _MAX_PATH 80 — tools/bcc31/INCLUDE/STDLIB.H:181
+- macro `_MAX_EXT` — define _MAX_PATH 80 — tools/bcc31/INCLUDE/STDLIB.H:182
+- function `random(int __num)` — ifdef __cplusplus — tools/bcc31/INCLUDE/STDLIB.H:185
+- function `randomize(void)` — tools/bcc31/INCLUDE/STDLIB.H:189
+- function `atoi(const char _FAR *__s)` — tools/bcc31/INCLUDE/STDLIB.H:190
+- macro `random(num)` — else — tools/bcc31/INCLUDE/STDLIB.H:192
+- macro `randomize()` — else — tools/bcc31/INCLUDE/STDLIB.H:193
+- macro `max(a,b)` — else — tools/bcc31/INCLUDE/STDLIB.H:194
+- macro `min(a,b)` — else — tools/bcc31/INCLUDE/STDLIB.H:195
+- macro `atoi(s)` — else — tools/bcc31/INCLUDE/STDLIB.H:196
+- macro `_rotl(__value, __count)` — ifdef __BCOPT__ — tools/bcc31/INCLUDE/STDLIB.H:259
+- macro `_rotr(__value, __count)` — ifdef __BCOPT__ — tools/bcc31/INCLUDE/STDLIB.H:260
+
+### STRING.H  `C, 168 lines`
+> string.h
+- macro `__STRING_H` — ifndef __STRING_H — tools/bcc31/INCLUDE/STRING.H:10
+- macro `_SIZE_T` — ifndef _SIZE_T — tools/bcc31/INCLUDE/STRING.H:21
+- type `size_t` — ifndef _SIZE_T — tools/bcc31/INCLUDE/STRING.H:22
+- macro `strcmpi(s1,s2)` — if !__STDC__ — tools/bcc31/INCLUDE/STRING.H:62
+- macro `strncmpi(s1,s2,n)` — if !__STDC__ — tools/bcc31/INCLUDE/STRING.H:63
+- macro `_stricmp(s1,s2)` — ifdef __MSC — tools/bcc31/INCLUDE/STRING.H:128
+- macro `_strdup(s1)` — ifdef __MSC — tools/bcc31/INCLUDE/STRING.H:129
+- macro `_strupr(s1)` — ifdef __MSC — tools/bcc31/INCLUDE/STRING.H:130
+- macro `_strlwr(s1)` — ifdef __MSC — tools/bcc31/INCLUDE/STRING.H:131
+- macro `_strrev(s1)` — ifdef __MSC — tools/bcc31/INCLUDE/STRING.H:132
+
+### STRSTREA.H  `C, 123 lines`
+> strstream.h -- class strstream declarations
+- macro `__STRSTREAM_H` — ifndef __STRSTREAM_H — tools/bcc31/INCLUDE/STRSTREA.H:12
+
+### TIME.H  `C, 93 lines`
+> time.h
+- macro `__TIME_H` — ifndef __TIME_H — tools/bcc31/INCLUDE/TIME.H:10
+- macro `_SIZE_T` — ifndef _SIZE_T — tools/bcc31/INCLUDE/TIME.H:17
+- type `size_t` — ifndef _SIZE_T — tools/bcc31/INCLUDE/TIME.H:18
+- macro `_TIME_T` — ifndef _TIME_T — tools/bcc31/INCLUDE/TIME.H:22
+- type `time_t` — ifndef _TIME_T — tools/bcc31/INCLUDE/TIME.H:23
+- macro `_CLOCK_T` — ifndef _CLOCK_T — tools/bcc31/INCLUDE/TIME.H:27
+- type `clock_t` — ifndef _CLOCK_T — tools/bcc31/INCLUDE/TIME.H:28
+- macro `CLOCKS_PER_SEC` — tools/bcc31/INCLUDE/TIME.H:30
+- macro `CLK_TCK` — define CLOCKS_PER_SEC 18.2 — tools/bcc31/INCLUDE/TIME.H:31
+- macro `daylight(*__getDaylight())` — tools/bcc31/INCLUDE/TIME.H:76
+- macro `timezone(*__getTimezone())` — define daylight (*__getDaylight()) — tools/bcc31/INCLUDE/TIME.H:77
+- macro `tzname(__getTzname())` — define daylight (*__getDaylight()) — tools/bcc31/INCLUDE/TIME.H:78
+
+### TIMEB.H  `C, 36 lines`
+> timeb.h
+- macro `__TIMEB_H` — if !defined(__TIMEB_H) — tools/bcc31/INCLUDE/TIMEB.H:10
+
+### TYPES.H  `C, 13 lines`
+> types.h
+- macro `_TIME_T` — ifndef _TIME_T — tools/bcc31/INCLUDE/TYPES.H:10
+- type `time_t` — ifndef _TIME_T — tools/bcc31/INCLUDE/TYPES.H:11
+
+### UTIME.H  `C, 35 lines`
+> utime.h
+- macro `_TIME_T` — ifndef _TIME_T — tools/bcc31/INCLUDE/UTIME.H:14
+- type `time_t` — ifndef _TIME_T — tools/bcc31/INCLUDE/UTIME.H:15
+
+### VALUES.H  `C, 56 lines`
+> values.h
+- macro `__VALUES_H` — if !defined(__VALUES_H) — tools/bcc31/INCLUDE/VALUES.H:11
+- macro `_VALUES_H` — ifndef _VALUES_H — tools/bcc31/INCLUDE/VALUES.H:18
+- macro `BITSPERBYTE` — tools/bcc31/INCLUDE/VALUES.H:20
+- macro `MAXSHORT` — define BITSPERBYTE 8 — tools/bcc31/INCLUDE/VALUES.H:21
+- macro `MAXINT` — define BITSPERBYTE 8 — tools/bcc31/INCLUDE/VALUES.H:22
+- macro `MAXLONG` — define BITSPERBYTE 8 — tools/bcc31/INCLUDE/VALUES.H:23
+- macro `HIBITS` — define BITSPERBYTE 8 — tools/bcc31/INCLUDE/VALUES.H:24
+- macro `HIBITI` — define BITSPERBYTE 8 — tools/bcc31/INCLUDE/VALUES.H:25
+- macro `HIBITL` — define BITSPERBYTE 8 — tools/bcc31/INCLUDE/VALUES.H:26
+- macro `DMAXEXP` — tools/bcc31/INCLUDE/VALUES.H:28
+- macro `FMAXEXP` — define DMAXEXP 308 — tools/bcc31/INCLUDE/VALUES.H:29
+- macro `DMINEXP` — define DMAXEXP 308 — tools/bcc31/INCLUDE/VALUES.H:30
+- macro `FMINEXP` — define DMAXEXP 308 — tools/bcc31/INCLUDE/VALUES.H:31
+- macro `MAXDOUBLE` — tools/bcc31/INCLUDE/VALUES.H:33
+- macro `MAXFLOAT` — define MAXDOUBLE 1.797693E+308 — tools/bcc31/INCLUDE/VALUES.H:34
+- macro `MINDOUBLE` — define MAXDOUBLE 1.797693E+308 — tools/bcc31/INCLUDE/VALUES.H:35
+- macro `MINFLOAT` — define MAXDOUBLE 1.797693E+308 — tools/bcc31/INCLUDE/VALUES.H:36
+- macro `DSIGNIF` — tools/bcc31/INCLUDE/VALUES.H:38
+- macro `FSIGNIF` — define DSIGNIF 53 — tools/bcc31/INCLUDE/VALUES.H:39
+- macro `DMAXPOWTWO` — tools/bcc31/INCLUDE/VALUES.H:41
+- macro `FMAXPOWTWO` — define DMAXPOWTWO 0x3FF — tools/bcc31/INCLUDE/VALUES.H:42
+- macro `_DEXPLEN` — define DMAXPOWTWO 0x3FF — tools/bcc31/INCLUDE/VALUES.H:43
+- macro `_FEXPLEN` — define DMAXPOWTWO 0x3FF — tools/bcc31/INCLUDE/VALUES.H:44
+- macro `_EXPBASE` — define DMAXPOWTWO 0x3FF — tools/bcc31/INCLUDE/VALUES.H:45
+- macro `_IEEE` — define DMAXPOWTWO 0x3FF — tools/bcc31/INCLUDE/VALUES.H:46
+- macro `_LENBASE` — define DMAXPOWTWO 0x3FF — tools/bcc31/INCLUDE/VALUES.H:47
+- macro `HIDDENBIT` — define DMAXPOWTWO 0x3FF — tools/bcc31/INCLUDE/VALUES.H:48
+- macro `LN_MAXDOUBLE` — define DMAXPOWTWO 0x3FF — tools/bcc31/INCLUDE/VALUES.H:49
+- macro `LN_MINDOUBLE` — define DMAXPOWTWO 0x3FF — tools/bcc31/INCLUDE/VALUES.H:50
+
+### VARARGS.H  `C, 29 lines`
+> varargs.h
+- macro `__VARARGS_H` — ifndef __VARARGS_H — tools/bcc31/INCLUDE/VARARGS.H:12
+- type `va_list` — if !defined(___DEFS_H) — tools/bcc31/INCLUDE/VARARGS.H:21
+- macro `va_dcl` — tools/bcc31/INCLUDE/VARARGS.H:23
+- macro `va_start(ap)` — define va_dcl va_list va_alist; — tools/bcc31/INCLUDE/VARARGS.H:24
+- macro `va_arg(ap, type)` — define va_dcl va_list va_alist; — tools/bcc31/INCLUDE/VARARGS.H:25
+- macro `va_end(ap)` — define va_dcl va_list va_alist; — tools/bcc31/INCLUDE/VARARGS.H:26
+
+### _DEFS.H  `C, 105 lines`
+> _defs.h
+- macro `___DEFS_H` — if !defined(___DEFS_H) — tools/bcc31/INCLUDE/_DEFS.H:10
+
+### _NFILE.H  `C, 15 lines`
+> _nfile.h
+- macro `___NFILE_H` — ifndef ___NFILE_H — tools/bcc31/INCLUDE/_NFILE.H:10
+- macro `_NFILE_` — tools/bcc31/INCLUDE/_NFILE.H:12
+
+### _NULL.H  `C, 16 lines`
+> _null.h
+- (no top-level symbols found)
+
+## tools/msc6/INCLUDE/
+
+### ASSERT.H  `C, 35 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/ASSERT.H:17
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/ASSERT.H:19
+- macro `assert(exp)` — tools/msc6/INCLUDE/ASSERT.H:26
+- macro `assert(exp)` — tools/msc6/INCLUDE/ASSERT.H:31
+
+### BIOS.H  `C, 176 lines`
+> *
+- macro `_COM_INIT` — tools/msc6/INCLUDE/BIOS.H:18
+- macro `_COM_SEND` — define _COM_INIT 0 /* init serial port — tools/msc6/INCLUDE/BIOS.H:19
+- macro `_COM_RECEIVE` — define _COM_INIT 0 /* init serial port — tools/msc6/INCLUDE/BIOS.H:20
+- macro `_COM_STATUS` — define _COM_INIT 0 /* init serial port — tools/msc6/INCLUDE/BIOS.H:21
+- macro `_COM_CHR7` — tools/msc6/INCLUDE/BIOS.H:30
+- macro `_COM_CHR8` — define _COM_CHR7 2 /* 7 bits characters — tools/msc6/INCLUDE/BIOS.H:31
+- macro `_COM_STOP1` — tools/msc6/INCLUDE/BIOS.H:35
+- macro `_COM_STOP2` — define _COM_STOP1 0 /* 1 stop bit — tools/msc6/INCLUDE/BIOS.H:36
+- macro `_COM_NOPARITY` — tools/msc6/INCLUDE/BIOS.H:40
+- macro `_COM_ODDPARITY` — define _COM_NOPARITY 0 /* no parity — tools/msc6/INCLUDE/BIOS.H:41
+- macro `_COM_EVENPARITY` — define _COM_NOPARITY 0 /* no parity — tools/msc6/INCLUDE/BIOS.H:42
+- macro `_COM_110` — tools/msc6/INCLUDE/BIOS.H:46
+- macro `_COM_150` — define _COM_110 0 /* 110 baud — tools/msc6/INCLUDE/BIOS.H:47
+- macro `_COM_300` — define _COM_110 0 /* 110 baud — tools/msc6/INCLUDE/BIOS.H:48
+- macro `_COM_600` — define _COM_110 0 /* 110 baud — tools/msc6/INCLUDE/BIOS.H:49
+- macro `_COM_1200` — define _COM_110 0 /* 110 baud — tools/msc6/INCLUDE/BIOS.H:50
+- macro `_COM_2400` — define _COM_110 0 /* 110 baud — tools/msc6/INCLUDE/BIOS.H:51
+- macro `_COM_4800` — define _COM_110 0 /* 110 baud — tools/msc6/INCLUDE/BIOS.H:52
+- macro `_COM_9600` — define _COM_110 0 /* 110 baud — tools/msc6/INCLUDE/BIOS.H:53
+- macro `_DISK_RESET` — tools/msc6/INCLUDE/BIOS.H:60
+- macro `_DISK_STATUS` — define _DISK_RESET 0 /* reset disk controller — tools/msc6/INCLUDE/BIOS.H:61
+- macro `_DISK_READ` — define _DISK_RESET 0 /* reset disk controller — tools/msc6/INCLUDE/BIOS.H:62
+- macro `_DISK_WRITE` — define _DISK_RESET 0 /* reset disk controller — tools/msc6/INCLUDE/BIOS.H:63
+- macro `_DISK_VERIFY` — define _DISK_RESET 0 /* reset disk controller — tools/msc6/INCLUDE/BIOS.H:64
+- macro `_DISK_FORMAT` — define _DISK_RESET 0 /* reset disk controller — tools/msc6/INCLUDE/BIOS.H:65
+- macro `_DISKINFO_T_DEFINED` — tools/msc6/INCLUDE/BIOS.H:80
+- macro `_KEYBRD_READ` — tools/msc6/INCLUDE/BIOS.H:89
+- macro `_KEYBRD_READY` — define _KEYBRD_READ 0 /* read next character from keyboard — tools/msc6/INCLUDE/BIOS.H:90
+- macro `_KEYBRD_SHIFTSTATUS` — define _KEYBRD_READ 0 /* read next character from keyboard — tools/msc6/INCLUDE/BIOS.H:91
+- macro `_NKEYBRD_READ` — tools/msc6/INCLUDE/BIOS.H:95
+- macro `_NKEYBRD_READY` — define _NKEYBRD_READ 0x10 /* read next character from keyboard — tools/msc6/INCLUDE/BIOS.H:96
+- macro `_NKEYBRD_SHIFTSTATUS` — define _NKEYBRD_READ 0x10 /* read next character from keyboard — tools/msc6/INCLUDE/BIOS.H:97
+- macro `_PRINTER_WRITE` — tools/msc6/INCLUDE/BIOS.H:104
+- macro `_PRINTER_INIT` — define _PRINTER_WRITE 0 /* write character to printer — tools/msc6/INCLUDE/BIOS.H:105
+- macro `_PRINTER_STATUS` — define _PRINTER_WRITE 0 /* write character to printer — tools/msc6/INCLUDE/BIOS.H:106
+- macro `_TIME_GETCLOCK` — tools/msc6/INCLUDE/BIOS.H:113
+- macro `_TIME_SETCLOCK` — define _TIME_GETCLOCK 0 /* get current clock count — tools/msc6/INCLUDE/BIOS.H:114
+- macro `_REGS_DEFINED` — tools/msc6/INCLUDE/BIOS.H:158
+
+### CONIO.H  `C, 37 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/CONIO.H:17
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/CONIO.H:19
+
+### CTYPE.H  `C, 97 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/CTYPE.H:17
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/CTYPE.H:19
+- macro `_UPPER` — tools/msc6/INCLUDE/CTYPE.H:36
+- macro `_LOWER` — define _UPPER 0x1 /* upper case letter — tools/msc6/INCLUDE/CTYPE.H:37
+- macro `_DIGIT` — define _UPPER 0x1 /* upper case letter — tools/msc6/INCLUDE/CTYPE.H:38
+- macro `_SPACE` — define _UPPER 0x1 /* upper case letter — tools/msc6/INCLUDE/CTYPE.H:39
+- macro `_PUNCT` — define _UPPER 0x1 /* upper case letter — tools/msc6/INCLUDE/CTYPE.H:41
+- macro `_CONTROL` — define _UPPER 0x1 /* upper case letter — tools/msc6/INCLUDE/CTYPE.H:42
+- macro `_BLANK` — define _UPPER 0x1 /* upper case letter — tools/msc6/INCLUDE/CTYPE.H:43
+- macro `_HEX` — define _UPPER 0x1 /* upper case letter — tools/msc6/INCLUDE/CTYPE.H:44
+- macro `_CTYPE_DEFINED` — tools/msc6/INCLUDE/CTYPE.H:68
+- macro `isalpha(_c)` — tools/msc6/INCLUDE/CTYPE.H:73
+- macro `isupper(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:74
+- macro `islower(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:75
+- macro `isdigit(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:76
+- macro `isxdigit(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:77
+- macro `isspace(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:78
+- macro `ispunct(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:79
+- macro `isalnum(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:80
+- macro `isprint(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:81
+- macro `isgraph(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:82
+- macro `iscntrl(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:83
+- macro `toupper(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:85
+- macro `tolower(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:86
+- macro `_tolower(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:88
+- macro `_toupper(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:89
+- macro `isascii(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:90
+- macro `toascii(_c)` — define isalpha(_c) ( (_ctype+1)[_c] & (_UPPER|_LOWER) ) — tools/msc6/INCLUDE/CTYPE.H:91
+- macro `iscsymf(_c)` — tools/msc6/INCLUDE/CTYPE.H:95
+- macro `iscsym(_c)` — define iscsymf(_c) (isalpha(_c) || ((_c) == '_')) — tools/msc6/INCLUDE/CTYPE.H:96
+
+### DIRECT.H  `C, 37 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/DIRECT.H:17
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/DIRECT.H:19
+- type `size_t` — ifndef _SIZE_T_DEFINED — tools/msc6/INCLUDE/DIRECT.H:24
+- macro `_SIZE_T_DEFINED` — tools/msc6/INCLUDE/DIRECT.H:25
+
+### DOS.H  `C, 210 lines`
+> *
+- macro `_REGS_DEFINED` — tools/msc6/INCLUDE/DOS.H:59
+- macro `_DOSERROR_DEFINED` — tools/msc6/INCLUDE/DOS.H:75
+- macro `_FIND_T_DEFINED` — tools/msc6/INCLUDE/DOS.H:93
+- macro `_DATETIME_T_DEFINED` — tools/msc6/INCLUDE/DOS.H:116
+- macro `_DISKFREE_T_DEFINED` — tools/msc6/INCLUDE/DOS.H:132
+- macro `_HARDERR_IGNORE` — tools/msc6/INCLUDE/DOS.H:139
+- macro `_HARDERR_RETRY` — define _HARDERR_IGNORE 0 /* Ignore the error — tools/msc6/INCLUDE/DOS.H:140
+- macro `_HARDERR_ABORT` — define _HARDERR_IGNORE 0 /* Ignore the error — tools/msc6/INCLUDE/DOS.H:141
+- macro `_HARDERR_FAIL` — define _HARDERR_IGNORE 0 /* Ignore the error — tools/msc6/INCLUDE/DOS.H:142
+- macro `_A_NORMAL` — tools/msc6/INCLUDE/DOS.H:147
+- macro `_A_RDONLY` — define _A_NORMAL 0x00 /* Normal file - No read/write restrictions — tools/msc6/INCLUDE/DOS.H:148
+- macro `_A_HIDDEN` — define _A_NORMAL 0x00 /* Normal file - No read/write restrictions — tools/msc6/INCLUDE/DOS.H:149
+- macro `_A_SYSTEM` — define _A_NORMAL 0x00 /* Normal file - No read/write restrictions — tools/msc6/INCLUDE/DOS.H:150
+- macro `_A_VOLID` — define _A_NORMAL 0x00 /* Normal file - No read/write restrictions — tools/msc6/INCLUDE/DOS.H:151
+- macro `_A_SUBDIR` — define _A_NORMAL 0x00 /* Normal file - No read/write restrictions — tools/msc6/INCLUDE/DOS.H:152
+- macro `_A_ARCH` — define _A_NORMAL 0x00 /* Normal file - No read/write restrictions — tools/msc6/INCLUDE/DOS.H:153
+- macro `FP_SEG(fp)` — tools/msc6/INCLUDE/DOS.H:158
+- macro `FP_OFF(fp)` — define FP_SEG(fp) (*((unsigned _far *)&(fp)+1)) — tools/msc6/INCLUDE/DOS.H:159
+
+### ERRNO.H  `C, 72 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/ERRNO.H:19
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/ERRNO.H:21
+- macro `errno(*_errno())` — tools/msc6/INCLUDE/ERRNO.H:28
+- macro `EZERO` — tools/msc6/INCLUDE/ERRNO.H:35
+- macro `EPERM` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:36
+- macro `ENOENT` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:37
+- macro `ESRCH` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:38
+- macro `EINTR` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:39
+- macro `EIO` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:40
+- macro `ENXIO` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:41
+- macro `E2BIG` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:42
+- macro `ENOEXEC` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:43
+- macro `EBADF` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:44
+- macro `ECHILD` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:45
+- macro `EAGAIN` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:46
+- macro `ENOMEM` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:47
+- macro `EACCES` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:48
+- macro `EFAULT` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:49
+- macro `ENOTBLK` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:50
+- macro `EBUSY` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:51
+- macro `EEXIST` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:52
+- macro `EXDEV` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:53
+- macro `ENODEV` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:54
+- macro `ENOTDIR` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:55
+- macro `EISDIR` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:56
+- macro `EINVAL` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:57
+- macro `ENFILE` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:58
+- macro `EMFILE` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:59
+- macro `ENOTTY` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:60
+- macro `ETXTBSY` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:61
+- macro `EFBIG` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:62
+- macro `ENOSPC` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:63
+- macro `ESPIPE` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:64
+- macro `EROFS` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:65
+- macro `EMLINK` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:66
+- macro `EPIPE` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:67
+- macro `EDOM` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:68
+- macro `ERANGE` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:69
+- macro `EUCLEAN` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:70
+- macro `EDEADLOCK` — define EZERO 0 — tools/msc6/INCLUDE/ERRNO.H:71
+
+### FCNTL.H  `C, 36 lines`
+> *
+- macro `O_RDONLY` — tools/msc6/INCLUDE/FCNTL.H:13
+- macro `O_WRONLY` — define O_RDONLY 0x0000 /* open for reading only — tools/msc6/INCLUDE/FCNTL.H:14
+- macro `O_RDWR` — define O_RDONLY 0x0000 /* open for reading only — tools/msc6/INCLUDE/FCNTL.H:15
+- macro `O_APPEND` — define O_RDONLY 0x0000 /* open for reading only — tools/msc6/INCLUDE/FCNTL.H:16
+- macro `O_CREAT` — tools/msc6/INCLUDE/FCNTL.H:18
+- macro `O_TRUNC` — define O_CREAT 0x0100 /* create and open file — tools/msc6/INCLUDE/FCNTL.H:19
+- macro `O_EXCL` — define O_CREAT 0x0100 /* create and open file — tools/msc6/INCLUDE/FCNTL.H:20
+- macro `O_TEXT(translated)` — tools/msc6/INCLUDE/FCNTL.H:26
+- macro `O_BINARY(untranslated)` — define O_TEXT 0x4000 /* file mode is text (translated) — tools/msc6/INCLUDE/FCNTL.H:27
+- macro `O_RAW` — tools/msc6/INCLUDE/FCNTL.H:31
+- macro `O_NOINHERIT` — tools/msc6/INCLUDE/FCNTL.H:35
+
+### FLOAT.H  `C, 141 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/FLOAT.H:19
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/FLOAT.H:21
+- macro `DBL_DIG` — tools/msc6/INCLUDE/FLOAT.H:24
+- macro `DBL_EPSILON` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:25
+- macro `DBL_MANT_DIG` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:26
+- macro `DBL_MAX` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:27
+- macro `DBL_MAX_10_EXP` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:28
+- macro `DBL_MAX_EXP` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:29
+- macro `DBL_MIN` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:30
+- macro `DBL_MIN_10_EXP(-307)` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:31
+- macro `DBL_MIN_EXP(-1021)` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:32
+- macro `DBL_RADIX` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:33
+- macro `DBL_ROUNDS` — define DBL_DIG 15 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:34
+- macro `FLT_DIG` — tools/msc6/INCLUDE/FLOAT.H:36
+- macro `FLT_EPSILON` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:37
+- macro `FLT_GUARD` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:38
+- macro `FLT_MANT_DIG` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:39
+- macro `FLT_MAX` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:40
+- macro `FLT_MAX_10_EXP` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:41
+- macro `FLT_MAX_EXP` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:42
+- macro `FLT_MIN` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:43
+- macro `FLT_MIN_10_EXP(-37)` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:44
+- macro `FLT_MIN_EXP(-125)` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:45
+- macro `FLT_NORMALIZE` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:46
+- macro `FLT_RADIX` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:47
+- macro `FLT_ROUNDS` — define FLT_DIG 7 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:48
+- macro `LDBL_DIG` — tools/msc6/INCLUDE/FLOAT.H:50
+- macro `LDBL_EPSILON` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:51
+- macro `LDBL_MANT_DIG` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:52
+- macro `LDBL_MAX` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:53
+- macro `LDBL_MAX_10_EXP` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:54
+- macro `LDBL_MAX_EXP` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:55
+- macro `LDBL_MIN` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:56
+- macro `LDBL_MIN_10_EXP(-4931)` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:57
+- macro `LDBL_MIN_EXP(-16381)` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:58
+- macro `LDBL_RADIX` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:59
+- macro `LDBL_ROUNDS` — define LDBL_DIG 19 /* # of decimal digits of precision — tools/msc6/INCLUDE/FLOAT.H:60
+- macro `MCW_EM` — tools/msc6/INCLUDE/FLOAT.H:72
+- macro `EM_INVALID` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/msc6/INCLUDE/FLOAT.H:73
+- macro `EM_DENORMAL` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/msc6/INCLUDE/FLOAT.H:74
+- macro `EM_ZERODIVIDE` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/msc6/INCLUDE/FLOAT.H:75
+- macro `EM_OVERFLOW` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/msc6/INCLUDE/FLOAT.H:76
+- macro `EM_UNDERFLOW` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/msc6/INCLUDE/FLOAT.H:77
+- macro `EM_INEXACT(precision)` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/msc6/INCLUDE/FLOAT.H:78
+- macro `MCW_IC` — tools/msc6/INCLUDE/FLOAT.H:80
+- macro `IC_AFFINE` — define MCW_IC 0x1000 /* Infinity Control — tools/msc6/INCLUDE/FLOAT.H:81
+- macro `IC_PROJECTIVE` — define MCW_IC 0x1000 /* Infinity Control — tools/msc6/INCLUDE/FLOAT.H:82
+- macro `MCW_RC` — tools/msc6/INCLUDE/FLOAT.H:84
+- macro `RC_CHOP` — define MCW_RC 0x0c00 /* Rounding Control — tools/msc6/INCLUDE/FLOAT.H:85
+- macro `RC_UP` — define MCW_RC 0x0c00 /* Rounding Control — tools/msc6/INCLUDE/FLOAT.H:86
+- macro `RC_DOWN` — define MCW_RC 0x0c00 /* Rounding Control — tools/msc6/INCLUDE/FLOAT.H:87
+- macro `RC_NEAR` — define MCW_RC 0x0c00 /* Rounding Control — tools/msc6/INCLUDE/FLOAT.H:88
+- macro `MCW_PC` — tools/msc6/INCLUDE/FLOAT.H:90
+- macro `PC_24` — define MCW_PC 0x0300 /* Precision Control — tools/msc6/INCLUDE/FLOAT.H:91
+- macro `PC_53` — define MCW_PC 0x0300 /* Precision Control — tools/msc6/INCLUDE/FLOAT.H:92
+- macro `PC_64` — define MCW_PC 0x0300 /* Precision Control — tools/msc6/INCLUDE/FLOAT.H:93
+- macro `CW_DEFAULT( IC_AFFINE + RC_NEAR + PC_64 + EM_DENORMAL + EM_UNDERFLOW + EM_INEXA…` — tools/msc6/INCLUDE/FLOAT.H:98
+- macro `SW_INVALID` — tools/msc6/INCLUDE/FLOAT.H:103
+- macro `SW_DENORMAL` — define SW_INVALID 0x0001 /* invalid — tools/msc6/INCLUDE/FLOAT.H:104
+- macro `SW_ZERODIVIDE` — define SW_INVALID 0x0001 /* invalid — tools/msc6/INCLUDE/FLOAT.H:105
+- macro `SW_OVERFLOW` — define SW_INVALID 0x0001 /* invalid — tools/msc6/INCLUDE/FLOAT.H:106
+- macro `SW_UNDERFLOW` — define SW_INVALID 0x0001 /* invalid — tools/msc6/INCLUDE/FLOAT.H:107
+- macro `SW_INEXACT(precision)` — define SW_INVALID 0x0001 /* invalid — tools/msc6/INCLUDE/FLOAT.H:108
+- macro `SW_UNEMULATED` — tools/msc6/INCLUDE/FLOAT.H:113
+- macro `SW_SQRTNEG` — define SW_UNEMULATED 0x0040 /* unemulated instruction — tools/msc6/INCLUDE/FLOAT.H:114
+- macro `SW_STACKOVERFLOW` — define SW_UNEMULATED 0x0040 /* unemulated instruction — tools/msc6/INCLUDE/FLOAT.H:115
+- macro `SW_STACKUNDERFLOW` — define SW_UNEMULATED 0x0040 /* unemulated instruction — tools/msc6/INCLUDE/FLOAT.H:116
+- macro `FPE_INVALID` — tools/msc6/INCLUDE/FLOAT.H:121
+- macro `FPE_DENORMAL` — define FPE_INVALID 0x81 — tools/msc6/INCLUDE/FLOAT.H:122
+- macro `FPE_ZERODIVIDE` — define FPE_INVALID 0x81 — tools/msc6/INCLUDE/FLOAT.H:123
+- macro `FPE_OVERFLOW` — define FPE_INVALID 0x81 — tools/msc6/INCLUDE/FLOAT.H:124
+- macro `FPE_UNDERFLOW` — define FPE_INVALID 0x81 — tools/msc6/INCLUDE/FLOAT.H:125
+- macro `FPE_INEXACT` — define FPE_INVALID 0x81 — tools/msc6/INCLUDE/FLOAT.H:126
+- macro `FPE_UNEMULATED` — tools/msc6/INCLUDE/FLOAT.H:128
+- macro `FPE_SQRTNEG` — define FPE_UNEMULATED 0x87 — tools/msc6/INCLUDE/FLOAT.H:129
+- macro `FPE_STACKOVERFLOW` — define FPE_UNEMULATED 0x87 — tools/msc6/INCLUDE/FLOAT.H:130
+- macro `FPE_STACKUNDERFLOW` — define FPE_UNEMULATED 0x87 — tools/msc6/INCLUDE/FLOAT.H:131
+- macro `FPE_EXPLICITGEN( SIGFPE )` — tools/msc6/INCLUDE/FLOAT.H:133
+
+### GRAPH.H  `C, 428 lines`
+> *
+- macro `_VIDEOCONFIG_DEFINED` — tools/msc6/INCLUDE/GRAPH.H:33
+- macro `_XYCOORD_DEFINED` — tools/msc6/INCLUDE/GRAPH.H:43
+- macro `_RCCOORD_DEFINED` — tools/msc6/INCLUDE/GRAPH.H:53
+- macro `_GROK` — successful — tools/msc6/INCLUDE/GRAPH.H:64
+- macro `_GRERROR(-1)` — errors — tools/msc6/INCLUDE/GRAPH.H:67
+- macro `_GRMODENOTSUPPORTED(-2)` — errors — tools/msc6/INCLUDE/GRAPH.H:68
+- macro `_GRNOTINPROPERMODE(-3)` — errors — tools/msc6/INCLUDE/GRAPH.H:69
+- macro `_GRINVALIDPARAMETER(-4)` — errors — tools/msc6/INCLUDE/GRAPH.H:70
+- macro `_GRFONTFILENOTFOUND(-5)` — errors — tools/msc6/INCLUDE/GRAPH.H:71
+- macro `_GRINVALIDFONTFILE(-6)` — errors — tools/msc6/INCLUDE/GRAPH.H:72
+- macro `_GRCORRUPTEDFONTFILE(-7)` — errors — tools/msc6/INCLUDE/GRAPH.H:73
+- macro `_GRINSUFFICIENTMEMORY(-8)` — errors — tools/msc6/INCLUDE/GRAPH.H:74
+- macro `_GRINVALIDIMAGEBUFFER(-9)` — errors — tools/msc6/INCLUDE/GRAPH.H:75
+- macro `_GRNOOUTPUT` — warnings — tools/msc6/INCLUDE/GRAPH.H:78
+- macro `_GRCLIPPED` — warnings — tools/msc6/INCLUDE/GRAPH.H:79
+- macro `_GRPARAMETERALTERED` — warnings — tools/msc6/INCLUDE/GRAPH.H:80
+- macro `_MAXRESMODE(-3)` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:89
+- macro `_MAXCOLORMODE(-2)` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:90
+- macro `_DEFAULTMODE(-1)` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:91
+- macro `_TEXTBW40` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:92
+- macro `_TEXTC40` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:93
+- macro `_TEXTBW80` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:94
+- macro `_TEXTC80` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:95
+- macro `_MRES4COLOR` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:96
+- macro `_MRESNOCOLOR` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:97
+- macro `_HRESBW` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:98
+- macro `_TEXTMONO` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:99
+- macro `_HERCMONO` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:100
+- macro `_MRES16COLOR` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:101
+- macro `_HRES16COLOR` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:102
+- macro `_ERESNOCOLOR` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:103
+- macro `_ERESCOLOR` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:104
+- macro `_VRES2COLOR` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:105
+- macro `_VRES16COLOR` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:106
+- macro `_MRES256COLOR` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:107
+- macro `_ORESCOLOR(Olivetti)` — arguments to _setvideomode() — tools/msc6/INCLUDE/GRAPH.H:108
+- macro `_MDPA(MDPA)` — videoconfig adapter values — tools/msc6/INCLUDE/GRAPH.H:118
+- macro `_CGA(CGA)` — videoconfig adapter values — tools/msc6/INCLUDE/GRAPH.H:119
+- macro `_EGA(EGA)` — videoconfig adapter values — tools/msc6/INCLUDE/GRAPH.H:120
+- macro `_VGA(VGA)` — videoconfig adapter values — tools/msc6/INCLUDE/GRAPH.H:121
+- macro `_MCGA(MCGA)` — videoconfig adapter values — tools/msc6/INCLUDE/GRAPH.H:122
+- macro `_HGC(HGC)` — videoconfig adapter values — tools/msc6/INCLUDE/GRAPH.H:123
+- macro `_OCGA(OCGA)` — videoconfig adapter values — tools/msc6/INCLUDE/GRAPH.H:124
+- macro `_OEGA(OEGA)` — videoconfig adapter values — tools/msc6/INCLUDE/GRAPH.H:125
+- macro `_OVGA(OVGA)` — videoconfig adapter values — tools/msc6/INCLUDE/GRAPH.H:126
+- macro `_MONO` — videoconfig monitor values — tools/msc6/INCLUDE/GRAPH.H:131
+- macro `_COLOR(or Enhanced emulating color)` — videoconfig monitor values — tools/msc6/INCLUDE/GRAPH.H:132
+- macro `_ENHCOLOR` — videoconfig monitor values — tools/msc6/INCLUDE/GRAPH.H:133
+- macro `_ANALOGMONO` — videoconfig monitor values — tools/msc6/INCLUDE/GRAPH.H:134
+- macro `_ANALOGCOLOR` — videoconfig monitor values — tools/msc6/INCLUDE/GRAPH.H:135
+- macro `_ANALOG` — videoconfig monitor values — tools/msc6/INCLUDE/GRAPH.H:136
+- macro `_setlogorg` — tools/msc6/INCLUDE/GRAPH.H:145
+- macro `_getlogcoord` — tools/msc6/INCLUDE/GRAPH.H:148
+- macro `_GBORDER` — control parameters for _ellipse, _rectangle, _pie and _polygon — tools/msc6/INCLUDE/GRAPH.H:159
+- macro `_GFILLINTERIOR` — control parameters for _ellipse, _rectangle, _pie and _polygon — tools/msc6/INCLUDE/GRAPH.H:160
+- macro `_GCLEARSCREEN` — parameters for _clearscreen — tools/msc6/INCLUDE/GRAPH.H:163
+- macro `_GVIEWPORT` — parameters for _clearscreen — tools/msc6/INCLUDE/GRAPH.H:164
+- macro `_GWINDOW` — parameters for _clearscreen — tools/msc6/INCLUDE/GRAPH.H:165
+- macro `_GCURSOROFF` — TEXT — tools/msc6/INCLUDE/GRAPH.H:212
+- macro `_GCURSORON` — TEXT — tools/msc6/INCLUDE/GRAPH.H:213
+- macro `_GWRAPOFF` — parameters for _wrapon — tools/msc6/INCLUDE/GRAPH.H:216
+- macro `_GWRAPON` — parameters for _wrapon — tools/msc6/INCLUDE/GRAPH.H:217
+- macro `_GSCROLLUP` — direction parameters for _scrolltextwindow — tools/msc6/INCLUDE/GRAPH.H:221
+- macro `_GSCROLLDOWN(-1)` — direction parameters for _scrolltextwindow — tools/msc6/INCLUDE/GRAPH.H:222
+- macro `_MAXTEXTROWS(-1)` — request maximum number of rows in _settextrows and _setvideomoderows — tools/msc6/INCLUDE/GRAPH.H:225
+- macro `_GPSET` — "action verbs" for _putimage() and _setwritemode() — tools/msc6/INCLUDE/GRAPH.H:253
+- macro `_GPRESET` — "action verbs" for _putimage() and _setwritemode() — tools/msc6/INCLUDE/GRAPH.H:254
+- macro `_GAND` — "action verbs" for _putimage() and _setwritemode() — tools/msc6/INCLUDE/GRAPH.H:255
+- macro `_GOR` — "action verbs" for _putimage() and _setwritemode() — tools/msc6/INCLUDE/GRAPH.H:256
+- macro `_GXOR` — "action verbs" for _putimage() and _setwritemode() — tools/msc6/INCLUDE/GRAPH.H:257
+- macro `_BLACK` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:265
+- macro `_BLUE` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:266
+- macro `_GREEN` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:267
+- macro `_CYAN` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:268
+- macro `_RED` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:269
+- macro `_MAGENTA` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:270
+- macro `_BROWN` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:271
+- macro `_WHITE` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:272
+- macro `_GRAY` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:273
+- macro `_LIGHTBLUE` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:274
+- macro `_LIGHTGREEN` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:275
+- macro `_LIGHTCYAN` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:276
+- macro `_LIGHTRED` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:277
+- macro `_LIGHTMAGENTA` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:278
+- macro `_YELLOW` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:279
+- macro `_BRIGHTWHITE` — universal color values (all color modes): — tools/msc6/INCLUDE/GRAPH.H:280
+- macro `_LIGHTYELLOW` — the following is obsolescent and defined only for backward compatibility — tools/msc6/INCLUDE/GRAPH.H:283
+- macro `_MODEFOFF` — mono mode F (_ERESNOCOLOR) color values: — tools/msc6/INCLUDE/GRAPH.H:286
+- macro `_MODEFOFFTOON` — mono mode F (_ERESNOCOLOR) color values: — tools/msc6/INCLUDE/GRAPH.H:287
+- macro `_MODEFOFFTOHI` — mono mode F (_ERESNOCOLOR) color values: — tools/msc6/INCLUDE/GRAPH.H:288
+- macro `_MODEFONTOOFF` — mono mode F (_ERESNOCOLOR) color values: — tools/msc6/INCLUDE/GRAPH.H:289
+- macro `_MODEFON` — mono mode F (_ERESNOCOLOR) color values: — tools/msc6/INCLUDE/GRAPH.H:290
+- macro `_MODEFONTOHI` — mono mode F (_ERESNOCOLOR) color values: — tools/msc6/INCLUDE/GRAPH.H:291
+- macro `_MODEFHITOOFF` — mono mode F (_ERESNOCOLOR) color values: — tools/msc6/INCLUDE/GRAPH.H:292
+- macro `_MODEFHITOON` — mono mode F (_ERESNOCOLOR) color values: — tools/msc6/INCLUDE/GRAPH.H:293
+- macro `_MODEFHI` — mono mode F (_ERESNOCOLOR) color values: — tools/msc6/INCLUDE/GRAPH.H:294
+- macro `_MODE7OFF` — mono mode 7 (_TEXTMONO) color values: — tools/msc6/INCLUDE/GRAPH.H:297
+- macro `_MODE7ON` — mono mode 7 (_TEXTMONO) color values: — tools/msc6/INCLUDE/GRAPH.H:298
+- macro `_MODE7HI` — mono mode 7 (_TEXTMONO) color values: — tools/msc6/INCLUDE/GRAPH.H:299
+- macro `_WXYCOORD_DEFINED` — tools/msc6/INCLUDE/GRAPH.H:326
+- macro `_FONTINFO_DEFINED` — tools/msc6/INCLUDE/GRAPH.H:412
+
+### IO.H  `C, 48 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/IO.H:17
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/IO.H:19
+
+### LIMITS.H  `C, 34 lines`
+> *
+- macro `CHAR_BIT` — tools/msc6/INCLUDE/LIMITS.H:13
+- macro `SCHAR_MIN(-127)` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:14
+- macro `SCHAR_MAX` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:15
+- macro `UCHAR_MAX` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:16
+- macro `CHAR_MIN` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:18
+- macro `CHAR_MAX` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:19
+- macro `CHAR_MIN` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:21
+- macro `CHAR_MAX` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:22
+- macro `MB_LEN_MAX` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:24
+- macro `SHRT_MIN(-32767)` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:25
+- macro `SHRT_MAX(signed)` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:26
+- macro `USHRT_MAX` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:27
+- macro `INT_MIN(-32767)` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:28
+- macro `INT_MAX(signed)` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:29
+- macro `UINT_MAX` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:30
+- macro `LONG_MIN(-2147483647)` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:31
+- macro `LONG_MAX(signed)` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:32
+- macro `ULONG_MAX` — define CHAR_BIT 8 /* number of bits in a char — tools/msc6/INCLUDE/LIMITS.H:33
+
+### LOCALE.H  `C, 79 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/LOCALE.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/LOCALE.H:20
+- macro `NULL((void *)0)` — ifndef NULL — tools/msc6/INCLUDE/LOCALE.H:27
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/LOCALE.H:29
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/LOCALE.H:31
+- macro `LC_ALL` — tools/msc6/INCLUDE/LOCALE.H:38
+- macro `LC_COLLATE` — define LC_ALL 0 — tools/msc6/INCLUDE/LOCALE.H:39
+- macro `LC_CTYPE` — define LC_ALL 0 — tools/msc6/INCLUDE/LOCALE.H:40
+- macro `LC_MONETARY` — define LC_ALL 0 — tools/msc6/INCLUDE/LOCALE.H:41
+- macro `LC_NUMERIC` — define LC_ALL 0 — tools/msc6/INCLUDE/LOCALE.H:42
+- macro `LC_TIME` — define LC_ALL 0 — tools/msc6/INCLUDE/LOCALE.H:43
+- macro `LC_MIN` — tools/msc6/INCLUDE/LOCALE.H:45
+- macro `LC_MAX` — define LC_MIN LC_ALL — tools/msc6/INCLUDE/LOCALE.H:46
+- macro `_LCONV_DEFINED` — tools/msc6/INCLUDE/LOCALE.H:72
+
+### MALLOC.H  `C, 137 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/MALLOC.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/MALLOC.H:20
+- macro `_NULLSEG((_segment)0)` — if (_MSC_VER >= 600) — tools/msc6/INCLUDE/MALLOC.H:27
+- macro `_NULLOFF((void _based(void) *)0xffff)` — if (_MSC_VER >= 600) — tools/msc6/INCLUDE/MALLOC.H:28
+- macro `_HEAPEMPTY(-1)` — tools/msc6/INCLUDE/MALLOC.H:34
+- macro `_HEAPOK(-2)` — define _HEAPEMPTY (-1) — tools/msc6/INCLUDE/MALLOC.H:35
+- macro `_HEAPBADBEGIN(-3)` — define _HEAPEMPTY (-1) — tools/msc6/INCLUDE/MALLOC.H:36
+- macro `_HEAPBADNODE(-4)` — define _HEAPEMPTY (-1) — tools/msc6/INCLUDE/MALLOC.H:37
+- macro `_HEAPEND(-5)` — define _HEAPEMPTY (-1) — tools/msc6/INCLUDE/MALLOC.H:38
+- macro `_HEAPBADPTR(-6)` — define _HEAPEMPTY (-1) — tools/msc6/INCLUDE/MALLOC.H:39
+- macro `_FREEENTRY` — define _HEAPEMPTY (-1) — tools/msc6/INCLUDE/MALLOC.H:40
+- macro `_USEDENTRY` — define _HEAPEMPTY (-1) — tools/msc6/INCLUDE/MALLOC.H:41
+- macro `_HEAP_MAXREQ` — tools/msc6/INCLUDE/MALLOC.H:46
+- type `size_t` — ifndef _SIZE_T_DEFINED — tools/msc6/INCLUDE/MALLOC.H:52
+- macro `_SIZE_T_DEFINED` — tools/msc6/INCLUDE/MALLOC.H:53
+- type `_pentry` — ifndef _HEAPINFO_DEFINED — tools/msc6/INCLUDE/MALLOC.H:58
+- macro `_HEAPINFO_DEFINED` — tools/msc6/INCLUDE/MALLOC.H:63
+
+### MATH.H  `C, 236 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/MATH.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/MATH.H:20
+- macro `_EXCEPTION_DEFINED` — tools/msc6/INCLUDE/MATH.H:36
+- macro `_COMPLEX_DEFINED` — tools/msc6/INCLUDE/MATH.H:48
+- macro `DOMAIN` — tools/msc6/INCLUDE/MATH.H:55
+- macro `SING` — define DOMAIN 1 /* argument domain error — tools/msc6/INCLUDE/MATH.H:56
+- macro `OVERFLOW` — define DOMAIN 1 /* argument domain error — tools/msc6/INCLUDE/MATH.H:57
+- macro `UNDERFLOW` — define DOMAIN 1 /* argument domain error — tools/msc6/INCLUDE/MATH.H:58
+- macro `TLOSS` — define DOMAIN 1 /* argument domain error — tools/msc6/INCLUDE/MATH.H:59
+- macro `PLOSS` — define DOMAIN 1 /* argument domain error — tools/msc6/INCLUDE/MATH.H:60
+- macro `EDOM` — tools/msc6/INCLUDE/MATH.H:62
+- macro `ERANGE` — define EDOM 33 — tools/msc6/INCLUDE/MATH.H:63
+- macro `HUGE_VAL` — tools/msc6/INCLUDE/MATH.H:73
+- macro `HUGE_VAL` — tools/msc6/INCLUDE/MATH.H:77
+- macro `_LD_EXCEPTION_DEFINED` — tools/msc6/INCLUDE/MATH.H:178
+- macro `_LD_COMPLEX_DEFINED` — tools/msc6/INCLUDE/MATH.H:190
+- macro `_LHUGE_VAL` — tools/msc6/INCLUDE/MATH.H:196
+- macro `_LHUGE_VAL` — tools/msc6/INCLUDE/MATH.H:200
+
+### MEMORY.H  `C, 57 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/MEMORY.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/MEMORY.H:20
+- type `size_t` — ifndef _SIZE_T_DEFINED — tools/msc6/INCLUDE/MEMORY.H:24
+- macro `_SIZE_T_DEFINED` — tools/msc6/INCLUDE/MEMORY.H:25
+
+### PGCHART.H  `C, 222 lines`
+> *
+- macro `FLT_MAX` — Required for the missing value definition — tools/msc6/INCLUDE/PGCHART.H:17
+- macro `_PG_PALETTELEN` — tools/msc6/INCLUDE/PGCHART.H:20
+- macro `_PG_MAXCHARTTYPE` — define _PG_PALETTELEN 16 /* Number of entries in internal palette — tools/msc6/INCLUDE/PGCHART.H:21
+- macro `_PG_MAXCHARTSTYLE` — define _PG_PALETTELEN 16 /* Number of entries in internal palette — tools/msc6/INCLUDE/PGCHART.H:22
+- macro `_PG_TITLELEN` — define _PG_PALETTELEN 16 /* Number of entries in internal palette — tools/msc6/INCLUDE/PGCHART.H:23
+- macro `_PG_LEFT` — tools/msc6/INCLUDE/PGCHART.H:25
+- macro `_PG_CENTER` — define _PG_LEFT 1 /* Positions used for titles and legends — tools/msc6/INCLUDE/PGCHART.H:26
+- macro `_PG_RIGHT` — define _PG_LEFT 1 /* Positions used for titles and legends — tools/msc6/INCLUDE/PGCHART.H:27
+- macro `_PG_BOTTOM` — define _PG_LEFT 1 /* Positions used for titles and legends — tools/msc6/INCLUDE/PGCHART.H:28
+- macro `_PG_OVERLAY` — define _PG_LEFT 1 /* Positions used for titles and legends — tools/msc6/INCLUDE/PGCHART.H:29
+- macro `_PG_LINEARAXIS` — tools/msc6/INCLUDE/PGCHART.H:31
+- macro `_PG_LOGAXIS` — define _PG_LINEARAXIS 1 /* Used to specify axis types — tools/msc6/INCLUDE/PGCHART.H:32
+- macro `_PG_DECFORMAT` — tools/msc6/INCLUDE/PGCHART.H:34
+- macro `_PG_EXPFORMAT` — define _PG_DECFORMAT 1 /* Used to specify tic mark label format — tools/msc6/INCLUDE/PGCHART.H:35
+- macro `_PG_BARCHART` — tools/msc6/INCLUDE/PGCHART.H:37
+- macro `_PG_COLUMNCHART` — define _PG_BARCHART 1 /* Charttype for a bar chart — tools/msc6/INCLUDE/PGCHART.H:38
+- macro `_PG_PLAINBARS` — define _PG_BARCHART 1 /* Charttype for a bar chart — tools/msc6/INCLUDE/PGCHART.H:39
+- macro `_PG_STACKEDBARS` — define _PG_BARCHART 1 /* Charttype for a bar chart — tools/msc6/INCLUDE/PGCHART.H:40
+- macro `_PG_LINECHART` — tools/msc6/INCLUDE/PGCHART.H:42
+- macro `_PG_SCATTERCHART` — define _PG_LINECHART 3 /* Charttype for a line chart — tools/msc6/INCLUDE/PGCHART.H:43
+- macro `_PG_POINTANDLINE` — define _PG_LINECHART 3 /* Charttype for a line chart — tools/msc6/INCLUDE/PGCHART.H:44
+- macro `_PG_POINTONLY` — define _PG_LINECHART 3 /* Charttype for a line chart — tools/msc6/INCLUDE/PGCHART.H:45
+- macro `_PG_PIECHART` — tools/msc6/INCLUDE/PGCHART.H:47
+- macro `_PG_PERCENT` — define _PG_PIECHART 5 /* Charttype for pie chart — tools/msc6/INCLUDE/PGCHART.H:48
+- macro `_PG_NOPERCENT` — define _PG_PIECHART 5 /* Charttype for pie chart — tools/msc6/INCLUDE/PGCHART.H:49
+- macro `_PG_MISSINGVALUE(-FLT_MAX)` — tools/msc6/INCLUDE/PGCHART.H:51
+- macro `_PG_NOTINITIALIZED` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:58
+- macro `_PG_BADSCREENMODE` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:59
+- macro `_PG_BADCHARTSTYLE` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:60
+- macro `_PG_BADCHARTTYPE` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:61
+- macro `_PG_BADLEGENDWINDOW` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:62
+- macro `_PG_BADCHARTWINDOW` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:63
+- macro `_PG_BADDATAWINDOW` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:64
+- macro `_PG_NOMEMORY` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:65
+- macro `_PG_BADLOGBASE` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:66
+- macro `_PG_BADSCALEFACTOR` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:67
+- macro `_PG_TOOSMALLN` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:68
+- macro `_PG_TOOFEWSERIES` — Numbers greater than 100 will terminate chart routine, others will cause — tools/msc6/INCLUDE/PGCHART.H:69
+- macro `_TITLETYPE_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:80
+- type `grid` — Typedef for chart axes — tools/msc6/INCLUDE/PGCHART.H:85
+- macro `_AXISTYPE_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:102
+- type `x1` — Typedef used for defining chart and data windows — tools/msc6/INCLUDE/PGCHART.H:107
+- macro `_WINDOWTYPE_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:117
+- type `legend` — Typedef for legend definition — tools/msc6/INCLUDE/PGCHART.H:122
+- macro `_LEGENDTYPE_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:129
+- type `charttype` — Typedef for legend definition — tools/msc6/INCLUDE/PGCHART.H:134
+- macro `_CHARTENV_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:145
+- macro `_CHARMAP_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:151
+- macro `_FILLMAP_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:157
+- type `color` — Typedef for palette entry definition — tools/msc6/INCLUDE/PGCHART.H:162
+- macro `_PALETTEENTRY_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:168
+- macro `_PALETTETYPE_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:174
+- macro `_STYLESET_DEFINED` — tools/msc6/INCLUDE/PGCHART.H:180
+
+### PROCESS.H  `C, 92 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/PROCESS.H:17
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/PROCESS.H:19
+- macro `P_WAIT` — tools/msc6/INCLUDE/PROCESS.H:30
+- macro `P_NOWAIT` — define P_WAIT 0 — tools/msc6/INCLUDE/PROCESS.H:31
+- macro `P_OVERLAY` — define P_WAIT 0 — tools/msc6/INCLUDE/PROCESS.H:33
+- macro `P_OVERLAY` — define P_WAIT 0 — tools/msc6/INCLUDE/PROCESS.H:35
+- macro `OLD_P_OVERLAY` — define P_WAIT 0 — tools/msc6/INCLUDE/PROCESS.H:37
+- macro `P_NOWAITO` — define P_WAIT 0 — tools/msc6/INCLUDE/PROCESS.H:38
+- macro `P_DETACH` — define P_WAIT 0 — tools/msc6/INCLUDE/PROCESS.H:39
+- macro `WAIT_CHILD` — tools/msc6/INCLUDE/PROCESS.H:44
+- macro `WAIT_GRANDCHILD` — define WAIT_CHILD 0 — tools/msc6/INCLUDE/PROCESS.H:45
+
+### SEARCH.H  `C, 42 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/SEARCH.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/SEARCH.H:20
+- type `size_t` — ifndef _SIZE_T_DEFINED — tools/msc6/INCLUDE/SEARCH.H:24
+- macro `_SIZE_T_DEFINED` — tools/msc6/INCLUDE/SEARCH.H:25
+
+### SETJMP.H  `C, 38 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/SETJMP.H:19
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/SETJMP.H:21
+- macro `_JBLEN` — tools/msc6/INCLUDE/SETJMP.H:26
+- macro `_JMP_BUF_DEFINED` — tools/msc6/INCLUDE/SETJMP.H:30
+
+### SHARE.H  `C, 16 lines`
+> *
+- macro `SH_COMPAT` — tools/msc6/INCLUDE/SHARE.H:11
+- macro `SH_DENYRW` — define SH_COMPAT 0x00 /* compatibility mode — tools/msc6/INCLUDE/SHARE.H:12
+- macro `SH_DENYWR` — define SH_COMPAT 0x00 /* compatibility mode — tools/msc6/INCLUDE/SHARE.H:13
+- macro `SH_DENYRD` — define SH_COMPAT 0x00 /* compatibility mode — tools/msc6/INCLUDE/SHARE.H:14
+- macro `SH_DENYNO` — define SH_COMPAT 0x00 /* compatibility mode — tools/msc6/INCLUDE/SHARE.H:15
+
+### SIGNAL.H  `C, 72 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/SIGNAL.H:17
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/SIGNAL.H:19
+- macro `_LOADDS_` — ifdef _DLL — tools/msc6/INCLUDE/SIGNAL.H:23
+- macro `_LOADDS_` — ifdef _DLL — tools/msc6/INCLUDE/SIGNAL.H:25
+- type `sig_atomic_t` — ifndef _SIG_ATOMIC_T_DEFINED — tools/msc6/INCLUDE/SIGNAL.H:29
+- macro `_SIG_ATOMIC_T_DEFINED` — tools/msc6/INCLUDE/SIGNAL.H:30
+- macro `NSIG` — tools/msc6/INCLUDE/SIGNAL.H:34
+- macro `SIGINT` — tools/msc6/INCLUDE/SIGNAL.H:39
+- macro `SIGILL` — define SIGINT 2 /* interrupt - corresponds to DOS 3.x int 23H — tools/msc6/INCLUDE/SIGNAL.H:40
+- macro `SIGFPE` — define SIGINT 2 /* interrupt - corresponds to DOS 3.x int 23H — tools/msc6/INCLUDE/SIGNAL.H:41
+- macro `SIGSEGV` — define SIGINT 2 /* interrupt - corresponds to DOS 3.x int 23H — tools/msc6/INCLUDE/SIGNAL.H:42
+- macro `SIGTERM` — define SIGINT 2 /* interrupt - corresponds to DOS 3.x int 23H — tools/msc6/INCLUDE/SIGNAL.H:43
+- macro `SIGUSR1` — define SIGINT 2 /* interrupt - corresponds to DOS 3.x int 23H — tools/msc6/INCLUDE/SIGNAL.H:44
+- macro `SIGUSR2` — define SIGINT 2 /* interrupt - corresponds to DOS 3.x int 23H — tools/msc6/INCLUDE/SIGNAL.H:45
+- macro `SIGUSR3` — define SIGINT 2 /* interrupt - corresponds to DOS 3.x int 23H — tools/msc6/INCLUDE/SIGNAL.H:46
+- macro `SIGBREAK` — define SIGINT 2 /* interrupt - corresponds to DOS 3.x int 23H — tools/msc6/INCLUDE/SIGNAL.H:47
+- macro `SIGABRT` — define SIGINT 2 /* interrupt - corresponds to DOS 3.x int 23H — tools/msc6/INCLUDE/SIGNAL.H:48
+- macro `SIG_DFL(void (_FAR_ _cdecl _LOADDS_ *)())` — tools/msc6/INCLUDE/SIGNAL.H:54
+- macro `SIG_IGN(void (_FAR_ _cdecl _LOADDS_ *)())` — define SIG_DFL (void (_FAR_ _cdecl _LOADDS_ *)())0 /* default signal action — tools/msc6/INCLUDE/SIGNAL.H:55
+- macro `SIG_SGE(void (_FAR_ _cdecl _LOADDS_ *)())` — define SIG_DFL (void (_FAR_ _cdecl _LOADDS_ *)())0 /* default signal action — tools/msc6/INCLUDE/SIGNAL.H:56
+- macro `SIG_ACK(void (_FAR_ _cdecl _LOADDS_ *)())` — define SIG_DFL (void (_FAR_ _cdecl _LOADDS_ *)())0 /* default signal action — tools/msc6/INCLUDE/SIGNAL.H:57
+- macro `SIG_ERR(void (_FAR_ _cdecl _LOADDS_ *)())` — tools/msc6/INCLUDE/SIGNAL.H:62
+
+### STDARG.H  `C, 43 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STDARG.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STDARG.H:20
+- macro `NULL((void *)0)` — ifndef NULL — tools/msc6/INCLUDE/STDARG.H:27
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/STDARG.H:29
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/STDARG.H:31
+- type `va_list` — ifndef _VA_LIST_DEFINED — tools/msc6/INCLUDE/STDARG.H:36
+- macro `_VA_LIST_DEFINED` — tools/msc6/INCLUDE/STDARG.H:37
+- macro `va_start(ap,v)` — tools/msc6/INCLUDE/STDARG.H:40
+- macro `va_arg(ap,t)` — define va_start(ap,v) ap = (va_list)&v + sizeof(v) — tools/msc6/INCLUDE/STDARG.H:41
+- macro `va_end(ap)` — define va_start(ap,v) ap = (va_list)&v + sizeof(v) — tools/msc6/INCLUDE/STDARG.H:42
+
+### STDDEF.H  `C, 66 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STDDEF.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STDDEF.H:20
+- macro `NULL((void *)0)` — ifndef NULL — tools/msc6/INCLUDE/STDDEF.H:27
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/STDDEF.H:29
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/STDDEF.H:31
+- macro `offsetof(s,m)` — tools/msc6/INCLUDE/STDDEF.H:35
+- macro `errno(*_errno())` — tools/msc6/INCLUDE/STDDEF.H:42
+- type `ptrdiff_t` — ifndef _PTRDIFF_T_DEFINED — tools/msc6/INCLUDE/STDDEF.H:51
+- macro `_PTRDIFF_T_DEFINED` — tools/msc6/INCLUDE/STDDEF.H:52
+- type `size_t` — ifndef _SIZE_T_DEFINED — tools/msc6/INCLUDE/STDDEF.H:56
+- macro `_SIZE_T_DEFINED` — tools/msc6/INCLUDE/STDDEF.H:57
+
+### STDIO.H  `C, 225 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STDIO.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STDIO.H:20
+- type `size_t` — ifndef _SIZE_T_DEFINED — tools/msc6/INCLUDE/STDIO.H:24
+- macro `_SIZE_T_DEFINED` — tools/msc6/INCLUDE/STDIO.H:25
+- type `va_list` — ifndef _VA_LIST_DEFINED — tools/msc6/INCLUDE/STDIO.H:29
+- macro `_VA_LIST_DEFINED` — tools/msc6/INCLUDE/STDIO.H:30
+- macro `BUFSIZ` — tools/msc6/INCLUDE/STDIO.H:35
+- macro `_NFILE` — define BUFSIZ 512 — tools/msc6/INCLUDE/STDIO.H:37
+- macro `_NFILE` — define BUFSIZ 512 — tools/msc6/INCLUDE/STDIO.H:39
+- macro `EOF(-1)` — define BUFSIZ 512 — tools/msc6/INCLUDE/STDIO.H:41
+- type `FILE` — tools/msc6/INCLUDE/STDIO.H:51
+- macro `_FILE_DEFINED` — tools/msc6/INCLUDE/STDIO.H:52
+- macro `P_tmpdir` — tools/msc6/INCLUDE/STDIO.H:63
+- macro `L_tmpnam(P_tmpdir)` — define P_tmpdir "\\" — tools/msc6/INCLUDE/STDIO.H:64
+- macro `SEEK_CUR` — tools/msc6/INCLUDE/STDIO.H:69
+- macro `SEEK_END` — define SEEK_CUR 1 — tools/msc6/INCLUDE/STDIO.H:70
+- macro `SEEK_SET` — define SEEK_CUR 1 — tools/msc6/INCLUDE/STDIO.H:71
+- macro `FILENAME_MAX` — tools/msc6/INCLUDE/STDIO.H:78
+- macro `FOPEN_MAX` — define FILENAME_MAX 63 — tools/msc6/INCLUDE/STDIO.H:79
+- macro `SYS_OPEN` — define FILENAME_MAX 63 — tools/msc6/INCLUDE/STDIO.H:80
+- macro `TMP_MAX` — define FILENAME_MAX 63 — tools/msc6/INCLUDE/STDIO.H:81
+- macro `NULL((void *)0)` — ifndef NULL — tools/msc6/INCLUDE/STDIO.H:88
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/STDIO.H:90
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/STDIO.H:92
+- type `fpos_t` — ifndef _FPOS_T_DEFINED — tools/msc6/INCLUDE/STDIO.H:111
+- macro `_FPOS_T_DEFINED` — tools/msc6/INCLUDE/STDIO.H:112
+- macro `stdin(&_iob[0])` — tools/msc6/INCLUDE/STDIO.H:118
+- macro `stdout(&_iob[1])` — define stdin (&_iob[0]) — tools/msc6/INCLUDE/STDIO.H:119
+- macro `stderr(&_iob[2])` — define stdin (&_iob[0]) — tools/msc6/INCLUDE/STDIO.H:120
+- macro `stdaux(&_iob[3])` — define stdin (&_iob[0]) — tools/msc6/INCLUDE/STDIO.H:121
+- macro `stdprn(&_iob[4])` — define stdin (&_iob[0]) — tools/msc6/INCLUDE/STDIO.H:122
+- macro `_IOREAD` — tools/msc6/INCLUDE/STDIO.H:125
+- macro `_IOWRT` — define _IOREAD 0x01 — tools/msc6/INCLUDE/STDIO.H:126
+- macro `_IOFBF` — tools/msc6/INCLUDE/STDIO.H:128
+- macro `_IOLBF` — define _IOFBF 0x0 — tools/msc6/INCLUDE/STDIO.H:129
+- macro `_IONBF` — define _IOFBF 0x0 — tools/msc6/INCLUDE/STDIO.H:130
+- macro `_IOMYBUF` — tools/msc6/INCLUDE/STDIO.H:132
+- macro `_IOEOF` — define _IOMYBUF 0x08 — tools/msc6/INCLUDE/STDIO.H:133
+- macro `_IOERR` — define _IOMYBUF 0x08 — tools/msc6/INCLUDE/STDIO.H:134
+- macro `_IOSTRG` — define _IOMYBUF 0x08 — tools/msc6/INCLUDE/STDIO.H:135
+- macro `_IORW` — define _IOMYBUF 0x08 — tools/msc6/INCLUDE/STDIO.H:136
+- macro `_STDIO_DEFINED` — tools/msc6/INCLUDE/STDIO.H:204
+- macro `feof(_stream)` — tools/msc6/INCLUDE/STDIO.H:209
+- macro `ferror(_stream)` — define feof(_stream) ((_stream)->_flag & _IOEOF) — tools/msc6/INCLUDE/STDIO.H:210
+- macro `fileno(_stream)` — define feof(_stream) ((_stream)->_flag & _IOEOF) — tools/msc6/INCLUDE/STDIO.H:211
+- macro `getc(_stream)` — define feof(_stream) ((_stream)->_flag & _IOEOF) — tools/msc6/INCLUDE/STDIO.H:212
+- macro `putc(_c,_stream)` — tools/msc6/INCLUDE/STDIO.H:214
+- macro `getchar()` — tools/msc6/INCLUDE/STDIO.H:216
+- macro `putchar(_c)` — define getchar() getc(stdin) — tools/msc6/INCLUDE/STDIO.H:217
+
+### STDLIB.H  `C, 205 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STDLIB.H:20
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STDLIB.H:22
+- macro `_LOADDS_` — ifdef _DLL — tools/msc6/INCLUDE/STDLIB.H:26
+- macro `_LOADDS_` — ifdef _DLL — tools/msc6/INCLUDE/STDLIB.H:28
+- type `size_t` — ifndef _SIZE_T_DEFINED — tools/msc6/INCLUDE/STDLIB.H:32
+- macro `_SIZE_T_DEFINED` — tools/msc6/INCLUDE/STDLIB.H:33
+- macro `NULL((void *)0)` — ifndef NULL — tools/msc6/INCLUDE/STDLIB.H:40
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/STDLIB.H:42
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/STDLIB.H:44
+- macro `EXIT_SUCCESS` — tools/msc6/INCLUDE/STDLIB.H:50
+- macro `EXIT_FAILURE` — define EXIT_SUCCESS 0 — tools/msc6/INCLUDE/STDLIB.H:51
+- macro `_ONEXIT_T_DEFINED` — tools/msc6/INCLUDE/STDLIB.H:55
+- type `quot` — ifndef _DIV_T_DEFINED — tools/msc6/INCLUDE/STDLIB.H:62
+- type `quot` — tools/msc6/INCLUDE/STDLIB.H:67
+- macro `_DIV_T_DEFINED` — tools/msc6/INCLUDE/STDLIB.H:73
+- macro `RAND_MAX` — tools/msc6/INCLUDE/STDLIB.H:78
+- macro `max(a,b)` — tools/msc6/INCLUDE/STDLIB.H:83
+- macro `min(a,b)` — define max(a,b) (((a) > (b)) ? (a) : (b)) — tools/msc6/INCLUDE/STDLIB.H:84
+- macro `_MAX_PATH` — tools/msc6/INCLUDE/STDLIB.H:91
+- macro `_MAX_DRIVE` — define _MAX_PATH 260 /* max. length of full pathname — tools/msc6/INCLUDE/STDLIB.H:92
+- macro `_MAX_DIR` — define _MAX_PATH 260 /* max. length of full pathname — tools/msc6/INCLUDE/STDLIB.H:93
+- macro `_MAX_FNAME` — define _MAX_PATH 260 /* max. length of full pathname — tools/msc6/INCLUDE/STDLIB.H:94
+- macro `_MAX_EXT` — define _MAX_PATH 260 /* max. length of full pathname — tools/msc6/INCLUDE/STDLIB.H:95
+- macro `errno(*_errno())` — tools/msc6/INCLUDE/STDLIB.H:102
+- macro `_doserrno(*__doserrno())` — define errno (*_errno()) — tools/msc6/INCLUDE/STDLIB.H:103
+- macro `DOS_MODE` — tools/msc6/INCLUDE/STDLIB.H:128
+- macro `OS2_MODE` — define DOS_MODE 0 /* Real Address Mode — tools/msc6/INCLUDE/STDLIB.H:129
+
+### STRING.H  `C, 122 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STRING.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/STRING.H:20
+- type `size_t` — ifndef _SIZE_T_DEFINED — tools/msc6/INCLUDE/STRING.H:24
+- macro `_SIZE_T_DEFINED` — tools/msc6/INCLUDE/STRING.H:25
+
+### TIME.H  `C, 115 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/TIME.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/TIME.H:20
+- type `time_t` — ifndef _TIME_T_DEFINED — tools/msc6/INCLUDE/TIME.H:26
+- macro `_TIME_T_DEFINED` — tools/msc6/INCLUDE/TIME.H:27
+- type `clock_t` — ifndef _CLOCK_T_DEFINED — tools/msc6/INCLUDE/TIME.H:31
+- macro `_CLOCK_T_DEFINED` — tools/msc6/INCLUDE/TIME.H:32
+- type `size_t` — ifndef _SIZE_T_DEFINED — tools/msc6/INCLUDE/TIME.H:36
+- macro `_SIZE_T_DEFINED` — tools/msc6/INCLUDE/TIME.H:37
+- macro `_TM_DEFINED` — tools/msc6/INCLUDE/TIME.H:54
+- macro `NULL((void *)0)` — ifndef NULL — tools/msc6/INCLUDE/TIME.H:62
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/TIME.H:64
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/TIME.H:66
+- macro `CLOCKS_PER_SEC` — tools/msc6/INCLUDE/TIME.H:73
+- macro `CLK_TCK` — tools/msc6/INCLUDE/TIME.H:77
+
+### VARARGS.H  `C, 44 lines`
+> *
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/VARARGS.H:18
+- macro `_FAR_` — ifdef _MT — tools/msc6/INCLUDE/VARARGS.H:20
+- macro `NULL((void *)0)` — ifndef NULL — tools/msc6/INCLUDE/VARARGS.H:27
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/VARARGS.H:29
+- macro `NULL` — ifndef NULL — tools/msc6/INCLUDE/VARARGS.H:31
+- type `va_list` — ifndef _VA_LIST_DEFINED — tools/msc6/INCLUDE/VARARGS.H:36
+- macro `_VA_LIST_DEFINED` — tools/msc6/INCLUDE/VARARGS.H:37
+- macro `va_dcl` — tools/msc6/INCLUDE/VARARGS.H:40
+- macro `va_start(ap)` — define va_dcl va_list va_alist; — tools/msc6/INCLUDE/VARARGS.H:41
+- macro `va_arg(ap,t)` — define va_dcl va_list va_alist; — tools/msc6/INCLUDE/VARARGS.H:42
+- macro `va_end(ap)` — define va_dcl va_list va_alist; — tools/msc6/INCLUDE/VARARGS.H:43
+
+## tools/tc20/INCLUDE/
+
+### ALLOC.H  `C, 59 lines`
+> alloc.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/ALLOC.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/ALLOC.H:11
+- macro `_STDDEF` — ifndef _STDDEF — tools/tc20/INCLUDE/ALLOC.H:15
+- macro `_PTRDIFF_T` — ifndef _STDDEF — tools/tc20/INCLUDE/ALLOC.H:17
+- type `ptrdiff_t` — ifndef _STDDEF — tools/tc20/INCLUDE/ALLOC.H:19
+- type `ptrdiff_t` — else — tools/tc20/INCLUDE/ALLOC.H:21
+- macro `_SIZE_T` — endif — tools/tc20/INCLUDE/ALLOC.H:25
+- type `size_t` — endif — tools/tc20/INCLUDE/ALLOC.H:26
+- macro `NULL` — ifndef NULL — tools/tc20/INCLUDE/ALLOC.H:32
+- macro `NULL` — ifndef NULL — tools/tc20/INCLUDE/ALLOC.H:34
+
+### ASSERT.H  `C, 20 lines`
+> assert.h
+- macro `assert(p)` — if !defined(NDEBUG) — tools/tc20/INCLUDE/ASSERT.H:14
+- macro `assert(p)` — p, __FILE__, __LINE__);abort();} — tools/tc20/INCLUDE/ASSERT.H:18
+
+### BIOS.H  `C, 22 lines`
+> bios.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/BIOS.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/BIOS.H:11
+
+### CONIO.H  `C, 98 lines`
+> conio.h
+- macro `__VIDEO` — / — tools/tc20/INCLUDE/CONIO.H:9
+- macro `_Cdecl` — if __STDC__ — tools/tc20/INCLUDE/CONIO.H:12
+- macro `_Cdecl` — if __STDC__ — tools/tc20/INCLUDE/CONIO.H:14
+- macro `__COLORS` — if !defined(__COLORS) — tools/tc20/INCLUDE/CONIO.H:36
+- macro `BLINK` — tools/tc20/INCLUDE/CONIO.H:58
+
+### CTYPE.H  `C, 43 lines`
+> ctype.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/CTYPE.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/CTYPE.H:11
+- macro `_IS_SP` — tools/tc20/INCLUDE/CTYPE.H:14
+- macro `_IS_DIG` — define _IS_SP 1 /* is space — tools/tc20/INCLUDE/CTYPE.H:15
+- macro `_IS_UPP` — define _IS_SP 1 /* is space — tools/tc20/INCLUDE/CTYPE.H:16
+- macro `_IS_LOW` — define _IS_SP 1 /* is space — tools/tc20/INCLUDE/CTYPE.H:17
+- macro `_IS_HEX` — define _IS_SP 1 /* is space — tools/tc20/INCLUDE/CTYPE.H:18
+- macro `_IS_CTL` — define _IS_SP 1 /* is space — tools/tc20/INCLUDE/CTYPE.H:19
+- macro `_IS_PUN` — define _IS_SP 1 /* is space — tools/tc20/INCLUDE/CTYPE.H:20
+- macro `isalnum(c)` — tools/tc20/INCLUDE/CTYPE.H:24
+- macro `isalpha(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:25
+- macro `isascii(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:26
+- macro `iscntrl(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:27
+- macro `isdigit(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:28
+- macro `isgraph(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:29
+- macro `islower(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:30
+- macro `isprint(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:31
+- macro `ispunct(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:32
+- macro `isspace(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:33
+- macro `isupper(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:34
+- macro `isxdigit(c)` — define isalnum(c) (_ctype[(c) + 1] & (_IS_DIG | _IS_UPP | _IS_LOW)) — tools/tc20/INCLUDE/CTYPE.H:35
+- macro `_toupper(c)` — tools/tc20/INCLUDE/CTYPE.H:37
+- macro `_tolower(c)` — define _toupper(c) ((c) + 'A' - 'a') — tools/tc20/INCLUDE/CTYPE.H:38
+- macro `toascii(c)` — define _toupper(c) ((c) + 'A' - 'a') — tools/tc20/INCLUDE/CTYPE.H:39
+
+### DIR.H  `C, 57 lines`
+> dir.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/DIR.H:10
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/DIR.H:12
+- macro `__DIR_DEF_` — if !defined(__DIR_DEF_) — tools/tc20/INCLUDE/DIR.H:16
+- macro `WILDCARDS` — tools/tc20/INCLUDE/DIR.H:27
+- macro `EXTENSION` — define WILDCARDS 0x01 — tools/tc20/INCLUDE/DIR.H:28
+- macro `FILENAME` — define WILDCARDS 0x01 — tools/tc20/INCLUDE/DIR.H:29
+- macro `DIRECTORY` — define WILDCARDS 0x01 — tools/tc20/INCLUDE/DIR.H:30
+- macro `DRIVE` — define WILDCARDS 0x01 — tools/tc20/INCLUDE/DIR.H:31
+- macro `MAXPATH` — tools/tc20/INCLUDE/DIR.H:33
+- macro `MAXDRIVE` — define MAXPATH 80 — tools/tc20/INCLUDE/DIR.H:34
+- macro `MAXDIR` — define MAXPATH 80 — tools/tc20/INCLUDE/DIR.H:35
+- macro `MAXFILE` — define MAXPATH 80 — tools/tc20/INCLUDE/DIR.H:36
+- macro `MAXEXT` — define MAXPATH 80 — tools/tc20/INCLUDE/DIR.H:37
+
+### DOS.H  `C, 252 lines`
+> dos.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/DOS.H:10
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/DOS.H:12
+- macro `__DOS_DEF_` — if !defined(__DOS_DEF_) — tools/tc20/INCLUDE/DOS.H:16
+- macro `FA_RDONLY` — tools/tc20/INCLUDE/DOS.H:31
+- macro `FA_HIDDEN` — define FA_RDONLY 0x01 /* Read only attribute — tools/tc20/INCLUDE/DOS.H:32
+- macro `FA_SYSTEM` — define FA_RDONLY 0x01 /* Read only attribute — tools/tc20/INCLUDE/DOS.H:33
+- macro `FA_LABEL` — define FA_RDONLY 0x01 /* Read only attribute — tools/tc20/INCLUDE/DOS.H:34
+- macro `FA_DIREC` — define FA_RDONLY 0x01 /* Read only attribute — tools/tc20/INCLUDE/DOS.H:35
+- macro `FA_ARCH` — define FA_RDONLY 0x01 /* Read only attribute — tools/tc20/INCLUDE/DOS.H:36
+- macro `NFDS` — tools/tc20/INCLUDE/DOS.H:38
+- macro `FP_OFF(fp)` — tools/tc20/INCLUDE/DOS.H:142
+- macro `FP_SEG(fp)` — define FP_OFF(fp) ((unsigned)(fp)) — tools/tc20/INCLUDE/DOS.H:143
+- type `drive` — define FP_OFF(fp) ((unsigned)(fp)) — tools/tc20/INCLUDE/DOS.H:144
+- macro `disable()` — tools/tc20/INCLUDE/DOS.H:228
+- macro `enable()` — define disable() __cli__() /* Clear interrupt flag — tools/tc20/INCLUDE/DOS.H:229
+- macro `inportb(portid)` — define disable() __cli__() /* Clear interrupt flag — tools/tc20/INCLUDE/DOS.H:230
+- macro `outportb(portid, v)` — define disable() __cli__() /* Clear interrupt flag — tools/tc20/INCLUDE/DOS.H:231
+- macro `geninterrupt(i)` — define disable() __cli__() /* Clear interrupt flag — tools/tc20/INCLUDE/DOS.H:232
+- macro `inp(portid)` — some other compilers use inp, outp for inportb, outportb — tools/tc20/INCLUDE/DOS.H:235
+- macro `outp(portid,v)` — some other compilers use inp, outp for inportb, outportb — tools/tc20/INCLUDE/DOS.H:236
+- macro `MK_FP(seg,ofs)` — tools/tc20/INCLUDE/DOS.H:242
+- macro `poke(a,b,c)` — tools/tc20/INCLUDE/DOS.H:245
+- macro `pokeb(a,b,c)` — define poke(a,b,c) (*((int far*)MK_FP((a),(b))) = (int)(c)) — tools/tc20/INCLUDE/DOS.H:246
+- macro `peek(a,b)` — define poke(a,b,c) (*((int far*)MK_FP((a),(b))) = (int)(c)) — tools/tc20/INCLUDE/DOS.H:247
+- macro `peekb(a,b)` — define poke(a,b,c) (*((int far*)MK_FP((a),(b))) = (int)(c)) — tools/tc20/INCLUDE/DOS.H:248
+
+### ERRNO.H  `C, 77 lines`
+> errno.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/ERRNO.H:11
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/ERRNO.H:13
+- macro `EZERO` — tools/tc20/INCLUDE/ERRNO.H:19
+- macro `EINVFNC` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:20
+- macro `ENOFILE` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:21
+- macro `ENOPATH` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:22
+- macro `ECONTR` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:23
+- macro `EINVMEM` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:24
+- macro `EINVENV` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:25
+- macro `EINVFMT` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:26
+- macro `EINVACC` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:27
+- macro `EINVDAT` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:28
+- macro `EINVDRV` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:29
+- macro `ECURDIR` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:30
+- macro `ENOTSAM` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:31
+- macro `ENMFILE` — define EZERO 0 /* Error 0 — tools/tc20/INCLUDE/ERRNO.H:32
+- macro `ENOENT` — tools/tc20/INCLUDE/ERRNO.H:34
+- macro `EMFILE` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:35
+- macro `EACCES` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:36
+- macro `EBADF` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:37
+- macro `ENOMEM` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:38
+- macro `ENODEV` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:39
+- macro `EINVAL` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:40
+- macro `E2BIG` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:41
+- macro `ENOEXEC` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:42
+- macro `EXDEV` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:43
+- macro `EDOM` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:44
+- macro `ERANGE` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:45
+- macro `EEXIST` — define ENOENT 2 /* No such file or directory — tools/tc20/INCLUDE/ERRNO.H:46
+- macro `EFAULT` — tools/tc20/INCLUDE/ERRNO.H:48
+- macro `EPERM` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:49
+- macro `ESRCH` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:50
+- macro `EINTR` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:51
+- macro `EIO` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:52
+- macro `ENXIO` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:53
+- macro `ECHILD` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:54
+- macro `EAGAIN` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:55
+- macro `ENOTBLK` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:56
+- macro `EBUSY` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:57
+- macro `ENOTDIR` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:58
+- macro `EISDIR` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:59
+- macro `ENFILE` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:60
+- macro `ENOTTY` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:61
+- macro `ETXTBSY` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:62
+- macro `EFBIG` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:63
+- macro `ENOSPC` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:64
+- macro `ESPIPE` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:65
+- macro `EROFS` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:66
+- macro `EMLINK` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:67
+- macro `EPIPE` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:68
+- macro `EUCLEAN` — define EFAULT -1 /* Unknown error — tools/tc20/INCLUDE/ERRNO.H:69
+- macro `_sys_nerr` — tools/tc20/INCLUDE/ERRNO.H:73
+
+### FCNTL.H  `C, 53 lines`
+> fcntl.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/FCNTL.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/FCNTL.H:11
+- macro `O_RDONLY` — tools/tc20/INCLUDE/FCNTL.H:18
+- macro `O_WRONLY` — define O_RDONLY 1 — tools/tc20/INCLUDE/FCNTL.H:19
+- macro `O_RDWR` — define O_RDONLY 1 — tools/tc20/INCLUDE/FCNTL.H:20
+- macro `O_CREAT` — tools/tc20/INCLUDE/FCNTL.H:24
+- macro `O_TRUNC` — define O_CREAT 0x0100 /* create and open file — tools/tc20/INCLUDE/FCNTL.H:25
+- macro `O_EXCL` — define O_CREAT 0x0100 /* create and open file — tools/tc20/INCLUDE/FCNTL.H:26
+- macro `_O_RUNFLAGS` — The "open flags" defined above are not needed after open, hence they — tools/tc20/INCLUDE/FCNTL.H:32
+- macro `_O_EOF` — / — tools/tc20/INCLUDE/FCNTL.H:33
+- macro `O_APPEND` — a file in append mode may be written to only at its end. — tools/tc20/INCLUDE/FCNTL.H:37
+- macro `O_CHANGED` — tools/tc20/INCLUDE/FCNTL.H:41
+- macro `O_DEVICE` — define O_CHANGED 0x1000 /* user may read these bits, but — tools/tc20/INCLUDE/FCNTL.H:42
+- macro `O_TEXT` — define O_CHANGED 0x1000 /* user may read these bits, but — tools/tc20/INCLUDE/FCNTL.H:43
+- macro `O_BINARY` — define O_CHANGED 0x1000 /* user may read these bits, but — tools/tc20/INCLUDE/FCNTL.H:44
+- macro `O_NOINHERIT` — tools/tc20/INCLUDE/FCNTL.H:48
+- macro `O_DENYALL` — define O_NOINHERIT 0x80 — tools/tc20/INCLUDE/FCNTL.H:49
+- macro `O_DENYWRITE` — define O_NOINHERIT 0x80 — tools/tc20/INCLUDE/FCNTL.H:50
+- macro `O_DENYREAD` — define O_NOINHERIT 0x80 — tools/tc20/INCLUDE/FCNTL.H:51
+- macro `O_DENYNONE` — define O_NOINHERIT 0x80 — tools/tc20/INCLUDE/FCNTL.H:52
+
+### FLOAT.H  `C, 131 lines`
+> float.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/FLOAT.H:10
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/FLOAT.H:12
+- macro `FLT_RADIX` — tools/tc20/INCLUDE/FLOAT.H:15
+- macro `FLT_ROUNDS` — define FLT_RADIX 2 — tools/tc20/INCLUDE/FLOAT.H:16
+- macro `FLT_GUARD` — define FLT_RADIX 2 — tools/tc20/INCLUDE/FLOAT.H:17
+- macro `FLT_NORMALIZE` — define FLT_RADIX 2 — tools/tc20/INCLUDE/FLOAT.H:18
+- macro `DBL_DIG` — tools/tc20/INCLUDE/FLOAT.H:20
+- macro `FLT_DIG` — define DBL_DIG 15 — tools/tc20/INCLUDE/FLOAT.H:21
+- macro `LDBL_DIG` — define DBL_DIG 15 — tools/tc20/INCLUDE/FLOAT.H:22
+- macro `DBL_MANT_DIG` — tools/tc20/INCLUDE/FLOAT.H:24
+- macro `FLT_MANT_DIG` — define DBL_MANT_DIG 53 — tools/tc20/INCLUDE/FLOAT.H:25
+- macro `LDBL_MANT_DIG` — define DBL_MANT_DIG 53 — tools/tc20/INCLUDE/FLOAT.H:26
+- macro `DBL_EPSILON` — tools/tc20/INCLUDE/FLOAT.H:28
+- macro `FLT_EPSILON` — define DBL_EPSILON 2.2204460492503131E-16 — tools/tc20/INCLUDE/FLOAT.H:29
+- macro `LDBL_EPSILON` — define DBL_EPSILON 2.2204460492503131E-16 — tools/tc20/INCLUDE/FLOAT.H:30
+- macro `DBL_MIN` — smallest positive IEEE normal numbers — tools/tc20/INCLUDE/FLOAT.H:33
+- macro `FLT_MIN` — smallest positive IEEE normal numbers — tools/tc20/INCLUDE/FLOAT.H:34
+- macro `LDBL_MIN` — smallest positive IEEE normal numbers — tools/tc20/INCLUDE/FLOAT.H:35
+- macro `DBL_MAX` — tools/tc20/INCLUDE/FLOAT.H:37
+- macro `FLT_MAX` — define DBL_MAX _huge_dble — tools/tc20/INCLUDE/FLOAT.H:38
+- macro `LDBL_MAX` — define DBL_MAX _huge_dble — tools/tc20/INCLUDE/FLOAT.H:39
+- macro `DBL_MAX_EXP` — tools/tc20/INCLUDE/FLOAT.H:41
+- macro `FLT_MAX_EXP` — define DBL_MAX_EXP +1024 — tools/tc20/INCLUDE/FLOAT.H:42
+- macro `LDBL_MAX_EXP` — define DBL_MAX_EXP +1024 — tools/tc20/INCLUDE/FLOAT.H:43
+- macro `DBL_MAX_10_EXP` — tools/tc20/INCLUDE/FLOAT.H:45
+- macro `FLT_MAX_10_EXP` — define DBL_MAX_10_EXP +308 — tools/tc20/INCLUDE/FLOAT.H:46
+- macro `LDBL_MAX_10_EXP` — define DBL_MAX_10_EXP +308 — tools/tc20/INCLUDE/FLOAT.H:47
+- macro `DBL_MIN_10_EXP` — tools/tc20/INCLUDE/FLOAT.H:49
+- macro `FLT_MIN_10_EXP` — define DBL_MIN_10_EXP -307 — tools/tc20/INCLUDE/FLOAT.H:50
+- macro `LDBL_MIN_10_EXP` — define DBL_MIN_10_EXP -307 — tools/tc20/INCLUDE/FLOAT.H:51
+- macro `DBL_MIN_EXP` — tools/tc20/INCLUDE/FLOAT.H:53
+- macro `FLT_MIN_EXP` — define DBL_MIN_EXP -1021 — tools/tc20/INCLUDE/FLOAT.H:54
+- macro `LDBL_MIN_EXP` — define DBL_MIN_EXP -1021 — tools/tc20/INCLUDE/FLOAT.H:55
+- macro `SW_INVALID` — tools/tc20/INCLUDE/FLOAT.H:69
+- macro `SW_DENORMAL` — define SW_INVALID 0x0001 /* Invalid operation — tools/tc20/INCLUDE/FLOAT.H:70
+- macro `SW_ZERODIVIDE` — define SW_INVALID 0x0001 /* Invalid operation — tools/tc20/INCLUDE/FLOAT.H:71
+- macro `SW_OVERFLOW` — define SW_INVALID 0x0001 /* Invalid operation — tools/tc20/INCLUDE/FLOAT.H:72
+- macro `SW_UNDERFLOW` — define SW_INVALID 0x0001 /* Invalid operation — tools/tc20/INCLUDE/FLOAT.H:73
+- macro `SW_INEXACT(Inexact result)` — define SW_INVALID 0x0001 /* Invalid operation — tools/tc20/INCLUDE/FLOAT.H:74
+- macro `MCW_EM` — tools/tc20/INCLUDE/FLOAT.H:78
+- macro `EM_INVALID` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/tc20/INCLUDE/FLOAT.H:79
+- macro `EM_DENORMAL` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/tc20/INCLUDE/FLOAT.H:80
+- macro `EM_ZERODIVIDE` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/tc20/INCLUDE/FLOAT.H:81
+- macro `EM_OVERFLOW` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/tc20/INCLUDE/FLOAT.H:82
+- macro `EM_UNDERFLOW` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/tc20/INCLUDE/FLOAT.H:83
+- macro `EM_INEXACT(precision)` — define MCW_EM 0x003f /* interrupt Exception Masks — tools/tc20/INCLUDE/FLOAT.H:84
+- macro `MCW_IC` — tools/tc20/INCLUDE/FLOAT.H:86
+- macro `IC_AFFINE` — define MCW_IC 0x1000 /* Infinity Control — tools/tc20/INCLUDE/FLOAT.H:87
+- macro `IC_PROJECTIVE` — define MCW_IC 0x1000 /* Infinity Control — tools/tc20/INCLUDE/FLOAT.H:88
+- macro `MCW_RC` — tools/tc20/INCLUDE/FLOAT.H:90
+- macro `RC_CHOP` — define MCW_RC 0x0c00 /* Rounding Control — tools/tc20/INCLUDE/FLOAT.H:91
+- macro `RC_UP` — define MCW_RC 0x0c00 /* Rounding Control — tools/tc20/INCLUDE/FLOAT.H:92
+- macro `RC_DOWN` — define MCW_RC 0x0c00 /* Rounding Control — tools/tc20/INCLUDE/FLOAT.H:93
+- macro `RC_NEAR` — define MCW_RC 0x0c00 /* Rounding Control — tools/tc20/INCLUDE/FLOAT.H:94
+- macro `MCW_PC` — tools/tc20/INCLUDE/FLOAT.H:96
+- macro `PC_24` — define MCW_PC 0x0300 /* Precision Control — tools/tc20/INCLUDE/FLOAT.H:97
+- macro `PC_53` — define MCW_PC 0x0300 /* Precision Control — tools/tc20/INCLUDE/FLOAT.H:98
+- macro `PC_64` — define MCW_PC 0x0300 /* Precision Control — tools/tc20/INCLUDE/FLOAT.H:99
+- macro `CW_DEFAULT(RC_NEAR+PC_64+IC_AFFINE+EM_UNDERFLOW+EM_INEXACT)` — tools/tc20/INCLUDE/FLOAT.H:104
+- macro `FPE_INTOVFLOW` — SIGFPE signal error types (for integer & float exceptions). — tools/tc20/INCLUDE/FLOAT.H:109
+- macro `FPE_INTDIV0` — / — tools/tc20/INCLUDE/FLOAT.H:110
+- macro `FPE_INVALID` — tools/tc20/INCLUDE/FLOAT.H:112
+- macro `FPE_ZERODIVIDE` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/tc20/INCLUDE/FLOAT.H:113
+- macro `FPE_OVERFLOW` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/tc20/INCLUDE/FLOAT.H:114
+- macro `FPE_UNDERFLOW` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/tc20/INCLUDE/FLOAT.H:115
+- macro `FPE_INEXACT` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/tc20/INCLUDE/FLOAT.H:116
+- macro `FPE_EXPLICITGEN()` — define FPE_INVALID 129 /* 80x87 invalid operation — tools/tc20/INCLUDE/FLOAT.H:117
+- macro `SEGV_BOUND(SIGSEGV)` — SIGSEGV signal error types. — tools/tc20/INCLUDE/FLOAT.H:122
+- macro `SEGV_EXPLICITGEN()` — / — tools/tc20/INCLUDE/FLOAT.H:123
+- macro `ILL_EXECUTION` — SIGILL signal error types. — tools/tc20/INCLUDE/FLOAT.H:128
+- macro `ILL_EXPLICITGEN()` — / — tools/tc20/INCLUDE/FLOAT.H:129
+
+### GRAPHICS.H  `C, 377 lines`
+> graphics.h
+- macro `_Cdecl` — if __STDC__ — tools/tc20/INCLUDE/GRAPHICS.H:10
+- macro `_Cdecl` — if __STDC__ — tools/tc20/INCLUDE/GRAPHICS.H:12
+- macro `__GRAPHX_DEF_` — if !defined(__GRAPHX_DEF_) — tools/tc20/INCLUDE/GRAPHICS.H:16
+- macro `__COLORS` — if !defined(__COLORS) — tools/tc20/INCLUDE/GRAPHICS.H:79
+- macro `HORIZ_DIR` — tools/tc20/INCLUDE/GRAPHICS.H:160
+- macro `VERT_DIR` — define HORIZ_DIR 0 /* left to right — tools/tc20/INCLUDE/GRAPHICS.H:161
+- macro `USER_CHAR_SIZE` — tools/tc20/INCLUDE/GRAPHICS.H:163
+- macro `MAXCOLORS` — tools/tc20/INCLUDE/GRAPHICS.H:201
+
+### IO.H  `C, 71 lines`
+> io.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/IO.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/IO.H:11
+- macro `_IO_H` — ifndef _IO_H — tools/tc20/INCLUDE/IO.H:15
+- macro `HANDLE_MAX` — tools/tc20/INCLUDE/IO.H:17
+- macro `SEEK_CUR` — tools/tc20/INCLUDE/IO.H:30
+- macro `SEEK_END` — define SEEK_CUR 1 — tools/tc20/INCLUDE/IO.H:31
+- macro `SEEK_SET` — define SEEK_CUR 1 — tools/tc20/INCLUDE/IO.H:32
+- macro `sopen(path,access,shflag,mode)` — macros for compatibility with earlier versions & other compilers. — tools/tc20/INCLUDE/IO.H:68
+
+### LIMITS.H  `C, 39 lines`
+> limits.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/LIMITS.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/LIMITS.H:11
+- macro `CHAR_BIT` — tools/tc20/INCLUDE/LIMITS.H:14
+- macro `CHAR_MAX` — if (((int)((char)0x80)) < 0) — tools/tc20/INCLUDE/LIMITS.H:17
+- macro `CHAR_MIN` — if (((int)((char)0x80)) < 0) — tools/tc20/INCLUDE/LIMITS.H:18
+- macro `CHAR_MAX` — if (((int)((char)0x80)) < 0) — tools/tc20/INCLUDE/LIMITS.H:20
+- macro `CHAR_MIN` — if (((int)((char)0x80)) < 0) — tools/tc20/INCLUDE/LIMITS.H:21
+- macro `SCHAR_MAX` — tools/tc20/INCLUDE/LIMITS.H:24
+- macro `SCHAR_MIN` — define SCHAR_MAX 0x7F — tools/tc20/INCLUDE/LIMITS.H:25
+- macro `UCHAR_MAX` — define SCHAR_MAX 0x7F — tools/tc20/INCLUDE/LIMITS.H:26
+- macro `SHRT_MAX` — tools/tc20/INCLUDE/LIMITS.H:28
+- macro `SHRT_MIN((int)0x8000)` — define SHRT_MAX 0x7FFF — tools/tc20/INCLUDE/LIMITS.H:29
+- macro `USHRT_MAX` — define SHRT_MAX 0x7FFF — tools/tc20/INCLUDE/LIMITS.H:30
+- macro `INT_MAX` — tools/tc20/INCLUDE/LIMITS.H:32
+- macro `INT_MIN((int)0x8000)` — define INT_MAX 0x7FFF — tools/tc20/INCLUDE/LIMITS.H:33
+- macro `UINT_MAX` — define INT_MAX 0x7FFF — tools/tc20/INCLUDE/LIMITS.H:34
+- macro `LONG_MAX` — tools/tc20/INCLUDE/LIMITS.H:36
+- macro `LONG_MIN((long)0x80000000L)` — define LONG_MAX 0x7FFFFFFFL — tools/tc20/INCLUDE/LIMITS.H:37
+- macro `ULONG_MAX` — define LONG_MAX 0x7FFFFFFFL — tools/tc20/INCLUDE/LIMITS.H:38
+
+### MATH.H  `C, 107 lines`
+> math.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/MATH.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/MATH.H:11
+- macro `_MATH_H` — ifndef _MATH_H — tools/tc20/INCLUDE/MATH.H:15
+- macro `EDOM` — tools/tc20/INCLUDE/MATH.H:17
+- macro `ERANGE` — define EDOM 33 /* Math argument — tools/tc20/INCLUDE/MATH.H:18
+- macro `HUGE_VAL` — tools/tc20/INCLUDE/MATH.H:20
+- macro `cabs(z)` — tools/tc20/INCLUDE/MATH.H:68
+- type `_mexcep` — The customary matherr() exception handler for maths functions is — tools/tc20/INCLUDE/MATH.H:74
+- macro `M_E` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:89
+- macro `M_LOG2E` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:90
+- macro `M_LOG10E` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:91
+- macro `M_LN2` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:92
+- macro `M_LN10` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:93
+- macro `M_PI` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:94
+- macro `M_PI_2` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:95
+- macro `M_PI_4` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:96
+- macro `M_1_PI` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:97
+- macro `M_2_PI` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:98
+- macro `M_1_SQRTPI` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:99
+- macro `M_2_SQRTPI` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:100
+- macro `M_SQRT2` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:101
+- macro `M_SQRT_2` — Constants rounded for 21 decimals. — tools/tc20/INCLUDE/MATH.H:102
+
+### MEM.H  `C, 49 lines`
+> mem.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/MEM.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/MEM.H:11
+- macro `_STDDEF` — ifndef _STDDEF — tools/tc20/INCLUDE/MEM.H:15
+- macro `_PTRDIFF_T` — ifndef _STDDEF — tools/tc20/INCLUDE/MEM.H:17
+- type `ptrdiff_t` — ifndef _STDDEF — tools/tc20/INCLUDE/MEM.H:19
+- type `ptrdiff_t` — else — tools/tc20/INCLUDE/MEM.H:21
+- macro `_SIZE_T` — endif — tools/tc20/INCLUDE/MEM.H:25
+- type `size_t` — endif — tools/tc20/INCLUDE/MEM.H:26
+- macro `NULL` — ifndef NULL — tools/tc20/INCLUDE/MEM.H:32
+- macro `NULL` — ifndef NULL — tools/tc20/INCLUDE/MEM.H:34
+
+### PROCESS.H  `C, 52 lines`
+> process.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/PROCESS.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/PROCESS.H:11
+- macro `P_WAIT` — tools/tc20/INCLUDE/PROCESS.H:16
+- macro `P_NOWAIT` — define P_WAIT 0 /* child runs separately, parent waits until exit — tools/tc20/INCLUDE/PROCESS.H:17
+- macro `P_OVERLAY` — define P_WAIT 0 /* child runs separately, parent waits until exit — tools/tc20/INCLUDE/PROCESS.H:18
+- macro `getpid()` — tools/tc20/INCLUDE/PROCESS.H:29
+
+### SETJMP.H  `C, 33 lines`
+> setjmp.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/SETJMP.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/SETJMP.H:11
+- macro `_SETJMP` — ifndef _SETJMP — tools/tc20/INCLUDE/SETJMP.H:15
+- type `j_sp` — ifndef _SETJMP — tools/tc20/INCLUDE/SETJMP.H:16
+
+### SHARE.H  `C, 22 lines`
+> share.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/SHARE.H:10
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/SHARE.H:12
+- macro `SH_COMPAT` — tools/tc20/INCLUDE/SHARE.H:15
+- macro `SH_DENYRW` — define SH_COMPAT 0x0000 — tools/tc20/INCLUDE/SHARE.H:16
+- macro `SH_DENYWR` — define SH_COMPAT 0x0000 — tools/tc20/INCLUDE/SHARE.H:17
+- macro `SH_DENYRD` — define SH_COMPAT 0x0000 — tools/tc20/INCLUDE/SHARE.H:18
+- macro `SH_DENYNONE` — define SH_COMPAT 0x0000 — tools/tc20/INCLUDE/SHARE.H:19
+- macro `SH_DENYNO` — tools/tc20/INCLUDE/SHARE.H:21
+
+### SIGNAL.H  `C, 49 lines`
+> signal.h
+- macro `__SIGNAL_H` — ifndef __SIGNAL_H — tools/tc20/INCLUDE/SIGNAL.H:10
+- macro `_Cdecl` — if __STDC__ — tools/tc20/INCLUDE/SIGNAL.H:14
+- macro `_Cdecl` — if __STDC__ — tools/tc20/INCLUDE/SIGNAL.H:16
+- type `sig_atomic_t` — if __STDC__ — tools/tc20/INCLUDE/SIGNAL.H:18
+- macro `SIG_DFL((void (* _Cdecl)(int))0)` — tools/tc20/INCLUDE/SIGNAL.H:21
+- macro `SIG_IGN((void (* _Cdecl)(int))1)` — define SIG_DFL ((void (* _Cdecl)(int))0) /* Default action — tools/tc20/INCLUDE/SIGNAL.H:22
+- macro `SIG_SGE((void (* _Cdecl)(int))3)` — ifdef __OS2__ — tools/tc20/INCLUDE/SIGNAL.H:25
+- macro `SIG_ACK((void (* _Cdecl)(int))4)` — ifdef __OS2__ — tools/tc20/INCLUDE/SIGNAL.H:26
+- macro `SIG_ERR((void (* _Cdecl)(int))-1)` — tools/tc20/INCLUDE/SIGNAL.H:29
+- macro `SIGABRT` — tools/tc20/INCLUDE/SIGNAL.H:31
+- macro `SIGFPE` — define SIGABRT 22 — tools/tc20/INCLUDE/SIGNAL.H:32
+- macro `SIGILL` — define SIGABRT 22 — tools/tc20/INCLUDE/SIGNAL.H:33
+- macro `SIGINT` — define SIGABRT 22 — tools/tc20/INCLUDE/SIGNAL.H:34
+- macro `SIGSEGV` — define SIGABRT 22 — tools/tc20/INCLUDE/SIGNAL.H:35
+- macro `SIGTERM` — define SIGABRT 22 — tools/tc20/INCLUDE/SIGNAL.H:36
+- macro `SIGBREAK` — ifdef __OS2__ — tools/tc20/INCLUDE/SIGNAL.H:39
+- macro `SIGUSR1` — ifdef __OS2__ — tools/tc20/INCLUDE/SIGNAL.H:40
+- macro `SIGUSR2` — ifdef __OS2__ — tools/tc20/INCLUDE/SIGNAL.H:41
+- macro `SIGUSR3` — ifdef __OS2__ — tools/tc20/INCLUDE/SIGNAL.H:42
+
+### STDARG.H  `C, 25 lines`
+> stdarg.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STDARG.H:10
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STDARG.H:12
+- macro `__STDARG` — if !defined(__STDARG) — tools/tc20/INCLUDE/STDARG.H:16
+- type `va_list` — if !defined(__STDARG) — tools/tc20/INCLUDE/STDARG.H:17
+- macro `va_start(ap, parmN)` — tools/tc20/INCLUDE/STDARG.H:20
+- macro `va_arg(ap, type)` — define va_start(ap, parmN) (ap = ...) — tools/tc20/INCLUDE/STDARG.H:21
+- macro `va_end(ap)` — define va_start(ap, parmN) (ap = ...) — tools/tc20/INCLUDE/STDARG.H:22
+- macro `_va_ptr(...)` — define va_start(ap, parmN) (ap = ...) — tools/tc20/INCLUDE/STDARG.H:23
+
+### STDDEF.H  `C, 40 lines`
+> stddef.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STDDEF.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STDDEF.H:11
+- macro `_STDDEF` — ifndef _STDDEF — tools/tc20/INCLUDE/STDDEF.H:15
+- macro `_PTRDIFF_T` — ifndef _STDDEF — tools/tc20/INCLUDE/STDDEF.H:17
+- type `ptrdiff_t` — ifndef _STDDEF — tools/tc20/INCLUDE/STDDEF.H:19
+- type `ptrdiff_t` — else — tools/tc20/INCLUDE/STDDEF.H:21
+- macro `_SIZE_T` — endif — tools/tc20/INCLUDE/STDDEF.H:25
+- type `size_t` — endif — tools/tc20/INCLUDE/STDDEF.H:26
+- macro `NULL` — ifndef NULL — tools/tc20/INCLUDE/STDDEF.H:31
+- macro `NULL` — ifndef NULL — tools/tc20/INCLUDE/STDDEF.H:33
+
+### STDIO.H  `C, 187 lines`
+> stdio.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STDIO.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STDIO.H:11
+- macro `__STDIO_DEF_` — if !defined(__STDIO_DEF_) — tools/tc20/INCLUDE/STDIO.H:15
+- macro `_SIZE_T` — ifndef _SIZE_T — tools/tc20/INCLUDE/STDIO.H:18
+- type `size_t` — ifndef _SIZE_T — tools/tc20/INCLUDE/STDIO.H:19
+- type `fpos_t` — Definition of the file position type — tools/tc20/INCLUDE/STDIO.H:35
+- type `level` — Definition of the control structure for streams — tools/tc20/INCLUDE/STDIO.H:39
+- macro `_IOFBF` — Bufferisation type to be used as 3rd argument for "setvbuf" function — tools/tc20/INCLUDE/STDIO.H:53
+- macro `_IOLBF` — Bufferisation type to be used as 3rd argument for "setvbuf" function — tools/tc20/INCLUDE/STDIO.H:54
+- macro `_IONBF` — Bufferisation type to be used as 3rd argument for "setvbuf" function — tools/tc20/INCLUDE/STDIO.H:55
+- macro `_F_RDWR` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:59
+- macro `_F_READ` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:60
+- macro `_F_WRIT` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:61
+- macro `_F_BUF` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:62
+- macro `_F_LBUF` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:63
+- macro `_F_ERR` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:64
+- macro `_F_EOF` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:65
+- macro `_F_BIN` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:66
+- macro `_F_IN` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:67
+- macro `_F_OUT` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:68
+- macro `_F_TERM` — "flags" bits definitions — tools/tc20/INCLUDE/STDIO.H:69
+- macro `EOF(-1)` — End-of-file constant definition — tools/tc20/INCLUDE/STDIO.H:73
+- macro `OPEN_MAX` — Number of files that can be open simultaneously — tools/tc20/INCLUDE/STDIO.H:77
+- macro `SYS_OPEN` — Number of files that can be open simultaneously — tools/tc20/INCLUDE/STDIO.H:78
+- macro `BUFSIZ` — Default buffer size use by "setbuf" function — tools/tc20/INCLUDE/STDIO.H:82
+- macro `L_ctermid` — Size of an arry large enough to hold a temporary file name string — tools/tc20/INCLUDE/STDIO.H:86
+- macro `L_tmpnam` — Size of an arry large enough to hold a temporary file name string — tools/tc20/INCLUDE/STDIO.H:87
+- macro `SEEK_CUR` — Constants to be used as 3rd argument for "fseek" function — tools/tc20/INCLUDE/STDIO.H:91
+- macro `SEEK_END` — Constants to be used as 3rd argument for "fseek" function — tools/tc20/INCLUDE/STDIO.H:92
+- macro `SEEK_SET` — Constants to be used as 3rd argument for "fseek" function — tools/tc20/INCLUDE/STDIO.H:93
+- macro `TMP_MAX` — Number of unique file names that shall be generated by "tmpnam" function — tools/tc20/INCLUDE/STDIO.H:97
+- macro `stdin(&_streams[0])` — tools/tc20/INCLUDE/STDIO.H:103
+- macro `stdout(&_streams[1])` — define stdin (&_streams[0]) — tools/tc20/INCLUDE/STDIO.H:104
+- macro `stderr(&_streams[2])` — define stdin (&_streams[0]) — tools/tc20/INCLUDE/STDIO.H:105
+- macro `stdaux(&_streams[3])` — define stdin (&_streams[0]) — tools/tc20/INCLUDE/STDIO.H:106
+- macro `stdprn(&_streams[4])` — define stdin (&_streams[0]) — tools/tc20/INCLUDE/STDIO.H:107
+- macro `ferror(f)` — tools/tc20/INCLUDE/STDIO.H:168
+- macro `feof(f)` — define ferror(f) ((f)->flags & _F_ERR) — tools/tc20/INCLUDE/STDIO.H:169
+- macro `fileno(f)` — define ferror(f) ((f)->flags & _F_ERR) — tools/tc20/INCLUDE/STDIO.H:170
+- macro `remove(path)` — define ferror(f) ((f)->flags & _F_ERR) — tools/tc20/INCLUDE/STDIO.H:171
+- macro `getc(f)` — tools/tc20/INCLUDE/STDIO.H:173
+- macro `putc(c,f)` — tools/tc20/INCLUDE/STDIO.H:176
+- macro `getchar()` — tools/tc20/INCLUDE/STDIO.H:180
+- macro `putchar(c)` — define getchar() getc(stdin) — tools/tc20/INCLUDE/STDIO.H:181
+- macro `ungetc(c,f)` — tools/tc20/INCLUDE/STDIO.H:183
+
+### STDLIB.H  `C, 132 lines`
+> stdlib.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STDLIB.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STDLIB.H:11
+- macro `__STDLIB` — if !defined(__STDLIB) — tools/tc20/INCLUDE/STDLIB.H:15
+- macro `_SIZE_T` — ifndef _SIZE_T — tools/tc20/INCLUDE/STDLIB.H:18
+- type `size_t` — ifndef _SIZE_T — tools/tc20/INCLUDE/STDLIB.H:19
+- macro `_DIV_T` — ifndef _DIV_T — tools/tc20/INCLUDE/STDLIB.H:23
+- type `quot` — ifndef _DIV_T — tools/tc20/INCLUDE/STDLIB.H:24
+- macro `_LDIV_T` — ifndef _LDIV_T — tools/tc20/INCLUDE/STDLIB.H:31
+- type `quot` — ifndef _LDIV_T — tools/tc20/INCLUDE/STDLIB.H:32
+- macro `EXIT_SUCCESS` — tools/tc20/INCLUDE/STDLIB.H:38
+- macro `EXIT_FAILURE` — define EXIT_SUCCESS 0 — tools/tc20/INCLUDE/STDLIB.H:39
+- macro `RAND_MAX` — Maximum value returned by "rand" function — tools/tc20/INCLUDE/STDLIB.H:43
+- macro `NULL` — ifndef NULL — tools/tc20/INCLUDE/STDLIB.H:78
+- macro `NULL` — ifndef NULL — tools/tc20/INCLUDE/STDLIB.H:80
+- macro `abs(x)` — Variables — tools/tc20/INCLUDE/STDLIB.H:97
+- macro `atoi(s)` — int _Cdecl __abs__(int x); /* This is an in-line function — tools/tc20/INCLUDE/STDLIB.H:98
+- macro `max(a,b)` — tools/tc20/INCLUDE/STDLIB.H:100
+- macro `min(a,b)` — define max(a,b) (((a) > (b)) ? (a) : (b)) — tools/tc20/INCLUDE/STDLIB.H:101
+- macro `random(num)` — tools/tc20/INCLUDE/STDLIB.H:103
+- macro `randomize()` — define random(num) (rand() % (num)) — tools/tc20/INCLUDE/STDLIB.H:104
+
+### STRING.H  `C, 61 lines`
+> string.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STRING.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/STRING.H:11
+- macro `_SIZE_T` — ifndef _SIZE_T — tools/tc20/INCLUDE/STRING.H:15
+- type `size_t` — ifndef _SIZE_T — tools/tc20/INCLUDE/STRING.H:16
+- macro `strcmpi(s1,s2)` — tools/tc20/INCLUDE/STRING.H:55
+- macro `strncmpi(s1,s2,n)` — define strcmpi(s1,s2) stricmp(s1,s2) — tools/tc20/INCLUDE/STRING.H:56
+
+### TIME.H  `C, 57 lines`
+> time.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/TIME.H:9
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/TIME.H:11
+- macro `_TM_DEFINED` — ifndef _TM_DEFINED — tools/tc20/INCLUDE/TIME.H:15
+- macro `__TIME_T` — ifndef __TIME_T — tools/tc20/INCLUDE/TIME.H:18
+- type `time_t` — ifndef __TIME_T — tools/tc20/INCLUDE/TIME.H:19
+- macro `__CLOCK_T` — ifndef __CLOCK_T — tools/tc20/INCLUDE/TIME.H:23
+- type `clock_t` — ifndef __CLOCK_T — tools/tc20/INCLUDE/TIME.H:24
+- macro `CLK_TCK` — tools/tc20/INCLUDE/TIME.H:25
+
+### VALUES.H  `C, 51 lines`
+> values.h
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/VALUES.H:10
+- macro `_Cdecl` — / — tools/tc20/INCLUDE/VALUES.H:12
+- macro `_VALUES_H` — ifndef _VALUES_H — tools/tc20/INCLUDE/VALUES.H:16
+- macro `BITSPERBYTE` — tools/tc20/INCLUDE/VALUES.H:18
+- macro `MAXSHORT` — define BITSPERBYTE 8 — tools/tc20/INCLUDE/VALUES.H:19
+- macro `MAXINT` — define BITSPERBYTE 8 — tools/tc20/INCLUDE/VALUES.H:20
+- macro `MAXLONG` — define BITSPERBYTE 8 — tools/tc20/INCLUDE/VALUES.H:21
+- macro `HIBITS` — define BITSPERBYTE 8 — tools/tc20/INCLUDE/VALUES.H:22
+- macro `HIBITI` — define BITSPERBYTE 8 — tools/tc20/INCLUDE/VALUES.H:23
+- macro `HIBITL` — define BITSPERBYTE 8 — tools/tc20/INCLUDE/VALUES.H:24
+- macro `DMAXEXP` — tools/tc20/INCLUDE/VALUES.H:26
+- macro `FMAXEXP` — define DMAXEXP 308 — tools/tc20/INCLUDE/VALUES.H:27
+- macro `DMINEXP` — define DMAXEXP 308 — tools/tc20/INCLUDE/VALUES.H:28
+- macro `FMINEXP` — define DMAXEXP 308 — tools/tc20/INCLUDE/VALUES.H:29
+- macro `MAXDOUBLE` — tools/tc20/INCLUDE/VALUES.H:31
+- macro `MAXFLOAT` — define MAXDOUBLE 1.797693E+308 — tools/tc20/INCLUDE/VALUES.H:32
+- macro `MINDOUBLE` — define MAXDOUBLE 1.797693E+308 — tools/tc20/INCLUDE/VALUES.H:33
+- macro `MINFLOAT` — define MAXDOUBLE 1.797693E+308 — tools/tc20/INCLUDE/VALUES.H:34
+- macro `DSIGNIF` — tools/tc20/INCLUDE/VALUES.H:36
+- macro `FSIGNIF` — define DSIGNIF 53 — tools/tc20/INCLUDE/VALUES.H:37
+- macro `DMAXPOWTWO` — tools/tc20/INCLUDE/VALUES.H:39
+- macro `FMAXPOWTWO` — define DMAXPOWTWO 0x3FF — tools/tc20/INCLUDE/VALUES.H:40
+- macro `_DEXPLEN` — define DMAXPOWTWO 0x3FF — tools/tc20/INCLUDE/VALUES.H:41
+- macro `_FEXPLEN` — define DMAXPOWTWO 0x3FF — tools/tc20/INCLUDE/VALUES.H:42
+- macro `_EXPBASE` — define DMAXPOWTWO 0x3FF — tools/tc20/INCLUDE/VALUES.H:43
+- macro `_IEEE` — define DMAXPOWTWO 0x3FF — tools/tc20/INCLUDE/VALUES.H:44
+- macro `_LENBASE` — define DMAXPOWTWO 0x3FF — tools/tc20/INCLUDE/VALUES.H:45
+- macro `HIDDENBIT` — define DMAXPOWTWO 0x3FF — tools/tc20/INCLUDE/VALUES.H:46
+- macro `LN_MAXDOUBLE` — define DMAXPOWTWO 0x3FF — tools/tc20/INCLUDE/VALUES.H:47
+- macro `LN_MINDOUBLE` — define DMAXPOWTWO 0x3FF — tools/tc20/INCLUDE/VALUES.H:48
+
+## tools/wc10/h/
+
+### ASSERT.H  `C, 24 lines`
+> assert.h
+- (no top-level symbols found)
+
+### BIOS.H  `C, 126 lines`
+> bios.h BIOS functions
+- macro `diskinfo_t` — if !defined(NO_EXT_KEYS) /* extensions enabled — tools/wc10/h/BIOS.H:22
+- macro `_DISK_RESET` — constants for BIOS disk access functions — tools/wc10/h/BIOS.H:26
+- macro `_DISK_STATUS` — constants for BIOS disk access functions — tools/wc10/h/BIOS.H:27
+- macro `_DISK_READ` — constants for BIOS disk access functions — tools/wc10/h/BIOS.H:28
+- macro `_DISK_WRITE` — constants for BIOS disk access functions — tools/wc10/h/BIOS.H:29
+- macro `_DISK_VERIFY` — constants for BIOS disk access functions — tools/wc10/h/BIOS.H:30
+- macro `_DISK_FORMAT` — constants for BIOS disk access functions — tools/wc10/h/BIOS.H:31
+- macro `_COM_INIT` — tools/wc10/h/BIOS.H:37
+- macro `_COM_SEND` — define _COM_INIT 0 /* init serial port — tools/wc10/h/BIOS.H:38
+- macro `_COM_RECEIVE` — define _COM_INIT 0 /* init serial port — tools/wc10/h/BIOS.H:39
+- macro `_COM_STATUS` — define _COM_INIT 0 /* init serial port — tools/wc10/h/BIOS.H:40
+- macro `_COM_CHR7` — tools/wc10/h/BIOS.H:49
+- macro `_COM_CHR8` — define _COM_CHR7 2 /* 7 bits characters — tools/wc10/h/BIOS.H:50
+- macro `_COM_STOP1` — tools/wc10/h/BIOS.H:54
+- macro `_COM_STOP2` — define _COM_STOP1 0 /* 1 stop bit — tools/wc10/h/BIOS.H:55
+- macro `_COM_NOPARITY` — tools/wc10/h/BIOS.H:59
+- macro `_COM_ODDPARITY` — define _COM_NOPARITY 0 /* no parity — tools/wc10/h/BIOS.H:60
+- macro `_COM_SPACEPARITY` — define _COM_NOPARITY 0 /* no parity — tools/wc10/h/BIOS.H:61
+- macro `_COM_EVENPARITY` — define _COM_NOPARITY 0 /* no parity — tools/wc10/h/BIOS.H:62
+- macro `_COM_110` — tools/wc10/h/BIOS.H:66
+- macro `_COM_150` — define _COM_110 0 /* 110 baud — tools/wc10/h/BIOS.H:67
+- macro `_COM_300` — define _COM_110 0 /* 110 baud — tools/wc10/h/BIOS.H:68
+- macro `_COM_600` — define _COM_110 0 /* 110 baud — tools/wc10/h/BIOS.H:69
+- macro `_COM_1200` — define _COM_110 0 /* 110 baud — tools/wc10/h/BIOS.H:70
+- macro `_COM_2400` — define _COM_110 0 /* 110 baud — tools/wc10/h/BIOS.H:71
+- macro `_COM_4800` — define _COM_110 0 /* 110 baud — tools/wc10/h/BIOS.H:72
+- macro `_COM_9600` — define _COM_110 0 /* 110 baud — tools/wc10/h/BIOS.H:73
+- macro `_KEYBRD_READ` — tools/wc10/h/BIOS.H:77
+- macro `_KEYBRD_READY` — define _KEYBRD_READ 0 /* read next character from keyboard — tools/wc10/h/BIOS.H:78
+- macro `_KEYBRD_SHIFTSTATUS` — define _KEYBRD_READ 0 /* read next character from keyboard — tools/wc10/h/BIOS.H:79
+- macro `_NKEYBRD_READ` — tools/wc10/h/BIOS.H:83
+- macro `_NKEYBRD_READY` — define _NKEYBRD_READ 0x10 /* read next character from keyboard — tools/wc10/h/BIOS.H:84
+- macro `_NKEYBRD_SHIFTSTATUS` — define _NKEYBRD_READ 0x10 /* read next character from keyboard — tools/wc10/h/BIOS.H:85
+- macro `_PRINTER_WRITE` — tools/wc10/h/BIOS.H:89
+- macro `_PRINTER_INIT` — define _PRINTER_WRITE 0 /* write character to printer — tools/wc10/h/BIOS.H:90
+- macro `_PRINTER_STATUS` — define _PRINTER_WRITE 0 /* write character to printer — tools/wc10/h/BIOS.H:91
+- macro `_TIME_GETCLOCK` — tools/wc10/h/BIOS.H:95
+- macro `_TIME_SETCLOCK` — define _TIME_GETCLOCK 0 /* get current clock count — tools/wc10/h/BIOS.H:96
+- macro `_BIOS_H_INCLUDED` — pragma pack(); — tools/wc10/h/BIOS.H:121
+
+### BIOS98.H  `C, 226 lines`
+> bios98.h NEC BIOS functions
+- macro `_DISK_VERIFY` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:32
+- macro `_DISK_DIAGNOSTIC` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:33
+- macro `_DISK_INITIALIZE` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:34
+- macro `_DISK_SENSE` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:35
+- macro `_DISK_WRITE` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:36
+- macro `_DISK_READ` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:37
+- macro `_DISK_RECALIBRATE` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:38
+- macro `_DISK_ALTERNATE` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:39
+- macro `_DISK_WRITEDDAM` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:40
+- macro `_DISK_READID` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:41
+- macro `_DISK_BADTRACK` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:42
+- macro `_DISK_READDDAM` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:43
+- macro `_DISK_FORMATTRACK` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:44
+- macro `_DISK_OPMODE` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:45
+- macro `_DISK_RETRACT` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:46
+- macro `_DISK_SEEK` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:47
+- macro `_DISK_FORMATDRIVE` — constants for BIOS disk access functions — tools/wc10/h/BIOS98.H:48
+- macro `_CMD_2HD` — tools/wc10/h/BIOS98.H:50
+- macro `_CMD_2DD` — define _CMD_2HD 0x0090 /* 1MB flopy disk — tools/wc10/h/BIOS98.H:51
+- macro `_CMD_2D` — define _CMD_2HD 0x0090 /* 1MB flopy disk — tools/wc10/h/BIOS98.H:52
+- macro `_CMD_HD` — define _CMD_2HD 0x0090 /* 1MB flopy disk — tools/wc10/h/BIOS98.H:53
+- macro `_CMD_SEEK` — tools/wc10/h/BIOS98.H:55
+- macro `_CMD_MF` — define _CMD_SEEK 0x1000 /* seek operation — tools/wc10/h/BIOS98.H:56
+- macro `_CMD_MT` — define _CMD_SEEK 0x1000 /* seek operation — tools/wc10/h/BIOS98.H:57
+- macro `_CMD_RETRY` — define _CMD_SEEK 0x1000 /* seek operation — tools/wc10/h/BIOS98.H:58
+- macro `_COM_INIT` — tools/wc10/h/BIOS98.H:64
+- macro `_COM_INITX(with X parameter)` — define _COM_INIT 0x00 /* init serial port — tools/wc10/h/BIOS98.H:65
+- macro `_COM_GETDTL` — define _COM_INIT 0x00 /* init serial port — tools/wc10/h/BIOS98.H:66
+- macro `_COM_SEND` — define _COM_INIT 0x00 /* init serial port — tools/wc10/h/BIOS98.H:67
+- macro `_COM_RECEIVE` — define _COM_INIT 0x00 /* init serial port — tools/wc10/h/BIOS98.H:68
+- macro `_COM_COMMAND` — define _COM_INIT 0x00 /* init serial port — tools/wc10/h/BIOS98.H:69
+- macro `_COM_STATUS` — define _COM_INIT 0x00 /* init serial port — tools/wc10/h/BIOS98.H:70
+- macro `_COM_CH1` — tools/wc10/h/BIOS98.H:74
+- macro `_COM_CH2` — define _COM_CH1 0x01 /* default port — tools/wc10/h/BIOS98.H:75
+- macro `_COM_CH3` — define _COM_CH1 0x01 /* default port — tools/wc10/h/BIOS98.H:76
+- macro `_COM_CHR7` — tools/wc10/h/BIOS98.H:85
+- macro `_COM_CHR8` — define _COM_CHR7 0x08 /* 7 bits characters — tools/wc10/h/BIOS98.H:86
+- macro `_COM_STOP1` — tools/wc10/h/BIOS98.H:90
+- macro `_COM_STOP2` — define _COM_STOP1 0x40 /* 1 stop bit — tools/wc10/h/BIOS98.H:91
+- macro `_COM_NOPARITY` — tools/wc10/h/BIOS98.H:95
+- macro `_COM_ODDPARITY` — define _COM_NOPARITY 0 /* no parity — tools/wc10/h/BIOS98.H:96
+- macro `_COM_ODD` — define _COM_NOPARITY 0 /* no parity — tools/wc10/h/BIOS98.H:97
+- macro `_COM_EVENPARITY` — define _COM_NOPARITY 0 /* no parity — tools/wc10/h/BIOS98.H:98
+- macro `_COM_EVEN` — define _COM_NOPARITY 0 /* no parity — tools/wc10/h/BIOS98.H:99
+- macro `_COM_DEFAULT` — tools/wc10/h/BIOS98.H:103
+- macro `_COM_75` — define _COM_DEFAULT 0xFF /* default baud — tools/wc10/h/BIOS98.H:104
+- macro `_COM_150` — define _COM_DEFAULT 0xFF /* default baud — tools/wc10/h/BIOS98.H:105
+- macro `_COM_300` — define _COM_DEFAULT 0xFF /* default baud — tools/wc10/h/BIOS98.H:106
+- macro `_COM_600` — define _COM_DEFAULT 0xFF /* default baud — tools/wc10/h/BIOS98.H:107
+- macro `_COM_1200` — define _COM_DEFAULT 0xFF /* default baud — tools/wc10/h/BIOS98.H:108
+- macro `_COM_2400` — define _COM_DEFAULT 0xFF /* default baud — tools/wc10/h/BIOS98.H:109
+- macro `_COM_4800` — define _COM_DEFAULT 0xFF /* default baud — tools/wc10/h/BIOS98.H:110
+- macro `_COM_9600` — define _COM_DEFAULT 0xFF /* default baud — tools/wc10/h/BIOS98.H:111
+- macro `_COM_TXEN` — tools/wc10/h/BIOS98.H:115
+- macro `_COM_DTR` — define _COM_TXEN 0x01 /* transmission enable — tools/wc10/h/BIOS98.H:116
+- macro `_COM_RXEN` — define _COM_TXEN 0x01 /* transmission enable — tools/wc10/h/BIOS98.H:117
+- macro `_COM_SBRK` — define _COM_TXEN 0x01 /* transmission enable — tools/wc10/h/BIOS98.H:118
+- macro `_COM_ER` — define _COM_TXEN 0x01 /* transmission enable — tools/wc10/h/BIOS98.H:119
+- macro `_COM_RTS` — define _COM_TXEN 0x01 /* transmission enable — tools/wc10/h/BIOS98.H:120
+- macro `_COM_IR` — define _COM_TXEN 0x01 /* transmission enable — tools/wc10/h/BIOS98.H:121
+- macro `_KEYBRD_READ` — tools/wc10/h/BIOS98.H:139
+- macro `_KEYBRD_READY` — define _KEYBRD_READ 0 /* read next character from keyboard — tools/wc10/h/BIOS98.H:140
+- macro `_KEYBRD_SHIFTSTATUS` — define _KEYBRD_READ 0 /* read next character from keyboard — tools/wc10/h/BIOS98.H:141
+- macro `_KEYBRD_INITIALIZE` — define _KEYBRD_READ 0 /* read next character from keyboard — tools/wc10/h/BIOS98.H:142
+- macro `_KEYBRD_SENSE` — define _KEYBRD_READ 0 /* read next character from keyboard — tools/wc10/h/BIOS98.H:143
+- macro `_PRINTER_WRITE` — tools/wc10/h/BIOS98.H:147
+- macro `_PRINTER_INIT` — define _PRINTER_WRITE 0x11 /* write character to printer — tools/wc10/h/BIOS98.H:148
+- macro `_PRINTER_STATUS` — define _PRINTER_WRITE 0x11 /* write character to printer — tools/wc10/h/BIOS98.H:149
+- macro `_PRN_INIT` — define _PRINTER_WRITE 0x11 /* write character to printer — tools/wc10/h/BIOS98.H:151
+- macro `_PRN_WRITE` — define _PRINTER_WRITE 0x11 /* write character to printer — tools/wc10/h/BIOS98.H:152
+- macro `_PRN_STRING` — define _PRINTER_WRITE 0x11 /* write character to printer — tools/wc10/h/BIOS98.H:153
+- macro `_PRN_STATUS` — define _PRINTER_WRITE 0x11 /* write character to printer — tools/wc10/h/BIOS98.H:154
+- macro `_TIME_GETCLOCK` — tools/wc10/h/BIOS98.H:158
+- macro `_TIME_SETCLOCK` — define _TIME_GETCLOCK 0 /* get current clock count — tools/wc10/h/BIOS98.H:159
+- macro `_BIOS_H_INCLUDED` — pragma pack(); — tools/wc10/h/BIOS98.H:221
+
+### COMPLEX.H  `C, 303 lines`
+> complex.h Complex Numbers
+- type `complex` — pragma pack(); — tools/wc10/h/COMPLEX.H:86
+- function `conj( Complex const &__cv )` — tools/wc10/h/COMPLEX.H:276
+- function `real( Complex const &__cv )` — tools/wc10/h/COMPLEX.H:284
+- function `imag( Complex const &__cv )` — tools/wc10/h/COMPLEX.H:292
+- function `norm( Complex const &__cv )` — tools/wc10/h/COMPLEX.H:296
+- macro `_COMPLEX_H_INCLUDED` — tools/wc10/h/COMPLEX.H:301
+
+### CONIO.H  `C, 52 lines`
+> conio.h Console and Port I/O functions
+- macro `_CONIO_H_INCLUDED` — tools/wc10/h/CONIO.H:47
+
+### CTYPE.H  `C, 71 lines`
+> ctype.h Character Handling
+- macro `_LOWER` — tools/wc10/h/CTYPE.H:12
+- macro `_UPPER` — define _LOWER 0x80 — tools/wc10/h/CTYPE.H:13
+- macro `_DIGIT` — define _LOWER 0x80 — tools/wc10/h/CTYPE.H:14
+- macro `_XDIGT` — define _LOWER 0x80 — tools/wc10/h/CTYPE.H:15
+- macro `_PRINT` — define _LOWER 0x80 — tools/wc10/h/CTYPE.H:16
+- macro `_PUNCT` — define _LOWER 0x80 — tools/wc10/h/CTYPE.H:17
+- macro `_SPACE` — define _LOWER 0x80 — tools/wc10/h/CTYPE.H:18
+- macro `_CNTRL` — define _LOWER 0x80 — tools/wc10/h/CTYPE.H:19
+- macro `isalnum(__c)` — tools/wc10/h/CTYPE.H:52
+- macro `isalpha(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:53
+- macro `iscntrl(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:54
+- macro `isdigit(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:55
+- macro `isgraph(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:56
+- macro `islower(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:57
+- macro `isprint(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:58
+- macro `ispunct(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:59
+- macro `isspace(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:60
+- macro `isupper(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:61
+- macro `isxdigit(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:62
+- macro `__iscsymf(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:63
+- macro `__iscsym(__c)` — define isalnum(__c) (_IsTable[(unsigned char)((__c)+1)] & (_LOWER|_UPPER|_DIGIT)) — tools/wc10/h/CTYPE.H:64
+- macro `_CTYPE_H_INCLUDED` — tools/wc10/h/CTYPE.H:66
+
+### DIRECT.H  `C, 70 lines`
+> direct.h Defines the types and structures used by the directory routines
+- macro `NAME_MAX` — if defined(__OS2__) || defined(__NT__) — tools/wc10/h/DIRECT.H:17
+- macro `NAME_MAX` — if defined(__OS2__) || defined(__NT__) — tools/wc10/h/DIRECT.H:19
+- macro `_A_NORMAL` — tools/wc10/h/DIRECT.H:35
+- macro `_A_RDONLY` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DIRECT.H:36
+- macro `_A_HIDDEN` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DIRECT.H:37
+- macro `_A_SYSTEM` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DIRECT.H:38
+- macro `_A_VOLID` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DIRECT.H:39
+- macro `_A_SUBDIR` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DIRECT.H:40
+- macro `_A_ARCH` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DIRECT.H:41
+- macro `_DISKFREE_T_DEFINED_` — ifndef _DISKFREE_T_DEFINED_ — tools/wc10/h/DIRECT.H:44
+- macro `diskfree_t` — tools/wc10/h/DIRECT.H:51
+- macro `_DIRECT_H_INCLUDED` — pragma pack(); — tools/wc10/h/DIRECT.H:65
+
+### DOS.H  `C, 157 lines`
+> dos.h Defines the structs and unions used to handle the input and
+- macro `__far` — if defined(__WINDOWS_386__) || defined(__NT__) || ( defined(__OS2__) && defined(__386__) ) — tools/wc10/h/DOS.H:16
+- macro `_dosdate_t` — tools/wc10/h/DOS.H:43
+- macro `_dostime_t` — tools/wc10/h/DOS.H:51
+- macro `_find_t` — tools/wc10/h/DOS.H:65
+- macro `_HARDERR_IGNORE` — tools/wc10/h/DOS.H:69
+- macro `_HARDERR_RETRY` — define _HARDERR_IGNORE 0 /* Ignore the error — tools/wc10/h/DOS.H:70
+- macro `_HARDERR_ABORT` — define _HARDERR_IGNORE 0 /* Ignore the error — tools/wc10/h/DOS.H:71
+- macro `_HARDERR_FAIL` — define _HARDERR_IGNORE 0 /* Ignore the error — tools/wc10/h/DOS.H:72
+- macro `_A_NORMAL` — tools/wc10/h/DOS.H:76
+- macro `_A_RDONLY` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DOS.H:77
+- macro `_A_HIDDEN` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DOS.H:78
+- macro `_A_SYSTEM` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DOS.H:79
+- macro `_A_VOLID` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DOS.H:80
+- macro `_A_SUBDIR` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DOS.H:81
+- macro `_A_ARCH` — define _A_NORMAL 0x00 /* Normal file - read/write permitted — tools/wc10/h/DOS.H:82
+- macro `_DISKFREE_T_DEFINED_` — ifndef _DISKFREE_T_DEFINED_ — tools/wc10/h/DOS.H:85
+- macro `diskfree_t` — tools/wc10/h/DOS.H:92
+- macro `_DOS_H_INCLUDED` — pragma pack(); — tools/wc10/h/DOS.H:149
+
+### DOSFUNC.H  `C, 41 lines`
+> dosfunc.h DOS 2.0 function calls
+- macro `DOS_GET_CHAR_NO_ECHO` — tools/wc10/h/DOSFUNC.H:7
+- macro `DOS_CUR_DISK` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:8
+- macro `DOS_SET_DTA` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:9
+- macro `DOS_SET_INT` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:10
+- macro `DOS_GET_DATE` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:11
+- macro `DOS_GET_TIME` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:12
+- macro `DOS_GET_VERSION` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:13
+- macro `DOS_CTRL_BREAK` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:14
+- macro `DOS_GET_INT` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:15
+- macro `DOS_SWITCH_CHAR` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:16
+- macro `DOS_MKDIR` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:17
+- macro `DOS_RMDIR` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:18
+- macro `DOS_CHDIR` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:19
+- macro `DOS_CREAT` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:20
+- macro `DOS_OPEN` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:21
+- macro `DOS_CLOSE` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:22
+- macro `DOS_READ` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:23
+- macro `DOS_WRITE` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:24
+- macro `DOS_UNLINK` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:25
+- macro `DOS_LSEEK` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:26
+- macro `DOS_CHMOD` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:27
+- macro `DOS_IOCTL` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:28
+- macro `DOS_DUP` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:29
+- macro `DOS_DUP2` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:30
+- macro `DOS_GETCWD` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:31
+- macro `DOS_ALLOC_SEG` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:32
+- macro `DOS_FREE_SEG` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:33
+- macro `DOS_MODIFY_SEG` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:34
+- macro `DOS_EXIT` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:35
+- macro `DOS_FIND_FIRST` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:36
+- macro `DOS_FIND_NEXT` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:37
+- macro `DOS_RENAME` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:38
+- macro `DOS_FILE_DATE` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:39
+- macro `DOS_COMMIT_FILE` — define DOS_GET_CHAR_NO_ECHO 0x07 — tools/wc10/h/DOSFUNC.H:40
+
+### ENV.H  `C, 26 lines`
+> env.h Environment string operations
+- macro `_ENV_H_INCLUDED` — tools/wc10/h/ENV.H:21
+
+### ERRNO.H  `C, 69 lines`
+> errno.h Error numbers
+- macro `EZERO` — Error codes — tools/wc10/h/ERRNO.H:19
+- macro `ENOENT` — Error codes — tools/wc10/h/ERRNO.H:20
+- macro `E2BIG` — Error codes — tools/wc10/h/ERRNO.H:21
+- macro `ENOEXEC` — Error codes — tools/wc10/h/ERRNO.H:22
+- macro `EBADF` — Error codes — tools/wc10/h/ERRNO.H:23
+- macro `ENOMEM` — Error codes — tools/wc10/h/ERRNO.H:24
+- macro `EACCES` — Error codes — tools/wc10/h/ERRNO.H:25
+- macro `EEXIST` — Error codes — tools/wc10/h/ERRNO.H:26
+- macro `EXDEV` — Error codes — tools/wc10/h/ERRNO.H:27
+- macro `EINVAL` — Error codes — tools/wc10/h/ERRNO.H:28
+- macro `ENFILE` — Error codes — tools/wc10/h/ERRNO.H:29
+- macro `EMFILE` — Error codes — tools/wc10/h/ERRNO.H:30
+- macro `ENOSPC` — Error codes — tools/wc10/h/ERRNO.H:31
+- macro `EDOM` — Error codes — tools/wc10/h/ERRNO.H:33
+- macro `ERANGE` — Error codes — tools/wc10/h/ERRNO.H:34
+- macro `EDEADLK` — Error codes — tools/wc10/h/ERRNO.H:36
+- macro `EDEADLOCK` — Error codes — tools/wc10/h/ERRNO.H:37
+- macro `EINTR` — Error codes — tools/wc10/h/ERRNO.H:38
+- macro `ECHILD` — Error codes — tools/wc10/h/ERRNO.H:39
+- macro `EAGAIN` — Error codes — tools/wc10/h/ERRNO.H:41
+- macro `EBUSY` — Error codes — tools/wc10/h/ERRNO.H:42
+- macro `EFBIG` — Error codes — tools/wc10/h/ERRNO.H:43
+- macro `EIO` — Error codes — tools/wc10/h/ERRNO.H:44
+- macro `EISDIR` — Error codes — tools/wc10/h/ERRNO.H:45
+- macro `ENOTDIR` — Error codes — tools/wc10/h/ERRNO.H:46
+- macro `EMLINK` — Error codes — tools/wc10/h/ERRNO.H:47
+- macro `ENOTBLK` — Error codes — tools/wc10/h/ERRNO.H:48
+- macro `ENOTTY` — Error codes — tools/wc10/h/ERRNO.H:49
+- macro `ENXIO` — Error codes — tools/wc10/h/ERRNO.H:50
+- macro `EPERM` — Error codes — tools/wc10/h/ERRNO.H:51
+- macro `EPIPE` — Error codes — tools/wc10/h/ERRNO.H:52
+- macro `EROFS` — Error codes — tools/wc10/h/ERRNO.H:53
+- macro `ESPIPE` — Error codes — tools/wc10/h/ERRNO.H:54
+- macro `ESRCH` — Error codes — tools/wc10/h/ERRNO.H:55
+- macro `ETXTBSY` — Error codes — tools/wc10/h/ERRNO.H:56
+- macro `EFAULT` — Error codes — tools/wc10/h/ERRNO.H:57
+- macro `ENAMETOOLONG` — Error codes — tools/wc10/h/ERRNO.H:58
+- macro `ENODEV` — Error codes — tools/wc10/h/ERRNO.H:59
+- macro `ENOLCK` — Error codes — tools/wc10/h/ERRNO.H:60
+- macro `ENOSYS` — Error codes — tools/wc10/h/ERRNO.H:61
+- macro `ENOTEMPTY` — Error codes — tools/wc10/h/ERRNO.H:62
+- macro `_ERRNO_H_INCLUDED` — tools/wc10/h/ERRNO.H:64
+
+### EXCEPT.H  `C, 39 lines`
+> except.h -- C++ default exception handlers
+- macro `_PFV_DEFINED_` — ifndef _PFV_DEFINED_ — tools/wc10/h/EXCEPT.H:13
+- macro `_PFU_DEFINED_` — endif — tools/wc10/h/EXCEPT.H:17
+- macro `_PNH_DEFINED_` — endif — tools/wc10/h/EXCEPT.H:21
+- macro `_WATCOM_EXCEPTION_DEFINED_` — ifndef _WATCOM_EXCEPTION_DEFINED_ — tools/wc10/h/EXCEPT.H:26
+- macro `_EXCEPT_H_INCLUDED` — endif — tools/wc10/h/EXCEPT.H:37
+
+### FCNTL.H  `C, 36 lines`
+> fcntl.h File control options used by open
+- macro `O_RDONLY` — tools/wc10/h/FCNTL.H:13
+- macro `O_WRONLY` — define O_RDONLY 0x0000 /* open for read only — tools/wc10/h/FCNTL.H:14
+- macro `O_RDWR` — define O_RDONLY 0x0000 /* open for read only — tools/wc10/h/FCNTL.H:15
+- macro `O_APPEND` — define O_RDONLY 0x0000 /* open for read only — tools/wc10/h/FCNTL.H:16
+- macro `O_CREAT` — define O_RDONLY 0x0000 /* open for read only — tools/wc10/h/FCNTL.H:17
+- macro `O_TRUNC` — define O_RDONLY 0x0000 /* open for read only — tools/wc10/h/FCNTL.H:18
+- macro `O_NOINHERIT` — define O_RDONLY 0x0000 /* open for read only — tools/wc10/h/FCNTL.H:19
+- macro `O_TEXT` — define O_RDONLY 0x0000 /* open for read only — tools/wc10/h/FCNTL.H:20
+- macro `O_BINARY` — define O_RDONLY 0x0000 /* open for read only — tools/wc10/h/FCNTL.H:21
+- macro `O_EXCL` — define O_RDONLY 0x0000 /* open for read only — tools/wc10/h/FCNTL.H:22
+- macro `_FCNTL_H_INCLUDED` — tools/wc10/h/FCNTL.H:31
+
+### FLOAT.H  `C, 207 lines`
+> float.h Floating point functions
+- macro `FLT_RADIX` — tools/wc10/h/FLOAT.H:11
+- macro `FLT_ROUNDS` — define FLT_RADIX 2 — tools/wc10/h/FLOAT.H:12
+- macro `FLT_MANT_DIG` — number of base-FLT_RADIX digits in the floating point mantissa — tools/wc10/h/FLOAT.H:15
+- macro `DBL_MANT_DIG` — number of base-FLT_RADIX digits in the floating point mantissa — tools/wc10/h/FLOAT.H:16
+- macro `LDBL_MANT_DIG` — number of base-FLT_RADIX digits in the floating point mantissa — tools/wc10/h/FLOAT.H:17
+- macro `FLT_DIG` — number of decimal digits of precision — tools/wc10/h/FLOAT.H:20
+- macro `DBL_DIG` — number of decimal digits of precision — tools/wc10/h/FLOAT.H:21
+- macro `LDBL_DIG` — number of decimal digits of precision — tools/wc10/h/FLOAT.H:22
+- macro `FLT_MIN_EXP(-127)` — minimum negative integer such that FLT_RADIX raised to that power minus 1 — tools/wc10/h/FLOAT.H:26
+- macro `DBL_MIN_EXP(-1023)` — minimum negative integer such that FLT_RADIX raised to that power minus 1 — tools/wc10/h/FLOAT.H:27
+- macro `LDBL_MIN_EXP(-1023)` — minimum negative integer such that FLT_RADIX raised to that power minus 1 — tools/wc10/h/FLOAT.H:28
+- macro `FLT_MIN_10_EXP(-38)` — minimum negative integer such that 10 raised to that power is in the — tools/wc10/h/FLOAT.H:32
+- macro `DBL_MIN_10_EXP(-307)` — minimum negative integer such that 10 raised to that power is in the — tools/wc10/h/FLOAT.H:33
+- macro `LDBL_MIN_10_EXP(-307)` — minimum negative integer such that 10 raised to that power is in the — tools/wc10/h/FLOAT.H:34
+- macro `FLT_MAX_EXP` — maximum integer such that FLT_RADIX raised to that power minus 1 is a — tools/wc10/h/FLOAT.H:38
+- macro `DBL_MAX_EXP` — maximum integer such that FLT_RADIX raised to that power minus 1 is a — tools/wc10/h/FLOAT.H:39
+- macro `LDBL_MAX_EXP` — maximum integer such that FLT_RADIX raised to that power minus 1 is a — tools/wc10/h/FLOAT.H:40
+- macro `FLT_MAX_10_EXP` — maximum integer such that 10 raised to that power is in the range of — tools/wc10/h/FLOAT.H:44
+- macro `DBL_MAX_10_EXP` — maximum integer such that 10 raised to that power is in the range of — tools/wc10/h/FLOAT.H:45
+- macro `LDBL_MAX_10_EXP` — maximum integer such that 10 raised to that power is in the range of — tools/wc10/h/FLOAT.H:46
+- macro `FLT_MAX` — maximum representable floating point number — tools/wc10/h/FLOAT.H:49
+- macro `DBL_MAX` — maximum representable floating point number — tools/wc10/h/FLOAT.H:50
+- macro `LDBL_MAX` — maximum representable floating point number — tools/wc10/h/FLOAT.H:51
+- macro `FLT_EPSILON` — minimum positive floating point number x such that 1.0 + x != 1.0 — tools/wc10/h/FLOAT.H:54
+- macro `DBL_EPSILON` — minimum positive floating point number x such that 1.0 + x != 1.0 — tools/wc10/h/FLOAT.H:55
+- macro `LDBL_EPSILON` — minimum positive floating point number x such that 1.0 + x != 1.0 — tools/wc10/h/FLOAT.H:56
+- macro `FLT_MIN` — minimum representable positive floating point number — tools/wc10/h/FLOAT.H:59
+- macro `DBL_MIN` — minimum representable positive floating point number — tools/wc10/h/FLOAT.H:60
+- macro `LDBL_MIN` — minimum representable positive floating point number — tools/wc10/h/FLOAT.H:61
+- macro `_MCW_EM` — tools/wc10/h/FLOAT.H:69
+- macro `_EM_INVALID` — define _MCW_EM 0x003f /* Interrupt Exception Masks — tools/wc10/h/FLOAT.H:70
+- macro `_EM_DENORMAL` — define _MCW_EM 0x003f /* Interrupt Exception Masks — tools/wc10/h/FLOAT.H:71
+- macro `_EM_ZERODIVIDE` — define _MCW_EM 0x003f /* Interrupt Exception Masks — tools/wc10/h/FLOAT.H:72
+- macro `_EM_OVERFLOW` — define _MCW_EM 0x003f /* Interrupt Exception Masks — tools/wc10/h/FLOAT.H:73
+- macro `_EM_UNDERFLOW` — define _MCW_EM 0x003f /* Interrupt Exception Masks — tools/wc10/h/FLOAT.H:74
+- macro `_EM_INEXACT` — define _MCW_EM 0x003f /* Interrupt Exception Masks — tools/wc10/h/FLOAT.H:75
+- macro `_MCW_IC` — tools/wc10/h/FLOAT.H:77
+- macro `_IC_AFFINE` — define _MCW_IC 0x1000 /* Infinity Control — tools/wc10/h/FLOAT.H:78
+- macro `_IC_PROJECTIVE` — define _MCW_IC 0x1000 /* Infinity Control — tools/wc10/h/FLOAT.H:79
+- macro `_MCW_RC` — tools/wc10/h/FLOAT.H:81
+- macro `_RC_NEAR` — define _MCW_RC 0x0c00 /* Rounding Control — tools/wc10/h/FLOAT.H:82
+- macro `_RC_DOWN` — define _MCW_RC 0x0c00 /* Rounding Control — tools/wc10/h/FLOAT.H:83
+- macro `_RC_UP` — define _MCW_RC 0x0c00 /* Rounding Control — tools/wc10/h/FLOAT.H:84
+- macro `_RC_CHOP` — define _MCW_RC 0x0c00 /* Rounding Control — tools/wc10/h/FLOAT.H:85
+- macro `_MCW_PC` — tools/wc10/h/FLOAT.H:87
+- macro `_PC_24` — define _MCW_PC 0x0300 /* Precision Control — tools/wc10/h/FLOAT.H:88
+- macro `_PC_53` — define _MCW_PC 0x0300 /* Precision Control — tools/wc10/h/FLOAT.H:89
+- macro `_PC_64` — define _MCW_PC 0x0300 /* Precision Control — tools/wc10/h/FLOAT.H:90
+- macro `_CW_DEFAULT(_IC_AFFINE | _RC_NEAR | _PC_53 \ | _EM_INVALID | _EM_DENORMAL | _EM_…` — tools/wc10/h/FLOAT.H:94
+- macro `_SW_INVALID` — tools/wc10/h/FLOAT.H:100
+- macro `_SW_DENORMAL` — define _SW_INVALID 0x0001 /* invalid — tools/wc10/h/FLOAT.H:101
+- macro `_SW_ZERODIVIDE` — define _SW_INVALID 0x0001 /* invalid — tools/wc10/h/FLOAT.H:102
+- macro `_SW_OVERFLOW` — define _SW_INVALID 0x0001 /* invalid — tools/wc10/h/FLOAT.H:103
+- macro `_SW_UNDERFLOW` — define _SW_INVALID 0x0001 /* invalid — tools/wc10/h/FLOAT.H:104
+- macro `_SW_INEXACT(precision)` — define _SW_INVALID 0x0001 /* invalid — tools/wc10/h/FLOAT.H:105
+- macro `_SW_UNEMULATED` — tools/wc10/h/FLOAT.H:109
+- macro `_SW_SQRTNEG` — define _SW_UNEMULATED 0x0040 /* unemulated instruction — tools/wc10/h/FLOAT.H:111
+- macro `_SW_STACKOVERFLOW` — define _SW_UNEMULATED 0x0040 /* unemulated instruction — tools/wc10/h/FLOAT.H:112
+- macro `_SW_STACKUNDERFLOW` — define _SW_UNEMULATED 0x0040 /* unemulated instruction — tools/wc10/h/FLOAT.H:113
+- macro `_FPE_INVALID` — tools/wc10/h/FLOAT.H:117
+- macro `_FPE_DENORMAL` — define _FPE_INVALID 0x81 — tools/wc10/h/FLOAT.H:118
+- macro `_FPE_ZERODIVIDE` — define _FPE_INVALID 0x81 — tools/wc10/h/FLOAT.H:119
+- macro `_FPE_OVERFLOW` — define _FPE_INVALID 0x81 — tools/wc10/h/FLOAT.H:120
+- macro `_FPE_UNDERFLOW` — define _FPE_INVALID 0x81 — tools/wc10/h/FLOAT.H:121
+- macro `_FPE_INEXACT` — define _FPE_INVALID 0x81 — tools/wc10/h/FLOAT.H:122
+- macro `_FPE_UNEMULATED` — tools/wc10/h/FLOAT.H:124
+- macro `_FPE_SQRTNEG` — define _FPE_UNEMULATED 0x87 — tools/wc10/h/FLOAT.H:125
+- macro `_FPE_STACKOVERFLOW` — define _FPE_UNEMULATED 0x87 — tools/wc10/h/FLOAT.H:126
+- macro `_FPE_STACKUNDERFLOW` — define _FPE_UNEMULATED 0x87 — tools/wc10/h/FLOAT.H:127
+- macro `_FPE_EXPLICITGEN` — define _FPE_UNEMULATED 0x87 — tools/wc10/h/FLOAT.H:128
+- macro `_FPE_IOVERFLOW(p)` — define _FPE_UNEMULATED 0x87 — tools/wc10/h/FLOAT.H:129
+- macro `_FPE_LOGERR` — Floating-point error codes — tools/wc10/h/FLOAT.H:131
+- macro `_FPE_MODERR` — define _FPE_UNEMULATED 0x87 — tools/wc10/h/FLOAT.H:132
+- macro `MCW_EM` — tools/wc10/h/FLOAT.H:141
+- macro `EM_INVALID` — define MCW_EM _MCW_EM — tools/wc10/h/FLOAT.H:142
+- macro `EM_DENORMAL` — define MCW_EM _MCW_EM — tools/wc10/h/FLOAT.H:143
+- macro `EM_ZERODIVIDE` — define MCW_EM _MCW_EM — tools/wc10/h/FLOAT.H:144
+- macro `EM_OVERFLOW` — define MCW_EM _MCW_EM — tools/wc10/h/FLOAT.H:145
+- macro `EM_UNDERFLOW` — define MCW_EM _MCW_EM — tools/wc10/h/FLOAT.H:146
+- macro `EM_INEXACT` — define MCW_EM _MCW_EM — tools/wc10/h/FLOAT.H:147
+- macro `EM_PRECISION` — define MCW_EM _MCW_EM — tools/wc10/h/FLOAT.H:148
+- macro `MCW_IC` — tools/wc10/h/FLOAT.H:150
+- macro `IC_AFFINE` — define MCW_IC _MCW_IC — tools/wc10/h/FLOAT.H:151
+- macro `IC_PROJECTIVE` — define MCW_IC _MCW_IC — tools/wc10/h/FLOAT.H:152
+- macro `MCW_RC` — tools/wc10/h/FLOAT.H:154
+- macro `RC_NEAR` — define MCW_RC _MCW_RC — tools/wc10/h/FLOAT.H:155
+- macro `RC_DOWN` — define MCW_RC _MCW_RC — tools/wc10/h/FLOAT.H:156
+- macro `RC_UP` — define MCW_RC _MCW_RC — tools/wc10/h/FLOAT.H:157
+- macro `RC_CHOP` — define MCW_RC _MCW_RC — tools/wc10/h/FLOAT.H:158
+- macro `MCW_PC` — tools/wc10/h/FLOAT.H:160
+- macro `PC_24` — define MCW_PC _MCW_PC — tools/wc10/h/FLOAT.H:161
+- macro `PC_53` — define MCW_PC _MCW_PC — tools/wc10/h/FLOAT.H:162
+- macro `PC_64` — define MCW_PC _MCW_PC — tools/wc10/h/FLOAT.H:163
+- macro `SW_INVALID` — tools/wc10/h/FLOAT.H:167
+- macro `SW_DENORMAL` — define SW_INVALID _SW_INVALID — tools/wc10/h/FLOAT.H:168
+- macro `SW_ZERODIVIDE` — define SW_INVALID _SW_INVALID — tools/wc10/h/FLOAT.H:169
+- macro `SW_OVERFLOW` — define SW_INVALID _SW_INVALID — tools/wc10/h/FLOAT.H:170
+- macro `SW_UNDERFLOW` — define SW_INVALID _SW_INVALID — tools/wc10/h/FLOAT.H:171
+- macro `SW_INEXACT` — define SW_INVALID _SW_INVALID — tools/wc10/h/FLOAT.H:172
+- macro `SW_UNEMULATED` — define SW_INVALID _SW_INVALID — tools/wc10/h/FLOAT.H:174
+- macro `SW_SQRTNEG` — define SW_INVALID _SW_INVALID — tools/wc10/h/FLOAT.H:175
+- macro `SW_STACKOVERFLOW` — define SW_INVALID _SW_INVALID — tools/wc10/h/FLOAT.H:176
+- macro `SW_STACKUNDERFLOW` — define SW_INVALID _SW_INVALID — tools/wc10/h/FLOAT.H:177
+- macro `FPE_INVALID` — tools/wc10/h/FLOAT.H:181
+- macro `FPE_DENORMAL` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:182
+- macro `FPE_ZERODIVIDE` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:183
+- macro `FPE_OVERFLOW` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:184
+- macro `FPE_UNDERFLOW` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:185
+- macro `FPE_INEXACT` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:186
+- macro `FPE_UNEMULATED` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:187
+- macro `FPE_SQRTNEG` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:188
+- macro `FPE_STACKOVERFLOW` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:189
+- macro `FPE_STACKUNDERFLOW` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:190
+- macro `FPE_EXPLICITGEN` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:191
+- macro `FPE_IOVERFLOW` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:192
+- macro `FPE_LOGERR` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:193
+- macro `FPE_MODERR` — define FPE_INVALID _FPE_INVALID — tools/wc10/h/FLOAT.H:194
+- macro `_FLOAT_H_INCLUDED` — tools/wc10/h/FLOAT.H:202
+
+### FSTREAM.H  `C, 174 lines`
+> fstream.h File I/O streams
+- type `filedesc` — POSIX file handle: — tools/wc10/h/FSTREAM.H:15
+- macro `_FSTREAM_H_INCLUDED` — tools/wc10/h/FSTREAM.H:172
+
+### GENERIC.H  `C, 40 lines`
+> generic.h Macros to support pseudo-templates
+- macro `name2(__n1,__n2)` — tools/wc10/h/GENERIC.H:12
+- macro `__paste2(__p1,__p2)` — define name2(__n1,__n2) __paste2(__n1,__n2) — tools/wc10/h/GENERIC.H:13
+- macro `name3(__n1,__n2,__n3)` — define name2(__n1,__n2) __paste2(__n1,__n2) — tools/wc10/h/GENERIC.H:14
+- macro `__paste3(__p1,__p2,__p3)` — define name2(__n1,__n2) __paste2(__n1,__n2) — tools/wc10/h/GENERIC.H:15
+- macro `name4(__n1,__n2,__n3,__n4)` — define name2(__n1,__n2) __paste2(__n1,__n2) — tools/wc10/h/GENERIC.H:16
+- macro `__paste4(__p1,__p2,__p3,__p4)` — define name2(__n1,__n2) __paste2(__n1,__n2) — tools/wc10/h/GENERIC.H:17
+- macro `declare(__Cls,__Typ1)` — tools/wc10/h/GENERIC.H:19
+- macro `implement(__Cls,__Typ1)` — tools/wc10/h/GENERIC.H:21
+- macro `declare2(__Cls,__Typ1,__Typ2)` — tools/wc10/h/GENERIC.H:23
+- macro `implement2(__Cls,__Typ1,__Typ2)` — tools/wc10/h/GENERIC.H:25
+- macro `callerror(__Cls,__Typ1,__Typ2,__Typ3)` — tools/wc10/h/GENERIC.H:27
+- macro `errorhandler(__Cls,__Typ1)` — tools/wc10/h/GENERIC.H:29
+- macro `set_handler(__Cls,__Typ1,__Typ2)` — tools/wc10/h/GENERIC.H:31
+- macro `_GENERIC_H_INCLUDED` — tools/wc10/h/GENERIC.H:38
+
+### GRAPH.H  `C, 369 lines`
+> graph.h Graphics functions
+- macro `_MAXRESMODE(-3)` — tools/wc10/h/GRAPH.H:105
+- macro `_MAXCOLORMODE(-2)` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:106
+- macro `_DEFAULTMODE(-1)` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:107
+- macro `_TEXTBW40` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:108
+- macro `_TEXTC40` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:109
+- macro `_TEXTBW80` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:110
+- macro `_TEXTC80` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:111
+- macro `_MRES4COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:112
+- macro `_MRESNOCOLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:113
+- macro `_HRESBW` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:114
+- macro `_TEXTMONO` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:115
+- macro `_HERCMONO` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:116
+- macro `_MRES16COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:117
+- macro `_HRES16COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:118
+- macro `_ERESNOCOLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:119
+- macro `_ERESCOLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:120
+- macro `_VRES2COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:121
+- macro `_VRES16COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:122
+- macro `_MRES256COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:123
+- macro `_URES256COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:124
+- macro `_VRES256COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:125
+- macro `_SVRES16COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:126
+- macro `_SVRES256COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:127
+- macro `_XRES16COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:128
+- macro `_XRES256COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH.H:129
+- macro `_NODISPLAY(-1)` — tools/wc10/h/GRAPH.H:131
+- macro `_UNKNOWN` — define _NODISPLAY (-1) /* no display device — tools/wc10/h/GRAPH.H:132
+- macro `_MDPA` — tools/wc10/h/GRAPH.H:134
+- macro `_CGA` — define _MDPA 1 /* monochrome display/printer adapter — tools/wc10/h/GRAPH.H:135
+- macro `_HERCULES` — define _MDPA 1 /* monochrome display/printer adapter — tools/wc10/h/GRAPH.H:136
+- macro `_MCGA` — define _MDPA 1 /* monochrome display/printer adapter — tools/wc10/h/GRAPH.H:137
+- macro `_EGA` — define _MDPA 1 /* monochrome display/printer adapter — tools/wc10/h/GRAPH.H:138
+- macro `_VGA` — define _MDPA 1 /* monochrome display/printer adapter — tools/wc10/h/GRAPH.H:139
+- macro `_SVGA` — define _MDPA 1 /* monochrome display/printer adapter — tools/wc10/h/GRAPH.H:140
+- macro `_HGC` — define _MDPA 1 /* monochrome display/printer adapter — tools/wc10/h/GRAPH.H:141
+- macro `_MONO` — tools/wc10/h/GRAPH.H:143
+- macro `_COLOR` — define _MONO 1 /* regular monochrome — tools/wc10/h/GRAPH.H:144
+- macro `_ENHANCED` — define _MONO 1 /* regular monochrome — tools/wc10/h/GRAPH.H:145
+- macro `_ANALOGMONO` — define _MONO 1 /* regular monochrome — tools/wc10/h/GRAPH.H:146
+- macro `_ANALOGCOLOR` — define _MONO 1 /* regular monochrome — tools/wc10/h/GRAPH.H:147
+- macro `_GROK` — tools/wc10/h/GRAPH.H:149
+- macro `_GRERROR(-1)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH.H:150
+- macro `_GRMODENOTSUPPORTED(-2)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH.H:151
+- macro `_GRNOTINPROPERMODE(-3)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH.H:152
+- macro `_GRINVALIDPARAMETER(-4)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH.H:153
+- macro `_GRINSUFFICIENTMEMORY(-5)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH.H:154
+- macro `_GRFONTFILENOTFOUND(-6)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH.H:155
+- macro `_GRINVALIDFONTFILE(-7)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH.H:156
+- macro `_GRNOOUTPUT` — define _GROK 0 /* no error — tools/wc10/h/GRAPH.H:157
+- macro `_GRCLIPPED` — define _GROK 0 /* no error — tools/wc10/h/GRAPH.H:158
+- macro `_BLACK` — tools/wc10/h/GRAPH.H:170
+- macro `_BLUE` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:171
+- macro `_GREEN` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:172
+- macro `_CYAN` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:173
+- macro `_RED` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:174
+- macro `_MAGENTA` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:175
+- macro `_BROWN` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:176
+- macro `_WHITE` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:177
+- macro `_GRAY` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:178
+- macro `_LIGHTBLUE` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:179
+- macro `_LIGHTGREEN` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:180
+- macro `_LIGHTCYAN` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:181
+- macro `_LIGHTRED` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:182
+- macro `_LIGHTMAGENTA` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:183
+- macro `_YELLOW` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:184
+- macro `_BRIGHTWHITE` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:185
+- macro `_LIGHTYELLOW` — define _BLACK 0x000000L — tools/wc10/h/GRAPH.H:186
+- macro `_getlogcoord` — tools/wc10/h/GRAPH.H:242
+- macro `_setlogorg` — define _getlogcoord _getviewcoord /* for compatibility — tools/wc10/h/GRAPH.H:243
+- macro `_setwritemode` — tools/wc10/h/GRAPH.H:255
+- macro `_getwritemode` — define _setwritemode _setplotaction /* for compatibility — tools/wc10/h/GRAPH.H:256
+- macro `_GCLEARSCREEN` — tools/wc10/h/GRAPH.H:273
+- macro `_GVIEWPORT` — define _GCLEARSCREEN 0 — tools/wc10/h/GRAPH.H:274
+- macro `_GWINDOW` — define _GCLEARSCREEN 0 — tools/wc10/h/GRAPH.H:275
+- macro `_GBORDER` — tools/wc10/h/GRAPH.H:277
+- macro `_GFILLINTERIOR` — define _GBORDER 2 — tools/wc10/h/GRAPH.H:278
+- macro `_GSCROLLUP` — tools/wc10/h/GRAPH.H:318
+- macro `_GSCROLLDOWN(-1)` — define _GSCROLLUP 1 — tools/wc10/h/GRAPH.H:319
+- macro `_MAXTEXTROWS(-1)` — define _GSCROLLUP 1 — tools/wc10/h/GRAPH.H:320
+- macro `_GRAPH_H_INCLUDED` — pragma pack(); — tools/wc10/h/GRAPH.H:364
+
+### GRAPH98.H  `C, 363 lines`
+> graph.h Graphics functions
+- macro `_MAXRESMODE(-3)` — tools/wc10/h/GRAPH98.H:105
+- macro `_MAXCOLORMODE(-2)` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:106
+- macro `_DEFAULTMODE(-1)` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:107
+- macro `_98TEXT80` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:108
+- macro `_98RESSCOLOR(superimpose)` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:109
+- macro `_98RESS8COLOR(superimpose)` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:110
+- macro `_98RESS16COLOR(superimpose)` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:111
+- macro `_98HIRESS16COLOR(superimpose)` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:112
+- macro `_98RESCOLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:113
+- macro `_98RES8COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:114
+- macro `_98RES16COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:115
+- macro `_98HIRES16COLOR` — define _MAXRESMODE (-3) /* graphics mode with highest res. — tools/wc10/h/GRAPH98.H:116
+- macro `_NODISPLAY(-1)` — tools/wc10/h/GRAPH98.H:118
+- macro `_UNKNOWN` — define _NODISPLAY (-1) /* no display device — tools/wc10/h/GRAPH98.H:119
+- macro `_98CGA(digital)` — tools/wc10/h/GRAPH98.H:121
+- macro `_98EGA(analog)` — define _98CGA 0x2000 /* Color Graphics Adapter (digital) — tools/wc10/h/GRAPH98.H:122
+- macro `_98ANALOG` — tools/wc10/h/GRAPH98.H:124
+- macro `_98DIGITAL` — define _98ANALOG 0x0100 /* Analog color monitor — tools/wc10/h/GRAPH98.H:125
+- macro `_GROK` — tools/wc10/h/GRAPH98.H:127
+- macro `_GRERROR(-1)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH98.H:128
+- macro `_GRMODENOTSUPPORTED(-2)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH98.H:129
+- macro `_GRNOTINPROPERMODE(-3)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH98.H:130
+- macro `_GRINVALIDPARAMETER(-4)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH98.H:131
+- macro `_GRINSUFFICIENTMEMORY(-5)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH98.H:132
+- macro `_GRFONTFILENOTFOUND(-6)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH98.H:133
+- macro `_GRINVALIDFONTFILE(-7)` — define _GROK 0 /* no error — tools/wc10/h/GRAPH98.H:134
+- macro `_GRNOOUTPUT` — define _GROK 0 /* no error — tools/wc10/h/GRAPH98.H:135
+- macro `_GRCLIPPED` — define _GROK 0 /* no error — tools/wc10/h/GRAPH98.H:136
+- macro `_98BLACK` — tools/wc10/h/GRAPH98.H:148
+- macro `_98BLUE` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:149
+- macro `_98GREEN` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:150
+- macro `_98CYAN` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:151
+- macro `_98RED` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:152
+- macro `_98MAGENTA` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:153
+- macro `_98YELLOW` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:154
+- macro `_98WHITE` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:155
+- macro `_98GRAY` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:156
+- macro `_98DARKBLUE` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:157
+- macro `_98DARKGREEN` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:158
+- macro `_98DARKCYAN` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:159
+- macro `_98DARKRED` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:160
+- macro `_98DARKMAGENTA` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:161
+- macro `_98DARKYELLOW` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:162
+- macro `_98DARKWHITE` — define _98BLACK 0x000000L /* colour values for analog display — tools/wc10/h/GRAPH98.H:163
+- macro `_98BLACK_D` — tools/wc10/h/GRAPH98.H:165
+- macro `_98BLUE_D` — define _98BLACK_D 0x000000L /* colour values for digital display — tools/wc10/h/GRAPH98.H:166
+- macro `_98GREEN_D` — define _98BLACK_D 0x000000L /* colour values for digital display — tools/wc10/h/GRAPH98.H:167
+- macro `_98CYAN_D` — define _98BLACK_D 0x000000L /* colour values for digital display — tools/wc10/h/GRAPH98.H:168
+- macro `_98RED_D` — define _98BLACK_D 0x000000L /* colour values for digital display — tools/wc10/h/GRAPH98.H:169
+- macro `_98MAGENTA_D` — define _98BLACK_D 0x000000L /* colour values for digital display — tools/wc10/h/GRAPH98.H:170
+- macro `_98YELLOW_D` — define _98BLACK_D 0x000000L /* colour values for digital display — tools/wc10/h/GRAPH98.H:171
+- macro `_98WHITE_D` — define _98BLACK_D 0x000000L /* colour values for digital display — tools/wc10/h/GRAPH98.H:172
+- macro `_getlogcoord` — tools/wc10/h/GRAPH98.H:228
+- macro `_setlogorg` — define _getlogcoord _getviewcoord /* for compatibility — tools/wc10/h/GRAPH98.H:229
+- macro `_setwritemode` — tools/wc10/h/GRAPH98.H:241
+- macro `_getwritemode` — define _setwritemode _setplotaction /* for compatibility — tools/wc10/h/GRAPH98.H:242
+- macro `_GCLEARSCREEN` — tools/wc10/h/GRAPH98.H:259
+- macro `_GVIEWPORT` — define _GCLEARSCREEN 0 — tools/wc10/h/GRAPH98.H:260
+- macro `_GWINDOW` — define _GCLEARSCREEN 0 — tools/wc10/h/GRAPH98.H:261
+- macro `_GCLEARGRAPH` — define _GCLEARSCREEN 0 — tools/wc10/h/GRAPH98.H:262
+- macro `_GCLEARTEXT` — define _GCLEARSCREEN 0 — tools/wc10/h/GRAPH98.H:263
+- macro `_GBORDER` — tools/wc10/h/GRAPH98.H:265
+- macro `_GFILLINTERIOR` — define _GBORDER 2 — tools/wc10/h/GRAPH98.H:266
+- macro `_GSCROLLUP` — tools/wc10/h/GRAPH98.H:306
+- macro `_GSCROLLDOWN(-1)` — define _GSCROLLUP 1 — tools/wc10/h/GRAPH98.H:307
+- macro `_MAXTEXTROWS(-1)` — define _GSCROLLUP 1 — tools/wc10/h/GRAPH98.H:308
+- macro `_GRAPH_H_INCLUDED` — pragma pack(); — tools/wc10/h/GRAPH98.H:358
+
+### I86.H  `C, 240 lines`
+> i86.h Defines the structs and unions used to handle the input and
+- macro `_REGS` — tools/wc10/h/I86.H:70
+- macro `_SREGS` — tools/wc10/h/I86.H:80
+- macro `FP_OFF(__p)` — tools/wc10/h/I86.H:219
+- macro `_FP_OFF(__p)` — define FP_OFF(__p) ((unsigned)(__p)) — tools/wc10/h/I86.H:220
+- macro `_FP_SEG` — pragma aux FP_SEG = parm caller [eax dx] value [dx]; — tools/wc10/h/I86.H:228
+- macro `MK_FP(__s,__o)` — make a far pointer from segment and offset — tools/wc10/h/I86.H:231
+- macro `_I86_H_INCLUDED` — tools/wc10/h/I86.H:235
+
+### IO.H  `C, 72 lines`
+> io.h Low level I/O routines that work with file handles
+- macro `R_OK` — tools/wc10/h/IO.H:13
+- macro `W_OK` — define R_OK 4 /* Test for read permission — tools/wc10/h/IO.H:14
+- macro `X_OK` — define R_OK 4 /* Test for read permission — tools/wc10/h/IO.H:15
+- macro `F_OK` — define R_OK 4 /* Test for read permission — tools/wc10/h/IO.H:16
+- macro `ACCESS_WR` — tools/wc10/h/IO.H:18
+- macro `ACCESS_RD` — define ACCESS_WR 0x0002 — tools/wc10/h/IO.H:19
+- macro `SEEK_SET` — tools/wc10/h/IO.H:23
+- macro `SEEK_CUR` — define SEEK_SET 0 /* Seek relative to the start of file — tools/wc10/h/IO.H:24
+- macro `SEEK_END` — define SEEK_SET 0 /* Seek relative to the start of file — tools/wc10/h/IO.H:25
+- macro `STDIN_FILENO` — tools/wc10/h/IO.H:29
+- macro `STDOUT_FILENO` — define STDIN_FILENO 0 — tools/wc10/h/IO.H:30
+- macro `STDERR_FILENO` — define STDIN_FILENO 0 — tools/wc10/h/IO.H:31
+- macro `STDAUX_FILENO` — define STDIN_FILENO 0 — tools/wc10/h/IO.H:33
+- macro `STDPRN_FILENO` — define STDIN_FILENO 0 — tools/wc10/h/IO.H:34
+- macro `_IO_H_INCLUDED` — tools/wc10/h/IO.H:67
+
+### IOMANIP.H  `C, 147 lines`
+> iomanip.h I/O streams manipulators
+- macro `SMANIP(__Typ)` — define some compatibility macros for legacy code — tools/wc10/h/IOMANIP.H:133
+- macro `SAPP(__Typ)` — define some compatibility macros for legacy code — tools/wc10/h/IOMANIP.H:134
+- macro `IMANIP(__Typ)` — define some compatibility macros for legacy code — tools/wc10/h/IOMANIP.H:135
+- macro `IAPP(__Typ)` — define some compatibility macros for legacy code — tools/wc10/h/IOMANIP.H:136
+- macro `OMANIP(__Typ)` — define some compatibility macros for legacy code — tools/wc10/h/IOMANIP.H:137
+- macro `OAPP(__Typ)` — define some compatibility macros for legacy code — tools/wc10/h/IOMANIP.H:138
+- macro `IOMANIP(__Typ)` — define some compatibility macros for legacy code — tools/wc10/h/IOMANIP.H:139
+- macro `IOAPP(__Typ)` — define some compatibility macros for legacy code — tools/wc10/h/IOMANIP.H:140
+- macro `SMANIP_define(__Typ)` — tools/wc10/h/IOMANIP.H:142
+- macro `IOMANIPdeclare(__Typ)` — define SMANIP_define(__Typ) — tools/wc10/h/IOMANIP.H:143
+- macro `_IOMANIP_H_INCLUDED` — tools/wc10/h/IOMANIP.H:145
+
+### IOSTREAM.H  `C, 705 lines`
+> iostream.h I/O streams
+- macro `_IOSTREAM_H_INCLUDED` — tools/wc10/h/IOSTREAM.H:7
+- macro `_WATCOM_EXCEPTION_DEFINED_` — ifndef _WATCOM_EXCEPTION_DEFINED_ — tools/wc10/h/IOSTREAM.H:14
+- macro `__lock_it( __l )` — tools/wc10/h/IOSTREAM.H:32
+- macro `__lock_name( __ln )` — define __lock_it( __l ) __get_lock __lock_name( __LINE__ )( __l ) — tools/wc10/h/IOSTREAM.H:33
+- macro `__lock_glue( __pre, __lin )` — define __lock_it( __l ) __get_lock __lock_name( __LINE__ )( __l ) — tools/wc10/h/IOSTREAM.H:34
+- macro `__lock_it( __l )` — define __lock_it( __l ) __get_lock __lock_name( __LINE__ )( __l ) — tools/wc10/h/IOSTREAM.H:36
+- macro `__NOT_EOF` — __NOT_EOF is useful for those functions that return "something other — tools/wc10/h/IOSTREAM.H:48
+- type `streampos` — Position in the stream (absolute value, 0 is first byte): — tools/wc10/h/IOSTREAM.H:51
+- type `streamoff` — Offset from current position in the stream: — tools/wc10/h/IOSTREAM.H:54
+- type `iostate` — tools/wc10/h/IOSTREAM.H:78
+- type `openmode` — tools/wc10/h/IOSTREAM.H:94
+- type `seekdir` — tools/wc10/h/IOSTREAM.H:100
+- type `fmtflags` — tools/wc10/h/IOSTREAM.H:125
+
+### JCTYPE.H  `C, 69 lines`
+> jctype.h Japanese character test macros
+- macro `_K` — tools/wc10/h/JCTYPE.H:25
+- macro `_KP` — define _K 0x01 /* Kana moji — tools/wc10/h/JCTYPE.H:26
+- macro `_J1` — define _K 0x01 /* Kana moji — tools/wc10/h/JCTYPE.H:27
+- macro `_J2` — define _K 0x01 /* Kana moji — tools/wc10/h/JCTYPE.H:28
+- macro `iskana(__c)` — tools/wc10/h/JCTYPE.H:55
+- macro `iskpun(__c)` — define iskana(__c) (_IsKTable[(unsigned char)(__c)+1] & (_K|_KP)) — tools/wc10/h/JCTYPE.H:56
+- macro `iskmoji(__c)` — define iskana(__c) (_IsKTable[(unsigned char)(__c)+1] & (_K|_KP)) — tools/wc10/h/JCTYPE.H:57
+- macro `isalkana(__c)` — define iskana(__c) (_IsKTable[(unsigned char)(__c)+1] & (_K|_KP)) — tools/wc10/h/JCTYPE.H:58
+- macro `ispnkana(__c)` — define iskana(__c) (_IsKTable[(unsigned char)(__c)+1] & (_K|_KP)) — tools/wc10/h/JCTYPE.H:59
+- macro `isalnmkana(__c)` — define iskana(__c) (_IsKTable[(unsigned char)(__c)+1] & (_K|_KP)) — tools/wc10/h/JCTYPE.H:60
+- macro `isprkana(__c)` — define iskana(__c) (_IsKTable[(unsigned char)(__c)+1] & (_K|_KP)) — tools/wc10/h/JCTYPE.H:61
+- macro `isgrkana(__c)` — define iskana(__c) (_IsKTable[(unsigned char)(__c)+1] & (_K|_KP)) — tools/wc10/h/JCTYPE.H:62
+- macro `iskanji(__c)` — tools/wc10/h/JCTYPE.H:64
+- macro `iskanji2(__c)` — define iskanji(__c) (_IsKTable[(unsigned char)(__c)+1] & _J1) — tools/wc10/h/JCTYPE.H:65
+- macro `_JCTYPE_H_INCLUDED` — tools/wc10/h/JCTYPE.H:67
+
+### JSTRING.H  `C, 133 lines`
+> jstring.h Japanese DBCS functions
+- macro `_SIZE_T_DEFINED_` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/JSTRING.H:12
+- type `size_t` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/JSTRING.H:13
+- macro `CT_ANK` — tools/wc10/h/JSTRING.H:26
+- macro `CT_KJ1` — define CT_ANK 0 /* ANK — tools/wc10/h/JSTRING.H:27
+- macro `CT_KJ2` — define CT_ANK 0 /* ANK — tools/wc10/h/JSTRING.H:28
+- macro `CT_ILGL` — define CT_ANK 0 /* ANK — tools/wc10/h/JSTRING.H:29
+- type `JCHAR` — define CT_ANK 0 /* ANK — tools/wc10/h/JSTRING.H:30
+- type `JSTRING` — definitions for chkctype(), nthctype() — tools/wc10/h/JSTRING.H:32
+- type `FJSTRING` — definitions for chkctype(), nthctype() — tools/wc10/h/JSTRING.H:33
+- type `JMOJI` — definitions for chkctype(), nthctype() — tools/wc10/h/JSTRING.H:34
+- macro `_JSTRING_H_INCLUDED` — tools/wc10/h/JSTRING.H:128
+
+### JTIME.H  `C, 23 lines`
+> jtime.h Japanese time functions
+- macro `_JTIME_H_INCLUDED` — tools/wc10/h/JTIME.H:21
+
+### LIMITS.H  `C, 47 lines`
+> limits.h Machine and OS limits
+- macro `CHAR_BIT` — ANSI required limits — tools/wc10/h/LIMITS.H:11
+- macro `MB_LEN_MAX` — ANSI required limits — tools/wc10/h/LIMITS.H:19
+- macro `SCHAR_MIN(-128)` — ANSI required limits — tools/wc10/h/LIMITS.H:20
+- macro `SCHAR_MAX` — ANSI required limits — tools/wc10/h/LIMITS.H:21
+- macro `UCHAR_MAX` — ANSI required limits — tools/wc10/h/LIMITS.H:22
+- macro `SHRT_MIN(-32767-1)` — tools/wc10/h/LIMITS.H:24
+- macro `SHRT_MAX` — define SHRT_MIN (-32767-1) /* minimum value of a short int — tools/wc10/h/LIMITS.H:25
+- macro `USHRT_MAX` — define SHRT_MIN (-32767-1) /* minimum value of a short int — tools/wc10/h/LIMITS.H:26
+- macro `LONG_MAX` — define SHRT_MIN (-32767-1) /* minimum value of a short int — tools/wc10/h/LIMITS.H:27
+- macro `LONG_MIN(-2147483647L-1)` — define SHRT_MIN (-32767-1) /* minimum value of a short int — tools/wc10/h/LIMITS.H:28
+- macro `ULONG_MAX` — define SHRT_MIN (-32767-1) /* minimum value of a short int — tools/wc10/h/LIMITS.H:29
+- macro `TZNAME_MAX` — tools/wc10/h/LIMITS.H:40
+- macro `_LIMITS_H_INCLUDED` — tools/wc10/h/LIMITS.H:45
+
+### LOCALE.H  `C, 58 lines`
+> locale.h
+- macro `LC_CTYPE` — tools/wc10/h/LOCALE.H:12
+- macro `LC_NUMERIC` — define LC_CTYPE 0 — tools/wc10/h/LOCALE.H:13
+- macro `LC_TIME` — define LC_CTYPE 0 — tools/wc10/h/LOCALE.H:14
+- macro `LC_COLLATE` — define LC_CTYPE 0 — tools/wc10/h/LOCALE.H:15
+- macro `LC_MONETARY` — define LC_CTYPE 0 — tools/wc10/h/LOCALE.H:16
+- macro `LC_MESSAGES` — define LC_CTYPE 0 — tools/wc10/h/LOCALE.H:17
+- macro `LC_ALL` — define LC_CTYPE 0 — tools/wc10/h/LOCALE.H:18
+- macro `_LOCALE_H_INCLUDED` — tools/wc10/h/LOCALE.H:53
+
+### MALLOC.H  `C, 144 lines`
+> malloc.h Memory allocation functions
+- macro `_SIZE_T_DEFINED_` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/MALLOC.H:13
+- type `size_t` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/MALLOC.H:14
+- macro `__ALLOCA_ALIGN( s )` — tools/wc10/h/MALLOC.H:31
+- macro `__alloca( s )` — define __ALLOCA_ALIGN( s ) (((s)+(sizeof(int)-1))&~(sizeof(int)-1)) — tools/wc10/h/MALLOC.H:32
+- macro `alloca( s )` — tools/wc10/h/MALLOC.H:34
+- macro `_HEAPOK` — tools/wc10/h/MALLOC.H:53
+- macro `_HEAPEMPTY` — define _HEAPOK 0 — tools/wc10/h/MALLOC.H:54
+- macro `_HEAPBADBEGIN` — define _HEAPOK 0 — tools/wc10/h/MALLOC.H:55
+- macro `_HEAPBADNODE` — define _HEAPOK 0 — tools/wc10/h/MALLOC.H:56
+- macro `_HEAPEND(_heapwalk)` — define _HEAPOK 0 — tools/wc10/h/MALLOC.H:57
+- macro `_HEAPBADPTR(_heapwalk)` — define _HEAPOK 0 — tools/wc10/h/MALLOC.H:58
+- macro `_USEDENTRY` — tools/wc10/h/MALLOC.H:60
+- macro `_FREEENTRY` — define _USEDENTRY 0 — tools/wc10/h/MALLOC.H:61
+- type `_pentry` — define _USEDENTRY 0 — tools/wc10/h/MALLOC.H:62
+- macro `_NULLSEG((__segment)0)` — tools/wc10/h/MALLOC.H:120
+- macro `_NULLOFF((void __based(void) *)~0)` — define _NULLSEG ((__segment)0) — tools/wc10/h/MALLOC.H:121
+- macro `_MALLOC_H_INCLUDED` — endif — tools/wc10/h/MALLOC.H:139
+
+### MATH.H  `C, 106 lines`
+> math.h Math functions
+- macro `HUGE_VAL` — endif — tools/wc10/h/MATH.H:16
+- macro `DOMAIN` — tools/wc10/h/MATH.H:80
+- macro `SING` — define DOMAIN 1 /* argument domain error — tools/wc10/h/MATH.H:81
+- macro `OVERFLOW` — define DOMAIN 1 /* argument domain error — tools/wc10/h/MATH.H:82
+- macro `UNDERFLOW` — define DOMAIN 1 /* argument domain error — tools/wc10/h/MATH.H:83
+- macro `TLOSS` — define DOMAIN 1 /* argument domain error — tools/wc10/h/MATH.H:84
+- macro `PLOSS` — define DOMAIN 1 /* argument domain error — tools/wc10/h/MATH.H:85
+- macro `_MATH_H_INCLUDED` — / — tools/wc10/h/MATH.H:101
+
+### MEM.H  `C, 16 lines`
+> mem.h Memory manipulation functions
+- macro `_PTRDIFF_T_DEFINED_` — tools/wc10/h/MEM.H:7
+- type `ptrdiff_t` — tools/wc10/h/MEM.H:9
+- type `ptrdiff_t` — else — tools/wc10/h/MEM.H:11
+
+### NEW.H  `C, 39 lines`
+> new.h -- C++ default storage allocators
+- macro `_PFV_DEFINED_` — ifndef _PFV_DEFINED_ — tools/wc10/h/NEW.H:15
+- macro `_PFU_DEFINED_` — endif — tools/wc10/h/NEW.H:19
+- macro `_PNH_DEFINED_` — endif — tools/wc10/h/NEW.H:23
+- macro `_NEW_H_INCLUDED` — endif — tools/wc10/h/NEW.H:37
+
+### PGCHART.H  `C, 192 lines`
+> pgchart.h Presentation Graphics functions
+- macro `_PG_MAXCHARTTYPE` — tools/wc10/h/PGCHART.H:19
+- macro `_PG_MAXCHARTSTYLE` — tools/wc10/h/PGCHART.H:27
+- macro `_PG_MISSINGVALUE(-FLT_MAX)` — tools/wc10/h/PGCHART.H:54
+- macro `_PG_NOTINITIALIZED` — tools/wc10/h/PGCHART.H:60
+- macro `_PG_BADSCREENMODE` — define _PG_NOTINITIALIZED 101 /* library not initialized — tools/wc10/h/PGCHART.H:61
+- macro `_PG_BADCHARTTYPE` — define _PG_NOTINITIALIZED 101 /* library not initialized — tools/wc10/h/PGCHART.H:62
+- macro `_PG_BADLEGENDWINDOW` — define _PG_NOTINITIALIZED 101 /* library not initialized — tools/wc10/h/PGCHART.H:63
+- macro `_PG_BADDATAWINDOW` — define _PG_NOTINITIALIZED 101 /* library not initialized — tools/wc10/h/PGCHART.H:64
+- macro `_PG_TOOSMALLN` — define _PG_NOTINITIALIZED 101 /* library not initialized — tools/wc10/h/PGCHART.H:65
+- macro `_PG_TOOFEWSERIES` — define _PG_NOTINITIALIZED 101 /* library not initialized — tools/wc10/h/PGCHART.H:66
+- macro `_PG_BADCHARTSTYLE` — tools/wc10/h/PGCHART.H:68
+- macro `_PG_BADLOGBASE` — define _PG_BADCHARTSTYLE 1 /* invalid chart style — tools/wc10/h/PGCHART.H:69
+- macro `_PG_BADSCALEFACTOR` — define _PG_BADCHARTSTYLE 1 /* invalid chart style — tools/wc10/h/PGCHART.H:70
+- macro `_PG_BADCHARTWINDOW` — define _PG_BADCHARTSTYLE 1 /* invalid chart style — tools/wc10/h/PGCHART.H:71
+- macro `_PG_TITLELEN` — tools/wc10/h/PGCHART.H:76
+- type `grid` — tools/wc10/h/PGCHART.H:83
+- type `x1` — tools/wc10/h/PGCHART.H:101
+- type `legend` — tools/wc10/h/PGCHART.H:112
+- type `charttype` — tools/wc10/h/PGCHART.H:120
+- macro `_PG_PALETTELEN` — tools/wc10/h/PGCHART.H:136
+- type `color` — Palette and Style-set definition — tools/wc10/h/PGCHART.H:141
+- macro `_PGCHART_H_INCLUDED` — pragma pack(); — tools/wc10/h/PGCHART.H:187
+
+### PROCESS.H  `C, 86 lines`
+> process.h Process spawning and related routines
+- macro `P_WAIT` — tools/wc10/h/PROCESS.H:26
+- macro `P_NOWAIT` — define P_WAIT 0 — tools/wc10/h/PROCESS.H:27
+- macro `P_OVERLAY` — define P_WAIT 0 — tools/wc10/h/PROCESS.H:28
+- macro `P_NOWAITO` — define P_WAIT 0 — tools/wc10/h/PROCESS.H:29
+- macro `WAIT_CHILD` — tools/wc10/h/PROCESS.H:40
+- macro `WAIT_GRANDCHILD` — define WAIT_CHILD 0 — tools/wc10/h/PROCESS.H:41
+- macro `_PROCESS_H_INCLUDED` — tools/wc10/h/PROCESS.H:81
+
+### SEARCH.H  `C, 20 lines`
+> search.h Function prototypes for searching functions
+- macro `_SEARCH_H_INCLUDED` — tools/wc10/h/SEARCH.H:15
+
+### SETJMP.H  `C, 30 lines`
+> setjmp.h
+- macro `setjmp(__env)` — tools/wc10/h/SETJMP.H:14
+- macro `_SETJMP_H_INCLUDED` — tools/wc10/h/SETJMP.H:25
+
+### SHARE.H  `C, 12 lines`
+> share.h Define file sharing modes for sopen()
+- macro `SH_COMPAT` — tools/wc10/h/SHARE.H:7
+- macro `SH_DENYRW` — define SH_COMPAT 0x00 /* compatibility mode — tools/wc10/h/SHARE.H:8
+- macro `SH_DENYWR` — define SH_COMPAT 0x00 /* compatibility mode — tools/wc10/h/SHARE.H:9
+- macro `SH_DENYRD` — define SH_COMPAT 0x00 /* compatibility mode — tools/wc10/h/SHARE.H:10
+- macro `SH_DENYNO` — define SH_COMPAT 0x00 /* compatibility mode — tools/wc10/h/SHARE.H:11
+
+### SIGNAL.H  `C, 46 lines`
+> signal.h Signal definitions
+- type `sig_atomic_t` — endif — tools/wc10/h/SIGNAL.H:10
+- macro `SIG_IGN((__sig_func) 1)` — tools/wc10/h/SIGNAL.H:15
+- macro `SIG_DFL((__sig_func) 2)` — define SIG_IGN ((__sig_func) 1) — tools/wc10/h/SIGNAL.H:16
+- macro `SIG_ERR((__sig_func) 3)` — define SIG_IGN ((__sig_func) 1) — tools/wc10/h/SIGNAL.H:17
+- macro `SIGABRT` — tools/wc10/h/SIGNAL.H:19
+- macro `SIGFPE` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:20
+- macro `SIGILL` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:21
+- macro `SIGINT` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:22
+- macro `SIGSEGV` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:23
+- macro `SIGTERM` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:24
+- macro `SIGBREAK` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:25
+- macro `SIGUSR1` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:27
+- macro `SIGUSR2` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:28
+- macro `SIGUSR3` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:29
+- macro `SIGIDIVZ` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:31
+- macro `SIGIOVFL` — define SIGABRT 1 — tools/wc10/h/SIGNAL.H:32
+- macro `_SIGMAX` — tools/wc10/h/SIGNAL.H:34
+- macro `_SIGMIN` — define _SIGMAX 12 — tools/wc10/h/SIGNAL.H:35
+- macro `_SIGNAL_H_INCLUDED` — tools/wc10/h/SIGNAL.H:41
+
+### STDARG.H  `C, 37 lines`
+> stdarg.h Variable argument macros
+- macro `va_start(ap,pn)` — tools/wc10/h/STDARG.H:15
+- macro `va_arg(ap,type)` — tools/wc10/h/STDARG.H:17
+- macro `va_end(ap)` — tools/wc10/h/STDARG.H:20
+- macro `va_start(ap,pn)` — tools/wc10/h/STDARG.H:24
+- macro `va_arg(ap,type)` — tools/wc10/h/STDARG.H:26
+- macro `va_end(ap)` — tools/wc10/h/STDARG.H:29
+- macro `_STDARG_H_INCLUDED` — tools/wc10/h/STDARG.H:32
+
+### STDDEF.H  `C, 60 lines`
+> stddef.h Standard definitions
+- macro `_SIZE_T_DEFINED_` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/STDDEF.H:12
+- type `size_t` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/STDDEF.H:13
+- macro `_WCHAR_T_DEFINED_` — ifndef _WCHAR_T_DEFINED_ — tools/wc10/h/STDDEF.H:17
+- type `wchar_t` — ifndef _WCHAR_T_DEFINED_ — tools/wc10/h/STDDEF.H:19
+- type `wchar_t` — else — tools/wc10/h/STDDEF.H:21
+- macro `_PTRDIFF_T_DEFINED_` — ifndef _PTRDIFF_T_DEFINED_ — tools/wc10/h/STDDEF.H:34
+- type `ptrdiff_t` — ifndef _PTRDIFF_T_DEFINED_ — tools/wc10/h/STDDEF.H:36
+- type `ptrdiff_t` — else — tools/wc10/h/STDDEF.H:38
+- macro `offsetof` — ifdef __cplusplus — tools/wc10/h/STDDEF.H:43
+- macro `offsetof(typ,id)` — ifdef __cplusplus — tools/wc10/h/STDDEF.H:45
+- macro `_STDDEF_H_INCLUDED` — ifdef __cplusplus — tools/wc10/h/STDDEF.H:55
+
+### STDIO.H  `C, 204 lines`
+> stdio.h Standard I/O functions
+- macro `_SIZE_T_DEFINED_` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/STDIO.H:14
+- type `size_t` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/STDIO.H:15
+- macro `_NFILES` — ifdef __386__ — tools/wc10/h/STDIO.H:40
+- macro `FILENAME_MAX` — ifdef __386__ — tools/wc10/h/STDIO.H:41
+- type `_ptr` — ifdef __386__ — tools/wc10/h/STDIO.H:42
+- type `fpos_t` — tools/wc10/h/STDIO.H:53
+- macro `stdin((FILE *)&__iob[0])` — Define macros to access the three default file pointer (and descriptors) — tools/wc10/h/STDIO.H:78
+- macro `stdout((FILE *)&__iob[1])` — endif — tools/wc10/h/STDIO.H:79
+- macro `stderr((FILE *)&__iob[2])` — endif — tools/wc10/h/STDIO.H:80
+- macro `stdaux((FILE *)&__iob[3])` — endif — tools/wc10/h/STDIO.H:82
+- macro `stdprn((FILE *)&__iob[4])` — endif — tools/wc10/h/STDIO.H:83
+- macro `_READ` — tools/wc10/h/STDIO.H:88
+- macro `_WRITE` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:89
+- macro `_UNGET` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:90
+- macro `_BIGBUF` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:91
+- macro `_EOF` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:92
+- macro `_SFERR` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:93
+- macro `_APPEND` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:94
+- macro `_BINARY` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:95
+- macro `_IOFBF` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:96
+- macro `_IOLBF` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:97
+- macro `_IONBF` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:98
+- macro `_TMPFIL` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:99
+- macro `_DIRTY` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:100
+- macro `_ISTTY` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:101
+- macro `_DYNAMIC` — define _READ 0x0001 /* file opened for reading — tools/wc10/h/STDIO.H:102
+- macro `EOF(-1)` — tools/wc10/h/STDIO.H:104
+- macro `SEEK_SET` — tools/wc10/h/STDIO.H:106
+- macro `SEEK_CUR` — define SEEK_SET 0 /* Seek relative to start of file — tools/wc10/h/STDIO.H:107
+- macro `SEEK_END` — define SEEK_SET 0 /* Seek relative to start of file — tools/wc10/h/STDIO.H:108
+- macro `L_tmpnam` — tools/wc10/h/STDIO.H:110
+- macro `TMP_MAX(26*26*26)` — define L_tmpnam 13 — tools/wc10/h/STDIO.H:111
+- macro `clearerr(fp)` — tools/wc10/h/STDIO.H:171
+- macro `feof(fp)` — define clearerr(fp) ((fp)->_flag &= ~(_SFERR|_EOF)) — tools/wc10/h/STDIO.H:172
+- macro `ferror(fp)` — define clearerr(fp) ((fp)->_flag &= ~(_SFERR|_EOF)) — tools/wc10/h/STDIO.H:173
+- macro `fileno(fp)` — define clearerr(fp) ((fp)->_flag &= ~(_SFERR|_EOF)) — tools/wc10/h/STDIO.H:174
+- macro `_fileno(fp)` — define clearerr(fp) ((fp)->_flag &= ~(_SFERR|_EOF)) — tools/wc10/h/STDIO.H:175
+- macro `getc(fp)` — define clearerr(fp) ((fp)->_flag &= ~(_SFERR|_EOF)) — tools/wc10/h/STDIO.H:177
+- macro `putc(c,fp)` — define clearerr(fp) ((fp)->_flag &= ~(_SFERR|_EOF)) — tools/wc10/h/STDIO.H:178
+- macro `getc(fp)` — define clearerr(fp) ((fp)->_flag &= ~(_SFERR|_EOF)) — tools/wc10/h/STDIO.H:180
+- macro `putc(c,fp)` — tools/wc10/h/STDIO.H:187
+- macro `getchar()` — endif — tools/wc10/h/STDIO.H:195
+- macro `putchar(c)` — endif — tools/wc10/h/STDIO.H:196
+- macro `_STDIO_H_INCLUDED` — pragma pack(); — tools/wc10/h/STDIO.H:199
+
+### STDIOBUF.H  `C, 42 lines`
+> stdiobuf.h Standard I/O streams
+- macro `_STDIOBUF_H_INCLUDED` — tools/wc10/h/STDIOBUF.H:40
+
+### STDLIB.H  `C, 203 lines`
+> stdlib.h Standard Library functions
+- macro `_SIZE_T_DEFINED_` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/STDLIB.H:14
+- type `size_t` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/STDLIB.H:15
+- macro `_WCHAR_T_DEFINED_` — ifndef _WCHAR_T_DEFINED_ — tools/wc10/h/STDLIB.H:19
+- type `wchar_t` — ifndef _WCHAR_T_DEFINED_ — tools/wc10/h/STDLIB.H:21
+- type `wchar_t` — else — tools/wc10/h/STDLIB.H:23
+- macro `RAND_MAX` — tools/wc10/h/STDLIB.H:36
+- macro `EXIT_SUCCESS` — define RAND_MAX 32767u — tools/wc10/h/STDLIB.H:37
+- macro `EXIT_FAILURE` — define RAND_MAX 32767u — tools/wc10/h/STDLIB.H:38
+- macro `MB_CUR_MAX` — define RAND_MAX 32767u — tools/wc10/h/STDLIB.H:39
+- type `quot` — define RAND_MAX 32767u — tools/wc10/h/STDLIB.H:40
+- type `quot` — tools/wc10/h/STDLIB.H:45
+- macro `atof(p)` — ifndef __cplusplus — tools/wc10/h/STDLIB.H:91
+- macro `max(a,b)` — ifndef __cplusplus — tools/wc10/h/STDLIB.H:137
+- macro `min(a,b)` — ifndef __cplusplus — tools/wc10/h/STDLIB.H:140
+- macro `_MAX_PATH` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:150
+- macro `_MAX_DRIVE` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:151
+- macro `_MAX_DIR` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:152
+- macro `_MAX_FNAME` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:153
+- macro `_MAX_EXT` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:154
+- macro `_MAX_PATH` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:156
+- macro `_MAX_DRIVE` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:157
+- macro `_MAX_DIR` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:158
+- macro `_MAX_FNAME` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:159
+- macro `_MAX_EXT` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:160
+- macro `_MAX_NAME(with extension)` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:162
+- macro `_MAX_PATH2(_MAX_PATH+3)` — tools/wc10/h/STDLIB.H:166
+- macro `_doserrno(*__get_doserrno_ptr())` — tools/wc10/h/STDLIB.H:175
+- macro `DOS_MODE` — The following sizes are the maximum sizes of buffers used by the _fullpath() — tools/wc10/h/STDLIB.H:178
+- macro `OS2_MODE` — define _doserrno (*__get_doserrno_ptr()) — tools/wc10/h/STDLIB.H:179
+- macro `_STDLIB_H_INCLUDED` — pragma pack(); — tools/wc10/h/STDLIB.H:198
+
+### STREAMBU.H  `C, 281 lines`
+> streambu.h Stream buffer
+- macro `__lock_it( __l )` — tools/wc10/h/STREAMBU.H:32
+- macro `__lock_name( __ln )` — define __lock_it( __l ) __get_lock __lock_name( __LINE__ )( __l ) — tools/wc10/h/STREAMBU.H:33
+- macro `__lock_glue( __pre, __lin )` — define __lock_it( __l ) __get_lock __lock_name( __LINE__ )( __l ) — tools/wc10/h/STREAMBU.H:34
+- macro `__lock_it( __l )` — define __lock_it( __l ) __get_lock __lock_name( __LINE__ )( __l ) — tools/wc10/h/STREAMBU.H:36
+- macro `_STREAMBUF_H_INCLUDED` — tools/wc10/h/STREAMBU.H:279
+
+### STRING.H  `C, 118 lines`
+> string.h String functions
+- macro `_SIZE_T_DEFINED_` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/STRING.H:12
+- type `size_t` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/STRING.H:13
+- macro `_STRING_H_INCLUDED` — tools/wc10/h/STRING.H:113
+
+### STRING.HPP  `C++, 251 lines`
+> string.h Strings
+- class `String` — tools/wc10/h/STRING.HPP:22
+- class `StringRep` — tools/wc10/h/STRING.HPP:175
+- function `String::get_at( size_t __pos )` — tools/wc10/h/STRING.HPP:209
+- function `String::put_at( size_t __pos, char __c )` — tools/wc10/h/STRING.HPP:213
+- function `String::upper()` — tools/wc10/h/STRING.HPP:221
+- function `String::lower()` — tools/wc10/h/STRING.HPP:225
+- function `String::valid()` — tools/wc10/h/STRING.HPP:233
+- function `valid( String const &__s )` — tools/wc10/h/STRING.HPP:237
+- function `String::length()` — tools/wc10/h/STRING.HPP:241
+- function `String::alloc_mult_size()` — tools/wc10/h/STRING.HPP:245
+- macro `_STRING_HPP_INCLUDED` — tools/wc10/h/STRING.HPP:249
+
+### STRSTREA.H  `C, 163 lines`
+> strstrea.h String streams
+- macro `_STRSTREAM_H_INCLUDED` — tools/wc10/h/STRSTREA.H:161
+
+### TIME.H  `C, 88 lines`
+> time.h Time functions
+- macro `_SIZE_T_DEFINED_` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/TIME.H:14
+- type `size_t` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/TIME.H:15
+- type `time_t` — ifndef _TIME_T_DEFINED_ — tools/wc10/h/TIME.H:28
+- macro `CLK_TCK` — tools/wc10/h/TIME.H:31
+- macro `CLOCKS_PER_SEC` — define CLK_TCK 100 — tools/wc10/h/TIME.H:32
+- type `clock_t` — ifndef _CLOCK_T_DEFINED — tools/wc10/h/TIME.H:36
+- macro `difftime(t1,t0)` — ifndef __cplusplus — tools/wc10/h/TIME.H:63
+- macro `_TIME_H_INCLUDED` — tools/wc10/h/TIME.H:83
+
+### UNISTD.H  `C, 9 lines`
+> unistd.h
+- (no top-level symbols found)
+
+### VARARGS.H  `C, 33 lines`
+> varargs.h Variable argument macros (UNIX System V definition)
+- macro `va_alist` — tools/wc10/h/VARARGS.H:18
+- macro `va_dcl` — define va_alist void *__alist, ... — tools/wc10/h/VARARGS.H:19
+- macro `va_start(ap)` — undef va_start — tools/wc10/h/VARARGS.H:23
+- macro `va_start(ap)` — undef va_start — tools/wc10/h/VARARGS.H:25
+- macro `_VARARGS_H_INCLUDED` — tools/wc10/h/VARARGS.H:28
+
+### WCDEFS.H  `C, 30 lines`
+> wcdefs.h Definitions for the WATCOM Container Classes
+- type `WCbool` — include — tools/wc10/h/WCDEFS.H:14
+- macro `_SIZE_T_DEFINED_` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/WCDEFS.H:23
+- type `size_t` — ifndef _SIZE_T_DEFINED_ — tools/wc10/h/WCDEFS.H:24
+- macro `_WCDEFS_H_INCLUDED` — tools/wc10/h/WCDEFS.H:28
+
+### WCEXCEPT.H  `C, 185 lines`
+> wcexcept.h Definitions for exception base classes. These classes are
+- type `wc_state` — tools/wc10/h/WCEXCEPT.H:81
+- type `wclist_state` — For back compatiblity — tools/wc10/h/WCEXCEPT.H:85
+- type `WCListExcept` — For back compatiblity — tools/wc10/h/WCEXCEPT.H:111
+- type `wciter_state` — tools/wc10/h/WCEXCEPT.H:158
+- macro `_WCEXCEPT_H_INCLUDED` — tools/wc10/h/WCEXCEPT.H:183
+
+### WCHASH.H  `C, 902 lines`
+> wchash.h Defines for the WATCOM Container Hash Table Class
+- macro `WCValHashTableItemSize( Type )` — tools/wc10/h/WCHASH.H:26
+- macro `WCPtrHashTableItemSize( Type )` — define WCValHashTableItemSize( Type ) sizeof( WCHashLink ) — tools/wc10/h/WCHASH.H:27
+- macro `WCValHashSetItemSize( Type )` — define WCValHashTableItemSize( Type ) sizeof( WCHashLink ) — tools/wc10/h/WCHASH.H:28
+- macro `WCPtrHashSetItemSize( Type )` — define WCValHashTableItemSize( Type ) sizeof( WCHashLink ) — tools/wc10/h/WCHASH.H:29
+- macro `WCValHashDictItemSize( Key, Value )` — define WCValHashTableItemSize( Type ) sizeof( WCHashLink ) — tools/wc10/h/WCHASH.H:30
+- macro `WCPtrHashDictItemSize( Key, Value )` — tools/wc10/h/WCHASH.H:32
+- type `HashLink` — tools/wc10/h/WCHASH.H:49
+- type `__Type_Ptr` — the real type of what is stored in the hash table — tools/wc10/h/WCHASH.H:305
+- type `__Stored_Ptr` — all pointers are stored as pointers to void so that all pointer hashes — tools/wc10/h/WCHASH.H:308
+- type `KeyVal` — the type stored by WCValHashSet — tools/wc10/h/WCHASH.H:525
+- type `KeyVal` — the real type that is stored in the hash dictionary — tools/wc10/h/WCHASH.H:747
+- type `StoredKeyVal` — all pointers are stored as pointers to void so that all pointer hashes — tools/wc10/h/WCHASH.H:750
+- type `Key_Ptr` — tools/wc10/h/WCHASH.H:759
+- macro `_WCHASH_H_INCLUDED` — tools/wc10/h/WCHASH.H:900
+
+### WCHBASE.H  `C, 160 lines`
+> wchbase.h Definitions for the base classes used by
+- type `BaseHashLink` — link base non-templated class — tools/wc10/h/WCHBASE.H:94
+- type `TTypePtr` — pointer to element of templated type — tools/wc10/h/WCHBASE.H:96
+- macro `_WCHBASE_H_INCLUDED` — tools/wc10/h/WCHBASE.H:158
+
+### WCHITER.H  `C, 350 lines`
+> wchiter.h Definitions for the WATCOM Container Hash Iterator Classes
+- type `BaseHashLink` — tools/wc10/h/WCHITER.H:28
+- type `HashLink` — tools/wc10/h/WCHITER.H:70
+- macro `_WCHITER_H_INCLUDED` — tools/wc10/h/WCHITER.H:348
+
+### WCLBASE.H  `C, 773 lines`
+> wclbase.h Definitions for the base classes used by
+- macro `WCValSListItemSize( Type )` — tools/wc10/h/WCLBASE.H:80
+- macro `WCValDListItemSize( Type )` — define WCValSListItemSize( Type ) sizeof( WCNIsvSLink ) — tools/wc10/h/WCLBASE.H:81
+- macro `WCPtrSListItemSize( Type )` — define WCValSListItemSize( Type ) sizeof( WCNIsvSLink ) — tools/wc10/h/WCLBASE.H:82
+- macro `WCPtrDListItemSize( Type )` — define WCValSListItemSize( Type ) sizeof( WCNIsvSLink ) — tools/wc10/h/WCLBASE.H:83
+- macro `_WCLBASE_H_INCLUDED` — tools/wc10/h/WCLBASE.H:771
+
+### WCLCOM.H  `C, 79 lines`
+> wclcom.h Definitions for some common list classes used by
+- macro `_WCLCOM_H_INCLUDED` — tools/wc10/h/WCLCOM.H:77
+
+### WCLIBASE.H  `C, 319 lines`
+> wclibase.h Defines for the WATCOM Container List Iterator Base Classes
+- macro `_WCLIBASE_H_INCLUDED` — tools/wc10/h/WCLIBASE.H:317
+
+### WCLIST.H  `C, 283 lines`
+> wclist.h Defines the WATCOM Container List Classes
+- macro `_WCLIST_H_INCLUDED` — tools/wc10/h/WCLIST.H:281
+
+### WCLISTIT.H  `C, 385 lines`
+> wclistit.h Defines for the WATCOM Container List Iterator Class
+- type `NonConstList` — tools/wc10/h/WCLISTIT.H:187
+- type `NonConstList` — tools/wc10/h/WCLISTIT.H:222
+- type `NonConstList` — tools/wc10/h/WCLISTIT.H:256
+- type `NonConstList` — tools/wc10/h/WCLISTIT.H:291
+- type `NonConstList` — tools/wc10/h/WCLISTIT.H:325
+- type `NonConstList` — tools/wc10/h/WCLISTIT.H:360
+- macro `_WCLISTIT_H_INCLUDED` — tools/wc10/h/WCLISTIT.H:383
+
+### WCQUEUE.H  `C, 80 lines`
+> wcqueue.h Defines the WATCOM Queue Container Class
+- macro `_WCQUEUE_H_INCLUDED` — tools/wc10/h/WCQUEUE.H:78
+
+### WCSBASE.H  `C, 541 lines`
+> wcsbase.h Definitions and base implementation for the WATCOM Container
+- macro `WCValSkipListItemSize( Type, num_ptrs )` — Macros to give the user the size of allocated objects — tools/wc10/h/WCSBASE.H:107
+- macro `WCPtrSkipListItemSize( Type, num_ptrs )` — tools/wc10/h/WCSBASE.H:109
+- macro `WCValSkipListSetItemSize( Type, num_ptrs )` — tools/wc10/h/WCSBASE.H:111
+- macro `WCPtrSkipListSetItemSize( Type, num_ptrs )` — tools/wc10/h/WCSBASE.H:113
+- macro `WCValSkipListDictItemSize( Key, Value, num_ptrs )` — tools/wc10/h/WCSBASE.H:115
+- macro `WCPtrSkipListDictItemSize( Key, Value, num_ptrs )` — tools/wc10/h/WCSBASE.H:118
+- type `node_ptr` — pointer to the nodes stored in the skiplist — tools/wc10/h/WCSBASE.H:162
+- type `TTypePtr` — non-templated pointers to the templated Type — tools/wc10/h/WCSBASE.H:165
+- type `NodeType` — the nodes stored in the skip list — tools/wc10/h/WCSBASE.H:243
+- type `StoredPtr` — the pointers stored in the skip list by SkipListBase — tools/wc10/h/WCSBASE.H:444
+- type `TypePtr` — the real type of the pointers — tools/wc10/h/WCSBASE.H:446
+- macro `_WCSBASE_H_INCLUDED` — tools/wc10/h/WCSBASE.H:539
+
+### WCSIBASE.H  `C, 119 lines`
+> wcsibase.h Base Class Definitions for the WATCOM Container Skip List
+- type `node_ptr` — tools/wc10/h/WCSIBASE.H:29
+- macro `_WCSIBASE_H_INCLUDED` — tools/wc10/h/WCSIBASE.H:117
+
+### WCSKIP.H  `C, 513 lines`
+> wcskip.h Definitions and implementation for the WATCOM Container Skip
+- type `KeyVal` — tools/wc10/h/WCSKIP.H:217
+- type `NonConstThis` — for const member functions which modify temp_key_val, but not the — tools/wc10/h/WCSKIP.H:220
+- type `NonConstThis` — for const member functions which modify temp_key_val, but not the — tools/wc10/h/WCSKIP.H:382
+- type `Stored_Ptr` — the pointer stored by WCValSkipListDict — tools/wc10/h/WCSKIP.H:384
+- macro `_WCSKIP_H_INCLUDED` — tools/wc10/h/WCSKIP.H:511
+
+### WCSKIPIT.H  `C, 264 lines`
+> wcskipit.h Definitions for the WATCOM Container Skip List Iterator
+- macro `_WCSKIPIT_H_INCLUDED` — tools/wc10/h/WCSKIPIT.H:262
+
+### WCSTACK.H  `C, 73 lines`
+> wcstack.h Defines the WATCOM Stack Container Class
+- macro `_WCSTACK_H_INCLUDED` — tools/wc10/h/WCSTACK.H:71
+
+### WCVBASE.H  `C, 895 lines`
+> wcvbase.h Definitions for the base classes used by
+- type `__Type_Ptr` — tools/wc10/h/WCVBASE.H:765
+- type `__Stored_Ptr` — tools/wc10/h/WCVBASE.H:766
+- macro `_WCVBASE_H_INCLUDED` — tools/wc10/h/WCVBASE.H:893
+
+### WCVECTOR.H  `C, 348 lines`
+> wcvector.h Defines the WATCOM Container Vector Classes
+- type `__Type_Ptr` — tools/wc10/h/WCVECTOR.H:136
+- macro `_WCVECTOR_H_INCLUDED` — tools/wc10/h/WCVECTOR.H:346
+
+### WDEFWIN.H  `C, 33 lines`
+> wdefwin.h default windowing calls
+- macro `_WDEFWIN_H_INCLUDED` — tools/wc10/h/WDEFWIN.H:28
+
+### WSAMPLE.H  `C, 26 lines`
+> wsample.h WATCOM Execution Sampler include file
+- macro `_WSAMPLE_H_INCLUDED` — ifdef __386__ — tools/wc10/h/WSAMPLE.H:21
 

@@ -2547,9 +2547,9 @@ public sealed partial class InstructionSelector {
   /// <summary>
   /// A direct near call using the convention recorded on <see cref="IrCall"/>. BASIC/PASCAL push
   /// argument groups left to right and let the callee clean; CDECL/STDCALL push them right to left,
-  /// with CDECL alone restoring SP in the caller. Register conventions remain an explicit decline
-  /// until their argument staging is represented in machine IR. Integer results arrive in AX or
-  /// DX:AX and IEEE results in ST(0).
+  /// with CDECL alone restoring SP in the caller. FASTCALL/WATCALL put their leading word arguments
+  /// in the descriptor's physical registers and push only the overflow. Integer results arrive in
+  /// AX or DX:AX and IEEE results in ST(0).
   ///
   /// The call is marked as clobbering every allocatable register, which is the truth on this ABI
   /// (a callee owns AX-DX as scratch and may use SI/DI for loop residency without saving them).
@@ -2609,12 +2609,17 @@ public sealed partial class InstructionSelector {
     var abi = X86CallAbi.For(call.Convention);
     if (abi.Distance != X86CallDistance.Near)
       return this.Decline($"call: {calleeName} uses a far return address");
-    if (abi.ArgumentRegisters.Count > 0)
-      return this.Decline($"call: {calleeName} uses {call.Convention} register arguments");
+    var callArguments = call.Args.ToList();
+    if (abi.ArgumentRegisters.Count > 0
+        && callArguments.FirstOrDefault(argument => !IsWordRegisterArgument(argument.Type)) is { } unsupported)
+      return this.Decline($"call: {calleeName} uses {call.Convention} register arguments "
+        + $"(word arguments only; got {unsupported.Type})");
 
+    var registerArgumentCount = Math.Min(abi.ArgumentRegisters.Count, callArguments.Count);
+    var stackArguments = callArguments.Skip(registerArgumentCount);
     var arguments = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
-      ? call.Args.Reverse()
-      : call.Args;
+      ? stackArguments.Reverse()
+      : stackArguments;
     var stackBytes = 0;
     foreach (var arg in arguments) {
       if (!this.PushStackCallArgument(arg, calleeName, out var argumentBytes))
@@ -2628,9 +2633,10 @@ public sealed partial class InstructionSelector {
     else {
       // The IR's generic pointer type is a NEAR code offset here, not PB36's source-level fat closure
       // (ProcPtrType lowers through the legacy far-call path). Keep the computed target in a pinned
-      // word register immediately across the CALL: `FF /2` accepts any r/m16 on the 8086, and BX is
-      // already one of the backend's ABI scratch registers. The staging instruction is a barrier so
-      // scheduling cannot insert an allocated value between the pointer load and its consumption.
+      // word register immediately across the CALL: `FF /2` accepts any r/m16 on the 8086. BX is the
+      // ordinary scratch; when it carries argument three, SI keeps the target out of the ABI prefix.
+      // The staging instruction is a barrier so scheduling cannot insert an allocated value between
+      // the pointer load and its consumption.
       if (!call.Callee.Type.IsPointer)
         return this.Decline("call: indirect target is not a near pointer");
       if (!this.TryOperand(call.Callee, out var through))
@@ -2639,15 +2645,25 @@ public sealed partial class InstructionSelector {
           or MOperand.DataCell or MOperand.ParamCell or MOperand.LabelRef))
         return this.Decline($"call: indirect target has unsupported operand {through.GetType().Name}");
 
-      var bx = new MOperand.Register(MReg.Physical_(Reg.BX, MRegSize.Word));
-      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [bx, through], MovEffect(bx, through),
-        condition: null, clobbers: [Reg.BX]));
-      callTarget = bx;
+      var targetRegister = registerArgumentCount >= 3 ? Reg.SI : Reg.BX;
+      var target = new MOperand.Register(MReg.Physical_(targetRegister, MRegSize.Word));
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [target, through], MovEffect(target, through),
+        condition: null, clobbers: [targetRegister]));
+      callTarget = target;
     }
 
-    this._current.Instructions.Add(new MInstr(MOpcode.Call, [callTarget],
-      new MInstrEffect(WrittenRegs: [], ReadRegs: callTarget is MOperand.Register ? [0] : [],
-        ReadsFlags: false, WritesFlags: true, ReadsMemory: true, WritesMemory: true),
+    if (!this.TryStageRegisterCallArguments(callArguments, calleeName, abi, registerArgumentCount,
+          out var registerOperands))
+      return false;
+    var callOperands = new List<MOperand> { callTarget };
+    callOperands.AddRange(registerOperands);
+    var callReadRegs = new List<int>();
+    if (callTarget is MOperand.Register)
+      callReadRegs.Add(0);
+    callReadRegs.AddRange(Enumerable.Range(1, registerArgumentCount));
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, callOperands,
+      new MInstrEffect(WrittenRegs: [], ReadRegs: callReadRegs, ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
 
     if (abi.StackCleanup == X86StackCleanup.Caller && stackBytes > 0) {
@@ -2698,6 +2714,25 @@ public sealed partial class InstructionSelector {
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ax], MovEffect(destOp, ax)));
     return true;
   }
+
+  private bool TryStageRegisterCallArguments(IReadOnlyList<IrValue> arguments, string calleeName, X86CallAbi abi,
+      int count, out List<MOperand.Register> registerOperands) {
+    registerOperands = new(count);
+    for (var i = 0; i < count; ++i) {
+      if (!this.TryWordOperand(arguments[i], $"{calleeName} register argument {i + 1}", out var source))
+        return false;
+      var destination = new MOperand.Register(MReg.Physical_(abi.ArgumentRegisters[i], MRegSize.Word));
+      registerOperands.Add(destination);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, source],
+        MovEffect(destination, source), condition: null,
+        clobbers: [.. abi.ArgumentRegisters.Take(i + 1)]));
+    }
+    return true;
+  }
+
+  private static bool IsWordRegisterArgument(IrType type)
+    => type.IsInteger && type.Bits is 8 or 16
+      || type.IsPointer && !type.IsFarPointer;
 
   private bool PushStackCallArgument(IrValue argument, string calleeName, out int bytes) {
     bytes = 0;

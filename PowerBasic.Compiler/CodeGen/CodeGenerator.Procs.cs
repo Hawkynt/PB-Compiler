@@ -31,11 +31,15 @@ public sealed partial class CodeGenerator {
   /// <summary>
   /// True when a register convention is used but a parameter does not fit the common-case
   /// model (every parameter must be a single word - a BYVAL scalar &lt;= 2 bytes or a BYREF
-  /// near pointer). LONG/float/struct/string-by-value in a register convention need the
-  /// full per-compiler size rules, which we deliberately do not implement; reject them.
+  /// near pointer). Multiword BYVAL values in a register convention need the full
+  /// per-compiler size rules, which we deliberately do not implement; reject them.
   /// </summary>
   private static bool HasUnsupportedRegisterParam(ProcedureSymbol proc)
     => IsRegisterConvention(proc) && proc.Parameters.Any(p => ParamSlotSize(p) != 2);
+
+  private static string UnsupportedRegisterParamMessage(ProcedureSymbol proc)
+    => $"{proc.CallConv} {proc.Name}: a register-convention parameter must be word-sized "
+      + "(BYVAL <= 2 bytes or BYREF); multiword values need the full per-compiler ABI rules";
 
   /// <summary>True when the convention pushes (stack) arguments right to left: CDECL, STDCALL and WATCALL's overflow; BASIC/PASCAL/FASTCALL push left to right.</summary>
   private static bool PushesRightToLeft(ProcedureSymbol proc) => proc.CallConv is CallConvention.Cdecl or CallConvention.Stdcall or CallConvention.Watcall;
@@ -77,7 +81,7 @@ public sealed partial class CodeGenerator {
   private int LayoutFrame(ProcedureSymbol proc) {
     this._frameLocalBytes = 0;
     if (HasUnsupportedRegisterParam(proc))
-      this.Errors.Add(new(proc.Position, $"{proc.CallConv} {proc.Name}: a register-convention parameter must be word-sized (BYVAL <= 2 bytes or BYREF); LONG/float/UDT/string need the full per-compiler ABI rules"));
+      this.Errors.Add(new(proc.Position, UnsupportedRegisterParamMessage(proc)));
 
     // register-convention (WATCALL/FASTCALL) parameters arrive in registers; give them
     // negative slots at the top of the frame ([BP-2], [BP-4], ...) that the prologue fills
@@ -848,6 +852,13 @@ public sealed partial class CodeGenerator {
 
   private void EmitCall(ProcedureSymbol proc, IReadOnlyList<Expression> args, bool wantResult, SourcePosition position) {
     var asm = this._asm;
+
+    // A definition reaches the same check through LayoutFrame; an external declaration has no frame,
+    // so its call site is the only place that can reject a shape the common register ABI cannot carry.
+    if (proc.IsExternal && HasUnsupportedRegisterParam(proc)) {
+      this.Errors.Add(new(position, UnsupportedRegisterParamMessage(proc)));
+      return;
+    }
 
     // PB 3.6 default parameter values: fill omitted trailing arguments with each
     // parameter's default expression (evaluated here, at the call site) before any
