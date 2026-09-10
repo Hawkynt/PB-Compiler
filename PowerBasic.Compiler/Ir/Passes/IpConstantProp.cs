@@ -72,10 +72,10 @@ public static class IpConstantProp {
   private static IEnumerable<IrCall> CallsTo(IrFunction function)
     => function.Users.OfType<IrCall>().Where(c => ReferenceEquals(c.Callee, function));
 
-  /// <summary>Two constants are the same value when they are the same number of the same type.</summary>
+  /// <summary>Two constants agree only when the same declared type carries the same bits.</summary>
   private static bool Same(IrValue a, IrValue b) => (a, b) switch {
     (IrConstantInt x, IrConstantInt y) => x.Value == y.Value && Equals(x.Type, y.Type),
-    (IrConstantFloat x, IrConstantFloat y) => x.Value.Equals(y.Value) && Equals(x.Type, y.Type),
+    (IrConstantFloat x, IrConstantFloat y) => x.SameBits(y),
     _ => ReferenceEquals(a, b),
   };
 

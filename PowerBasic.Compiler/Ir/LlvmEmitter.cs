@@ -238,7 +238,8 @@ public sealed class LlvmEmitter {
 
   private string Ref(IrValue value) => value switch {
     IrConstantInt ci => ci.Value.ToString(CultureInfo.InvariantCulture),
-    IrConstantFloat cf => cf.Type.Bits == 80 ? FormatFp80(cf.Value) : FormatFloat(cf.Value),
+    IrConstantFloat { Type: { Bits: 80, Format: IrFloatFormat.Ieee } } cf => cf.Float80.ToLlvmHexString(),
+    IrConstantFloat cf => FormatFloat(cf.Value),
     IrNullPtr => "null",
     IrUndef => "undef",
     // an ON ERROR handler's address; the enclosing function is never optimized, so LLVM's
@@ -286,21 +287,6 @@ public sealed class LlvmEmitter {
       else
         sb.Append('\\').Append(b.ToString("X2", CultureInfo.InvariantCulture));
     return sb.ToString();
-  }
-
-  /// <summary>Renders an x86_fp80 constant in LLVM's 0xK form (16-bit sign+exponent, 64-bit significand).</summary>
-  private static string FormatFp80(double value) {
-    if (value == 0.0)
-      return "0xK00000000000000000000";
-    var bits = BitConverter.DoubleToInt64Bits(value);
-    var sign = (int)((bits >> 63) & 1);
-    var exp = (int)((bits >> 52) & 0x7FF);
-    var mant = bits & 0xFFFFFFFFFFFFF;
-    if (exp is 0 or 0x7FF)
-      return "0xK00000000000000000000";          // denormal/inf/nan: rare in folded constants, emit zero
-    var ext = (ushort)((sign << 15) | ((exp - 1023 + 16383) & 0x7FFF));
-    var sig = (1UL << 63) | ((ulong)mant << 11);  // explicit integer bit + left-aligned mantissa
-    return $"0xK{ext:X4}{sig:X16}";
   }
 
   /// <summary>LLVM accepts hex float literals; emit doubles as 0x-bit-pattern to round-trip exactly.</summary>

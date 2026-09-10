@@ -31,7 +31,9 @@ public static class IrConstFold {
 
   private static IrConstant? FoldBinary(IrBinary b) {
     if (b.Lhs is IrConstantFloat fl && b.Rhs is IrConstantFloat fr)
-      return FoldFloat(b, fl.Value, fr.Value);
+      return fl.TryGetDoubleExact(out var left) && fr.TryGetDoubleExact(out var right)
+        ? FoldFloat(b, left, right)
+        : null;
     if (b.Lhs is not IrConstantInt l || b.Rhs is not IrConstantInt r)
       return null;
 
@@ -100,6 +102,10 @@ public static class IrConstFold {
   /// product is exact when <c>fma(l, r, -p)</c> is zero, and the quotient when <c>fma(q, r, -l)</c>
   /// is. Addition uses the classic two-sum, whose error term is exact whenever no overflow occurs.
   /// Refusing to fold costs an instruction; folding wrongly costs a digit nobody can trace.
+  ///
+  /// Arbitrary F80 operands reach this method only when each is exactly representable as binary64.
+  /// Wider-exponent or extra-significand-bit constants are deliberately left to the target instead of
+  /// being rounded into the host evaluator.
   /// </summary>
   private static IrConstant? FoldFloat(IrBinary b, double l, double r) {
     double value;
@@ -153,14 +159,15 @@ public static class IrConstFold {
       };
       return result is { } b ? new IrConstantInt(IrType.I1, b ? 1 : 0) : null;
     }
-    if (c.Lhs is IrConstantFloat lf && c.Rhs is IrConstantFloat rf) {
+    if (c.Lhs is IrConstantFloat lf && c.Rhs is IrConstantFloat rf
+        && lf.TryGetDoubleExact(out var left) && rf.TryGetDoubleExact(out var right)) {
       var result = c.Pred switch {
-        IrCmpPred.Foeq => lf.Value == rf.Value,
-        IrCmpPred.Fone => lf.Value != rf.Value,
-        IrCmpPred.Folt => lf.Value < rf.Value,
-        IrCmpPred.Fole => lf.Value <= rf.Value,
-        IrCmpPred.Fogt => lf.Value > rf.Value,
-        IrCmpPred.Foge => lf.Value >= rf.Value,
+        IrCmpPred.Foeq => left == right,
+        IrCmpPred.Fone => left != right,
+        IrCmpPred.Folt => left < right,
+        IrCmpPred.Fole => left <= right,
+        IrCmpPred.Fogt => left > right,
+        IrCmpPred.Foge => left >= right,
         _ => (bool?)null,
       };
       return result is { } b ? new IrConstantInt(IrType.I1, b ? 1 : 0) : null;
@@ -184,13 +191,16 @@ public static class IrConstFold {
         return new IrConstantFloat(to, NarrowFloat(Wrap(c.Value, cast.Value.Type), to));
       case IrCastOp.UIToFP when cast.Value is IrConstantInt c:
         return new IrConstantFloat(to, NarrowFloat(c.ZeroExtended, to));
-      case IrCastOp.FPExt or IrCastOp.FPTrunc when cast.Value is IrConstantFloat c:
-        return new IrConstantFloat(to, NarrowFloat(c.Value, to));
-      case IrCastOp.FPToSI when cast.Value is IrConstantFloat c && InLongRange(c.Value):
-        return new IrConstantInt(to, Wrap((long)c.Value, to));
+      case IrCastOp.FPExt or IrCastOp.FPTrunc when cast.Value is IrConstantFloat c
+          && c.TryGetDoubleExact(out var sourceFloat):
+        return new IrConstantFloat(to, NarrowFloat(sourceFloat, to));
+      case IrCastOp.FPToSI when cast.Value is IrConstantFloat c
+          && c.TryGetDoubleExact(out var truncating) && InLongRange(truncating):
+        return new IrConstantInt(to, Wrap((long)truncating, to));
       // the rounding conversion folds by the same rule the hardware applies: nearest, ties to even
-      case IrCastOp.FPToSIRound when cast.Value is IrConstantFloat c && InLongRange(c.Value):
-        return new IrConstantInt(to, Wrap((long)Math.Round(c.Value, MidpointRounding.ToEven), to));
+      case IrCastOp.FPToSIRound when cast.Value is IrConstantFloat c
+          && c.TryGetDoubleExact(out var rounding) && InLongRange(rounding):
+        return new IrConstantInt(to, Wrap((long)Math.Round(rounding, MidpointRounding.ToEven), to));
       // FPToUIRound is deliberately NOT folded here, and neither was FPToUI before it. Folding it is
       // correct arithmetic and would be an improvement, but it removes the cast that currently stops
       // IrBasicWriter rendering DIFF05, DIFF58 and DIFF61 - and rendering those three exposes a
@@ -198,10 +208,12 @@ public static class IrConstFold {
       // pb35 variables (a WORD that wraps, a DWORD compared against a signed operand). The fold
       // belongs with the fix for that, not ahead of it.
       // bitcast reinterprets the bit pattern between same-width int and float
-      case IrCastOp.BitCast when cast.Value is IrConstantFloat cf && to.IsInteger && to.Bits == 32:
-        return new IrConstantInt(to, BitConverter.SingleToInt32Bits((float)cf.Value));
-      case IrCastOp.BitCast when cast.Value is IrConstantFloat cf && to.IsInteger && to.Bits == 64:
-        return new IrConstantInt(to, BitConverter.DoubleToInt64Bits(cf.Value));
+      case IrCastOp.BitCast when cast.Value is IrConstantFloat cf && to.IsInteger && to.Bits == 32
+          && cf.TryGetDoubleExact(out var f32):
+        return new IrConstantInt(to, BitConverter.SingleToInt32Bits((float)f32));
+      case IrCastOp.BitCast when cast.Value is IrConstantFloat cf && to.IsInteger && to.Bits == 64
+          && cf.TryGetDoubleExact(out var f64):
+        return new IrConstantInt(to, BitConverter.DoubleToInt64Bits(f64));
       case IrCastOp.BitCast when cast.Value is IrConstantInt ci && to.IsFloat && to.Bits == 32:
         return new IrConstantFloat(to, BitConverter.Int32BitsToSingle((int)ci.Value));
       case IrCastOp.BitCast when cast.Value is IrConstantInt ci && to.IsFloat && to.Bits == 64:
