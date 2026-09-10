@@ -265,6 +265,33 @@ internal static class RuntimeAbi {
     // "StrFree: AX=handle (0 ok)" - the zero case is why an assignment needs no first-time guard
     ["rt_str_free"] = new("rt_strfree", [new(ArgKind.Word, Reg.AX)], _callerSaved),
 
+    // O0289: begin preflights a bounded region in CX; end closes it. The specialized producers keep
+    // the ordinary string register ABI but route allocation through the preflighted DOS heap path.
+    ["rt_str_coalesce_begin"] = new("rt_strcoal_begin", [new(ArgKind.Word, Reg.CX)], _callerSaved),
+    ["rt_str_coalesce_end"] = new("rt_strcoal_end", [], _callerSaved),
+    ["rt_str_const_coalesced"] = new("rt_strmem_coal",
+      [new(ArgKind.Offset, Reg.SI), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Presets: [(Reg.DX, Reg.DS)]),
+    ["rt_str_left_coalesced"] = new("rt_strleft_coal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_right_coalesced"] = new("rt_strright_coal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_mid_coalesced"] = new("rt_strmid_coal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)],
+      _callerSaved, Result: Reg.AX),
+    ["rt_str_left_borrow_coalesced"] = new("rt_strleft_bcoal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_right_borrow_coalesced"] = new("rt_strright_bcoal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_mid_borrow_coalesced"] = new("rt_strmid_bcoal",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)],
+      _callerSaved, Result: Reg.AX),
+    ["rt_str_space_coalesced"] = new("rt_strfill_coal", [new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Constants: [(Reg.DX, ' ')]),
+    ["rt_str_string_coalesced"] = new("rt_strfill_coal",
+      [new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_chr_coalesced"] = new("rt_chr_coal", [new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+
     // rt_print_strvar(ptr handle) is the runtime's StrPrint: "AX=handle - writes to current output
     // (consumes)". PRINT of a string VARIABLE goes through this rather than through rt_print_str,
     // which takes literal bytes at DS:SI and has no handle to release. Consuming is what the IR wants
@@ -272,6 +299,15 @@ internal static class RuntimeAbi {
     ["rt_print_strvar"] = new("rt_str_print", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     ["rt_fprint_strvar"] = new("rt_str_print",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.AX)], _callerSaved, FileSelect: true),
+
+    // O0297 view PRINT borrows the stable string handle and prints the already-clamped range. Start
+    // and length are i32 in target-neutral IR but are bounded by PB's <=32750-byte string limit, so
+    // LowWord is the deliberate narrowing rather than a guessed Word conversion.
+    ["rt_print_strview"] = new("rt_str_print_view",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX), new(ArgKind.LowWord, Reg.DX)], _callerSaved),
+    ["rt_fprint_strview"] = new("rt_str_print_view",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.AX),
+       new(ArgKind.LowWord, Reg.CX), new(ArgKind.LowWord, Reg.DX)], _callerSaved, FileSelect: true),
 
     // files. The runtime documents these conventions at the head of DosRuntime.Files.cs:
     // FOpen AX=filename handle, BX=PB file number, CX=mode, SI=reclen; FClose AX=file number.
@@ -353,6 +389,9 @@ internal static class RuntimeAbi {
     // ResultKind.WidenedWord for why, and why the CWD is not optional
     ["rt_str_len"] = new("rt_len", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    // O0297's descriptor query is the same word result without consuming the stable handle.
+    ["rt_str_len_borrow"] = new("rt_len_borrow", [new(ArgKind.Word, Reg.AX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.WidenedWord),
 
     // "Val: AX=handle -> ST0 (consumes)". The only runtime entry so far that answers on the x87 stack
     ["rt_str_val"] = new("rt_val", [new(ArgKind.Word, Reg.AX)], _callerSaved,
@@ -390,6 +429,19 @@ internal static class RuntimeAbi {
     ["rt_str_compare_eq"] = new("rt_strcmpeq",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
+    // O0297 compares two borrowed ranges. All four bounds are clamped to the <=32750-byte source
+    // descriptors before the call, so their low words are the complete DOS values. The six-register
+    // convention is intentionally explicit because any accidental overlap would be a silent compare
+    // against the wrong range.
+    ["rt_str_compare_view"] = new("rt_strviewcmp", [
+      new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX), new(ArgKind.LowWord, Reg.BX),
+      new(ArgKind.Word, Reg.DX), new(ArgKind.LowWord, Reg.SI), new(ArgKind.LowWord, Reg.DI),
+    ], _callerSaved, Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    ["rt_str_compare_eq_view"] = new("rt_strviewcmpeq", [
+      new(ArgKind.Word, Reg.AX), new(ArgKind.LowWord, Reg.CX), new(ArgKind.LowWord, Reg.BX),
+      new(ArgKind.Word, Reg.DX), new(ArgKind.LowWord, Reg.SI), new(ArgKind.LowWord, Reg.DI),
+    ], _callerSaved, Result: Reg.AX, Answer: ResultKind.WidenedWord),
 
     // "MidSet: AX=target handle, CX=start, BX=length limit, DX=value handle (in-place replace;
     // consumes the value handle only)". The IR declares a pointer result and the routine returns
@@ -591,18 +643,18 @@ internal static class RuntimeAbi {
     // integer at once.
     ["rt_finput_u8"] = new("rt_inp_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.LowByte),
-    ["rt_input_u8"] = new("rt_inp_i16", [], _callerSaved, Result: Reg.AX,
-      Answer: ResultKind.LowByte, Constants: [(Reg.AX, 0)]),
+    ["rt_input_u8"] = new("rt_inp_i16", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.LowByte, Constants: [(Reg.AX, 0)]),
     ["rt_finput_u16"] = new("rt_inp_i16", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_input_u16"] = new("rt_inp_i16", [], _callerSaved, Result: Reg.AX, Constants: [(Reg.AX, 0)]),
     ["rt_finput_u32"] = new("rt_inp_i32", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.Pair),
-    ["rt_input_u32"] = new("rt_inp_i32", [], _callerSaved, Result: Reg.AX,
-      Answer: ResultKind.Pair, Constants: [(Reg.AX, 0)]),
+    ["rt_input_u32"] = new("rt_inp_i32", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair, Constants: [(Reg.AX, 0)]),
     ["rt_finput_i64"] = new("rt_inp_i64", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.St0ToQword),
-    ["rt_input_i64"] = new("rt_inp_i64", [], _callerSaved, Result: Reg.AX,
-      Answer: ResultKind.St0ToQword, Constants: [(Reg.AX, 0)]),
+    ["rt_input_i64"] = new("rt_inp_i64", [], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.St0ToQword, Constants: [(Reg.AX, 0)]),
 
     // "Rnd: -> ST0 = next SINGLE in [0,1)"
     ["rt_rnd"] = new("rt_rnd", [], _callerSaved, Answer: ResultKind.St0),
@@ -708,8 +760,10 @@ internal static class RuntimeAbi {
     // it. On this target that scaling is a 32-bit doubling, which is the whole body of the shim.
     //
     //   "rt_arr_alloc:     DX:AX = byte count  -> AX = offset within rt_arrseg (zero-filled)"
+    //   "rt_arr_alloc_nz:  DX:AX = byte count  -> AX = offset within rt_arrseg (not initialized)"
     //   "rt_arr_alloc_ptr: DX:AX = element count -> the same, for a block of target pointers"
     ["rt_arr_alloc"] = new("rt_arr_alloc", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_arr_alloc_nz"] = new("rt_arr_alloc_nz", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
     ["rt_arr_alloc_ptr"] = new("rt_arr_alloc_ptr", [new(ArgKind.Pair, Reg.AX, Reg.DX)], _callerSaved, Result: Reg.AX),
 
     //   "rt_arr_realloc: BX = old block, CX = old byte count, DX:AX = new byte count -> AX = new block"

@@ -106,7 +106,6 @@ public sealed partial class CodeGenerator {
       return $"filter: register calling convention outside the routed call ABI ({proc.CallConv})";
     return BackendAbiShapeReason(proc);
   }
-
   private static string? BackendAbiShapeReason(ProcedureSymbol proc) {
     // a FUNCTION with no resolved return type is refused along with the rest, exactly as the pattern
     // this replaced did - `null is not ScalarType{...}` was true, and the shape has no ABI either way
@@ -252,7 +251,11 @@ public sealed partial class CodeGenerator {
     if (this.Optimize)
       foreach (var f in module.Functions)
         if (!f.IsDeclaration)
-          MemoryRoutineSpecialization.Run(f);
+          MemoryRoutineSpecialization.Run(f, this.Cost);
+
+    // O0284 on native x86 uses ABI-preserving entry thunks. The source-visible procedures keep their
+    // original signatures while private helpers carry the one varying context parameter.
+    this.PrepareBackendSemanticMerges(module);
 
     var byName = new Dictionary<string, IrFunction>(System.StringComparer.OrdinalIgnoreCase);
     foreach (var f in module.Functions)
@@ -322,6 +325,7 @@ public sealed partial class CodeGenerator {
     // is known, so an unrouted local callee must remain one of the direct-compatible conventions.
     // Dropping one can invalidate its callers, so this iterates.
     var routable = candidates.Select(c => c.Proc.Name).ToHashSet(System.StringComparer.OrdinalIgnoreCase);
+    routable.UnionWith(this.BackendSemanticMergeNames);
     for (var changed = true; changed;) {
       changed = false;
       for (var i = candidates.Count - 1; i >= 0; --i) {
@@ -337,7 +341,7 @@ public sealed partial class CodeGenerator {
     }
 
     foreach (var (proc, irFn, mfn) in candidates) {
-      MachineScheduler.Schedule(mfn);             // schedule first, then allocate the final order
+      MachineScheduler.Schedule(mfn, this.SelectionTarget);             // schedule first, then allocate the final order
       if (LinearScanAllocator.Allocate(mfn, this.SelectionTarget, out var noRegisters) is not { } alloc) {
         this._backendDeclines.Add((proc.Name, "allocation: " + (noRegisters ?? "unknown")));
         continue;                                 // a value live across a CALL has no register - decline
@@ -348,14 +352,14 @@ public sealed partial class CodeGenerator {
       this._backendProcs[proc] = (mfn, alloc, this.Optimize && FrameElision.IsCandidate(irFn));
     }
 
-    // an allocation failure can strand a caller whose callee is no longer routed - re-check
+    // An allocation failure can strand a source caller, and a removed source callee can strand an
+    // O0284 helper. Conversely removing that helper strands its entry thunks. Settle both sets together.
     for (var changed = true; changed;) {
-      changed = false;
+      changed = this.PruneBackendSemanticMerges();
       foreach (var (proc, fn, _) in candidates)
         if (this._backendProcs.ContainsKey(proc)
             && CalleeNames(fn).FirstOrDefault(name =>
-              !this._backendProcs.Keys.Any(p => p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
-              && !this.CanCallDirectCallee(name)) is { } stranded) {
+              !this.BackendNameIsRouted(name) && !this.CanCallDirectCallee(name)) is { } stranded) {
           this._backendDeclines.Add((proc.Name, $"routing: calls '{stranded}', which is not routed"));
           this._backendProcs.Remove(proc);
           changed = true;
@@ -401,6 +405,7 @@ public sealed partial class CodeGenerator {
     this._backendProcs = null;
     this._backendModule = null;
     this._backendMain = null;
+    this.ResetBackendSemanticMerges();
     this._backendDeclines.Clear();
     return this.RouteMain();
   }
@@ -453,8 +458,7 @@ public sealed partial class CodeGenerator {
     if (this._backendModule.FindFunction("main") is not { IsDeclaration: false } main)
       return this.DeclineMain("lowering: the IR module has no main");
     if (CalleeNames(main).FirstOrDefault(name =>
-          !routed.Keys.Any(p => p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
-          && !this.CanCallDirectCallee(name)) is { } stranded)
+          !this.BackendNameIsRouted(name) && !this.CanCallDirectCallee(name)) is { } stranded)
       return this.DeclineMain($"routing: calls '{stranded}', which is not routed");
     if (this.ExternalCalleeDecline(main) is { } externalDecline)
       return this.DeclineMain(externalDecline);
@@ -464,7 +468,7 @@ public sealed partial class CodeGenerator {
       return this.DeclineMain("selection: " + (declineReason ?? "unknown"));
     if (UndefinedRuntimeCallee(machine) is { } undefined)
       return this.DeclineMain($"routing: calls '{undefined}', which the DOS runtime does not define");
-    MachineScheduler.Schedule(machine);
+    MachineScheduler.Schedule(machine, this.SelectionTarget);
     if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } alloc)
       return this.DeclineMain("allocation: " + (noRegisters ?? "unknown"));
     return this._backendMain = (machine, alloc);
@@ -506,6 +510,7 @@ public sealed partial class CodeGenerator {
         asm.Mov(Asm.Reg.AL, (Asm.Imm)0);
         asm.Jmp(this._rt.Exit);
       }, alignLoops: this.Optimize && this.Cost.AlignHotLoops);
+    this.EmitBackendSemanticMerges();
   }
 
   /// <summary>
@@ -692,6 +697,8 @@ public sealed partial class CodeGenerator {
     // function.
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))
       return RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name) ? this._asm.Lbl(name) : null;
+    if (this.IsBackendSemanticMerge(name))
+      return this._asm.Lbl(name);
     var proc = model.ProcedureList.FirstOrDefault(p =>
       p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
     proc ??= this.DirectCalleeWithCompatibleAbi(name);
@@ -990,5 +997,6 @@ public sealed partial class CodeGenerator {
     var calleeCleanupBytes = CallerCleansStack(proc) ? 0 : paramBytes;
     MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
       alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame);
+    this.EmitBackendSemanticMerges();
   }
 }

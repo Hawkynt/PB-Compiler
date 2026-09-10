@@ -38,6 +38,21 @@ public sealed class OptimizationStatusTableTests {
     return statuses;
   }
 
+  /// <summary>
+  /// The index defines three markers. Pages have repeatedly arrived carrying a fourth - 🟨 and 🟢 have
+  /// both appeared meaning "partial" and "implemented" - and a marker nothing defines is a marker the
+  /// tally silently drops, so the counts stop adding up to the number of pages.
+  /// </summary>
+  [Test]
+  public void Pages_GivenAStatusMarker_ThenItIsOneTheIndexDefines() {
+    var undefined = PageStatuses()
+      .Where(entry => entry.Value is not ("✅" or "\U0001F7E1" or "⬜"))
+      .Select(entry => $"  {entry.Key}: {entry.Value}")
+      .ToList();
+    Assert.That(undefined, Is.Empty,
+      "docs/optimizations/README.md defines exactly ✅ implemented, 🟡 partial and ⬜ planned");
+  }
+
   [Test]
   public void Readme_GivenEveryOptimizationPage_ThenTheTableAgreesWithIt() {
     var pages = PageStatuses();

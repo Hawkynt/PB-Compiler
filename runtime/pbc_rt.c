@@ -275,6 +275,24 @@ void *rt_str_chr(int32_t code) {
   return rt_make(&c, 1);
 }
 
+/* O0289 is a DOS heap-layout optimization. The hosted runtime already allocates each result through
+   malloc and has no compacting tail to preflight, so region markers carry no observable work and
+   specialized producers simply preserve the ordinary hosted string semantics. The borrowed and
+   consuming substring variants are intentionally identical here: hosted string consumers do not
+   destroy their input handles, so there is no ownership copy to cancel at runtime. */
+void rt_str_coalesce_begin(int16_t capacity) { (void)capacity; }
+void rt_str_coalesce_end(void) { }
+void *rt_str_const_coalesced(void *bytes, int32_t len) { return rt_str_const(bytes, len); }
+void *rt_str_left_coalesced(void *s, int32_t n) { return rt_str_left(s, n); }
+void *rt_str_right_coalesced(void *s, int32_t n) { return rt_str_right(s, n); }
+void *rt_str_mid_coalesced(void *s, int32_t start, int32_t len) { return rt_str_mid(s, start, len); }
+void *rt_str_left_borrow_coalesced(void *s, int32_t n) { return rt_str_left(s, n); }
+void *rt_str_right_borrow_coalesced(void *s, int32_t n) { return rt_str_right(s, n); }
+void *rt_str_mid_borrow_coalesced(void *s, int32_t start, int32_t len) { return rt_str_mid(s, start, len); }
+void *rt_str_space_coalesced(int32_t n) { return rt_str_space(n); }
+void *rt_str_string_coalesced(int32_t n, int32_t ch) { return rt_str_string(n, ch); }
+void *rt_str_chr_coalesced(int32_t code) { return rt_str_chr(code); }
+
 int32_t rt_str_asc(void *s) {
   pb_str *x = rt_of(s);
   return x->len ? (unsigned char)x->data[0] : -1;   /* PB: ASC("") is -1 */
@@ -561,7 +579,6 @@ static int rt_getfield(char *buf, size_t cap, int wholeLine) {
   return c != EOF || n > 0;
 }
 
-
 static double rt_input_num(void) {
   char buf[128];
   rt_getfield(buf, sizeof buf, 0);
@@ -808,6 +825,14 @@ void *rt_arr_alloc(int32_t bytes) {
   void *p = rt_xalloc(n ? n : 1);
   memset(p, 0, n ? n : 1);                    /* PB arrays start zeroed */
   return p;
+}
+
+/* O0068 has already proved every requested byte is overwritten before any read. Keep the same
+   size clamping and non-null zero-size allocation contract as rt_arr_alloc, but deliberately skip
+   initialization: malloc/rt_xalloc storage is indeterminate until the fill loop writes it. */
+void *rt_arr_alloc_nz(int32_t bytes) {
+  size_t n = (size_t)(bytes < 0 ? 0 : bytes);
+  return rt_xalloc(n ? n : 1);
 }
 
 void *rt_arr_alloc_ptr(int32_t count) {

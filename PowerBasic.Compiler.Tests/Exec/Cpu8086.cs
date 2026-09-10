@@ -684,6 +684,13 @@ public sealed class Cpu8086 {
         this.StringOp(opcode, repeat);
         return;
 
+      // XLAT: AL indexes the 256-byte table at DS:BX, and the byte read replaces AL. It touches no
+      // flag. The interpreter had no case for it because nothing emitted it until O0302's
+      // Boyer-Moore-Horspool skip table, which is exactly what a translate table is for.
+      case 0xD7:
+        this.SetReg8(_AX, this.ReadByte(Linear(this.DataSegment, (ushort)(this._r[_BX] + this.Reg8(_AX)))));
+        return;
+
       case 0xA8: this.SetLogicFlags8((byte)(this.Reg8(_AX) & this.Fetch())); return;
       case 0xA9: this.SetLogicFlags16((ushort)(this._r[_AX] & this.FetchWord())); return;
 

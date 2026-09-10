@@ -6,7 +6,7 @@
 | **Stage** | Mid-end + target dispatch |
 | **Source** | `Ir/Passes/StaticSearchRecognition.cs`, existing `IrSwitch` target dispatch |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
-| **Verified by** | `StaticDispatchOptimizationTests` |
+| **Verified by** | `StaticDispatchOptimizationTests`, `PerfectHashStaticSearchTests` |
 | **Related** | [O0100](O0100-perfect-hash-dispatch.md), [O0334](O0334-binary-search-recognition.md), [O0336](O0336-fsm-compilation.md) |
 
 ## The idea
@@ -22,6 +22,14 @@ For a canonical counted search over a unique read-only 8/16-bit integer table,
 not a sorted binary-search candidate. Each case returns the original table
 index; the original failure block remains the mandatory default verification
 path.
+
+Byte searches are widened to a 16-bit switch subject before dispatch formation:
+unsigned tables zero-extend the raw key pattern and signed tables sign-extend it.
+This is semantically required because equality originally compared only the byte
+pattern while the table's signedness defines the recovered case value, and it
+also bridges byte searches to the x86 selector, whose optimized switch dispatch
+operates on word/dword subjects. Without this bridge an 8-bit O0335 search became
+an `IrSwitch` but could never reach the perfect-hash selector.
 
 The existing target switch lowering is then free to choose its current
 perfect-hash implementation, jump table, mask or decision tree according to the

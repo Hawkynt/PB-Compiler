@@ -17,6 +17,7 @@ public sealed class IrVerificationException(string pass, IReadOnlyList<string> e
 public sealed class IrPassManager {
 
   private readonly List<(string Name, Func<IrFunction, int> Run)> _passes = [];
+  private readonly List<(string Name, Func<IrModule, int> Run)> _earlyModulePasses = [];
   private readonly List<(string Name, Func<IrModule, int> Run)> _modulePasses = [];
 
   /// <summary>When true, verifies the function after each pass and throws on any error.</summary>
@@ -33,6 +34,19 @@ public sealed class IrPassManager {
   /// <summary>Adds a pass only when <paramref name="condition"/> holds, so the pipeline stays one expression.</summary>
   public IrPassManager AddWhen(bool condition, string name, Func<IrFunction, int> pass)
     => condition ? this.Add(name, pass) : this;
+
+  /// <summary>
+  /// Adds a module pass that must see freshly lowered IR, before function passes erase its proof shape.
+  /// Such passes run once at the start of <see cref="RunOnModule"/>.
+  /// </summary>
+  public IrPassManager AddEarlyModulePass(string name, Func<IrModule, int> pass) {
+    this._earlyModulePasses.Add((name, pass));
+    return this;
+  }
+
+  /// <summary>Adds an early module pass only when <paramref name="condition"/> holds.</summary>
+  public IrPassManager AddEarlyModulePassWhen(bool condition, string name, Func<IrModule, int> pass)
+    => condition ? this.AddEarlyModulePass(name, pass) : this;
 
   /// <summary>Adds an interprocedural pass, run by <see cref="RunOnModule"/> around the function pipeline.</summary>
   public IrPassManager AddModulePass(string name, Func<IrModule, int> pass) {
@@ -75,17 +89,20 @@ public sealed class IrPassManager {
   }
 
   /// <summary>
-  /// Runs the pipeline over a module: the interprocedural passes first, then the function pipeline
-  /// over each body, then the interprocedural passes once more.
+  /// Runs the pipeline over a module: early module passes first while lowering provenance is intact,
+  /// then the function pipeline over each body, then the interprocedural passes. Every changing late
+  /// module pass is followed by another function sweep over what it exposed.
   ///
-  /// The order is the point. A pass that reasons across the call graph wants the bodies simplified —
-  /// a return is only recognisably constant after the body's arithmetic has folded — while the
-  /// function passes want the call-graph facts, because a parameter that turns out to be a literal is
-  /// what makes a branch inside the body foldable. Neither can go first and be right, so both run,
-  /// and the second interprocedural sweep is followed by another function sweep for what it exposed.
+  /// The order is the point. Early passes are the exceptional transformations whose safety proof IS
+  /// the lowering shape and therefore cannot wait for mem2reg/unrolling. Ordinary interprocedural
+  /// passes instead want bodies simplified — a return is only recognisably constant after arithmetic
+  /// has folded — while the function passes want call-graph facts. Those late passes therefore run
+  /// after the first function fixpoint and each successful one feeds another function sweep.
   /// </summary>
   public void RunOnModule(IrModule module) {
     module.OptimizeForSpeed = this.OptimizeForSpeed;
+    foreach (var (_, run) in this._earlyModulePasses)
+      run(module);
     RunFunctions();
     foreach (var (_, run) in this._modulePasses)
       if (run(module) > 0)
@@ -112,19 +129,15 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// unrolling, sccp, correlate, pointer checks, integer/float range folds, speculative narrowing,
-  /// overflow coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery,
-  /// equality saturation, verified arithmetic lowering, demote, phicong, gvn, memopt, dse,
-  /// interchange, licm, reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec and the
-  /// string/global module passes. So are the steps the caller runs around the pipeline - <c>Inliner</c>,
-  /// <c>SwitchFormation</c> and <c>MemoryRoutineSpecialization</c>, the last of which is not in
+  /// prefix-scan formation, speculative overflow versioning, ownership batching, speculative devirtualization, unrolling, sccp,
+  /// correlate, block versioning, loop versioning, pointer checks, integer/float range folds,
+  /// speculative narrowing, overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow,
+  /// ownership elision, reassociate, polynomial recovery, equality saturation, verified arithmetic
+  /// lowering, demote, ivsimplify, phicong, gvn, memopt, dse, interchange, licm, reciprocal reuse,
+  /// unswitch, allocation sinking, closed-form, deadloop, ifconv, tailrec, switch formation and the
+  /// string/global module passes. Caller-only steps such as <c>Inliner</c> and
+  /// <c>MemoryRoutineSpecialization</c> are off as well; the latter is not in
   /// <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
-  /// unrolling, sccp, correlate, block versioning, pointer checks, integer/float range folds, overflow
-  /// coalescing, sroa, aggregate-sroa, mem2reg2, reassociate, polynomial recovery, equality saturation,
-  /// verified arithmetic lowering, demote, phicong, gvn, memopt, dse, interchange, licm,
-  /// reciprocal reuse, unswitch, closed-form, deadloop, ifconv, tailrec, switch formation and the
-  /// string/global module passes. Caller-only late specialization such as
-  /// <c>MemoryRoutineSpecialization</c> is off as well (see CodeGenerator.Backend).
   /// </para>
   /// </summary>
   public static IrPassManager Legalize() => new IrPassManager()
@@ -146,6 +159,11 @@ public sealed class IrPassManager {
   /// empty loops because they may be intentional delay loops.
   /// </para>
   /// <para>
+  /// <paramref name="optimizeForSize"/> reflects <c>$OPTIMIZE SIZE</c>. It enables whole-module
+  /// transformations whose profitability comes from sharing code rather than reducing dynamic work;
+  /// O0284 semantic function merging is currently the only such IR pass.
+  /// </para>
+  /// <para>
   /// <paramref name="dataLayoutTarget"/> supplies facts that are not properties of target-neutral IR:
   /// pointer storage width, vector width and cache geometry. O0324-O0326 stay disabled when those facts
   /// are absent rather than guessing a target. The remaining O0320-O0323 and O0327-O0329 are guarded
@@ -158,13 +176,17 @@ public sealed class IrPassManager {
   /// </para>
   /// </summary>
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
-      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false)
+      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
+    // O0068 must see the allocation descriptor and the source-shaped FOR before mem2reg/unrolling
+    // turn them into a different proof problem. It is a module pass only because it may mint the
+    // rt_arr_alloc_nz declaration; the actual proof is local to one function.
+    .AddEarlyModulePassWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
     .Add("mem2reg", Mem2Reg.Run)
     // O0320-O0329 and O0313 have to see the explicit memory graph and the original counted-loop shape.
     // Run the aggregate transforms before AoS->SoA destroys record identity, then the loop/data
-    // transforms, form scan recurrences, and only then unroll. Every one declines escaped/opaque
-    // storage rather than speculating aliasing.
+    // transforms, form scan recurrences, and only then the overflow versioner and the unroller. Every
+    // one declines escaped/opaque storage rather than speculating aliasing.
     .Add("structpack", StructurePackingByRange.Run)
     .Add("fieldreorder", FieldReordering.Run)
     .Add("hotcold", HotColdFieldSplitting.Run)
@@ -181,6 +203,12 @@ public sealed class IrPassManager {
       fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
     .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arrayalign",
       fn => ArrayBaseAlignment.Run(fn, dataLayoutTarget!.VectorBytes, dataLayoutTarget.PointerBits))
+    // O0308 matches lowering's checked signed-add/sub predicate before InstCombine canonicalizes its
+    // XOR/AND tree. It versions only exact counted loops with an O(1) invariant safety guard.
+    .Add("overflow-version", SpeculativeOverflowElimination.Run)
+    // O0292 wants the ownership phi before a small counted loop is expanded into repeated copies.
+    // It is therefore the last SSA loop/data rewrite before unrolling gets a chance to erase the loop.
+    .Add("ownershipbatch", OwnershipBatching.Run)
     // unrolling goes early, right after values reach SSA: a fully unrolled loop turns its counter
     // into a constant in every copy, which is what gives the rest of the pipeline something to fold
     .Add("unroll", LoopUnroll.Run)
@@ -198,7 +226,7 @@ public sealed class IrPassManager {
     // O0351 shares the dominator-scoped edge facts with correlation, but only explicit pointer-null
     // tests count: dereferencing address zero is not a fault on PB's DOS memory model.
     .Add("ptrcheck", PointerCheckElim.Run)
-    // AFTER sccp and correlate, and the order is the whole of it: the range analysis reasons about
+    // AFTER sccp and correlate, and the order is the whole composition: the range analysis reasons about
     // what an expression CAN be, so it wants the values that are already known to be one thing folded
     // in first - a bounds check against a subscript sccp has resolved is not a range question at all.
     // What is left after those two is the class this answers: a loop counter, an IF-joined variable,
@@ -221,6 +249,12 @@ public sealed class IrPassManager {
     // region bounds and reject overlap so UNION aliasing remains shared storage.
     .Add("aggregate-sroa", ScalarReplaceAggregates.Run)
     .Add("mem2reg2", Mem2Reg.Run)
+    // O0293 wants the ownership graph after all scalar source-variable storage has become SSA. It
+    // removes only local dup/free lifetimes whose raw handles neither escape nor cross a CFG edge.
+    .Add("strcow", StringCopyOnWriteElision.Run)
+    // O0291 is an ownership transform, not generic call DCE. It wants local string storage promoted
+    // to SSA first, so exact use-lists expose a copied owner's nested borrows and matching release.
+    .Add("ownership-elision", HandleOwnershipElision.Run)
     // O0346/O0347 consume strict FP facts here, including branch-refined integer ranges at conversion
     // sites. SPEED supplies its explicit no-NaN/no-inf assumptions without changing strict defaults.
     .Add("fpsimplify", fn => FpSimplify.Run(fn,
@@ -236,17 +270,19 @@ public sealed class IrPassManager {
     // O0354: unlike the sequential canonicalizers above, local equality saturation keeps several
     // equivalent pure-integer forms alive under a hard budget and extracts the cheapest result.
     .Add("eqsat", EqualitySaturation.Run)
-    // O0359: arithmetic identities used for lowering DIV/MOD and non-trivial constant multiplies are
-    // admitted only after exhaustive verification over the complete 16-bit input domain.
-    .Add("verified-arith", VerifiedArithmeticLowering.Run)
+    // O0359 and O0056: exact integer strength reductions are admitted only after exhaustive Int16
+    // verification; O0056's reciprocal-multiply expansion remains a SPEED-only size/cycle trade.
+    .Add("verified-arith", fn => VerifiedArithmeticLowering.Run(fn, optimizeForSpeed))
     // Horner recovery wants the canonical integer expression after reassociation, while its result is
     // still early enough for GVN and DCE to collect the now-dead literal power tree.
     .Add("polynomial", PolynomialEvaluation.Run)
     // GVN cannot number a phi - a loop phi's operands include the value coming back round the latch,
     // which is derived from the phi itself - so congruent induction variables survive it untouched
     // after mem2reg has made the counter a phi, and before the value passes, so the integer form is
-    // what they see
+    // what they see. O0062's derived-IV pass runs immediately before phi congruence: it creates the
+    // carried affine values, then O0111 can coalesce any of those that turn out to be redundant.
     .Add("demote", FloatDemotion.Run)
+    .Add("ivsimplify", InductionVariableSimplification.Run)
     .Add("phicong", PhiCongruence.Run)
     .Add("gvn", Gvn.Run)
     // tiny intrinsic expansion is deliberately after GVN: one canonical memcpy/memset call is easier
@@ -266,7 +302,15 @@ public sealed class IrPassManager {
     // by cloning - each clone gets its own copy of the compare, so binding the original to a constant
     // reaches nothing. LICM hoists it out first, which is what makes the value substitutable.
     .Add("unswitch", LoopUnswitch.Run)
+    // O0306 follows LICM for loop-invariant guard operands, and follows unswitch so the fast clone's
+    // deliberately constant-false Error 9 branches are not mistaken for invariant branches to split.
+    // The original checked loop remains the fallback; only its clone is specialized.
+    .Add("loopversion", LoopVersioning.Run)
     .Add("dce", Dce.Run)
+    // O0288 runs late enough that dead scalar residue no longer blocks sinking, but before if-convert
+    // and simplifycfg erase the simple no-else IF shape. The pass itself refuses every heap-observable
+    // crossing and moves the matching cleanup with the allocation.
+    .Add("allocsink", AllocationSinking.Run)
     // AFTER dce: IntegerRecovery leaves the float-shaped arithmetic it replaced standing beside the
     // integer form, and until that shadow is collected the accumulator still has a reader inside the
     // loop - which is exactly the condition this pass requires to be absent
@@ -303,6 +347,12 @@ public sealed class IrPassManager {
     // chains, so every successful reduction immediately triggers another function sweep and lets
     // DCE/SCCP collect them before later module transforms.
     .AddModulePassWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
+    // O0307 deliberately spends one compare/branch and duplicates the call site, so keep it under the
+    // SPEED objective. It follows O0271, which promotes on real profile evidence and whose fallback is
+    // itself an indirect call this pass must not version again; running it immediately before SPEED
+    // inlining lets the guarded direct path expose an inlinable callee while the mismatch path retains
+    // the original indirect call.
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
     // SPEED inlining is a module pass so it can see the call graph after the first function fixpoint;
     // every successful inline immediately triggers another function sweep over the exposed body.
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
@@ -332,12 +382,23 @@ public sealed class IrPassManager {
     // O0353 consumes the exact-trip append shape produced immediately above and batches its suffix
     // into REPEAT$ + one concatenation in the preheader, so no per-iteration capacity check remains.
     .AddModulePassWhen(includeModulePasses, "strcapacity", StringCapacityHoisting.Run)
-    .AddModulePassWhen(includeModulePasses, "strbyte", StringByteRead.Run)
+    // Classify equality and empty-string comparisons while they are still ordinary string compares;
+    // the O0297 view consumer then preserves that classification with its equality-only view entry.
     .AddModulePassWhen(includeModulePasses, "strcmpeq", StringCompareEquality.Run)
     .AddModulePassWhen(includeModulePasses, "strempty", StringEmptinessTest.Run)
+    .AddModulePassWhen(includeModulePasses, "strslice", StringSliceLength.Run)
+    .AddModulePassWhen(includeModulePasses, "strbyte", StringByteRead.Run)
+    .AddModulePassWhen(includeModulePasses, "strview", StringSliceView.Run)
+    // O0289 wants the final string call shape. Once it inserts a begin/end reservation pair those
+    // calls intentionally become barriers, so allocation coalescing runs after every other string
+    // canonicalizer and immediately before the unrelated global cleanups.
+    .AddModulePassWhen(includeModulePasses, "strcoalesce", StringAllocationCoalescing.Run)
     .AddModulePassWhen(includeModulePasses, "readonly-globals", ReadOnlyGlobals.Run)
     .AddModulePassWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
     // O0279 wants the SSA/global cleanup above, and IPCP wants the direct edges O0279 exposes.
     .AddModulePassWhen(includeModulePasses, "devirt", WholeProgramDevirtualization.Run)
-    .AddModulePassWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run);
+    .AddModulePassWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run)
+    // O0284 is intentionally last. Every earlier interprocedural/local pass gets the original ABI and
+    // the maximum opportunity to make bodies congruent; only SIZE then pays the one-parameter ABI cost.
+    .AddModulePassWhen(includeModulePasses && optimizeForSize, "semantic-merge", SemanticFunctionMerging.Run);
 }

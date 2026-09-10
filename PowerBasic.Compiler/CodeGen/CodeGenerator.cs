@@ -3115,6 +3115,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return;
 
     if (kind == ValueKind.Int16 && constantStep is { } fastStep) {
+      // pb36 O0308: a checked signed add/sub array loop scans its inputs once; a fully safe
+      // range then enters O0026 unchecked, while any overflow restarts the original checked loop.
+      if (this.TryEmitOverflowVersionedVectorFor(f, counter, slot.WithSize(OperandSize.Word), fastStep))
+        return;
       // pb36 R4 auto-vectorisation ($CPU 80586 MMX): c(i)=a(i) OP b(i) runs four lanes/iteration through MMX
       if (this.TryEmitVectorizedFor(f, counter, slot.WithSize(OperandSize.Word), fastStep))
         return;

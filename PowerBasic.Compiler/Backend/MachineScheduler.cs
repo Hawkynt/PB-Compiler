@@ -21,14 +21,17 @@ public static class MachineScheduler {
   /// </summary>
   private const int _registerFile = 6;
 
+  /// <summary>Runs optimizer-gated combines for the conservative baseline target, then schedules.</summary>
+  public static void Schedule(MFunction function) => Schedule(function, SelectionTarget.Baseline);
+
   /// <summary>Runs optimizer-gated target combines, then reorders non-terminators by their dependencies.</summary>
-  public static void Schedule(MFunction function) {
+  public static void Schedule(MFunction function, SelectionTarget target) {
     if (MachineOptimizationState.IsMarked(function)) {
       // O0348/O0349 live here rather than in selection: only after all IR instructions have become
       // one machine stream can a private TBYTE spill/reload pair be recognized. Run before any
       // reordering so the x87 stack proof describes the selector's source-order expression tree.
       X87StackOptimizer.Run(function);
-      MachineCombiner.Run(function);
+      MachineCombiner.Run(function, target);
       SuperoptimizedPeepholes.Run(function);
     }
     foreach (var block in function.Blocks)

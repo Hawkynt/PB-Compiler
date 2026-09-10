@@ -33,6 +33,7 @@ public sealed partial class DosRuntime {
     this.EmitStrI64(asm);
     this.EmitAsciizProcedures(asm);
     this.EmitAscSet(asm);
+    this.EmitStringCoalescingProcedures(asm);
     this.EmitRndRange(asm);
     this.EmitRandomize(asm);
   }

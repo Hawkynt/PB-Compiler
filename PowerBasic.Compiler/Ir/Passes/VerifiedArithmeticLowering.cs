@@ -9,10 +9,14 @@ public static class VerifiedArithmeticLowering {
 
   private static readonly Dictionary<short, MultiplyPlan?> _multiplyPlans = [];
   private static readonly Dictionary<short, bool> _signedDivisors = [];
+  private static readonly Dictionary<short, ReciprocalPlan?> _signedReciprocalPlans = [];
   private static readonly object _verificationLock = new();
 
-  /// <summary>Rewrites verified constant multiplies and signed power-of-two divisions/remainders.</summary>
-  public static int Run(IrFunction function) {
+  /// <summary>
+  /// Rewrites verified constant multiplies and signed divisions/remainders. Reciprocal-multiply
+  /// lowering is a SPEED trade (more IR/code for fewer divide cycles), so callers must opt into it.
+  /// </summary>
+  public static int Run(IrFunction function, bool optimizeForSpeed = false) {
     ArgumentNullException.ThrowIfNull(function);
     var changed = 0;
     foreach (var binary in function.AllInstructions.OfType<IrBinary>().ToArray()) {
@@ -20,8 +24,8 @@ public static class VerifiedArithmeticLowering {
         continue;
       IrValue? replacement = binary.Op switch {
         IrBinaryOp.Mul => LowerMultiply(binary),
-        IrBinaryOp.SDiv => LowerSignedDivision(binary, remainder: false),
-        IrBinaryOp.SRem => LowerSignedDivision(binary, remainder: true),
+        IrBinaryOp.SDiv => LowerSignedDivision(binary, remainder: false, optimizeForSpeed),
+        IrBinaryOp.SRem => LowerSignedDivision(binary, remainder: true, optimizeForSpeed),
         _ => null,
       };
       if (replacement is null)
@@ -54,13 +58,20 @@ public static class VerifiedArithmeticLowering {
     return result;
   }
 
-  private static IrValue? LowerSignedDivision(IrBinary binary, bool remainder) {
+  private static IrValue? LowerSignedDivision(IrBinary binary, bool remainder, bool optimizeForSpeed) {
     if (binary.Rhs is not IrConstantInt constant)
       return null;
     var divisor = unchecked((short)constant.ZeroExtended);
-    if (!TryVerifiedSignedDivisor(divisor, out var shift, out var negative))
-      return null;
 
+    if (TryVerifiedSignedDivisor(divisor, out var shift, out var negative))
+      return LowerSignedPowerOfTwo(binary, divisor, shift, negative, remainder);
+
+    if (!optimizeForSpeed || !TryVerifiedSignedReciprocal(divisor, out var reciprocal))
+      return null;
+    return LowerSignedReciprocal(binary, divisor, reciprocal, remainder);
+  }
+
+  private static IrValue LowerSignedPowerOfTwo(IrBinary binary, short divisor, int shift, bool negative, bool remainder) {
     var type = binary.Type;
     var sign = Emit(binary, IrBinaryOp.AShr, binary.Lhs, C(type, type.Bits - 1));
     var bias = Emit(binary, IrBinaryOp.And, sign, C(type, (1 << shift) - 1));
@@ -77,8 +88,37 @@ public static class VerifiedArithmeticLowering {
     return Emit(binary, IrBinaryOp.Sub, binary.Lhs, product);
   }
 
+  /// <summary>
+  /// O0056: materializes the target-neutral spelling of signed high-half multiplication rather than
+  /// inventing an IR pseudo-op: <c>trunc((sext x * magic) ashr 16)</c>. C and LLVM can optimize that
+  /// directly; the x86-16 selector recognizes the exact single-use shape and selects the DX half of
+  /// one accumulator IMUL, so the widening never becomes a 32-bit runtime multiply there.
+  /// </summary>
+  private static IrValue LowerSignedReciprocal(IrBinary binary, short divisor, ReciprocalPlan plan, bool remainder) {
+    var type = binary.Type;
+    var wide = IrType.I32;
+    var extended = Cast(binary, IrCastOp.SExt, binary.Lhs, wide);
+    var product = Emit(binary, IrBinaryOp.Mul, extended, C(wide, plan.Magic));
+    var highWide = Emit(binary, IrBinaryOp.AShr, product, C(wide, 16));
+    IrValue high = Cast(binary, IrCastOp.Trunc, highWide, type);
+    if (plan.AddDividend)
+      high = Emit(binary, IrBinaryOp.Add, high, binary.Lhs);
+    if (plan.Shift > 0)
+      high = Emit(binary, IrBinaryOp.AShr, high, C(type, plan.Shift));
+    var sign = Emit(binary, IrBinaryOp.AShr, binary.Lhs, C(type, 15));
+    var quotient = Emit(binary, IrBinaryOp.Sub, high, sign);
+    if (!remainder)
+      return quotient;
+
+    var quotientTimesDivisor = Emit(binary, IrBinaryOp.Mul, quotient, C(type, divisor));
+    return Emit(binary, IrBinaryOp.Sub, binary.Lhs, quotientTimesDivisor);
+  }
+
   private static IrBinary Emit(IrInstruction before, IrBinaryOp op, IrValue left, IrValue right)
     => before.Parent!.InsertBefore(new IrBinary(op, left, right), before);
+
+  private static IrCast Cast(IrInstruction before, IrCastOp op, IrValue value, IrType type)
+    => before.Parent!.InsertBefore(new IrCast(op, value, type), before);
 
   private static IrConstantInt C(IrType type, long value) => new(type, IrConstFold.Wrap(value, type));
 
@@ -168,7 +208,76 @@ public static class VerifiedArithmeticLowering {
     return true;
   }
 
+  private static bool TryVerifiedSignedReciprocal(short divisor, out ReciprocalPlan plan) {
+    ReciprocalPlan? cached;
+    lock (_verificationLock) {
+      if (!_signedReciprocalPlans.TryGetValue(divisor, out cached)) {
+        cached = CreateSignedReciprocalPlan(divisor);
+        if (cached is { } candidate && !VerifySignedReciprocal(divisor, candidate))
+          cached = null;
+        _signedReciprocalPlans[divisor] = cached;
+      }
+    }
+    plan = cached ?? default;
+    return cached is not null;
+  }
+
+  /// <summary>
+  /// Granlund-Montgomery / Hacker's Delight signed magic-number derivation for the positive Int16
+  /// divisor slice O0056 currently promises. The output is specification data, not copied
+  /// implementation structure; every result is independently verified below before becoming usable.
+  /// </summary>
+  private static ReciprocalPlan? CreateSignedReciprocalPlan(short divisor) {
+    if (divisor < 2 || IsPowerOfTwo(divisor))
+      return null;
+
+    const int width = 16;
+    const long two15 = 1L << (width - 1);
+    var ad = (long)divisor;
+    var anc = two15 - 1 - two15 % ad;
+    var p = width - 1;
+    var q1 = two15 / anc;
+    var r1 = two15 - q1 * anc;
+    var q2 = two15 / ad;
+    var r2 = two15 - q2 * ad;
+    long delta;
+    do {
+      ++p;
+      q1 *= 2;
+      r1 *= 2;
+      if (r1 >= anc) { ++q1; r1 -= anc; }
+      q2 *= 2;
+      r2 *= 2;
+      if (r2 >= ad) { ++q2; r2 -= ad; }
+      delta = ad - r2;
+    } while (q1 < delta || (q1 == delta && r1 == 0));
+
+    var shift = p - width;
+    if (shift is < 0 or > 15)
+      return null;
+    var magic = unchecked((short)(q2 + 1));
+    return new(magic, shift, AddDividend: magic < 0);
+  }
+
+  private static bool VerifySignedReciprocal(short divisor, ReciprocalPlan plan) {
+    for (var raw = (int)short.MinValue; raw <= short.MaxValue; ++raw) {
+      var x = (short)raw;
+      var high = unchecked((short)(((int)x * plan.Magic) >> 16));
+      if (plan.AddDividend)
+        high = unchecked((short)(high + x));
+      var shifted = (short)(high >> plan.Shift);
+      var quotient = unchecked((short)(shifted - (x >> 15)));
+      if (quotient != x / divisor)
+        return false;
+      var remainder = unchecked((short)(x - unchecked((short)(quotient * divisor))));
+      if (remainder != x % divisor)
+        return false;
+    }
+    return true;
+  }
+
   private static bool IsPowerOfTwo(int value) => value > 0 && (value & (value - 1)) == 0;
 
   private readonly record struct MultiplyPlan(int Shift, bool Subtract, bool Negate);
+  private readonly record struct ReciprocalPlan(short Magic, int Shift, bool AddDividend);
 }

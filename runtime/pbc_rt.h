@@ -35,6 +35,24 @@ void *rt_str_append_var(void *target, void *source);
 void *rt_str_append_lit(void *target, void *bytes, int32_t len);
 void *rt_str_dup(void *s);
 void rt_str_free(void *s);
+
+/* O0289 allocation coalescing is a DOS heap optimization. Hosted runtimes do not expose that heap,
+   so the region markers are harmless no-ops and the specialized producers are ABI aliases of the
+   ordinary string operations. Keeping real symbols here lets both emitted C and LLVM share the same
+   optimized IR without target-specific pass suppression. */
+void rt_str_coalesce_begin(int16_t capacity);
+void rt_str_coalesce_end(void);
+void *rt_str_const_coalesced(void *bytes, int32_t len);
+void *rt_str_left_coalesced(void *s, int32_t n);
+void *rt_str_right_coalesced(void *s, int32_t n);
+void *rt_str_mid_coalesced(void *s, int32_t start, int32_t len);
+void *rt_str_left_borrow_coalesced(void *s, int32_t n);
+void *rt_str_right_borrow_coalesced(void *s, int32_t n);
+void *rt_str_mid_borrow_coalesced(void *s, int32_t start, int32_t len);
+void *rt_str_space_coalesced(int32_t n);
+void *rt_str_string_coalesced(int32_t n, int32_t ch);
+void *rt_str_chr_coalesced(int32_t code);
+
 int32_t rt_str_len(void *s);
 int32_t rt_str_compare(void *a, void *b);
 int32_t rt_str_compare_eq(void *a, void *b);
@@ -175,10 +193,74 @@ void rt_file_seek(int32_t n, int32_t position);
 void rt_fput_str(int32_t n, void *s);
 void *rt_fget_str(int32_t n, int32_t count);
 
+/* O0297 expression-local string views. The optimized IR carries a stable handle plus a 1-based
+   start and byte length. These helpers borrow the handle: they never allocate, copy, or free it.
+   Hosted C has a non-moving heap, but keeping the same ABI as DOS makes the IR target-neutral. */
+static inline int32_t rt_str_len_borrow(void *s) {
+  return s ? ((pb_str *)s)->len : 0;
+}
+
+static inline void pbc_rt_string_view(void *s, int32_t start, int32_t len,
+    const unsigned char **data, int32_t *view_len) {
+  static const unsigned char empty = 0;
+  pb_str *x = s ? (pb_str *)s : (pb_str *)0;
+  int32_t source_len = x ? x->len : 0;
+  if (start < 1) start = 1;
+  if (start > source_len || len <= 0) {
+    *data = &empty;
+    *view_len = 0;
+    return;
+  }
+  if (len > source_len - start + 1)
+    len = source_len - start + 1;
+  *data = (const unsigned char *)x->data + start - 1;
+  *view_len = len;
+}
+
+static inline int32_t rt_str_compare_view(void *a, int32_t a_start, int32_t a_len,
+    void *b, int32_t b_start, int32_t b_len) {
+  const unsigned char *x, *y;
+  int32_t xn, yn, n, i;
+  pbc_rt_string_view(a, a_start, a_len, &x, &xn);
+  pbc_rt_string_view(b, b_start, b_len, &y, &yn);
+  n = xn < yn ? xn : yn;
+  for (i = 0; i < n; ++i)
+    if (x[i] != y[i])
+      return x[i] < y[i] ? -1 : 1;
+  return xn == yn ? 0 : (xn < yn ? -1 : 1);
+}
+
+static inline int32_t rt_str_compare_eq_view(void *a, int32_t a_start, int32_t a_len,
+    void *b, int32_t b_start, int32_t b_len) {
+  const unsigned char *x, *y;
+  int32_t xn, yn, i;
+  pbc_rt_string_view(a, a_start, a_len, &x, &xn);
+  pbc_rt_string_view(b, b_start, b_len, &y, &yn);
+  if (xn != yn) return 1;
+  for (i = 0; i < xn; ++i)
+    if (x[i] != y[i]) return 1;
+  return 0;
+}
+
+static inline void rt_print_strview(void *s, int32_t start, int32_t len) {
+  const unsigned char *data;
+  int32_t n;
+  pbc_rt_string_view(s, start, len, &data, &n);
+  rt_print_str((void *)data, n);
+}
+
+static inline void rt_fprint_strview(int32_t file, void *s, int32_t start, int32_t len) {
+  const unsigned char *data;
+  int32_t n;
+  pbc_rt_string_view(s, start, len, &data, &n);
+  rt_fprint_str(file, (void *)data, n);
+}
+
 /* --- memory / arrays --------------------------------------------------- */
 /* Sizes are BYTES; the _ptr variants take element COUNTS because only this file knows how wide a
    target pointer is. See the definitions for the whole argument. */
 void *rt_arr_alloc(int32_t bytes);
+void *rt_arr_alloc_nz(int32_t bytes);
 void *rt_arr_alloc_ptr(int32_t count);
 void *rt_arr_realloc(void *p, int32_t oldBytes, int32_t newBytes);
 void *rt_arr_realloc_ptr(void *p, int32_t oldCount, int32_t newCount);

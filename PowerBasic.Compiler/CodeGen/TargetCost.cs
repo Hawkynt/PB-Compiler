@@ -69,6 +69,49 @@ public sealed class TargetCost {
   /// the wider bus and caches move the bottleneck to execution.</summary>
   public bool PrefetchBound => this.Tier <= CpuTier.I80286;
 
+  /// <summary>
+  /// The widest scalar memory access O0339 may ask the x86-16 back end to open-code. The 8086/286
+  /// have 16-bit general registers; the 386 introduced the operand-size-prefixed 32-bit MOV forms.
+  /// </summary>
+  public int MemoryScalarBits => this.Tier >= CpuTier.I80386 ? 32 : 16;
+
+  /// <summary>
+  /// Maximum scalar stores an inlined constant-size memcpy may spend (O0339). This is deliberately a
+  /// STORE count, matching LLVM TargetLowering's contract; memcpy's paired loads are priced implicitly.
+  /// Later cores tolerate more straight-line work, while SIZE clamps the wider tiers before code growth
+  /// starts competing with the existing REP/runtime forms.
+  /// </summary>
+  public int MaxStoresPerMemcpy {
+    get {
+      var byTier = this.Tier switch {
+        CpuTier.I8086 => 3,
+        CpuTier.I80286 => 4,
+        CpuTier.I80386 => 4,
+        CpuTier.I80486 => 6,
+        _ => 8,
+      };
+      return this.Objective == CostObjective.Size ? Math.Min(byTier, 4) : byTier;
+    }
+  }
+
+  /// <summary>
+  /// Maximum stores an inlined constant-byte memset may spend (O0339). A constant byte can be splatted
+  /// at compile time into the target's widest scalar; dynamic-byte fills remain byte-wise and keep their
+  /// separate four-store ceiling in the pass because manufacturing a repeated runtime word/dword is work.
+  /// </summary>
+  public int MaxStoresPerMemset {
+    get {
+      var byTier = this.Tier switch {
+        CpuTier.I8086 => 4,
+        CpuTier.I80286 => 6,
+        CpuTier.I80386 => 8,
+        CpuTier.I80486 => 12,
+        _ => 16,
+      };
+      return this.Objective == CostObjective.Size ? Math.Min(byTier, 8) : byTier;
+    }
+  }
+
   /// <summary>Representative latency of a 16-bit <c>MUL</c>/<c>IMUL</c> on this core, in cycles. The early
   /// parts pay dearly (the 8086 microcodes it into three digits), the 386 an order of magnitude less, the P6
   /// a few - which is exactly why replacing a multiply by shift/add (O0078) is a large win on an 8086 and a

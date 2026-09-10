@@ -570,6 +570,10 @@ public sealed class IrBasicWriter {
   /// </summary>
   private static readonly Dictionary<string, string> _intrinsics = new(StringComparer.Ordinal) {
     ["rt_str_len"] = "LEN", ["rt_str_val"] = "VAL", ["rt_str_asc"] = "ASC",
+    // O0297 asks the same question of a handle it does not consume; LEN is what it was lowered from,
+    // and BASIC has no spelling for the ownership difference (rt_str_dup renders as its argument for
+    // the same reason).
+    ["rt_str_len_borrow"] = "LEN",
     ["rt_str_left"] = "LEFT$", ["rt_str_right"] = "RIGHT$",
     ["rt_str_mid"] = "MID$", ["rt_str_mid2"] = "MID$",
     ["rt_str_chr"] = "CHR$", ["rt_str_space"] = "SPACE$",
@@ -610,7 +614,24 @@ public sealed class IrBasicWriter {
     return parts.Length == 3 ? parts[1] : null;
   }
 
+  /// <summary>
+  /// The routine a coalesced string entry stands for. O0289 batches several bounded allocations into
+  /// one preflighted heap region and points them at <c>NAME_coalesced</c> (or
+  /// <c>NAME_borrow_coalesced</c>, which additionally takes its source without a copy). Both keep the
+  /// original signature and compute the original value, so they spell as the intrinsic they came
+  /// from - which arena the bytes were carved out of has no more of a BASIC spelling than
+  /// <c>rt_str_dup</c> does.
+  /// </summary>
+  private static string Uncoalesced(string runtime) => runtime switch {
+    _ when runtime.EndsWith("_borrow_coalesced", StringComparison.Ordinal)
+      => runtime[..^"_borrow_coalesced".Length],
+    _ when runtime.EndsWith("_coalesced", StringComparison.Ordinal)
+      => runtime[..^"_coalesced".Length],
+    _ => runtime,
+  };
+
   private bool TryStringExpression(IrCall call, IrFunction callee) {
+    var name = Uncoalesced(callee.Name);
     if (MathName(callee.Name) is { } math) {
       // exponentiation is an operator in BASIC, not a function - it is what '^' lowered to
       if (math == "pow" && call.Args.Count() == 2) {
@@ -622,11 +643,11 @@ public sealed class IrBasicWriter {
         return true;
       }
     }
-    if (_intrinsics.TryGetValue(callee.Name, out var intrinsic)) {
+    if (_intrinsics.TryGetValue(name, out var intrinsic)) {
       this._names[call] = $"{intrinsic}({string.Join(", ", call.Args.Select(this.Ref))})";
       return true;
     }
-    switch (callee.Name) {
+    switch (name) {
       // rt_str_const(bytes, length) IS a string literal - it is what one lowers to
       case "rt_str_const" when call.Args.FirstOrDefault() is IrGlobalVariable { Bytes: { } bytes }:
         this._names[call] = Quote(System.Text.Encoding.ASCII.GetString(bytes));
@@ -708,6 +729,9 @@ public sealed class IrBasicWriter {
       case "rt_fprint_str" when args is [{ } number, IrGlobalVariable { Bytes: { } bytes }, _]:
         this.Line($"  PRINT #{this.Ref(number)}, {Quote(System.Text.Encoding.ASCII.GetString(bytes))};");
         return true;
+      case "rt_fprint_strview" when args.Count == 4:
+        this.Line($"  PRINT #{this.Ref(args[0])}, {this.Substring(args[1], args[2], args[3])};");
+        return true;
       case "rt_fprint_i16" or "rt_fprint_i32" or "rt_fprint_i64" or "rt_fprint_u8" or "rt_fprint_u16"
         or "rt_fprint_u32" or "rt_fprint_u64" or "rt_fprint_single" or "rt_fprint_double"
         or "rt_fprint_ext" or "rt_fprint_strvar"
@@ -718,6 +742,10 @@ public sealed class IrBasicWriter {
         return false;
     }
   }
+
+  /// <summary>The substring an O0297 view descriptor (handle, 1-based start, length) names.</summary>
+  private string Substring(IrValue handle, IrValue start, IrValue length)
+    => $"MID$({this.Ref(handle)}, {this.Ref(start)}, {this.Ref(length)})";
 
   /// <summary>A BASIC string literal, with the doubled quotes BASIC escapes with.</summary>
   private static string Quote(string text) => "\"" + text.Replace("\"", "\"\"") + "\"";
@@ -821,7 +849,9 @@ public sealed class IrBasicWriter {
       // Releasing the handle an assignment replaced is the same kind of bookkeeping rt_str_dup is,
       // and has the same spelling here: none. BASIC assigns strings by value and says nothing about
       // when the old one goes.
-      if (callee.Name == "rt_str_free")
+      // ...and so is the transaction O0289 wraps a batch of allocations in. Both markers are heap
+      // bookkeeping around calls that are individually spelled already.
+      if (callee.Name is "rt_str_free" or "rt_str_coalesce_begin" or "rt_str_coalesce_end")
         return;
       if (this.TryStringExpression(call, callee))
         return;
@@ -846,6 +876,13 @@ public sealed class IrBasicWriter {
       }
       if (_printItem.Contains(callee.Name)) {
         this.Line($"  PRINT {this.Ref(call.Args.First())};");
+        return;
+      }
+      // O0297 prints a borrowed RANGE of a string rather than a copy of it. The range is exactly the
+      // substring the program named, so it is written back out as that substring.
+      if (callee.Name == "rt_print_strview" && call.ArgCount == 3) {
+        var view = call.Args.ToList();
+        this.Line($"  PRINT {this.Substring(view[0], view[1], view[2])};");
         return;
       }
       if (this.TryFileStatement(call, callee))
