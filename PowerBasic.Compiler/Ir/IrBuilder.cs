@@ -69,7 +69,11 @@ public sealed class IrBuilder {
   public IrCall Call(IrType resultType, IrValue callee, IReadOnlyList<IrValue> args)
     => this.Emit(new IrCall(resultType, callee, args));
   public IrCall Call(IrType resultType, IrValue callee, IrCallConvention convention,
-      IReadOnlyList<IrValue> args) => this.Emit(new IrCall(resultType, callee, args, convention));
+      IReadOnlyList<IrValue> args) {
+    if (callee is IrFunction direct)
+      direct.BindConvention(convention);
+    return this.Emit(new IrCall(resultType, callee, args, convention));
+  }
 
   // ---- terminators ---------------------------------------------------------
 

@@ -11,6 +11,8 @@ public sealed class IrFunction : IrGlobalValue {
   private readonly List<IrBasicBlock> _blocks = [];
   private readonly List<IrArgument> _parameters = [];
   private int _nextProfileBlockId;
+  private IrCallConvention _convention;
+  private bool _hasConvention;
 
   public IrFunction(string name, IrType returnType, IEnumerable<IrArgument>? parameters = null) : base(name) {
     this.ReturnType = returnType;
@@ -24,6 +26,37 @@ public sealed class IrFunction : IrGlobalValue {
 
   /// <summary>The declared return type (<see cref="IrType.Void"/> for a SUB).</summary>
   public IrType ReturnType { get; }
+
+  /// <summary>
+  /// Calling-convention identity of this DEFINITION/declaration. A direct <see cref="IrCall"/> carries
+  /// the same identity at the call site; keeping both sides is what lets cloning, hosted emission and
+  /// target back ends preserve ABI rather than recovering it from a source symbol that a generated
+  /// function does not have. BASIC is the default for hand-built IR whose definition ABI was never
+  /// stated explicitly.
+  /// </summary>
+  public IrCallConvention Convention {
+    get => this._convention;
+    init {
+      this._convention = value;
+      this._hasConvention = true;
+    }
+  }
+
+  /// <summary>Whether the definition ABI was stated rather than merely defaulted to BASIC.</summary>
+  internal bool HasConvention => this._hasConvention;
+
+  /// <summary>
+  /// Records a direct call's ABI on a declaration/definition whose source signature has not already
+  /// supplied one. Production lowering builds direct calls through <see cref="IrBuilder"/>, so this
+  /// also covers declarations before their bodies are lowered. Once bound, the convention is immutable;
+  /// <see cref="IrVerifier"/> reports a mismatching direct call instead of letting one silently win.
+  /// </summary>
+  internal void BindConvention(IrCallConvention convention) {
+    if (this._hasConvention)
+      return;
+    this._convention = convention;
+    this._hasConvention = true;
+  }
 
   /// <summary>The formal parameters in signature order.</summary>
   public IReadOnlyList<IrArgument> Parameters => this._parameters;

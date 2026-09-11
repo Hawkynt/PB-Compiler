@@ -80,6 +80,7 @@ public sealed partial class CodeGenerator {
 
   private bool BackendNameIsRouted(string name)
     => this.IsBackendSemanticMerge(name)
+       || this.IsBackendGeneratedDefinition(name)
        || this._backendProcs?.Keys.Any(procedure =>
          procedure.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) == true;
 

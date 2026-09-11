@@ -264,6 +264,11 @@ public sealed partial class CodeGenerator {
       if (!f.IsDeclaration)
         byName[f.Name] = f;
 
+    // Middle-end generated definitions have no ProcedureSymbol. Select/allocate them from their IR
+    // signature and definition ABI now; source/generated call-graph pruning below decides whether the
+    // provisional bodies can actually coexist with the direct fallback.
+    this.PrepareBackendGenerated(module);
+
     var candidates = new List<(ProcedureSymbol Proc, IrFunction Fn, MFunction Machine)>();
     foreach (var proc in model.ProcedureList) {
       // The filter admits a SHAPE the ABI can express; whether the body can be compiled at all is the
@@ -325,9 +330,12 @@ public sealed partial class CodeGenerator {
     // Stack-only conventions are represented on IrCall and selected from X86CallAbi. SPEED
     // optimization can still convert a directly-emitted procedure through OptRegParm after this set
     // is known, so an unrouted local callee must remain one of the direct-compatible conventions.
-    // Dropping one can invalidate its callers, so this iterates.
+    // Generated definitions participate in the exact same reachability set: if a source caller was
+    // rebound to an O0283 clone, that clone is now a real private ABI partner rather than a stranded
+    // name which forces the caller back to the direct emitter.
     var routable = candidates.Select(c => c.Proc.Name).ToHashSet(System.StringComparer.OrdinalIgnoreCase);
     routable.UnionWith(this.BackendSemanticMergeNames);
+    routable.UnionWith(this.BackendGeneratedNames);
     for (var changed = true; changed;) {
       changed = false;
       for (var i = candidates.Count - 1; i >= 0; --i) {
@@ -355,7 +363,10 @@ public sealed partial class CodeGenerator {
     }
 
     // An allocation failure can strand a source caller, and a removed source callee can strand an
-    // O0284 helper. Conversely removing that helper strands its entry thunks. Settle both sets together.
+    // O0284 helper. Conversely removing that helper strands its entry thunks. An O0283 generated
+    // definition is stranded by the same edges, in both directions: it needs its source definition and
+    // every defined callee routed, and dropping it strands whichever caller was rebound onto it.
+    // Settle all three sets together, one round catching the reverse edge of the last.
     for (var changed = true; changed;) {
       changed = this.PruneBackendSemanticMerges();
       foreach (var (proc, fn, _) in candidates)
@@ -366,6 +377,7 @@ public sealed partial class CodeGenerator {
           this._backendProcs.Remove(proc);
           changed = true;
         }
+      changed |= this.PruneBackendGenerated(module);
     }
 
     return this._backendProcs;
@@ -405,6 +417,7 @@ public sealed partial class CodeGenerator {
     this._backendDataOwnershipDenied |= dataSplit;
     this._backendDynArrayOwnershipDenied |= dynSplit;
     this._backendProcs = null;
+    this.ResetBackendGenerated();
     this._backendModule = null;
     this._backendMain = null;
     this.ResetBackendSemanticMerges();
@@ -513,6 +526,7 @@ public sealed partial class CodeGenerator {
         asm.Jmp(this._rt.Exit);
       }, alignLoops: this.Optimize && this.Cost.AlignHotLoops);
     this.EmitBackendSemanticMerges();
+    this.EmitBackendGeneratedFunctions();
   }
 
   /// <summary>
@@ -701,6 +715,8 @@ public sealed partial class CodeGenerator {
       return RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name) ? this._asm.Lbl(name) : null;
     if (this.IsBackendSemanticMerge(name))
       return this._asm.Lbl(name);
+    if (this.GeneratedCalleeLabel(name) is { } generated)
+      return generated;
     var proc = model.ProcedureList.FirstOrDefault(p =>
       p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
     proc ??= this.DirectCalleeWithCompatibleAbi(name);
@@ -994,11 +1010,12 @@ public sealed partial class CodeGenerator {
       asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
-    // LayoutFrame already reflects the declared stack order. CDECL differs only in cleanup ownership:
-    // its caller restores SP after the call, so the routed epilogue must emit RET rather than RET n.
+    // Source procedures still get their public/export frame from ProcedureSymbol. Generated private
+    // definitions use the equivalent IR-derived layout in CodeGenerator.BackendGenerated.cs.
     var calleeCleanupBytes = CallerCleansStack(proc) ? 0 : paramBytes;
     MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
       alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame);
     this.EmitBackendSemanticMerges();
+    this.EmitBackendGeneratedFunctions();
   }
 }
