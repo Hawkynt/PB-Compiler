@@ -23,7 +23,7 @@ public sealed class MachineEmitter {
 
   private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
       Func<string, Label?>? resolveCallee = null, Func<string, Mem?>? resolveData = null,
-      int[]? paramOffsets = null) {
+      int[]? paramOffsets = null, int registerSpillBytes = 0) {
     PostRegisterAllocationPeepholes.Run(function, allocation);
     LateLoadStoreOptimization.Run(function, allocation);
     PostRegisterAllocationPeepholes.Run(function, allocation);
@@ -32,9 +32,15 @@ public sealed class MachineEmitter {
     this._resolveCallee = resolveCallee;
     this._resolveData = resolveData;
     this._paramOffsets = paramOffsets ?? [];
-    // lay the stack slots out below BP: slot k lives at [BP - offset], word-aligned
+    // lay the stack slots out below BP: slot k lives at [BP - offset], word-aligned.
+    //
+    // A register convention (FASTCALL/WATCALL) claims the first registerSpillBytes below BP for its
+    // incoming arguments: LayoutFrame gave those parameters [BP-2], [BP-4], ... and the prologue fills
+    // them by pushing. Starting the slots BELOW that reservation is the whole of what keeps an alloca
+    // from being handed the same address as parameter 0 - the two layouts are computed independently,
+    // so overlapping them silently returns an argument where a local was stored.
     this._slotDisp = new int[function.StackSlots.Count];
-    var running = 0;
+    var running = registerSpillBytes;
     for (var k = 0; k < function.StackSlots.Count; ++k) {
       running += (function.StackSlots[k] + 1) & ~1;   // round each slot up to an even size
       this._slotDisp[k] = -running;
@@ -95,10 +101,12 @@ public sealed class MachineEmitter {
   public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
       int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
       Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null, bool alignLoops = false,
-      bool allowFrameElision = false) {
-    var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets);
+      bool allowFrameElision = false, IReadOnlyList<Asm.Reg>? registerSpills = null) {
+    var spills = registerSpills ?? [];
+    var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets,
+      registerSpillBytes: spills.Count * 2);
     var loopHeaders = alignLoops ? FindLoopHeaders(function) : null;
-    var elideFrame = CanElideFrame(function, allowFrameElision);
+    var elideFrame = CanElideFrame(function, allowFrameElision && spills.Count == 0);
     var loadArgumentsThroughFrame = elideFrame && (function.HasArgumentPlan
       ? function.ArgumentLoads.Any(load => allocation.ContainsKey(load.VirtualId))
       : paramOffsets.Length != 0);
@@ -107,6 +115,13 @@ public sealed class MachineEmitter {
       asm.Push(Asm.Reg.BP);
       asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
     }
+
+    // A register convention's leading arguments arrived in AX,DX,BX(,CX). Push them in parameter order
+    // so each lands in the negative slot LayoutFrame assigned it - parameter 0 at [BP-2] - BEFORE the
+    // frame zero-fill below clobbers AX and CX. From here they are ordinary frame parameters, which is
+    // why nothing downstream needs to know the convention was a register one.
+    foreach (var spill in spills)
+      asm.Push(spill);
 
     if (!elideFrame) {
       var frame = 0;

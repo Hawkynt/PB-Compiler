@@ -228,16 +228,20 @@ public sealed class CallingConventionTests {
   }
 
   /// <summary>
-  /// A procedure whose parameters do not reach the frame the way the routed prologue expects must
-  /// stay with the direct emitter. That is now only the register conventions: WATCALL/FASTCALL lay
-  /// arguments at negative offsets which only the direct prologue's register spill fills, so routing
-  /// them reads an unfilled frame. The stack-only conventions no longer belong here - the back end
-  /// emits their right-to-left order and their respective cleanup, so they route; see
-  /// <see cref="Compile_GivenStackConvention_WhenRoutingIsOn_ThenTheProcedureIsRouted"/>.
+  /// The register conventions route as well, and a RECURSIVE one is the case worth pinning: the
+  /// callee passes its arguments in the same registers its own arguments arrived in, while those sit
+  /// spilled in its frame. Getting the spill wrong reads the inner call's arguments back out of the
+  /// outer frame, which still terminates and still prints a number.
+  ///
+  /// <para>
+  /// This replaces a test that asserted the opposite. WATCALL/FASTCALL lay their leading arguments at
+  /// negative offsets, and those are now filled by the routed prologue's own push sequence rather
+  /// than only by the direct emitter's.
+  /// </para>
   /// </summary>
   [TestCase("WATCALL")]
   [TestCase("FASTCALL")]
-  public void Compile_GivenNonDefaultConvention_WhenRoutingIsOn_ThenTheProcedureIsNotRouted(string convention) {
+  public void Compile_GivenRegisterConvention_WhenRoutingIsOn_ThenTheProcedureIsRouted(string convention) {
     var source = $"""
       DECLARE FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
       PRINT sub2(20, 7)
@@ -251,8 +255,8 @@ public sealed class CallingConventionTests {
       """;
     var (routed, _) = Compile(source, routed: true);
     Assert.That(routed.Errors, Is.Empty, "codegen: " + string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Not.Contain("sub2"),
-      $"{convention} is not the ABI the back end emits, so it must not be routed");
+    Assert.That(routed.BackendRoutedNames, Does.Contain("sub2"),
+      $"{convention} must route now that the prologue spills its register arguments");
   }
 
   /// <summary>

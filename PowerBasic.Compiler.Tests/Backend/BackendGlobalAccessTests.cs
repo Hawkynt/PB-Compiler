@@ -206,18 +206,23 @@ public sealed class BackendGlobalAccessTests {
 
   /// <summary>
   /// Two pools are only sound while nothing uses both, so a DATA reader the routing CANNOT take
-  /// costs the pool to every other reader. <c>Grab</c> here is deliberately FASTCALL, a calling
-  /// convention the routed procedure ABI still refuses, and it READs - so leaving the module body
-  /// routed would have it advancing <c>ir_dataptr</c> while <c>Grab</c> consults <c>rt_dataptr</c>.
-  /// The whole arrangement is refused at ROUTING time: by emission the only answer left would be an
-  /// exception, because <c>DataCellOf</c> has no cell to hand back and <c>MachineEmitter</c> raises on
-  /// null.
+  /// costs the pool to every other reader. <c>Grab</c> here takes an ARRAY parameter, a shape the
+  /// routed procedure ABI still refuses, and it READs - so leaving the module body routed would have
+  /// it advancing <c>ir_dataptr</c> while <c>Grab</c> consults <c>rt_dataptr</c>. The whole
+  /// arrangement is refused at ROUTING time: by emission the only answer left would be an exception,
+  /// because <c>DataCellOf</c> has no cell to hand back and <c>MachineEmitter</c> raises on null.
   ///
   /// <para>
   /// The subject is intentionally uncalled. That isolates DATA ownership from call compatibility:
   /// the split exists merely because two bodies which may execute in the program would otherwise
-  /// own different cursor representations. A genuinely unroutable reader is sufficient to prove the
-  /// guard without relying on procedure-local error handling, which now routes.
+  /// own different cursor representations.
+  /// </para>
+  /// <para>
+  /// The unroutable shape here is load-bearing and keeps having to be replaced: this test has used
+  /// procedure-local error handling and then FASTCALL, and each routed in turn. That is the intended
+  /// direction of travel, so when the LAST decline class closes this test does not need a new subject
+  /// - it needs deleting, because a routing that declines nothing cannot produce the split this
+  /// guards. <c>BackendRoutingGateTests</c> holds the current list.
   /// </para>
   /// </summary>
   [Test]
@@ -229,7 +234,7 @@ public sealed class BackendGlobalAccessTests {
       DATA one, two
       END
 
-      SUB Grab FASTCALL (BYVAL ignored%)
+      SUB Grab(ignored%())
         DIM t AS STRING
         READ t
         PRINT t
@@ -242,7 +247,7 @@ public sealed class BackendGlobalAccessTests {
     Assert.Multiple(() => {
       Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
       Assert.That(routed.BackendRoutedNames, Does.Not.Contain("Grab"),
-        "the premise: FASTCALL still keeps this DATA reader on the direct emitter");
+        "the premise: an array parameter still keeps this DATA reader on the direct emitter");
       Assert.That(routed.BackendRoutedNames, Does.Not.Contain("main"));
       Assert.That(image, Is.Not.Empty);
     });

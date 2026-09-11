@@ -376,6 +376,22 @@ public sealed class BackendRoutingGateTests {
         N% = k% * 3 - 2
       END FUNCTION
       """, "main"),
+    // Both register conventions overflow their register file here - FASTCALL has three registers and
+    // WATCALL four - so the row covers the boundary with the stack arguments behind them rather than
+    // only the registers. Execution equivalence is proven separately by
+    // BackendRegisterConventionRoutingTests; this row pins that the routing itself does not regress.
+    new("FASTCALL convention", """
+      SUB S FASTCALL (BYVAL a%, BYVAL b%, BYVAL c%, BYVAL d%, BYVAL e%)
+        PRINT a%; b%; c%; d%; e%
+      END SUB
+      S 1, 2, 3, 4, 5
+      """, "S"),
+    new("WATCALL convention", """
+      SUB S WATCALL (BYVAL a%, BYVAL b%, BYVAL c%, BYVAL d%, BYVAL e%)
+        PRINT a%; b%; c%; d%; e%
+      END SUB
+      S 1, 2, 3, 4, 5
+      """, "S"),
   ];
 
   /// <summary>
@@ -399,18 +415,10 @@ public sealed class BackendRoutingGateTests {
       END FUNCTION
       PRINT F(3)
       """, "F", "filter: return type outside the routed ABI (FIX)"),
-    new("FASTCALL convention", """
-      SUB S FASTCALL (BYVAL a%)
-        PRINT a%
-      END SUB
-      S 1
-      """, "S", "filter: calling convention outside the routed ABI (Fastcall)"),
-    new("WATCALL convention", """
-      SUB S WATCALL (BYVAL a%)
-        PRINT a%
-      END SUB
-      S 1
-      """, "S", "filter: calling convention outside the routed ABI (Watcall)"),
+    // FASTCALL/WATCALL definitions have moved to the routing list. A multiword BYVAL argument under
+    // a register convention has no row here for the same reason BYVAL records have none: LayoutFrame
+    // raises it as a hard error on BOTH paths, so it is a front-end rejection rather than a routing
+    // class, and a gate row for it would measure the front end.
     // ...not a filter at all: an array parameter stops the whole MODULE from lowering, which is
     // a level above the filter and costs the module body too
     new("array parameter", """
