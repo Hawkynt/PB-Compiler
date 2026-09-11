@@ -59,8 +59,8 @@ public static class IntegerRecovery {
       case IrCast { Op: IrCastOp.FPExt or IrCastOp.FPTrunc } precision:
         return TryRecover(precision.Value, intType, block, at);
 
-      case IrConstantFloat c when IsExactInteger(c.Value, intType):
-        return new IrConstantInt(intType, (long)c.Value);  // a float constant that is an exact integer
+      case IrConstantFloat c when c.TryGetDoubleExact(out var constant) && IsExactInteger(constant, intType):
+        return new IrConstantInt(intType, (long)constant);  // a float constant that is an exact integer
 
       case IrBinary b when MapOp(b.Op) is { } op: {
         if (TryRecover(b.Lhs, intType, block, at) is not { } lhs || TryRecover(b.Rhs, intType, block, at) is not { } rhs)

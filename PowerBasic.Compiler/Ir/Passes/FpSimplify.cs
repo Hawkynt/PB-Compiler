@@ -69,13 +69,15 @@ public static class FpSimplify {
     IrCmpPred predicate;
     double constant;
     if (cmp.Rhs is IrConstantFloat rightConstant) {
+      if (!rightConstant.TryGetDoubleExact(out constant))
+        return null;
       value = cmp.Lhs;
       predicate = cmp.Pred;
-      constant = rightConstant.Value;
     } else if (cmp.Lhs is IrConstantFloat leftConstant) {
+      if (!leftConstant.TryGetDoubleExact(out constant))
+        return null;
       value = cmp.Rhs;
       predicate = Flip(cmp.Pred);
-      constant = leftConstant.Value;
     } else
       return null;
 
@@ -190,7 +192,7 @@ public static class FpSimplify {
       return default;
 
     var facts = value switch {
-      IrConstantFloat constant => ConstantFacts(constant.Value),
+      IrConstantFloat constant => ConstantFacts(constant),
       IrCast { Op: IrCastOp.SIToFP or IrCastOp.UIToFP } cast => IntegerCastFacts(cast),
       IrCast { Op: IrCastOp.FPExt } cast => FactsOf(cast.Value, assumptions, memo, visiting),
       IrCast { Op: IrCastOp.FPTrunc } cast => TruncatedFacts(FactsOf(cast.Value, assumptions, memo, visiting)),
@@ -211,6 +213,27 @@ public static class FpSimplify {
     }
     memo[value] = facts;
     return facts;
+  }
+
+  private static Facts ConstantFacts(IrConstantFloat constant) {
+    if (constant.TryGetDoubleExact(out var value))
+      return ConstantFacts(value);
+    if (constant.Type is not { Bits: 80, Format: IrFloatFormat.Ieee } || !constant.Float80.IsCanonical)
+      return default;
+
+    var bits = constant.Float80;
+    if (bits.IsNaN)
+      return default;
+    var zero = bits.IsZero;
+    var negative = bits.Sign && !zero;
+    return new(
+      NonNaN: true,
+      Finite: bits.IsFinite,
+      NonNegative: !negative,
+      NonPositive: bits.Sign || zero,
+      Positive: !bits.Sign && !zero && bits.IsFinite,
+      Negative: negative && bits.IsFinite,
+      NonZero: !zero);
   }
 
   private static Facts ConstantFacts(double value) {

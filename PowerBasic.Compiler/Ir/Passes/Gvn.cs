@@ -102,7 +102,7 @@ public static class Gvn {
 
     private string Operand(IrValue v) => v switch {
       IrConstantInt ci => $"i{ci.Type}={ci.Value.ToString(CultureInfo.InvariantCulture)}",
-      IrConstantFloat cf => $"f{cf.Type}={BitConverter.DoubleToInt64Bits(cf.Value)}",
+      IrConstantFloat cf => $"f{cf.Type}={cf.BitPatternKey()}",
       IrNullPtr => "null",
       IrUndef => "u" + this._nextId++,                // undef is never congruent with anything
       _ => "v" + this.IdOf(v),
