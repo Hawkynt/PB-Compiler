@@ -385,6 +385,19 @@ public sealed class BackendRoutingGateTests {
       END FUNCTION
       PRINT F(3)
       """, "F"),
+    // An array crosses as one near pointer to a descriptor in the DIRECT emitter's layout, so a routed
+    // callee can be handed a block a directly-emitted caller wrote and the reverse. The callee has no
+    // bounds of its own - LBOUND/UBOUND are descriptor reads - which is why this row uses a lower
+    // bound of 3: dropping it still prints a number.
+    new("array parameter", """
+      SUB S(a%())
+        a%(4) = a%(3) + 1
+      END SUB
+      DIM v%(3 TO 5)
+      v%(3) = 9
+      S v%()
+      PRINT v%(4)
+      """, "S"),
     // Both register conventions overflow their register file here - FASTCALL has three registers and
     // WATCALL four - so the row covers the boundary with the stack arguments behind them rather than
     // only the registers. Execution equivalence is proven separately by
@@ -420,16 +433,18 @@ public sealed class BackendRoutingGateTests {
     // a register convention has no row here for the same reason BYVAL records have none: LayoutFrame
     // raises it as a hard error on BOTH paths, so it is a front-end rejection rather than a routing
     // class, and a gate row for it would measure the front end.
-    // ...not a filter at all: an array parameter stops the whole MODULE from lowering, which is
-    // a level above the filter and costs the module body too
-    new("array parameter", """
-      SUB S(a%())
-        PRINT a%(1)
+    // An array parameter has moved to the routing list. What remains is the case whose element
+    // ADDRESS escapes: a string element is a handle, and assigning one hands its address to string
+    // runtime routines that take a NEAR pointer, so a far element address would silently write the
+    // program's own data. A DIM ... AT array's string elements decline for the identical reason.
+    new("assignment into a string array parameter", """
+      SUB S(a$())
+        a$(2) = a$(1) + "!"
       END SUB
-      DIM v%(1 TO 2)
-      v%(1) = 9
-      S v%()
-      """, "S", "lowering: call to unsupported procedure S"),
+      DIM v$(1 TO 2)
+      v$(1) = "ab"
+      S v$()
+      """, "S", "lowering: a StringType { Size = 2 } element of an ABSOLUTE array"),
   ];
 
   private static SemanticModel Bind(string source) {
