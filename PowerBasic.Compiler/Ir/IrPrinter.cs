@@ -108,6 +108,7 @@ public sealed class IrPrinter {
   /// <summary>Renders a value as it appears in an operand position.</summary>
   private string Ref(IrValue value) => value switch {
     IrConstantInt ci => ci.Value.ToString(CultureInfo.InvariantCulture),
+    IrConstantFloat { Type: { Bits: 80, Format: IrFloatFormat.Ieee } } cf => cf.Float80.ToLlvmHexString(),
     IrConstantFloat cf => FormatFloat(cf.Value),
     IrNullPtr => "null",
     IrUndef => "undef",

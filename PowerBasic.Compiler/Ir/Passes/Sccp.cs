@@ -236,7 +236,7 @@ public static class Sccp {
 
     private static IrConstant Clone(IrConstant c) => c switch {
       IrConstantInt i => new IrConstantInt(i.Type, i.Value),
-      IrConstantFloat f => new IrConstantFloat(f.Type, f.Value),
+      IrConstantFloat f => f.Clone(),
       IrNullPtr n => new IrNullPtr(n.Type),
       _ => new IrUndef(c.Type),
     };
@@ -255,7 +255,7 @@ public static class Sccp {
 
     private static bool ConstEquals(IrConstant a, IrConstant b) => (a, b) switch {
       (IrConstantInt x, IrConstantInt y) => x.Type.Equals(y.Type) && x.Value == y.Value,
-      (IrConstantFloat x, IrConstantFloat y) => x.Type.Equals(y.Type) && x.Value.Equals(y.Value),
+      (IrConstantFloat x, IrConstantFloat y) => x.SameBits(y),
       (IrNullPtr, IrNullPtr) => true,
       _ => false,
     };

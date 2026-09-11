@@ -224,7 +224,8 @@ public static class FpFastMath {
     return changes;
   }
 
-  private static bool IsOne(IrValue value) => value is IrConstantFloat { Value: 1.0 };
+  private static bool IsOne(IrValue value)
+    => value is IrConstantFloat constant && constant.IsExactly(1.0);
 
   private static int AnnotateContractions(IrFunction function, IrFastMathFlags flags) {
     if ((flags & IrFastMathFlags.AllowContract) == 0)

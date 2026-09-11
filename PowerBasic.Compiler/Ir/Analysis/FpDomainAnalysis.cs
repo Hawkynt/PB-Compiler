@@ -40,8 +40,17 @@ public sealed class FpDomainAnalysis {
   /// <summary>Returns the strongest interval this adapter can prove at a particular use block.</summary>
   public Domain DomainAt(IrValue value, IrBasicBlock block) {
     if (value is IrConstantFloat constant) {
-      var finite = double.IsFinite(constant.Value);
-      return new(constant.Value, constant.Value, !double.IsNaN(constant.Value), finite);
+      if (constant.TryGetDoubleExact(out var number)) {
+        var finite = double.IsFinite(number);
+        return new(number, number, !double.IsNaN(number), finite);
+      }
+
+      // The domain's numeric endpoints are binary64, so an F80 value outside that exact subset must
+      // not be rounded into a fake singleton. Classification still survives independently: a canonical
+      // huge F80 can prove non-NaN/finite even though this lattice cannot represent its magnitude.
+      return constant.IsNaN
+        ? default
+        : new(double.NegativeInfinity, double.PositiveInfinity, NonNaN: true, Finite: constant.IsFinite);
     }
 
     // Affineness is used only to prove monotonic dependence on ONE integer source. Evaluate the actual

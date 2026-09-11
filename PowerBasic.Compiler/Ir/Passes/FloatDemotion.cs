@@ -48,8 +48,8 @@ public static class FloatDemotion {
   /// exists for. It did, until the IR was printed and looked at.
   /// </summary>
   private static long? Integral(IrValue value) {
-    if (value is IrConstantFloat c)
-      return c.Value == System.Math.Floor(c.Value) && c.Value is >= -_LIMIT and <= _LIMIT ? (long)c.Value : null;
+    if (value is IrConstantFloat c && c.TryGetDoubleExact(out var number))
+      return number == System.Math.Floor(number) && number is >= -_LIMIT and <= _LIMIT ? (long)number : null;
     if (value is IrCast { Op: IrCastOp.SIToFP or IrCastOp.UIToFP } widened
         && widened.Value is IrConstantInt i && i.Value is >= -_LIMIT and <= _LIMIT)
       return i.Value;
