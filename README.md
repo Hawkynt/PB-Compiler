@@ -356,10 +356,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 198 | 66 | 143 | 407 |
+| O — optimization passes | 199 | 66 | 142 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **212** | **66** | **143** | **421** |
+| **all** | **213** | **66** | **142** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
