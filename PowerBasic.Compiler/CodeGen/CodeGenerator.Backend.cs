@@ -87,13 +87,21 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// Why a procedure definition cannot use the routed frame ABI, or null when it can. All near
-  /// stack-only conventions are supported: BASIC/PASCAL push left-to-right, CDECL/STDCALL push
-  /// right-to-left, and CDECL is caller-clean. FASTCALL/WATCALL remain fenced until the routed
-  /// prologue can spill their incoming register arguments into the frame cells LayoutFrame assigns.
+  /// conventions are supported: BASIC/PASCAL push left-to-right, CDECL/STDCALL push right-to-left,
+  /// CDECL is caller-clean, and FASTCALL/WATCALL take their leading arguments in registers which the
+  /// routed prologue pushes into the negative frame cells LayoutFrame assigned them.
+  ///
+  /// <para>
+  /// A register convention keeps the same word-sized restriction the CALL side has. That is not a
+  /// routing limitation: the direct emitter refuses a multiword register argument too, because the
+  /// per-compiler rules for splitting one across a register pair differ between FASTCALL and WATCALL
+  /// and neither is modelled. Sharing <see cref="HasUnsupportedRegisterParam"/> with the call side is
+  /// what keeps a definition and its call sites from disagreeing about which shapes exist.
+  /// </para>
   /// </summary>
   private static string? BackendAbiReason(ProcedureSymbol proc) {
-    if (proc.CallConv is CallConvention.Fastcall or CallConvention.Watcall)
-      return $"filter: calling convention outside the routed ABI ({proc.CallConv})";
+    if (HasUnsupportedRegisterParam(proc))
+      return $"filter: {proc.CallConv} register-convention arguments must be word-sized";
     return BackendAbiShapeReason(proc);
   }
 
@@ -1051,8 +1059,12 @@ public sealed partial class CodeGenerator {
     // Source procedures still get their public/export frame from ProcedureSymbol. Generated private
     // definitions use the equivalent IR-derived layout in CodeGenerator.BackendGenerated.cs.
     var calleeCleanupBytes = CallerCleansStack(proc) ? 0 : paramBytes;
+    // paramBytes counts only the STACK parameters, so a register convention's RET n is already right:
+    // its leading arguments never reached the stack, and the pushes that spilled them are discarded by
+    // the epilogue's MOV SP,BP rather than popped.
+    var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
     MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
-      alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame);
+      alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame, registerSpills: spillRegs);
     this.EmitBackendSemanticMerges();
     this.EmitBackendGeneratedFunctions();
   }
