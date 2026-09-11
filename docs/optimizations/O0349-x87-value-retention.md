@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — private single-use TBYTE values are retained; general multi-use/loop residency remains planned |
+| **Status** | 🟡 Partial — single-use and multi-use TBYTE residency are retained (`RetainMultiUseValues`); loop-carried residency remains planned |
 | **Stage** | Machine IR, after selection and before scheduling/allocation |
 | **Gate** | Optimizer (`MachineOptimizationState`) |
 | **Source** | `Backend/X87StackOptimizer.cs` |
