@@ -376,6 +376,15 @@ public sealed class BackendRoutingGateTests {
         N% = k% * 3 - 2
       END FUNCTION
       """, "main"),
+    // A FIX RESULT crosses as the NUMERIC value in ST(0) - the epilogue converts the scaled cell
+    // through rt_fixdn - which is the opposite representation from a FIX PARAMETER, and matching each
+    // side separately is what keeps a routed callee and a direct caller in agreement.
+    new("FIX result", """
+      FUNCTION F(BYVAL a%) AS FIX
+        F = a% / 2
+      END FUNCTION
+      PRINT F(3)
+      """, "F"),
     // Both register conventions overflow their register file here - FASTCALL has three registers and
     // WATCALL four - so the row covers the boundary with the stack arguments behind them rather than
     // only the registers. Execution equivalence is proven separately by
@@ -407,14 +416,6 @@ public sealed class BackendRoutingGateTests {
     // Records have no row here any more. BYREF records route (see the routing list above), and BYVAL
     // of a record is refused by the DIRECT emitter too ("not yet generated: load of UdtType"), so it
     // is not a routing class at all - a gate case failing on both paths would measure the front end.
-    // A FIX result is deliberately still closed: the IR result slot is the scaled i64 cell, while
-    // the source-level FUNCTION result is numeric and therefore needs rt_fix_down before ST(0).
-    new("FIX result", """
-      FUNCTION F(BYVAL a%) AS FIX
-        F = a% / 2
-      END FUNCTION
-      PRINT F(3)
-      """, "F", "filter: return type outside the routed ABI (FIX)"),
     // FASTCALL/WATCALL definitions have moved to the routing list. A multiword BYVAL argument under
     // a register convention has no row here for the same reason BYVAL records have none: LayoutFrame
     // raises it as a hard error on BOTH paths, so it is a front-end rejection rather than a routing
