@@ -244,6 +244,16 @@ public sealed partial class CodeGenerator {
           Dce.Run(f);
         }
 
+    // O0287 runs here, not inside the standard pipeline, because what it produces is x86-16 shaped
+    // rather than target-neutral: a dynamic string is a runtime HANDLE, and the raw-print ABI this
+    // pass rewrites to takes a DS offset (RuntimeAbi's ArgKind.Offset), which is why it has to stage
+    // the SS frame object through a module-level buffer. On a hosted target that staging copy is pure
+    // cost, and in the IR->BASIC writer it is a frame object with no name in the language. It wants
+    // the canonical bounded builders, so it goes after the string canonicalizers have all run, and
+    // before O0339 so the two copies it mints are specialized like any other small transfer.
+    if (this.Optimize)
+      StringStackPromotion.Run(module);
+
     // O0339 runs here rather than inside the standard pipeline for the same reason
     // SwitchFormation does: it wants the FINAL shape. Expanding a tiny memcpy into byte
     // loads and stores hides the aggregate behind it from scalar replacement, which would
@@ -542,6 +552,10 @@ public sealed partial class CodeGenerator {
   private Asm.Label? _irDataCursor;
   private byte[]? _irDataBytes;
 
+  /// <summary>O0287's DS staging block, minted on demand together with the byte count it asked for.</summary>
+  private Asm.Label? _irPrintBuf;
+  private int _irPrintBufBytes;
+
   /// <summary>
   /// Emits the IR's DATA pool and read cursor, when a routed function asked for them. The cursor is
   /// a DWORD because the IR types it i32 and reads it back at that width; it starts at zero, which
@@ -568,6 +582,13 @@ public sealed partial class CodeGenerator {
       asm.Align(2);
       asm.MarkLabel(pool);
       asm.Db(this._irDataBytes ?? []);
+    }
+    // O0287 copies a finished frame object here and prints it in the same breath, so nothing reads
+    // the block before it is written; zeroed only because BSS has to be some byte.
+    if (this._irPrintBuf is { } printBuf) {
+      asm.Align(2);
+      asm.MarkLabel(printBuf);
+      asm.Db(new byte[this._irPrintBufBytes]);
     }
   }
 
@@ -864,6 +885,18 @@ public sealed partial class CodeGenerator {
         this._irDynCells[name] = label;
       }
       return Asm.Mem.Word(label);
+    }
+    // O0287's DS staging block. It is the routed path's own storage and carries no value between
+    // the copy that fills it and the print that reads it, so one module-wide cell serves every
+    // promotion - and its size is the one the pass asked for rather than a second constant here.
+    if (name == ".o0287.printbuf") {
+      if (this._backendModule?.FindGlobal(name) is not { Count: > 0 } staging)
+        return null;
+      if (!materialize)
+        return _ProbeCell;
+      this._irPrintBuf ??= this._asm.DefineLabel("ir_o0287_printbuf");
+      this._irPrintBufBytes = System.Math.Max(this._irPrintBufBytes, staging.Count);
+      return Asm.Mem.Word(this._irPrintBuf);
     }
     // a string constant the IR interned (".str0"): its bytes go through this codegen's own literal
     // pool, so the routed PRINT and a directly-emitted one share the identical pooled bytes

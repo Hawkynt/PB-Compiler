@@ -2415,8 +2415,12 @@ public sealed partial class InstructionSelector {
       // handler is skipped by the whole optimizer, because a raise can enter it where the CFG shows
       // no edge. So the one place a folded constant is guaranteed NOT to have been folded is exactly
       // the place that has to select it.
-      case IrCastOp.Trunc when cast.Value is IrConstantInt constant && to.IsInteger && to.Bits is 16 or 32: {
-        var wrapped = to.Bits == 16 ? (short)constant.Value : (int)constant.Value;
+      case IrCastOp.Trunc when cast.Value is IrConstantInt constant && to.IsInteger && to.Bits is 8 or 16 or 32: {
+        var wrapped = to.Bits switch {
+          8 => (sbyte)constant.Value,
+          16 => (short)constant.Value,
+          _ => (int)constant.Value,
+        };
         if (!IsWide(to)) {
           var narrow = this.FreshVreg(to);
           var dest = new MOperand.Register(narrow);
@@ -2492,6 +2496,18 @@ public sealed partial class InstructionSelector {
         if (lo is not MOperand.Register low)
           return this.Decline("cast: truncation of a constant pair");
         this._vregs[cast] = low.Reg;      // the low half IS the narrowed value - no instruction needed
+        return true;
+      }
+      // ...and a dword down to a BYTE is those same two renames composed: the low word holds the low
+      // eight bits, and naming that register at byte width is the view the word-to-byte case above
+      // already relies on. Neither step reads anything the other discards, so no instruction is
+      // emitted for either.
+      case IrCastOp.Trunc when IsWide(from) && to.IsInteger && to.Bits <= 8: {
+        if (!this.TryOperandPair(cast.Value, out var lo, out _))
+          return false;
+        if (lo is not MOperand.Register low)
+          return this.Decline("cast: truncation of a constant pair");
+        this._vregs[cast] = low.Reg with { Size = MRegSize.Byte };
         return true;
       }
       // ...and the FPToSI half emits NOTHING. Selection walks instructions in order, so it reaches
@@ -4531,7 +4547,15 @@ public sealed partial class InstructionSelector {
        // and its own descriptor for a SHARED dynamic array, on the same terms: cells the routed path
        // owns outright, kept apart from the direct emitter's packed block, and only ever live when
        // every user of the array routed (CodeGenerator.SharedDynArrayUsersRouteTogether)
-       || global.Name.StartsWith(".dyn.", System.StringComparison.Ordinal);
+       || global.Name.StartsWith(".dyn.", System.StringComparison.Ordinal)
+       // O0287's DS staging buffer. A frame object is SS-relative and the raw print ABI names a
+       // DS offset, so the pass copies through one compiler-owned block of bytes; it holds no value
+       // across the copy, so a single module-wide cell is all it needs.
+       || global.Name == ".o0287.printbuf"
+       // a pooled literal, whose bytes this codegen lays out at the label its own literal pool gives
+       // it - see CodeGenerator.ResolveDataCell. Only a global that CARRIES bytes qualifies: the name
+       // is the resolver's key and a ".str" with nothing behind it has no pool entry to point at.
+       || (global.Name.StartsWith(".str", System.StringComparison.Ordinal) && global.Bytes is not null);
 
   /// <summary>The same cell shifted by <paramref name="delta"/> bytes - the high word of a 32-bit access.</summary>
   private static MOperand Shifted(MOperand cell, int delta) => cell switch {
