@@ -429,7 +429,10 @@ public sealed partial class CodeGenerator {
   /// Under SPEED optimization, everything it calls must itself be routed, for the ABI reason the
   /// procedure fixpoint already covers: <c>OptRegParm</c> may convert a direct procedure to registers.
   /// Otherwise a locally defined BASIC/PASCAL callee keeps the same stack ABI and may remain on the
-  /// direct emitter. CHAIN still disqualifies main outright.
+  /// direct emitter. CHAIN no longer disqualifies main: the IR lowers both halves of
+  /// the handoff - LowerChain streams the COMMON block out, LowerChainCommonLoad absorbs it at the head
+  /// of the body - and the filter that refused it only ever matched a TOP-LEVEL ChainStmt, so a CHAIN
+  /// inside an IF was already routing and passing BackendChainTests.
   /// </summary>
   private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? BackendMain() {
     if (this._backendMainKnown)
@@ -504,8 +507,6 @@ public sealed partial class CodeGenerator {
       return this.DeclineMain("filter: a $COMPILE UNIT has no module body to own");
     if (this._backendModule is null)
       return this.DeclineMain("lowering: the module did not lower to IR");
-    if (model.MainBody.Any(s => s is Syntax.Ast.ChainStmt))
-      return this.DeclineMain("filter: CHAIN is emitted around the body by the direct path");
     if (this._backendModule.FindFunction("main") is not { IsDeclaration: false } main)
       return this.DeclineMain("lowering: the IR module has no main");
     if (CalleeNames(main).FirstOrDefault(name =>
