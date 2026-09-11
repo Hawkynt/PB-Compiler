@@ -46,8 +46,19 @@ public static class SimplifyCfg {
       }
       if (target is null)
         continue;
+
+      // Every edge the fold removes takes its phi arguments with it, and RemoveUnreachable below only
+      // prunes predecessors of blocks that died outright. A dropped successor that survives on some
+      // other path - a loop exit the latch also reaches, a shared dispatch target - would otherwise
+      // keep naming a predecessor it no longer has.
+      var dropped = new HashSet<IrBasicBlock>(block.Terminator!.Successors, ReferenceEqualityComparer.Instance);
+      dropped.Remove(target);
       block.Terminator!.EraseFromParent();
       block.Append(new IrBr(target));
+      foreach (var succ in dropped)
+        foreach (var phi in succ.Phis.ToList())
+          while (phi.IncomingBlocks.Contains(block))
+            phi.RemoveIncoming(block);
       ++folded;
       changed = true;
     }

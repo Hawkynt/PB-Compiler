@@ -196,8 +196,18 @@ public static class Sccp {
         if (c.State != State.Const)
           continue;
         var taken = IsTrue(c.Const!) ? cb.IfTrue : cb.IfFalse;
+        var dropped = IsTrue(c.Const!) ? cb.IfFalse : cb.IfTrue;
         cb.EraseFromParent();
         block.Append(new IrBr(taken));
+
+        // The untaken edge is gone even when its target survives on another path - a loop guard that
+        // skips straight to the exit the latch also reaches is exactly that shape. RemoveUnreachable
+        // only prunes phi arguments of blocks that died outright, so drop this one here or the phi
+        // keeps naming a predecessor it no longer has.
+        if (ReferenceEquals(dropped, taken))
+          continue;
+        foreach (var phi in dropped.Phis.ToList())
+          phi.RemoveIncoming(block);
       }
 
       // 3) delete blocks that can no longer be reached
