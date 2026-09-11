@@ -407,17 +407,18 @@ convention added later is excluded until someone states its stack discipline.
 Calls are now distinct from definitions. `IrCall.Convention` carries BASIC, PASCAL, CDECL, STDCALL,
 FASTCALL or WATCALL identity through cloning and optimization. `X86CallAbi` maps that identity to near
 or far return-address width, stack order, cleanup ownership and argument registers. `SelectCall`
-consumes the four near stack-only descriptors: CDECL and STDCALL reverse argument **groups** while
-preserving each multiword value's high-to-low word order, and CDECL emits `ADD SP,n` immediately after
-the call. FASTCALL/WATCALL descriptors name the existing DOS register orders but deliberately decline
-until their staging path is selectable.
+consumes all six near descriptors. CDECL and STDCALL reverse argument **groups** while preserving each
+multiword value's high-to-low word order, and CDECL emits `ADD SP,n` immediately after the call.
+FASTCALL stages up to three leading words in AX/DX/BX and pushes overflow left to right; WATCALL stages
+up to four in AX/DX/BX/CX and pushes overflow right to left. Both leave overflow cleanup to the callee.
+The call names the physical inputs in machine IR, and each staging move reserves the prefix it has
+filled, so scheduling, spilling and allocation cannot silently overwrite an earlier argument.
 
-The same omission cost a **diagnostic**. `HasUnsupportedRegisterParam` rejects a register-convention
-parameter that is not a single word (a `LONG`, a float, a UDT — the per-compiler size rules are
-deliberately not implemented), and it was raised inside `EmitProcedure`. Routing bypassed the whole
-function, so with `PBC_X_BACKEND=1` a program the compiler must reject compiled clean. The check now
-lives in `LayoutFrame`, which is the one function BOTH emission paths call: a diagnostic about the ABI
-belongs where the ABI is decided, not on one of the two sides that acts on it.
+`HasUnsupportedRegisterParam` rejects a register-convention parameter that is not a single word (for
+example, a `LONG`, float or multiword aggregate; the per-compiler pair/size rules are not implemented).
+Definitions reach that check through `LayoutFrame`; external declarations have no frame, so `EmitCall`
+applies the same diagnostic before either caller path can bypass it. Near pointer values and BYVAL
+8/16-bit integers are the implemented register-value classes.
 
 ### The routed frame (`BackendFrameTests`)
 
@@ -1914,8 +1915,9 @@ arguments/results, while the IR releases BYVAL parameters, locals, copy-in tempo
 results at their ownership boundaries. The final optimized gap closed when a linked BASIC/PASCAL
 external declaration stopped disqualifying its caller wholesale: the census builds the PBU named by
 `$LINK`, and `LINKDEMO` routes through numeric, BYREF, nested and dynamic-string unit calls in both
-optimizer modes. Near CDECL/STDCALL external calls now route with their declared order and cleanup;
-FASTCALL/WATCALL externals still decline per callee before selection. The four
+optimizer modes. Near CDECL/STDCALL external calls route with their declared order and cleanup. Near
+FASTCALL/WATCALL external calls now route their leading one-word values in registers and preserve the
+declared overflow order; unsupported wider register values still decline per callee. The four
 unoptimized gaps that remained - two phi edge-copy cycles, one `FPToSI f80 -> i64`, one `f32` `select` -
 have since closed, and closing them made the two figures the same one: all four were selection arms,
 so what the optimizer had been supplying was the accident of folding those shapes away rather than any
