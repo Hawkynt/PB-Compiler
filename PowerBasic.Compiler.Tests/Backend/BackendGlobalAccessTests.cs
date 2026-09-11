@@ -206,7 +206,7 @@ public sealed class BackendGlobalAccessTests {
 
   /// <summary>
   /// Two pools are only sound while nothing uses both, so a DATA reader the routing CANNOT take
-  /// costs the pool to every other reader. <c>Grab</c> here takes an ARRAY parameter, a shape the
+  /// costs the pool to every other reader. <c>Grab</c> here returns a <c>BCD</c>, a result shape the
   /// routed procedure ABI still refuses, and it READs - so leaving the module body routed would have
   /// it advancing <c>ir_dataptr</c> while <c>Grab</c> consults <c>rt_dataptr</c>. The whole
   /// arrangement is refused at ROUTING time: by emission the only answer left would be an exception,
@@ -219,7 +219,7 @@ public sealed class BackendGlobalAccessTests {
   /// </para>
   /// <para>
   /// The unroutable shape here is load-bearing and keeps having to be replaced: this test has used
-  /// procedure-local error handling and then FASTCALL, and each routed in turn. That is the intended
+  /// procedure-local error handling, then FASTCALL, then an array parameter, and each routed in turn. That is the intended
   /// direction of travel, so when the LAST decline class closes this test does not need a new subject
   /// - it needs deleting, because a routing that declines nothing cannot produce the split this
   /// guards. <c>BackendRoutingGateTests</c> holds the current list.
@@ -234,11 +234,12 @@ public sealed class BackendGlobalAccessTests {
       DATA one, two
       END
 
-      SUB Grab(ignored%())
+      FUNCTION Grab AS BCD
         DIM t AS STRING
         READ t
         PRINT t
-      END SUB
+        Grab = 1
+      END FUNCTION
       """;
     var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
 
@@ -247,7 +248,7 @@ public sealed class BackendGlobalAccessTests {
     Assert.Multiple(() => {
       Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
       Assert.That(routed.BackendRoutedNames, Does.Not.Contain("Grab"),
-        "the premise: an array parameter still keeps this DATA reader on the direct emitter");
+        "the premise: a BCD result still keeps this DATA reader on the direct emitter");
       Assert.That(routed.BackendRoutedNames, Does.Not.Contain("main"));
       Assert.That(image, Is.Not.Empty);
     });
