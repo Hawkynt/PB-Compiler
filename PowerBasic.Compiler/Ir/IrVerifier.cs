@@ -216,8 +216,11 @@ public sealed class IrVerifier {
         if (!sel.IfTrue.Type.SameStorage(sel.IfFalse.Type) || !sel.Type.SameStorage(sel.IfTrue.Type))
           this.Error($"select arms/result types disagree ({sel.IfTrue.Type}, {sel.IfFalse.Type} -> {sel.Type})");
         break;
-      case IrCall call when !call.Callee.Type.IsPointer:
-        this.Error("call to a non-pointer callee");
+      case IrCall call:
+        if (!call.Callee.Type.IsPointer)
+          this.Error("call to a non-pointer callee");
+        if (call.Callee is IrFunction { HasConvention: true } callee && call.Convention != callee.Convention)
+          this.Error($"direct call convention {call.Convention} does not match callee '{callee.Name}' convention {callee.Convention}");
         break;
     }
   }

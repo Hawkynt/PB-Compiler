@@ -2570,11 +2570,11 @@ public sealed partial class IrLowering {
       if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
         if (r.Preserve)
           throw new IrLoweringException($"REDIM PRESERVE on the {symbol.ArrayClass} array {v.Name}");
-        this.LowerPagedAllocation(symbol, arr, dims);
+        this.LowerPagedAllocation(symbol, arr, this._model.ArrayBoundsOf(v));
         continue;
       }
 
-      this.AllocateDynamicArray(symbol, arr, dims, r.Preserve);
+      this.AllocateDynamicArray(symbol, arr, this._model.ArrayBoundsOf(v), r.Preserve);
     }
   }
 
@@ -3098,7 +3098,7 @@ public sealed partial class IrLowering {
         continue;                                    // static array or scalar: laid out at compile time
       if (dims.Count != arr.Rank)
         throw new IrLoweringException("DIM rank mismatch");
-      this.AllocateDynamicArray(symbol, arr, dims, preserve: false);
+      this.AllocateDynamicArray(symbol, arr, this._model.ArrayBoundsOf(v), preserve: false);
     }
   }
 

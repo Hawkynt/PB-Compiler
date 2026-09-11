@@ -37,7 +37,7 @@ public sealed class IrPrinter {
     this.AssignNames(fn);
     var sb = new StringBuilder();
     var keyword = fn.IsDeclaration ? "declare" : "define";
-    sb.Append(keyword).Append(' ').Append(fn.ReturnType).Append(" @").Append(fn.Name).Append('(');
+    sb.Append(keyword).Append(FunctionConventionOf(fn)).Append(' ').Append(fn.ReturnType).Append(" @").Append(fn.Name).Append('(');
     for (var i = 0; i < fn.Parameters.Count; ++i) {
       if (i > 0)
         sb.Append(", ");
@@ -96,6 +96,9 @@ public sealed class IrPrinter {
 
   private string PrintArgs(IrCall call) =>
     string.Join(", ", call.Args.Select(a => $"{a.Type} {this.Ref(a)}"));
+
+  private static string FunctionConventionOf(IrFunction function)
+    => function.Convention == IrCallConvention.Basic ? "" : $" {function.Convention.ToString().ToLowerInvariant()}";
 
   private static string CallConventionOf(IrCall call)
     => call.Convention == IrCallConvention.Basic ? "" : $" {call.Convention.ToString().ToLowerInvariant()}";

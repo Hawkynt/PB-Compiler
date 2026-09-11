@@ -26,6 +26,20 @@ public sealed class SemanticModel {
   /// <summary>The dialect that governs runtime quirk emulation: the <c>$COMPAT</c> override when set, else the compile dialect.</summary>
   public Dialect EffectiveDialect => this.CompatDialect ?? this.Dialect;
 
+  /// <summary>Effective <c>OPTION BASE</c> at each source array declaration/REDIM, captured in source order.</summary>
+  public Dictionary<VariableDecl, int> ArrayOptionBases { get; } = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>Returns the implicit lower bound in effect at <paramref name="declaration"/> (zero when none was specified).</summary>
+  public int OptionBaseOf(VariableDecl declaration)
+    => this.ArrayOptionBases.TryGetValue(declaration, out var optionBase) ? optionBase : 0;
+
+  /// <summary>Returns array bounds with an omitted lower bound materialized from the declaration's <c>OPTION BASE</c>.</summary>
+  public IReadOnlyList<(Expression? Lower, Expression Upper)> ArrayBoundsOf(VariableDecl declaration) {
+    if (declaration.ArrayBounds is not { } bounds || this.OptionBaseOf(declaration) == 0)
+      return declaration.ArrayBounds ?? [];
+    return [.. bounds.Select(bound => (bound.Lower ?? new IntegerLiteralExpr(declaration.Position, 1, TypeSuffix.None), bound.Upper))];
+  }
+
   /// <summary>Folded named constants (%equates).</summary>
   public Dictionary<string, ConstantValue> Equates { get; } = new(StringComparer.OrdinalIgnoreCase);
 

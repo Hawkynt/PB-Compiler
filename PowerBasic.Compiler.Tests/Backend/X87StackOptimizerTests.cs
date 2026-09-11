@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
 
 namespace PowerBasic.Compiler.Tests.Backend;
@@ -13,6 +14,11 @@ public sealed class X87StackOptimizerTests {
     new MInstrEffect([], [], false, false, ReadsMemory: false, WritesMemory: true));
 
   private static MInstr Op(MOpcode opcode) => new(opcode, [], MInstrEffect.None);
+
+  private static MInstr Jump(string target) => new(MOpcode.Jmp, [new MOperand.LabelRef(target)], MInstrEffect.None);
+
+  private static MInstr ConditionalJump(string target) => new(MOpcode.Jcc, [new MOperand.LabelRef(target)],
+    MInstrEffect.None, Condition.NotZero);
 
   private static MOperand.DataCell Data(string name) => new(name, 0, MRegSize.Qword);
   private static MOperand.StackSlot Temp(int index) => new(index, MRegSize.Tbyte);
@@ -51,15 +57,90 @@ public sealed class X87StackOptimizerTests {
   }
 
   [Test]
-  public void Retention_GivenTemporaryHasAnotherReader_ThenItMustStillBeMaterialized() {
+  public void Retention_GivenTemporaryHasSeveralReaders_ThenValueStaysResidentAndReadersDuplicateIt() {
+    var temporary = Temp(0);
+    var first = Temp(1);
+    var second = Temp(2);
+    var (function, block) = OneBlock(
+      Load(Data("a")), Store(temporary),
+      Load(temporary), Store(first),
+      Load(temporary), Store(second));
+
+    Assert.That(X87StackOptimizer.Run(function), Is.EqualTo(1));
+
+    var duplicates = block.Instructions
+      .Where(instruction => instruction.Opcode == MOpcode.InlineAsm)
+      .Select(instruction => ((MOperand.InlineAsmText)instruction.Operands[0]).Text)
+      .ToList();
+    Assert.Multiple(() => {
+      Assert.That(duplicates, Is.EqualTo(new[] { "FLD ST(0)", "FLD ST(0)" }));
+      Assert.That(block.Instructions.Any(instruction => IsStoreOf(instruction, temporary)), Is.False);
+      Assert.That(block.Instructions.Any(instruction => IsLoadOf(instruction, temporary)), Is.False);
+      Assert.That(block.Instructions[^1].Opcode, Is.EqualTo(MOpcode.FstpSt0),
+        "the retained source is discarded when the region ends");
+    });
+  }
+
+  [Test]
+  public void Retention_GivenResidentBelowTransientValue_ThenReloadDuplicatesTheCorrectStackDepth() {
+    var temporary = Temp(0);
+    var result = Temp(1);
+    var again = Temp(2);
+    var (function, block) = OneBlock(
+      Load(Data("a")), Store(temporary),
+      Load(Data("b")), Load(temporary), Op(MOpcode.Faddp), Store(result),
+      Load(temporary), Store(again));
+
+    Assert.That(X87StackOptimizer.Run(function), Is.EqualTo(1));
+
+    var duplicates = block.Instructions
+      .Where(instruction => instruction.Opcode == MOpcode.InlineAsm)
+      .Select(instruction => ((MOperand.InlineAsmText)instruction.Operands[0]).Text)
+      .ToList();
+    Assert.That(duplicates, Is.EqualTo(new[] { "FLD ST(1)", "FLD ST(0)" }));
+  }
+
+  [Test]
+  public void Retention_GivenLoopInvariantTemporary_ThenResidencyCrossesBackEdgeAndFlushesOnExit() {
+    var value = Temp(0);
+    var observed = Temp(1);
+    var function = new MFunction("f");
+    var preheader = new MBlock("preheader");
+    var loop = new MBlock("loop");
+    var exit = new MBlock("exit");
+    preheader.Instructions.AddRange([Load(Data("a")), Store(value), Jump("loop")]);
+    preheader.Successors.Add("loop");
+    loop.Instructions.AddRange([Load(value), Store(observed), ConditionalJump("exit")]);
+    loop.Successors.AddRange(["loop", "exit"]);
+    exit.Instructions.Add(Op(MOpcode.Ret));
+    function.Blocks.AddRange([preheader, loop, exit]);
+
+    Assert.That(X87StackOptimizer.Run(function), Is.EqualTo(1));
+
+    Assert.Multiple(() => {
+      Assert.That(preheader.Instructions.Any(instruction => IsStoreOf(instruction, value)), Is.False);
+      Assert.That(loop.Instructions.Any(instruction => IsLoadOf(instruction, value)), Is.False);
+      Assert.That(loop.Instructions.Any(instruction => instruction is { Opcode: MOpcode.InlineAsm,
+        Operands: [MOperand.InlineAsmText { Text: "FLD ST(0)" }] }), Is.True);
+      Assert.That(exit.Instructions.Select(instruction => instruction.Opcode),
+        Is.EqualTo(new[] { MOpcode.FstpSt0, MOpcode.Ret }));
+    });
+  }
+
+  [Test]
+  public void Retention_GivenCallInsideRequiredRegion_ThenTemporaryRemainsMaterialized() {
     var temporary = Temp(0);
     var (function, block) = OneBlock(
       Load(Data("a")), Store(temporary),
+      new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt")], MInstrEffect.None),
       Load(temporary), Store(Temp(1)),
       Load(temporary), Store(Temp(2)));
 
     Assert.That(X87StackOptimizer.Run(function), Is.Zero);
-    Assert.That(block.Instructions, Has.Count.EqualTo(6));
+    Assert.Multiple(() => {
+      Assert.That(block.Instructions.Any(instruction => IsStoreOf(instruction, temporary)), Is.True);
+      Assert.That(block.Instructions.Count(instruction => IsLoadOf(instruction, temporary)), Is.EqualTo(2));
+    });
   }
 
   [Test]
@@ -207,6 +288,27 @@ public sealed class X87StackOptimizerTests {
   }
 
   [Test]
+  public void Scheduler_GivenGeneratedRegisterDuplicate_ThenItStaysOrderedWithOtherX87Instructions() {
+    var temporary = Temp(0);
+    var (function, block) = OneBlock(
+      Load(Data("a")), Store(temporary),
+      Load(temporary), Store(Temp(1)),
+      Load(temporary), Store(Temp(2)));
+    Assert.That(X87StackOptimizer.Run(function), Is.EqualTo(1));
+
+    MachineScheduler.Schedule(function);
+
+    var x87 = block.Instructions
+      .Where(instruction => instruction.Opcode is MOpcode.Fld or MOpcode.Fstp or MOpcode.FstpSt0
+        or MOpcode.InlineAsm)
+      .Select(instruction => instruction.Opcode == MOpcode.InlineAsm
+        ? ((MOperand.InlineAsmText)instruction.Operands[0]).Text
+        : instruction.Opcode.ToString())
+      .ToList();
+    Assert.That(x87, Is.EqualTo(new[] { "Fld", "FLD ST(0)", "Fstp", "FLD ST(0)", "Fstp", "FstpSt0" }));
+  }
+
+  [Test]
   public void Scheduler_GivenUnmarkedFunction_ThenX87StackificationDoesNotRun() {
     var temporary = Temp(0);
     var (function, block) = OneBlock(
@@ -229,4 +331,12 @@ public sealed class X87StackOptimizerTests {
 
     Assert.That(block.Instructions, Has.Count.EqualTo(2));
   }
+
+  private static bool IsStoreOf(MInstr instruction, MOperand.StackSlot slot)
+    => instruction is { Opcode: MOpcode.Fstp, Operands: [MOperand.StackSlot candidate] }
+      && candidate.Equals(slot);
+
+  private static bool IsLoadOf(MInstr instruction, MOperand.StackSlot slot)
+    => instruction is { Opcode: MOpcode.Fld, Operands: [MOperand.StackSlot candidate] }
+      && candidate.Equals(slot);
 }

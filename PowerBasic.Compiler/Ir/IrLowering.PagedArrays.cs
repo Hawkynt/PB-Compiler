@@ -114,7 +114,7 @@ public sealed partial class IrLowering {
         throw new IrLoweringException($"DIM {d.Class} {v.Name} without array bounds");
       if (this.ArrayVariable(v) is not { Type: ArrayType arr } symbol)
         throw new IrLoweringException($"DIM {d.Class}: no array symbol for {v.Name}");
-      this.LowerPagedAllocation(symbol, arr, dims);
+      this.LowerPagedAllocation(symbol, arr, this._model.ArrayBoundsOf(v));
     }
   }
 

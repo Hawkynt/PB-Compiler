@@ -46,11 +46,15 @@ public sealed class BackendResidencyTests {
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard(target.OptimizeSpeed).RunOnModule(module);
+    // O0057's profitability floor is the back end's, exactly as CodeGenerator.Backend supplies it: a
+    // 386 keeps a LONG in a dword register, so narrowing its storage to a word would cost the very
+    // residency this fixture measures.
+    var narrowestStorageBits = target.CpuLevel >= 386 ? 32 : 16;
+    IrPassManager.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard(target.OptimizeSpeed).RunOnModule(module);
+    IrPassManager.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
     var main = module.FindFunction("main");
     Assert.That(main, Is.Not.Null);
     var machine = InstructionSelector.TrySelect(main!, out var reason, target);

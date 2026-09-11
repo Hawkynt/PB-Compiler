@@ -25,14 +25,20 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// value numbering is the one transform here that legalization cannot supply by accident, where a
 /// dead store is removed by <c>mem2reg</c> plus <c>dce</c> and would therefore go either way.
 /// </para>
+/// <para>
+/// The multiplier has to survive the optimized build too, or the count is zero on both sides and the
+/// measurement disappears. O0359 strength-reduces any factor of the form <c>±(2^a ± 2^b)</c> into
+/// shifts, so 320 (= 2^8 + 2^6) would leave no multiply at all. 345 is not expressible that way -
+/// it is odd, and neither 344 nor 346 is a power of two - so it stays one <c>MUL</c>.
+/// </para>
 /// </summary>
 [TestFixture]
 public sealed class BackendOptimizeGatingTests {
 
   private const string _SOURCE = """
     SUB Cse(BYVAL y%, BYVAL x%) NOINLINE
-      a% = y% * 320 + x%
-      b% = y% * 320 + x%
+      a% = y% * 345 + x%
+      b% = y% * 345 + x%
       PRINT "gate"; a% + b%
     END SUB
 
@@ -128,6 +134,6 @@ public sealed class BackendOptimizeGatingTests {
     var direct = Execute(directImage, "direct");
     Assert.That(Execute(routedImage, "routed"), Is.EqualTo(direct));
     Assert.That(direct.Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
-      Is.EqualTo(new[] { "gate", "644", "gate", "1928" }));
+      Is.EqualTo(new[] { "gate", "694", "gate", "2078" }));
   }
 }

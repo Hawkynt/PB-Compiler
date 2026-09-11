@@ -73,7 +73,7 @@ public static class Mem2Reg {
   /// the slot's storage type. Signed/unsigned integer views are storage-compatible; wider/narrower
   /// aggregate field views are not.
   /// </summary>
-  private static bool IsPromotable(IrAlloca a) {
+  internal static bool IsPromotable(IrAlloca a) {
     foreach (var user in a.Users)
       switch (user) {
         case IrLoad load when ReferenceEquals(load.Pointer, a) && load.Type.SameStorage(a.Allocated):

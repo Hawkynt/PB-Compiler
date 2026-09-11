@@ -190,8 +190,13 @@ public sealed partial class CodeGenerator {
     // of a size comparison ONE build and made "optimizer off means vintage behaviour" - the promise
     // the historic dialects rest on - true only of the functions the back end happened not to take.
     // IrPassManager.Legalize states which passes survive the flag and why each one is not a choice.
+    // O0057 proves the narrower representation; the smallest cell worth materializing is a backend
+    // decision. A 386 keeps a LONG in a dword register, so narrowing it to a word costs a partial
+    // register there rather than saving anything; only a 16-bit target profits from word storage.
+    var narrowestStorageBits = this.Has32BitCpu ? 32 : 16;
     var pipeline = this.Optimize
-      ? () => IrPassManager.Standard(this.OptimizeSpeed)
+      ? () => IrPassManager.Standard(this.OptimizeSpeed, arithmeticCostModel: this.SelectionCost,
+          minimumIntegerStorageBits: narrowestStorageBits)
       : (Func<IrPassManager>)IrPassManager.Legalize;
     // Recovery runs BEFORE the optimizer as well as after. PB's integral arithmetic is float-shaped
     // in the IR, and constant folding on a float tree is lossy where the integer answer is not:
@@ -244,6 +249,16 @@ public sealed partial class CodeGenerator {
           Dce.Run(f);
         }
 
+    // O0287 runs here, not inside the standard pipeline, because what it produces is x86-16 shaped
+    // rather than target-neutral: a dynamic string is a runtime HANDLE, and the raw-print ABI this
+    // pass rewrites to takes a DS offset (RuntimeAbi's ArgKind.Offset), which is why it has to stage
+    // the SS frame object through a module-level buffer. On a hosted target that staging copy is pure
+    // cost, and in the IR->BASIC writer it is a frame object with no name in the language. It wants
+    // the canonical bounded builders, so it goes after the string canonicalizers have all run, and
+    // before O0339 so the two copies it mints are specialized like any other small transfer.
+    if (this.Optimize)
+      StringStackPromotion.Run(module);
+
     // O0339 runs here rather than inside the standard pipeline for the same reason
     // SwitchFormation does: it wants the FINAL shape. Expanding a tiny memcpy into byte
     // loads and stores hides the aggregate behind it from scalar replacement, which would
@@ -263,6 +278,11 @@ public sealed partial class CodeGenerator {
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
         byName[f.Name] = f;
+
+    // Middle-end generated definitions have no ProcedureSymbol. Select/allocate them from their IR
+    // signature and definition ABI now; source/generated call-graph pruning below decides whether the
+    // provisional bodies can actually coexist with the direct fallback.
+    this.PrepareBackendGenerated(module);
 
     var candidates = new List<(ProcedureSymbol Proc, IrFunction Fn, MFunction Machine)>();
     foreach (var proc in model.ProcedureList) {
@@ -325,9 +345,12 @@ public sealed partial class CodeGenerator {
     // Stack-only conventions are represented on IrCall and selected from X86CallAbi. SPEED
     // optimization can still convert a directly-emitted procedure through OptRegParm after this set
     // is known, so an unrouted local callee must remain one of the direct-compatible conventions.
-    // Dropping one can invalidate its callers, so this iterates.
+    // Generated definitions participate in the exact same reachability set: if a source caller was
+    // rebound to an O0283 clone, that clone is now a real private ABI partner rather than a stranded
+    // name which forces the caller back to the direct emitter.
     var routable = candidates.Select(c => c.Proc.Name).ToHashSet(System.StringComparer.OrdinalIgnoreCase);
     routable.UnionWith(this.BackendSemanticMergeNames);
+    routable.UnionWith(this.BackendGeneratedNames);
     for (var changed = true; changed;) {
       changed = false;
       for (var i = candidates.Count - 1; i >= 0; --i) {
@@ -355,7 +378,10 @@ public sealed partial class CodeGenerator {
     }
 
     // An allocation failure can strand a source caller, and a removed source callee can strand an
-    // O0284 helper. Conversely removing that helper strands its entry thunks. Settle both sets together.
+    // O0284 helper. Conversely removing that helper strands its entry thunks. An O0283 generated
+    // definition is stranded by the same edges, in both directions: it needs its source definition and
+    // every defined callee routed, and dropping it strands whichever caller was rebound onto it.
+    // Settle all three sets together, one round catching the reverse edge of the last.
     for (var changed = true; changed;) {
       changed = this.PruneBackendSemanticMerges();
       foreach (var (proc, fn, _) in candidates)
@@ -366,6 +392,7 @@ public sealed partial class CodeGenerator {
           this._backendProcs.Remove(proc);
           changed = true;
         }
+      changed |= this.PruneBackendGenerated(module);
     }
 
     return this._backendProcs;
@@ -405,6 +432,7 @@ public sealed partial class CodeGenerator {
     this._backendDataOwnershipDenied |= dataSplit;
     this._backendDynArrayOwnershipDenied |= dynSplit;
     this._backendProcs = null;
+    this.ResetBackendGenerated();
     this._backendModule = null;
     this._backendMain = null;
     this.ResetBackendSemanticMerges();
@@ -513,6 +541,7 @@ public sealed partial class CodeGenerator {
         asm.Jmp(this._rt.Exit);
       }, alignLoops: this.Optimize && this.Cost.AlignHotLoops);
     this.EmitBackendSemanticMerges();
+    this.EmitBackendGeneratedFunctions();
   }
 
   /// <summary>
@@ -527,6 +556,10 @@ public sealed partial class CodeGenerator {
   private Asm.Label? _irDataPool;
   private Asm.Label? _irDataCursor;
   private byte[]? _irDataBytes;
+
+  /// <summary>O0287's DS staging block, minted on demand together with the byte count it asked for.</summary>
+  private Asm.Label? _irPrintBuf;
+  private int _irPrintBufBytes;
 
   /// <summary>
   /// Emits the IR's DATA pool and read cursor, when a routed function asked for them. The cursor is
@@ -554,6 +587,13 @@ public sealed partial class CodeGenerator {
       asm.Align(2);
       asm.MarkLabel(pool);
       asm.Db(this._irDataBytes ?? []);
+    }
+    // O0287 copies a finished frame object here and prints it in the same breath, so nothing reads
+    // the block before it is written; zeroed only because BSS has to be some byte.
+    if (this._irPrintBuf is { } printBuf) {
+      asm.Align(2);
+      asm.MarkLabel(printBuf);
+      asm.Db(new byte[this._irPrintBufBytes]);
     }
   }
 
@@ -701,6 +741,8 @@ public sealed partial class CodeGenerator {
       return RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name) ? this._asm.Lbl(name) : null;
     if (this.IsBackendSemanticMerge(name))
       return this._asm.Lbl(name);
+    if (this.GeneratedCalleeLabel(name) is { } generated)
+      return generated;
     var proc = model.ProcedureList.FirstOrDefault(p =>
       p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
     proc ??= this.DirectCalleeWithCompatibleAbi(name);
@@ -849,6 +891,18 @@ public sealed partial class CodeGenerator {
       }
       return Asm.Mem.Word(label);
     }
+    // O0287's DS staging block. It is the routed path's own storage and carries no value between
+    // the copy that fills it and the print that reads it, so one module-wide cell serves every
+    // promotion - and its size is the one the pass asked for rather than a second constant here.
+    if (name == ".o0287.printbuf") {
+      if (this._backendModule?.FindGlobal(name) is not { Count: > 0 } staging)
+        return null;
+      if (!materialize)
+        return _ProbeCell;
+      this._irPrintBuf ??= this._asm.DefineLabel("ir_o0287_printbuf");
+      this._irPrintBufBytes = System.Math.Max(this._irPrintBufBytes, staging.Count);
+      return Asm.Mem.Word(this._irPrintBuf);
+    }
     // a string constant the IR interned (".str0"): its bytes go through this codegen's own literal
     // pool, so the routed PRINT and a directly-emitted one share the identical pooled bytes
     if (name.StartsWith(".str", System.StringComparison.Ordinal)
@@ -994,11 +1048,12 @@ public sealed partial class CodeGenerator {
       asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
-    // LayoutFrame already reflects the declared stack order. CDECL differs only in cleanup ownership:
-    // its caller restores SP after the call, so the routed epilogue must emit RET rather than RET n.
+    // Source procedures still get their public/export frame from ProcedureSymbol. Generated private
+    // definitions use the equivalent IR-derived layout in CodeGenerator.BackendGenerated.cs.
     var calleeCleanupBytes = CallerCleansStack(proc) ? 0 : paramBytes;
     MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
       alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame);
     this.EmitBackendSemanticMerges();
+    this.EmitBackendGeneratedFunctions();
   }
 }

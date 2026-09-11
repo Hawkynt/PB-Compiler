@@ -8,10 +8,10 @@ namespace PowerBasic.Compiler.Tests.Semantics;
 /// <summary>
 /// OPTION BASE 0|1 - the implicit lower bound of an array declared without one.
 ///
-/// The statement is read by the binder's module pre-pass rather than by the code generator, because
-/// it has to take effect on DIMs that come after it in the file but are processed in the same sweep.
-/// Nothing is emitted for it: by the time the code generator runs, the bounds already carry the
-/// answer. That is why the runtime checks below ask LBOUND and UBOUND rather than looking at bytes.
+/// The statement is read by the binder's module pre-pass rather than emitted at run time. Static
+/// bounds bake the answer into their array type; dynamic DIM/REDIM declarations keep the effective
+/// base in a semantic side table so later lowering sees the value that was in force at that exact
+/// source position. The runtime checks below therefore ask LBOUND/UBOUND rather than looking at bytes.
 /// </summary>
 [TestFixture]
 public sealed class OptionBaseTests {

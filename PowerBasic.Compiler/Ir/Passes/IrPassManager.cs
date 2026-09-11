@@ -128,8 +128,9 @@ public sealed class IrPassManager {
   ///   <item><b>simplifycfg</b> removes constant branch forms the selector cannot encode directly.</item>
   /// </list>
   /// <para>
-  /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// prefix-scan formation, speculative overflow versioning, ownership batching, speculative devirtualization, unrolling, sccp,
+  /// Everything else in <see cref="Standard"/> is optimization and is off: storage/data-layout
+  /// rewrites, prefix-scan formation, loop-temporary reuse, speculative overflow versioning,
+  /// ownership batching, speculative devirtualization, unrolling, sccp,
   /// correlate, block versioning, loop versioning, pointer checks, integer/float range folds,
   /// speculative narrowing, overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow,
   /// ownership elision, reassociate, polynomial recovery, equality saturation, verified arithmetic
@@ -153,10 +154,11 @@ public sealed class IrPassManager {
   /// <para>
   /// <paramref name="optimizeForSpeed"/> reflects <c>$OPTIMIZE SPEED</c>. SPEED may spend code size to
   /// erase abstraction overhead: it runs demanded-bit cleanup, admits larger callees to the inliner,
-  /// recognizes library loops, generates lookup tables, compiles static searches, removes semantically
-  /// dead loops, and grants the relaxed floating-point contract used by O0340-O0345/O0343. The ordinary
-  /// optimization objective keeps strict FP semantics, the conservative size budget, and preserves
-  /// empty loops because they may be intentional delay loops.
+  /// preserves profitable caller-specific facts through bounded cloning, recognizes library loops,
+  /// generates lookup tables, compiles static searches, removes semantically dead loops, and grants
+  /// the relaxed floating-point contract used by O0340-O0345/O0343. The ordinary optimization objective
+  /// keeps strict FP semantics, the conservative size budget, and preserves empty loops because they
+  /// may be intentional delay loops.
   /// </para>
   /// <para>
   /// <paramref name="optimizeForSize"/> reflects <c>$OPTIMIZE SIZE</c>. It enables whole-module
@@ -170,23 +172,40 @@ public sealed class IrPassManager {
   /// entirely by IR provenance/escape/dependence proofs and therefore run on every optimized target.
   /// </para>
   /// <para>
+  /// <paramref name="minimumIntegerStorageBits"/> is the O0057 backend profitability decision. The
+  /// shared analysis proves the narrower representation, while the caller chooses the smallest cell
+  /// worth materializing. The current default is one x86-16 word; hosted targets may request 8 bits.
+  /// </para>
+  /// <para>
   /// <paramref name="enableFpLookupTables"/> is a backend capability, not another numerical mode. It
   /// allows O0343 to materialize typed floating constant tables when the selected backend can carry
   /// them; range-specialized polynomial kernels remain available under SPEED without it.
   /// </para>
+  /// <para>
+  /// <paramref name="arithmeticCostModel"/> is optional target profitability information. O0338 uses it
+  /// to decide whether one runtime reciprocal plus multiplies actually beats repeated divides; callers
+  /// without a target model retain the target-neutral transform once SPEED has made it legal.
+  /// </para>
   /// </summary>
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
-      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false)
+      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false,
+      IIrArithmeticCostModel? arithmeticCostModel = null,
+      int minimumIntegerStorageBits = 16)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     // O0068 must see the allocation descriptor and the source-shaped FOR before mem2reg/unrolling
     // turn them into a different proof problem. It is a module pass only because it may mint the
     // rt_arr_alloc_nz declaration; the actual proof is local to one function.
     .AddEarlyModulePassWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
+    // O0057 has to see direct scalar storage before mem2reg erases it. The truncation/extension pair it
+    // inserts survives promotion, so later spilling can still use the proven narrow representation.
+    .Add("storagenarrow", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     .Add("mem2reg", Mem2Reg.Run)
+    // Some source variables become phis only after promotion; their ranges are strongest in SSA form.
+    .Add("storagenarrow-ssa", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     // O0320-O0329 and O0313 have to see the explicit memory graph and the original counted-loop shape.
     // Run the aggregate transforms before AoS->SoA destroys record identity, then the loop/data
-    // transforms, form scan recurrences, and only then the overflow versioner and the unroller. Every
-    // one declines escaped/opaque storage rather than speculating aliasing.
+    // transforms, form scan recurrences, and only then O0290, the overflow versioner and the
+    // unroller. Every one declines escaped/opaque storage rather than speculating aliasing.
     .Add("structpack", StructurePackingByRange.Run)
     .Add("fieldreorder", FieldReordering.Run)
     .Add("hotcold", HotColdFieldSplitting.Run)
@@ -203,6 +222,10 @@ public sealed class IrPassManager {
       fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
     .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arrayalign",
       fn => ArrayBaseAlignment.Run(fn, dataLayoutTarget!.VectorBytes, dataLayoutTarget.PointerBits))
+    // O0290 must see the one alloc/free pair and the original counted-loop shape. It therefore runs
+    // before the overflow versioner splits the loop into a guarded pair and before unroll clones the
+    // very temporary lifetime this pass exists to collapse.
+    .Add("looptemp-reuse", LoopTemporaryReuse.Run)
     // O0308 matches lowering's checked signed-add/sub predicate before InstCombine canonicalizes its
     // XOR/AND tree. It versions only exact counted loops with an O(1) invariant safety guard.
     .Add("overflow-version", SpeculativeOverflowElimination.Run)
@@ -248,7 +271,11 @@ public sealed class IrPassManager {
     // homogeneous elements. Keep the proofs separate: arrays use element stride, aggregates use
     // region bounds and reject overlap so UNION aliasing remains shared storage.
     .Add("aggregate-sroa", ScalarReplaceAggregates.Run)
+    // SROA can expose new scalar cells after the first narrowing opportunity. Give those cells the
+    // same proof before the second promotion removes their storage graph.
+    .Add("storagenarrow2", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     .Add("mem2reg2", Mem2Reg.Run)
+    .Add("storagenarrow-ssa2", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
     // O0293 wants the ownership graph after all scalar source-variable storage has become SSA. It
     // removes only local dup/free lifetimes whose raw handles neither escape nor cross a CFG edge.
     .Add("strcow", StringCopyOnWriteElision.Run)
@@ -294,9 +321,10 @@ public sealed class IrPassManager {
     // correctly refuses. Interchange therefore goes immediately before LICM.
     .Add("interchange", LoopInterchange.Run)
     .Add("licm", Licm.Run)
-    // Exact reciprocal reuse runs after LICM, so an invariant divisor that is already representable as
-    // a constant has reached the place where the repeated divisions are visible together.
-    .Add("reciprocal-reuse", ReciprocalSequenceReuse.Run)
+    // O0338 runs after LICM so invariant divisor calculations have already moved. Strict exact constants
+    // need no target opinion; relaxed reciprocals consume the optional cost model and can then move the
+    // shared runtime reciprocal behind a zero-trip guard for canonical loops.
+    .Add("reciprocal-reuse", fn => ReciprocalSequenceReuse.Run(fn, arithmeticCostModel))
     // AFTER licm, and that ordering is the whole composition: `IF mode THEN` inside a loop lowers to
     // a COMPARE computed in the loop, and a condition defined inside the region cannot be specialized
     // by cloning - each clone gets its own copy of the compare, so binding the original to a constant
@@ -356,6 +384,14 @@ public sealed class IrPassManager {
     // SPEED inlining is a module pass so it can see the call graph after the first function fixpoint;
     // every successful inline immediately triggers another function sweep over the exposed body.
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
+      module => Inliner.Run(module, optimizeForSpeed: true))
+    // SPEED first inlines callees already beneath its structural budget. O0283 then spends its own hard
+    // growth budget only on the surviving larger calls, so caller specialization does not duplicate a
+    // body the inliner was about to erase anyway. A changed context clone immediately receives another
+    // function sweep from RunOnModule; the second inliner can therefore consume a clone that the seeded
+    // facts shrank beneath its threshold.
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "ctxclone", ContextSensitiveCloning.Run)
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-context",
       module => Inliner.Run(module, optimizeForSpeed: true))
     // The advanced data/search passes run before the string passes: searches need the original static
     // table shape, bitset packing needs whole-module escape information, and generated tables must
