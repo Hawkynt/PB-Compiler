@@ -662,7 +662,7 @@ next free number rather than displacing anything.
 | 🟡 | [O0272](docs/optimizations/O0272-profile-guided-loop-optimization.md) | Profile-guided loop optimization | Unroll factors, vector widths, peeling decisions and loop versioning are all guesses without trip-count data. |
 | ✅ | [O0273](docs/optimizations/O0273-profile-guided-register-allocation.md) | Profile-guided register allocation | Spill cost is not uniform: a reload inside a loop that runs a million times costs a million memory accesses, and one on an error path costs one. |
 | 🟡 | [O0274](docs/optimizations/O0274-profile-guided-code-layout.md) | Profile-guided code layout | Arrange functions and blocks by observed execution so that the hot path is contiguous. |
-| ⬜ | [O0275](docs/optimizations/O0275-cold-code-outlining.md) | Cold-code outlining | Extract error paths, rare cases and exceptional cleanup out of a hot procedure into a separate cold procedure, so the hot body shrinks. |
+| ✅ | [O0275](docs/optimizations/O0275-cold-code-outlining.md) | Cold-code outlining | Extract error paths, rare cases and exceptional cleanup out of a hot procedure into a separate cold procedure, so the hot body shrinks. |
 | ✅ | [O0276](docs/optimizations/O0276-post-link-optimization.md) | Post-link optimization | Reorder and rewrite the final executable using its actual addresses and a sampled profile. |
 
 ### O — whole-program optimization

@@ -43,46 +43,107 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
-  /// Selects and allocates every O0283 definition before source-procedure call-graph pruning. They are
-  /// provisional at this point: <see cref="PruneBackendGenerated"/> later requires the original source
-  /// definition and every generated callee to have survived source allocation too.
+  /// Every private definition the middle end synthesized, and therefore the ones the routing cannot
+  /// find through <c>model.ProcedureList</c>: an O0283 context clone, an O0275 outlined cold region.
+  ///
+  /// <para>
+  /// The rule is the PROPERTY that makes a function synthetic - it is defined, it is not the module
+  /// body, and no source procedure carries its name - rather than one name pattern per producer, so
+  /// the next pass that appends a helper is routed by this bridge instead of growing a third copy of
+  /// it. O0284's shared bodies are the single exception and keep their own: the merge that mints them
+  /// has to RUN inside the routing (a source-visible procedure ABI may not change), so they do not
+  /// exist until <see cref="PrepareBackendSemanticMerges"/> has already claimed them.
+  /// </para>
+  /// </summary>
+  private bool IsGeneratedDefinition(IrFunction function)
+    => !function.IsDeclaration
+       && !function.Name.Equals("main", StringComparison.OrdinalIgnoreCase)
+       && !this.IsBackendSemanticMerge(function.Name)
+       && !model.ProcedureList.Any(procedure =>
+         procedure.Name.Equals(function.Name, StringComparison.OrdinalIgnoreCase));
+
+  /// <summary>
+  /// Selects and allocates every generated definition before source-procedure call-graph pruning. They
+  /// are provisional at this point: <see cref="PruneBackendGenerated"/> later requires every generated
+  /// callee - and, for an O0283 clone, the original source definition - to have survived source
+  /// allocation too.
+  ///
+  /// <para>
+  /// O0275's extraction is SPECULATIVE here, which is the one thing a clone is not. A clone exists
+  /// because a caller was rebound onto it and is worth nothing without that caller; an outlined region
+  /// was lifted out of a body that was perfectly routable WITH it, so a helper this bridge cannot take
+  /// would cost the caller its routing for no gain at all. <c>tests/diff/DIFF36.BAS</c> produces one
+  /// the register allocator cannot finish. Such a helper goes back where it came from and the caller
+  /// is routed as though it had never been outlined; putting one back changes a body this sweep has
+  /// already taken a selection from, so the sweep restarts, and it can only restart as often as there
+  /// are helpers to remove.
+  /// </para>
   /// </summary>
   private void PrepareBackendGenerated(IrModule module) {
     this._backendGenerated = new(StringComparer.OrdinalIgnoreCase);
     this._backendGeneratedLabels.Clear();
     this._backendGeneratedEmitted = false;
 
-    foreach (var function in module.Functions.Where(ContextSensitiveCloning.IsGeneratedClone)) {
-      if (!X86CallAbi.TryDefinitionStackLayout(function, out var layout, out var abiDecline)) {
-        this._backendDeclines.Add((function.Name, "filter: " + (abiDecline ?? "unsupported generated definition ABI")));
-        continue;
-      }
-      if (this.ExternalCalleeDecline(function) is { } externalDecline) {
-        this._backendDeclines.Add((function.Name, externalDecline));
-        continue;
-      }
-      if (!this.DataGlobalsResolve(function, out var unaddressable)) {
-        this._backendDeclines.Add((function.Name, $"routing: global '{unaddressable}' has no cell the emitter can address"));
-        continue;
-      }
-      if (InstructionSelector.TrySelect(function, out var declineReason, this.SelectionTarget) is not { } machine) {
-        this._backendDeclines.Add((function.Name, "selection: " + (declineReason ?? "unknown")));
-        continue;
-      }
-      if (UndefinedRuntimeCallee(machine) is { } undefined) {
-        this._backendDeclines.Add((function.Name, $"routing: calls '{undefined}', which the DOS runtime does not define"));
-        continue;
-      }
+    List<(string Name, string Reason)> declines;
+    do {
+      declines = [];
+      this._backendGenerated.Clear();
+    } while (!this.RouteGeneratedDefinitions(module, declines));
 
-      MachineScheduler.Schedule(machine);
-      if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } allocation) {
-        this._backendDeclines.Add((function.Name, "allocation: " + (noRegisters ?? "unknown")));
-        continue;
-      }
+    this._backendDeclines.AddRange(declines);
+  }
 
-      this._backendGenerated[function.Name] = new BackendGeneratedFunction(
-        function, machine, allocation, this.Optimize && FrameElision.IsCandidate(function), layout);
+  /// <summary>
+  /// One sweep over the generated definitions. Answers false when it put an outlined region back,
+  /// because the body it came from is one every selection taken so far may have been read from.
+  /// </summary>
+  private bool RouteGeneratedDefinitions(IrModule module, List<(string Name, string Reason)> declines) {
+    foreach (var function in module.Functions.Where(this.IsGeneratedDefinition).ToList()) {
+      if (this.TryRouteBackendGenerated(function, out var decline))
+        continue;
+      if (ColdCodeOutlining.Reinline(module, function))
+        return false;
+      declines.Add((function.Name, decline));
     }
+    return true;
+  }
+
+  /// <summary>
+  /// Puts one generated definition through the selection/scheduling/allocation a source procedure gets,
+  /// answering whether it can be routed and, when it cannot, the routing's own reason for it.
+  /// </summary>
+  private bool TryRouteBackendGenerated(IrFunction function, out string decline) {
+    if (!X86CallAbi.TryDefinitionStackLayout(function, out var layout, out var abiDecline)) {
+      decline = "filter: " + (abiDecline ?? "unsupported generated definition ABI");
+      return false;
+    }
+    if (this.ExternalCalleeDecline(function) is { } externalDecline) {
+      decline = externalDecline;
+      return false;
+    }
+    if (!this.DataGlobalsResolve(function, out var unaddressable)) {
+      decline = $"routing: global '{unaddressable}' has no cell the emitter can address";
+      return false;
+    }
+    if (InstructionSelector.TrySelect(function, out var declineReason, this.SelectionTarget) is not { } machine) {
+      decline = "selection: " + (declineReason ?? "unknown");
+      return false;
+    }
+    if (UndefinedRuntimeCallee(machine) is { } undefined) {
+      decline = $"routing: calls '{undefined}', which the DOS runtime does not define";
+      return false;
+    }
+
+    MachineScheduler.Schedule(machine);
+    if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } allocation) {
+      decline = "allocation: " + (noRegisters ?? "unknown");
+      return false;
+    }
+
+    this._backendGenerated![function.Name] = new BackendGeneratedFunction(
+      function, machine, allocation, this.Optimize && FrameElision.IsCandidate(function), layout);
+    decline = string.Empty;
+    return true;
   }
 
   /// <summary>Whether a name belongs to a generated definition the backend will actually emit.</summary>
@@ -90,10 +151,12 @@ public sealed partial class CodeGenerator {
     => this._backendGenerated?.ContainsKey(name) == true;
 
   /// <summary>
-  /// Removes generated bodies whose original source definition or another defined callee failed to
-  /// route. Requiring the source definition is intentionally stronger than mere codegen convenience:
-  /// a clone and its original may share DATA/dynamic-array/static storage, and routing only one side
-  /// would split ownership between the IR and direct emitters.
+  /// Removes generated bodies whose defined callees - and, for an O0283 clone, whose original source
+  /// definition - failed to route. Requiring the source definition is intentionally stronger than mere
+  /// codegen convenience: a clone and its original may share DATA/dynamic-array/static storage, and
+  /// routing only one side would split ownership between the IR and direct emitters. It is a rule
+  /// about CLONING rather than about generated definitions, so an outlined region - which shares no
+  /// storage with anything, having been lifted out of a single body - is held to the callee rule only.
   /// </summary>
   private bool PruneBackendGenerated(IrModule module) {
     if (this._backendGenerated is null || this._backendGenerated.Count == 0)
@@ -103,13 +166,16 @@ public sealed partial class CodeGenerator {
     for (var again = true; again;) {
       again = false;
       foreach (var generated in this._backendGenerated.Values.ToList()) {
-        var source = ContextSensitiveCloning.SourceOfGeneratedClone(module, generated.Ir);
-        string? stranded = null;
-        if (source is null || !this.BackendNameIsRouted(source.Name))
-          stranded = source?.Name ?? "its source definition";
-        else
-          stranded = CalleeNames(generated.Ir)
-            .FirstOrDefault(name => !this.BackendNameIsRouted(name) && !this.CanCallDirectCallee(name));
+        string? stranded;
+        if (ContextSensitiveCloning.IsGeneratedClone(generated.Ir)) {
+          var source = ContextSensitiveCloning.SourceOfGeneratedClone(module, generated.Ir);
+          stranded = source is null || !this.BackendNameIsRouted(source.Name)
+            ? source?.Name ?? "its source definition"
+            : null;
+        } else
+          stranded = null;
+        stranded ??= CalleeNames(generated.Ir)
+          .FirstOrDefault(name => !this.BackendNameIsRouted(name) && !this.CanCallDirectCallee(name));
         if (stranded is null)
           continue;
 

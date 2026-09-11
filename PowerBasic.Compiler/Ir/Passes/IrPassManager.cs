@@ -366,6 +366,10 @@ public sealed class IrPassManager {
     // could not previously see through. What it then does with it differs from the original, which is
     // a finding about that optimizer and not about this pass. Until that is chased down, the summaries
     // are available to callers and this consumer is off.
+    // O0275 is a SPEED trade: it grows total code by a call/return shell in exchange for shrinking the
+    // function's hot body. Run it immediately before inlining so the inliner sees that smaller body;
+    // generated cold helpers are NOINLINE, so this ordering cannot undo the extraction.
+    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)
     // O0271 must run before either inliner. It consumes source-site profile metadata and creates a
     // genuine direct call on the hot arm; the fallback keeps the original indirect call and has its
     // profile cleared, so a later module sweep cannot build an unbounded chain of guards.
