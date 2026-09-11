@@ -356,10 +356,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 197 | 64 | 146 | 407 |
+| O — optimization passes | 197 | 66 | 144 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **211** | **64** | **146** | **421** |
+| **all** | **211** | **66** | **144** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -428,7 +428,7 @@ next free number rather than displacing anything.
 | ✅ | [O0054](docs/optimizations/O0054-ir-global-dce.md) | IR: global DCE | Unreferenced functions and globals are removed from the module, to a fixpoint. |
 | ✅ | [O0055](docs/optimizations/O0055-ir-integer-recovery.md) | IR: integer recovery | The float form of PB's integral `+ - *` is rewritten back to integer arithmetic for the IR back ends. |
 | 🟡 | [O0056](docs/optimizations/O0056-reciprocal-division.md) | Reciprocal-multiply division | `x \ 10` becomes a magic-number multiply plus a shift instead of the runtime divide. |
-| ⬜ | [O0057](docs/optimizations/O0057-storage-narrowing.md) | Storage narrowing | A value whose facts prove it fits a narrower type is *stored* as one, converting only at the boundaries. |
+| 🟡 | [O0057](docs/optimizations/O0057-storage-narrowing.md) | Storage narrowing | A value whose facts prove it fits a narrower type is *stored* as one, converting only at the boundaries. |
 | ⬜ | [O0058](docs/optimizations/O0058-386-register-allocation.md) | 386/486 register allocation | Several hot LONG/INTEGER locals resident at once in EAX–EDX/ESI/EDI, plus 8-bit sub-register packing. |
 | 🟡 | [O0059](docs/optimizations/O0059-scalar-replacement.md) | Scalar replacement of aggregates | A non-escaping TYPE decomposes into independent field variables that allocate like plain locals. |
 | ✅ | [O0060](docs/optimizations/O0060-memory-ssa.md) | Memory SSA / alias analysis | Dependency edges for loads and stores, so loads hoist and GVN sees through memory. |
@@ -684,7 +684,7 @@ next free number rather than displacing anything.
 | | # | Optimization | What it does |
 |---|---|---|---|
 | 🟡 | [O0286](docs/optimizations/O0286-allocation-elimination.md) | Allocation elimination | A heap allocation whose contents can live entirely in registers or a frame slot should not happen at all. |
-| ⬜ | [O0287](docs/optimizations/O0287-stack-promotion.md) | Stack promotion | A non-escaping dynamic allocation of bounded size can live in the frame instead of the heap. |
+| 🟡 | [O0287](docs/optimizations/O0287-stack-promotion.md) | Stack promotion | A non-escaping dynamic allocation of bounded size can live in the frame instead of the heap. |
 | 🟡 | [O0288](docs/optimizations/O0288-allocation-sinking.md) | Allocation sinking | An allocation performed unconditionally but used only on a rare path should happen on that path. |
 | ✅ | [O0289](docs/optimizations/O0289-allocation-coalescing.md) | Allocation coalescing | Several short-lived allocations with overlapping lifetimes become one block, carved up internally. |
 | 🟡 | [O0290](docs/optimizations/O0290-loop-temporary-reuse.md) | Temporary reuse across loop iterations | A temporary allocated and freed inside a loop body is allocated and freed once per iteration. |
