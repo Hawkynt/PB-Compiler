@@ -128,6 +128,40 @@ public sealed class O0354O0359MiddleEndTests {
   }
 
   [Test]
+  public void VerifiedArithmetic_GivenMultiplyByTen_WhenRun_ThenVerifiedTwoShiftSumReplacesMultiply() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("f", IrType.I16, [x]);
+    var entry = fn.CreateBlock("entry");
+    var multiply = entry.Append(new IrBinary(IrBinaryOp.Mul, x, new IrConstantInt(IrType.I16, 10)));
+    entry.Append(new IrRet(multiply));
+
+    Assert.That(VerifiedArithmeticLowering.Run(fn), Is.EqualTo(1));
+
+    Assert.That(multiply.Parent, Is.Null);
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(i => i.Op == IrBinaryOp.Mul), Is.False);
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(i => i.Op == IrBinaryOp.Shl), Is.EqualTo(2));
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(i => i.Op == IrBinaryOp.Add), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
+  public void VerifiedArithmetic_GivenMultiplyByNegativeEight_WhenRun_ThenVerifiedShiftNegateReplacesMultiply() {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("f", IrType.I16, [x]);
+    var entry = fn.CreateBlock("entry");
+    var multiply = entry.Append(new IrBinary(IrBinaryOp.Mul, x, new IrConstantInt(IrType.I16, -8)));
+    entry.Append(new IrRet(multiply));
+
+    Assert.That(VerifiedArithmeticLowering.Run(fn), Is.EqualTo(1));
+
+    Assert.That(multiply.Parent, Is.Null);
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(i => i.Op == IrBinaryOp.Mul), Is.False);
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(i => i.Op == IrBinaryOp.Shl), Is.EqualTo(1));
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(i => i.Op == IrBinaryOp.Sub), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  [Test]
   public void VerifiedArithmetic_GivenSignedDivideByEight_WhenRun_ThenBiasAndArithmeticShiftReplaceDivide() {
     var x = new IrArgument(IrType.I16, 0, "x");
     var fn = new IrFunction("f", IrType.I16, [x]);
@@ -145,7 +179,7 @@ public sealed class O0354O0359MiddleEndTests {
   }
 
   [Test]
-  public void VerifiedArithmetic_GivenSignedRemainderByNegativeEight_WhenRun_ThenRemainderUsesVerifiedQuotientProduct() {
+  public void VerifiedArithmetic_GivenSignedRemainderByNegativeEight_WhenRun_ThenDirectVerifiedMaskFormulaReplacesRemainder() {
     var x = new IrArgument(IrType.I16, 0, "x");
     var fn = new IrFunction("f", IrType.I16, [x]);
     var entry = fn.CreateBlock("entry");
@@ -156,7 +190,9 @@ public sealed class O0354O0359MiddleEndTests {
 
     Assert.That(remainder.Parent, Is.Null);
     Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(i => i.Op == IrBinaryOp.SRem), Is.False);
-    Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(i => i.Op == IrBinaryOp.Shl), Is.True);
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(i => i.Op == IrBinaryOp.AShr), Is.EqualTo(1));
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(i => i.Op == IrBinaryOp.And), Is.EqualTo(2));
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(i => i.Op == IrBinaryOp.Shl), Is.False);
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
