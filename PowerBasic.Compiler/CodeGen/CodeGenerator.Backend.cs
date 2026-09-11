@@ -190,8 +190,13 @@ public sealed partial class CodeGenerator {
     // of a size comparison ONE build and made "optimizer off means vintage behaviour" - the promise
     // the historic dialects rest on - true only of the functions the back end happened not to take.
     // IrPassManager.Legalize states which passes survive the flag and why each one is not a choice.
+    // O0057 proves the narrower representation; the smallest cell worth materializing is a backend
+    // decision. A 386 keeps a LONG in a dword register, so narrowing it to a word costs a partial
+    // register there rather than saving anything; only a 16-bit target profits from word storage.
+    var narrowestStorageBits = this.Has32BitCpu ? 32 : 16;
     var pipeline = this.Optimize
-      ? () => IrPassManager.Standard(this.OptimizeSpeed, arithmeticCostModel: this.SelectionCost)
+      ? () => IrPassManager.Standard(this.OptimizeSpeed, arithmeticCostModel: this.SelectionCost,
+          minimumIntegerStorageBits: narrowestStorageBits)
       : (Func<IrPassManager>)IrPassManager.Legalize;
     // Recovery runs BEFORE the optimizer as well as after. PB's integral arithmetic is float-shaped
     // in the IR, and constant folding on a float tree is lossy where the integer answer is not:
