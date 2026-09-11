@@ -129,7 +129,8 @@ public sealed class IrPassManager {
   /// </list>
   /// <para>
   /// Everything else in <see cref="Standard"/> is optimization and is off: data-layout rewrites,
-  /// prefix-scan formation, speculative overflow versioning, ownership batching, speculative devirtualization, unrolling, sccp,
+  /// prefix-scan formation, loop-temporary reuse, speculative overflow versioning, ownership batching,
+  /// speculative devirtualization, unrolling, sccp,
   /// correlate, block versioning, loop versioning, pointer checks, integer/float range folds,
   /// speculative narrowing, overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow,
   /// ownership elision, reassociate, polynomial recovery, equality saturation, verified arithmetic
@@ -192,8 +193,8 @@ public sealed class IrPassManager {
     .Add("mem2reg", Mem2Reg.Run)
     // O0320-O0329 and O0313 have to see the explicit memory graph and the original counted-loop shape.
     // Run the aggregate transforms before AoS->SoA destroys record identity, then the loop/data
-    // transforms, form scan recurrences, and only then the overflow versioner and the unroller. Every
-    // one declines escaped/opaque storage rather than speculating aliasing.
+    // transforms, form scan recurrences, and only then O0290, the overflow versioner and the
+    // unroller. Every one declines escaped/opaque storage rather than speculating aliasing.
     .Add("structpack", StructurePackingByRange.Run)
     .Add("fieldreorder", FieldReordering.Run)
     .Add("hotcold", HotColdFieldSplitting.Run)
@@ -210,6 +211,10 @@ public sealed class IrPassManager {
       fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
     .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arrayalign",
       fn => ArrayBaseAlignment.Run(fn, dataLayoutTarget!.VectorBytes, dataLayoutTarget.PointerBits))
+    // O0290 must see the one alloc/free pair and the original counted-loop shape. It therefore runs
+    // before the overflow versioner splits the loop into a guarded pair and before unroll clones the
+    // very temporary lifetime this pass exists to collapse.
+    .Add("looptemp-reuse", LoopTemporaryReuse.Run)
     // O0308 matches lowering's checked signed-add/sub predicate before InstCombine canonicalizes its
     // XOR/AND tree. It versions only exact counted loops with an O(1) invariant safety guard.
     .Add("overflow-version", SpeculativeOverflowElimination.Run)
