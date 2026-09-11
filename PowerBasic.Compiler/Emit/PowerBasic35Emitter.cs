@@ -712,7 +712,13 @@ public sealed class PowerBasic35Emitter {
                    && v.ArrayBounds is { Count: > 0 } && rb.Count == v.ArrayBounds.Count
       ? "(" + string.Join(", ", rb.Select(b => $"{b.Lower} TO {b.Upper}")) + ")"
       : null;
-    var bounds = resolved ?? (v.ArrayBounds is { Count: > 0 } ? "(" + this.FormatBounds(v.ArrayBounds) + ")" : "");
+    // A DYNAMIC array has no StaticBounds to resolve from, so the same OPTION BASE hazard reaches it
+    // through the other door: `REDIM b(3)` under OPTION BASE 1 is 1..3, and re-emitting `b(3)` with no
+    // OPTION BASE in front of it declares 0..3. ArrayBoundsOf materializes the omitted lower bound
+    // from the base in effect AT THIS DECLARATION, which is the only correct source for it - OPTION
+    // BASE is lexical, so two REDIMs of one array in the same program can disagree about it.
+    var declaredBounds = this._model.ArrayBoundsOf(v);
+    var bounds = resolved ?? (declaredBounds is { Count: > 0 } ? "(" + this.FormatBounds(declaredBounds) + ")" : "");
     // Prefer the bound symbol's resolved type so a generic use (Box OF LONG) names its monomorphized
     // type and a proc-pointer / named delegate becomes a DWORD - which the surface TypeName cannot.
     var type = this.ScopeSymbol(v.Name)?.Type switch {
