@@ -36,7 +36,7 @@ public sealed partial class CodeGenerator {
       var symbol = this.LookupVariable(v.Name, v.Suffix, isArray: true) ?? this.LookupVariable(v.Name, TypeSuffix.None, isArray: true);
       if (symbol?.Type is not ArrayType { IsDynamic: true })
         continue;   // static arrays and scalars are laid out at compile time
-      this.EmitClassedAllocation(symbol, v.ArrayBounds, dim.AtAddress, dim.Position, skipZero);
+      this.EmitClassedAllocation(symbol, model.ArrayBoundsOf(v), dim.AtAddress, dim.Position, skipZero);
     }
   }
 
@@ -187,11 +187,12 @@ public sealed partial class CodeGenerator {
         this.Unsupported(redim);
         continue;
       }
+      var bounds = model.ArrayBoundsOf(v);
       if (redim.Preserve) {
-        this.EmitRedimPreserve(symbol, v.ArrayBounds, redim.Position);
+        this.EmitRedimPreserve(symbol, bounds, redim.Position);
         continue;
       }
-      this.EmitClassedAllocation(symbol, v.ArrayBounds, null, redim.Position, skipZero);
+      this.EmitClassedAllocation(symbol, bounds, null, redim.Position, skipZero);
     }
   }
 

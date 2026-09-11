@@ -95,6 +95,7 @@ public sealed class Binder {
     binder.ExpandGenerics();
     binder.SeedInternalVariables();
     binder.CollectRedims(binder._unit.Statements);
+    binder.CaptureArrayOptionBases();
     binder.ScanModule();
     binder.BindAllBodies();
     binder.SpliceDimInitializers();
@@ -325,6 +326,56 @@ public sealed class Binder {
   /// <summary>Folder hook: folds what the surface tree alone cannot - bind-time desugars recorded in the model (e.g. compile-time reflection calls already replaced by literals).</summary>
   private ConstantValue? FoldDesugared(Expression e)
     => this._model.Desugared.TryGetValue(e, out var d) ? this._folder.TryFold(d) : null;
+
+  /// <summary>
+  /// Captures the lexical OPTION BASE at every source DIM/REDIM before procedure bodies are bound.
+  /// PowerBASIC permits OPTION BASE to appear between declarations, so using the binder's final
+  /// module value later would retroactively change arrays that appeared before it.
+  /// </summary>
+  private void CaptureArrayOptionBases() {
+    var optionBase = 0;
+    foreach (var statement in this._unit.Statements) {
+      if (statement is CommandStmt { Keyword: "OPTION BASE", Arguments: [IntegerLiteralExpr { Value: 0 or 1 } b] }) {
+        optionBase = (int)b.Value;
+        continue;
+      }
+      this.CaptureArrayOptionBases([statement], optionBase);
+    }
+  }
+
+  private void CaptureArrayOptionBases(IReadOnlyList<Statement> statements, int optionBase) {
+    foreach (var statement in statements)
+      switch (statement) {
+        case DimStmt dim:
+          this.CaptureArrayOptionBases(dim.Variables, optionBase);
+          break;
+        case RedimStmt redim:
+          this.CaptureArrayOptionBases(redim.Variables, optionBase);
+          break;
+        case SubDecl sub:
+          this.CaptureArrayOptionBases(sub.Body, optionBase);
+          break;
+        case FunctionDecl function:
+          this.CaptureArrayOptionBases(function.Body, optionBase);
+          break;
+        case DefFnDecl { BlockBody: { } body }:
+          this.CaptureArrayOptionBases(body, optionBase);
+          break;
+        default:
+          foreach (var block in ChildBlocks(statement))
+            this.CaptureArrayOptionBases(block, optionBase);
+          break;
+      }
+  }
+
+  private void CaptureArrayOptionBases(IReadOnlyList<VariableDecl> variables, int optionBase) {
+    foreach (var variable in variables)
+      if (variable.ArrayBounds != null)
+        this._model.ArrayOptionBases[variable] = optionBase;
+  }
+
+  private int ArrayOptionBase(VariableDecl declaration)
+    => this._model.OptionBaseOf(declaration);
 
   #region pass 1 - module scan
 
@@ -1862,7 +1913,7 @@ public sealed class Binder {
       && arrayClass is not (ArrayClass.Dynamic or ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Absolute or ArrayClass.Ems or ArrayClass.Xms)
       && !this._redimmedArrays.Contains(VariableKey(v.Name, v.Suffix, isArray: true));
     foreach (var (lowerExpr, upperExpr) in v.ArrayBounds) {
-      var lower = lowerExpr == null ? this._optionBase : (int?)(this._folder.TryFold(lowerExpr)?.Integer);
+      var lower = lowerExpr == null ? this.ArrayOptionBase(v) : (int?)(this._folder.TryFold(lowerExpr)?.Integer);
       var upper = (int?)(this._folder.TryFold(upperExpr)?.Integer);
       if (lower == null || upper == null) {
         isStatic = false;
@@ -3203,7 +3254,7 @@ public sealed class Binder {
       }
 
     // explicit DIM size (a(n)) or auto-size (a()) from the element count
-    var lower = this._optionBase;
+    var lower = this.ArrayOptionBase(v);
     int upper;
     if (v.ArrayBounds is [var (lowerExpr, upperExpr)] && this._folder.TryFold(upperExpr)?.Integer is { } u) {
       if (lowerExpr != null && this._folder.TryFold(lowerExpr)?.Integer is { } l)
