@@ -246,4 +246,49 @@ public sealed class BackendChainTests {
   private static string[] Lines(string text)
     => text.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(line => line.Trim()).ToArray();
+
+  /// <summary>
+  /// A CHAIN at the TOP LEVEL of the module body, which until now was the one shape the routing
+  /// refused - and refused by accident. The filter asked whether any top-level statement was a
+  /// ChainStmt, so <see cref="_chainToSelf"/>, whose CHAIN sits inside an IF, was already routing and
+  /// already passing every test above it. Nothing about the handoff depends on the nesting: the IR
+  /// lowers both halves either way.
+  ///
+  /// <para>
+  /// GOTO rather than IF keeps the CHAIN unnested while still giving the second pass somewhere to go,
+  /// and the COMMON values are checked rather than only the routing, so a body that routed but lost
+  /// the handoff would fail here.
+  /// </para>
+  /// </summary>
+  private const string _topLevelChain = """
+    COMMON stage%, n&
+    IF stage% <> 0 THEN GOTO Arrived
+    stage% = 1
+    n& = 4242
+    PRINT "first pass"
+    CHAIN "T.EXE"
+    Arrived:
+    PRINT "second pass"
+    PRINT stage%; n&
+    END
+    """;
+
+  [Test]
+  public void Run_GivenATopLevelChain_ThenTheModuleBodyStillRoutesAndAgreesWithTheDirectEmitter() {
+    var (routedImage, routed) = Compile(_topLevelChain, backend: true);
+    var (directImage, _) = Compile(_topLevelChain, backend: false);
+    Assert.That(routed, Does.Contain("main"),
+      "a top-level CHAIN must not disqualify the module body - the comparison below would otherwise "
+        + "be the direct image against itself");
+
+    var (routedFirst, routedHandoff, routedSecond) = ChainToSelf(routedImage);
+    var (directFirst, directHandoff, directSecond) = ChainToSelf(directImage);
+
+    Assert.Multiple(() => {
+      Assert.That(routedFirst, Is.EqualTo(directFirst));
+      Assert.That(routedHandoff, Is.EqualTo(directHandoff), "the COMMON block, in declaration order");
+      Assert.That(routedSecond, Is.EqualTo(directSecond));
+      Assert.That(Lines(routedSecond), Is.EqualTo(new[] { "second pass", "1  4242" }));
+    });
+  }
 }
