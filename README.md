@@ -356,10 +356,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 195 | 65 | 147 | 407 |
+| O — optimization passes | 196 | 64 | 147 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **209** | **65** | **147** | **421** |
+| **all** | **210** | **64** | **147** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -760,7 +760,7 @@ next free number rather than displacing anything.
 | 🟡 | [O0335](docs/optimizations/O0335-perfect-hash-data.md) | Perfect-hash generation for static key sets | A fixed set of keys — keyword tables, enum names, command strings, file extensions — admits a collision-free hash computed at compile time. |
 | 🟡 | [O0336](docs/optimizations/O0336-fsm-compilation.md) | Finite-state-machine compilation | Character-classification chains — `IF c >= "0" AND c <= "9" THEN … ELSEIF c = " " THEN …` — are a state machine written as branches. |
 | ✅ | [O0337](docs/optimizations/O0337-polynomial-evaluation.md) | Horner / Estrin polynomial evaluation | `a*x^3 + b*x^2 + c*x + d` evaluated literally costs three powers and three multiplies. |
-| 🟡 | [O0338](docs/optimizations/O0338-reciprocal-sequence-reuse.md) | Reciprocal reuse across repeated divisions | Dividing repeatedly by the same loop-invariant value computes the reciprocal once and multiplies thereafter. |
+| ✅ | [O0338](docs/optimizations/O0338-reciprocal-sequence-reuse.md) | Reciprocal reuse across repeated divisions | Dividing repeatedly by the same loop-invariant value computes the reciprocal once and multiplies thereafter. |
 | 🟡 | [O0339](docs/optimizations/O0339-memory-routine-by-size.md) | Memory routine specialization by size | One copy routine is wrong for every size. |
 
 ### O — floating point

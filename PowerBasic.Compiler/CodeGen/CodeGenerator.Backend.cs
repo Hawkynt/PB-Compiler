@@ -191,7 +191,7 @@ public sealed partial class CodeGenerator {
     // the historic dialects rest on - true only of the functions the back end happened not to take.
     // IrPassManager.Legalize states which passes survive the flag and why each one is not a choice.
     var pipeline = this.Optimize
-      ? () => IrPassManager.Standard(this.OptimizeSpeed)
+      ? () => IrPassManager.Standard(this.OptimizeSpeed, arithmeticCostModel: this.SelectionCost)
       : (Func<IrPassManager>)IrPassManager.Legalize;
     // Recovery runs BEFORE the optimizer as well as after. PB's integral arithmetic is float-shaped
     // in the IR, and constant folding on a float tree is lossy where the integer answer is not:

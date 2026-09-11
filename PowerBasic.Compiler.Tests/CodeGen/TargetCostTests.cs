@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Ir;
 
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
@@ -112,6 +113,23 @@ public sealed class TargetCostTests {
     // On an 8086 a MUL dwarfs a shift/add pair; on a P6 they are within a small factor.
     Assert.That(Cost(CpuTier.I8086).Mul16Cycles, Is.GreaterThan(Cost(CpuTier.I8086).ShiftAddCycles * 10));
     Assert.That(Cost(CpuTier.P6).Mul16Cycles, Is.LessThan(Cost(CpuTier.P6).ShiftAddCycles * 10));
+  }
+
+  [Test]
+  public void ReciprocalReuse_GivenX87Generation_WhenPriced_ThenBreakEvenMovesWithTheFpu() {
+    Assert.Multiple(() => {
+      Assert.That(Cost(CpuTier.I8086, CostObjective.Speed).X87DivideCycles,
+        Is.GreaterThan(Cost(CpuTier.I8086, CostObjective.Speed).X87MultiplyCycles));
+      Assert.That(Cost(CpuTier.I8086, CostObjective.Speed).PreferReciprocalReuse(IrType.F80, 2), Is.False,
+        "one 8087 FDIV plus two FMULs is slower than two FDIVs");
+      Assert.That(Cost(CpuTier.I8086, CostObjective.Speed).PreferReciprocalReuse(IrType.F80, 4), Is.True);
+      Assert.That(Cost(CpuTier.I80386, CostObjective.Speed).PreferReciprocalReuse(IrType.F64, 2), Is.False);
+      Assert.That(Cost(CpuTier.I80386, CostObjective.Speed).PreferReciprocalReuse(IrType.F64, 3), Is.True);
+      Assert.That(Cost(CpuTier.I80486, CostObjective.Speed).PreferReciprocalReuse(IrType.F32, 2), Is.True);
+      Assert.That(Cost(CpuTier.Pentium, CostObjective.Speed).PreferReciprocalReuse(IrType.F80, 2), Is.True);
+      Assert.That(Cost(CpuTier.Pentium, CostObjective.Size).PreferReciprocalReuse(IrType.F80, 8), Is.False,
+        "a size objective must not introduce the reciprocal plus multiply form");
+    });
   }
 
   [Test]

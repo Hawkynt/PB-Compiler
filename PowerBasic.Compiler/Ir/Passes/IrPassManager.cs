@@ -174,9 +174,15 @@ public sealed class IrPassManager {
   /// allows O0343 to materialize typed floating constant tables when the selected backend can carry
   /// them; range-specialized polynomial kernels remain available under SPEED without it.
   /// </para>
+  /// <para>
+  /// <paramref name="arithmeticCostModel"/> is optional target profitability information. O0338 uses it
+  /// to decide whether one runtime reciprocal plus multiplies actually beats repeated divides; callers
+  /// without a target model retain the target-neutral transform once SPEED has made it legal.
+  /// </para>
   /// </summary>
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
-      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false)
+      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false,
+      IIrArithmeticCostModel? arithmeticCostModel = null)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     // O0068 must see the allocation descriptor and the source-shaped FOR before mem2reg/unrolling
     // turn them into a different proof problem. It is a module pass only because it may mint the
@@ -294,9 +300,10 @@ public sealed class IrPassManager {
     // correctly refuses. Interchange therefore goes immediately before LICM.
     .Add("interchange", LoopInterchange.Run)
     .Add("licm", Licm.Run)
-    // Exact reciprocal reuse runs after LICM, so an invariant divisor that is already representable as
-    // a constant has reached the place where the repeated divisions are visible together.
-    .Add("reciprocal-reuse", ReciprocalSequenceReuse.Run)
+    // O0338 runs after LICM so invariant divisor calculations have already moved. Strict exact constants
+    // need no target opinion; relaxed reciprocals consume the optional cost model and can then move the
+    // shared runtime reciprocal behind a zero-trip guard for canonical loops.
+    .Add("reciprocal-reuse", fn => ReciprocalSequenceReuse.Run(fn, arithmeticCostModel))
     // AFTER licm, and that ordering is the whole composition: `IF mode THEN` inside a loop lowers to
     // a COMPARE computed in the loop, and a condition defined inside the region cannot be specialized
     // by cloning - each clone gets its own copy of the compare, so binding the original to a constant
