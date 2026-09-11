@@ -317,8 +317,9 @@ PBU named by `$LINK`, so `LINKDEMO` is measured with the same `MATHUNIT.PBU` inp
 Its numeric, BYREF, nested-call and dynamic-string calls use the routed stack ABI in both optimizer
 modes, through either a PBU or a PBL. Routed calls to near CDECL and STDCALL declarations now preserve
 their IR convention identity, push argument groups right-to-left, and apply caller/callee cleanup as
-declared. FASTCALL/WATCALL external calls still decline per callee until register-argument staging is
-selectable; merely having a link input no longer rejects the entire module.
+declared. Near FASTCALL/WATCALL external calls stage leading one-word values in ABI registers, put
+overflow on the stack, and use callee cleanup; multiword register values still decline per callee.
+Merely having a link input no longer rejects the entire module.
 
 Dynamic-string `SWAP` removes the former invisible lowering row. The IR loads the raw handle from
 each owner cell and crosses the stores; it neither borrows a duplicate nor frees a handle because the
