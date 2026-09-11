@@ -129,6 +129,10 @@ public sealed partial class CodeGenerator {
       // their required copy-in is different ABI semantics.
       if (!parameter.ByVal && parameter.Type is UdtType)
         continue;
+      // An array parameter is one near pointer to the caller's descriptor, exactly as it is for the
+      // direct emitter. The descriptor's own layout crosses the boundary, not the element storage.
+      if (!parameter.ByVal && parameter.Type is ArrayType)
+        continue;
       // Every other near BYREF argument is one pointer word too, but its pointee must be a value shape
       // the routed lowering already models. Dynamic strings use the word as a handle-cell pointer.
       if (!parameter.ByVal && !IsBackendAbiType(parameter.Type))

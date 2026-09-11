@@ -244,6 +244,13 @@ public sealed partial class IrLowering {
         args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));   // a record is passed as a pointer (BYVAL = callee copies on entry)
         continue;
       }
+      if (p.Type is ArrayType) {
+        // An array crosses as one near pointer to its DESCRIPTOR - never as element storage. The
+        // callee reads the bounds and the data pointer out of that block, which is why an array
+        // parameter has no bounds of its own to declare.
+        args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));
+        continue;
+      }
       if (p.Type is StringType) {
         // BYVAL passes the handle itself, BYREF a pointer to the caller's handle slot - both
         // are pointers to the IR, and the existing parameter binding already does the right
@@ -766,7 +773,11 @@ public sealed partial class IrLowering {
         ? this.PagedElementAddress(expr, symbol, arr)
         : throw new IrLoweringException(
             $"the address of an element of the {symbol.ArrayClass} array {symbol.Name} (only a direct read or write of one lowers)");
-    if (arr.IsDynamic)
+    // An array PARAMETER has no bounds of its own whether or not the array behind it is dynamic: the
+    // callee knows only what the descriptor says, so it reaches every element the descriptor-driven
+    // way. Without this a static array's parameter fell through to the static path, which has no
+    // StaticBounds to use and said "rank mismatch".
+    if (arr.IsDynamic || symbol.Storage == VariableStorage.Parameter)
       return this.DynamicElementAddress(expr, symbol, arr);
     if (arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
       throw new IrLoweringException("rank mismatch");
@@ -799,7 +810,17 @@ public sealed partial class IrLowering {
   // A dynamic array is a runtime-allocated buffer plus a bound descriptor: the data
   // pointer and, per dimension, the lower bound and size each live in their own
   // promotable scalar slot. Sizes feed first-subscript-fastest flattening and the allocation count.
-  private readonly record struct DynArr(IrValue Data, IrValue[] Lo, IrValue[] Size);
+  /// <param name="Data">
+  /// The cell holding the block address: a <c>FarPtr</c> cell normally, or - when
+  /// <paramref name="Segment"/> is set - the OFFSET word alone, its segment held separately.
+  /// </param>
+  /// <param name="Segment">
+  /// Set only for an array PARAMETER, whose block address arrives as the two separate words of the
+  /// caller's descriptor. They stay separate because a composed <see cref="IrFarPtr"/> is an address
+  /// former rather than a storable value - there is no register that holds one - so the pair is
+  /// combined at each use instead of being stored as a pointer.
+  /// </param>
+  private readonly record struct DynArr(IrValue Data, IrValue[] Lo, IrValue[] Size, IrValue? Segment = null);
   private readonly Dictionary<VariableSymbol, DynArr> _dynArrays = new(ReferenceEqualityComparer.Instance);
 
   /// <summary>$ERROR BOUNDS ON: subscripts are checked and Error 9 raised when one is out of range.</summary>
@@ -887,6 +908,8 @@ public sealed partial class IrLowering {
   private DynArr DynDescriptor(VariableSymbol symbol, int rank) {
     if (this._dynArrays.TryGetValue(symbol, out var existing))
       return existing;
+    if (symbol.Storage == VariableStorage.Parameter)
+      return this._dynArrays[symbol] = this.ParameterDynDescriptor(symbol, rank);
     if (this.NeedsSharedStorage(symbol))
       return this._dynArrays[symbol] = this.SharedDynDescriptor(symbol, rank);
     // FarPtr, not Ptr: dynamic array storage comes out of the runtime's far array heap, and the cell
@@ -927,6 +950,59 @@ public sealed partial class IrLowering {
   /// remove that condition, and wants the field widths and order this descriptor does not have.
   /// </para>
   /// </summary>
+  /// <summary>
+  /// The descriptor an ARRAY PARAMETER is reached through. The caller hands over one near pointer to
+  /// a descriptor block, and the block's layout is the direct emitter's, because that is the layout a
+  /// direct caller will have written and a direct callee will expect:
+  ///
+  /// <code>
+  ///   +0  segment      +2  data offset
+  ///   +4  element size +6  rank
+  ///   +8 + d*4: lower bound (word), extent (word)
+  /// </code>
+  ///
+  /// <para>
+  /// This is the one place the routed path reads the direct emitter's descriptor rather than its own
+  /// <c>.dyn</c> cells, and it has to be: the block belongs to the CALLER, so its shape is settled by
+  /// the ABI rather than by whichever emitter compiled the callee. The fields are widened into an
+  /// ordinary frame <see cref="DynArr"/> on entry, after which every existing consumer - element
+  /// addressing, LBOUND/UBOUND - works unchanged against it.
+  /// </para>
+  /// <para>
+  /// Widening is a COPY, which is exactly why <c>REDIM</c> and <c>ERASE</c> of an array parameter
+  /// decline: those write the descriptor, and writing this copy would leave the caller still
+  /// describing the old block. Element writes are unaffected - they go through the data pointer to
+  /// the caller's own storage, which is the whole point of passing the descriptor.
+  /// </para>
+  /// </summary>
+  private DynArr ParameterDynDescriptor(VariableSymbol symbol, int rank) {
+    if (!this._addr.TryGetValue(symbol, out var descriptor))
+      throw new IrLoweringException($"array parameter {symbol.Name} has no incoming descriptor pointer");
+
+    // every field is a word, so the block is addressed as an i16 array and each field is its index
+    IrValue Word(int index) => this._b.Load(IrType.I16, this._b.Gep(descriptor, new IrConstantInt(IrType.I16, index), IrType.I16));
+
+    var segment = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I16) { Name = symbol.Name + ".seg" });
+    var offset = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I16) { Name = symbol.Name + ".off" });
+    var lo = new IrValue[rank];
+    var size = new IrValue[rank];
+    for (var k = 0; k < rank; ++k) {
+      lo[k] = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Name = $"{symbol.Name}.lo{k}" });
+      size[k] = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Name = $"{symbol.Name}.size{k}" });
+    }
+
+    // The reads happen where the builder is now rather than in the entry block: a descriptor is only
+    // consulted from the first use onwards, and the pointer is a parameter, so it is live throughout.
+    this._b.Store(Word(0), segment);
+    this._b.Store(Word(1), offset);
+    for (var k = 0; k < rank; ++k) {
+      // A lower bound is signed - DIM a(-5 TO 5) is legal - while an extent is a count and never is.
+      this._b.Store(this._b.Cast(IrCastOp.SExt, Word(4 + k * 2), IrType.I32), lo[k]);
+      this._b.Store(this._b.Cast(IrCastOp.ZExt, Word(5 + k * 2), IrType.I32), size[k]);
+    }
+    return new DynArr(offset, lo, size, segment);
+  }
+
   private DynArr SharedDynDescriptor(VariableSymbol symbol, int rank) {
     var stem = ".dyn." + (symbol.Storage == VariableStorage.Static
       ? StaticGlobalName(this._proc, symbol)
@@ -947,12 +1023,32 @@ public sealed partial class IrLowering {
     return new DynArr(Cell("data", IrType.FarPtr), lo, size);
   }
 
+  /// <summary>
+  /// The descriptor of an array whose BOUNDS or block address are about to be rewritten.
+  ///
+  /// <para>
+  /// An array parameter declines here. The callee widened the caller's descriptor into its own frame,
+  /// so writing those cells would change only the copy: the caller would still describe the old block,
+  /// and after a REDIM that block has been freed. Element writes are unaffected and deliberately so -
+  /// they travel through the data pointer to the caller's own storage.
+  /// </para>
+  /// </summary>
+  private DynArr MutableDynDescriptor(VariableSymbol symbol, int rank, string what) {
+    var descriptor = this.DynDescriptor(symbol, rank);
+    if (descriptor.Segment is not null)
+      throw new IrLoweringException($"{what} of the array PARAMETER {symbol.Name} (its descriptor belongs to the caller)");
+    return descriptor;
+  }
+
   /// <summary>The address of one runtime-allocated element in PowerBASIC's first-subscript-fastest layout.</summary>
   private (IrValue Address, PbType Element) DynamicElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
     if (expr.Arguments.Count != arr.Rank)
       throw new IrLoweringException("dynamic array rank mismatch");
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
-    var data = this._b.Load(IrType.FarPtr, descriptor.Data);
+    // A parameter's block address is two separate words, so the far pointer is formed at the END from
+    // the finished offset - the same shape AbsoluteElementAddress uses - rather than being loaded as a
+    // pointer and stepped with a GEP.
+    var data = descriptor.Segment is null ? this._b.Load(IrType.FarPtr, descriptor.Data) : null;
 
     // Preserve source-order evaluation just as the direct emitter does. Descriptor extents are read
     // afterwards for the reverse Horner fold, so changing the physical layout never reorders a call
@@ -974,9 +1070,18 @@ public sealed partial class IrLowering {
     for (var k = arr.Rank - 2; k >= 0; --k)
       flat = this._b.Add(this._b.Mul(flat, this._b.Load(IrType.I32, descriptor.Size[k])), relative[k]);
 
+    var stride = arr.Element is StringType ? 2 : arr.Element.Size;
+    if (descriptor.Segment is { } segmentCell) {
+      // Truncated to 16 bits for the same reason AbsoluteElementAddress truncates: address arithmetic
+      // inside a segment wraps at 64 KiB on this target, and computing it wider invents a carry the
+      // machine does not have.
+      var byteOffset = this._b.Trunc(this._b.Mul(flat, new IrConstantInt(IrType.I32, Math.Max(stride, 1))), IrType.I16);
+      var address = this._b.Add(this._b.Load(IrType.I16, descriptor.Data), byteOffset);
+      return (this._b.FarPtr(this._b.Load(IrType.I16, segmentCell), address), arr.Element);
+    }
     if (arr.Element is StringType)
-      return (this._b.Gep(data, flat, IrType.Ptr), arr.Element);
-    return (this._b.Gep(data, this._b.Mul(flat, new IrConstantInt(IrType.I32, arr.Element.Size))), arr.Element);
+      return (this._b.Gep(data!, flat, IrType.Ptr), arr.Element);
+    return (this._b.Gep(data!, this._b.Mul(flat, new IrConstantInt(IrType.I32, arr.Element.Size))), arr.Element);
   }
 
   /// <summary>
@@ -2603,7 +2708,7 @@ public sealed partial class IrLowering {
   /// </summary>
   private void AllocateDynamicArray(VariableSymbol symbol, ArrayType arr,
       IReadOnlyList<(Expression? Lower, Expression Upper)> dims, bool preserve) {
-    var descriptor = this.DynDescriptor(symbol, arr.Rank);
+    var descriptor = this.MutableDynDescriptor(symbol, arr.Rank, "REDIM");
     var isString = arr.Element is StringType;
     // REDIM PRESERVE carries the old contents over, so all OLD descriptor values that are needed
     // after the rewrite are captured before the first new bound is stored.
@@ -2692,7 +2797,7 @@ public sealed partial class IrLowering {
       // a block back when it is the topmost one, and "is this block on top" is `offset + bytes ==
       // top`. A malloc/free runtime ignores the second argument, but the IR cannot know which kind of
       // runtime it is talking to and the size is free to compute here.
-      var descriptor = this.DynDescriptor(symbol, arr.Rank);
+      var descriptor = this.MutableDynDescriptor(symbol, arr.Rank, "ERASE");
       var count = this.DynElementCount(descriptor, arr.Rank);
       var block = this._b.Load(IrType.FarPtr, descriptor.Data);
       if (arr.Element is StringType)
@@ -3152,7 +3257,7 @@ public sealed partial class IrLowering {
       if (arr.Element is StringType or FlexType)
         throw new IrLoweringException("DIM AT over a dynamic-string element type");
 
-      var descriptor = this.DynDescriptor(symbol, arr.Rank);
+      var descriptor = this.MutableDynDescriptor(symbol, arr.Rank, "DIM ... AT");
       for (var k = 0; k < dims.Count; ++k) {
         var (lower, upper) = dims[k];
         var lo = lower is null
@@ -4094,7 +4199,8 @@ public sealed partial class IrLowering {
       throw new IrLoweringException("LBOUND/UBOUND dimension out of range");
 
     IrValue result;
-    if (!arr.IsDynamic) {
+    // A parameter's bounds are the caller's, so they are read rather than known - see ElementAddress.
+    if (!arr.IsDynamic && sym.Storage != VariableStorage.Parameter) {
       if (arr.StaticBounds is not { } bounds)
         throw new IrLoweringException("static array without bounds");
       result = new IrConstantInt(IrType.I32, upper ? bounds[dim].Upper : bounds[dim].Lower);
@@ -4587,6 +4693,8 @@ public sealed partial class IrLowering {
       var p = proc.Parameters[i];
       args.Add(p.Type is UdtType
         ? this.UdtAddress(arguments[i])                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
+        : p.Type is ArrayType
+          ? this.ArrayDescriptorArgument(arguments[i])  // an array argument passes a descriptor, never element storage
         : p.Type is StringType
           ? this.StringArgument(arguments[i], p.ByVal, stringTemporaries)
         : p.ByVal
@@ -4606,6 +4714,76 @@ public sealed partial class IrLowering {
       this.FreeOwnedStringSlot(temporary);
     return result;
   }
+
+  /// <summary>
+  /// The descriptor an array ARGUMENT hands over: a near pointer to a block in the direct emitter's
+  /// layout (see <see cref="ParameterDynDescriptor"/>), built at the call site.
+  ///
+  /// <para>
+  /// It is built here rather than reused because the routed path has no such block of its own. A
+  /// static array is bare storage with its bounds in the compiler, and a routed dynamic array is
+  /// described by the <c>.dyn</c> cells, which are separate globals rather than one contiguous
+  /// record. Filling a fresh block is also what the direct emitter does for a static array - its
+  /// shadow descriptor is refilled at each call site - so the two paths agree about the bytes as well
+  /// as about the pointer.
+  /// </para>
+  /// <para>
+  /// The paged and ABSOLUTE classes decline. Their element addresses are not one segment plus one
+  /// offset - a paged array recomputes the segment per access from the byte offset or the EMS window -
+  /// so there is no data pointer this block could carry, and inventing one would hand the callee an
+  /// address that reads the wrong memory rather than failing.
+  /// </para>
+  /// </summary>
+  private IrValue ArrayDescriptorArgument(Expression argument) {
+    if (!this._model.VariableBindings.TryGetValue(argument, out var symbol) || symbol.Type is not ArrayType arr)
+      throw new IrLoweringException("array argument that is not an array");
+    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms or ArrayClass.Absolute)
+      throw new IrLoweringException($"an argument of the {symbol.ArrayClass} array {symbol.Name}");
+
+    var words = 4 + arr.Rank * 2;
+    var block = this._entry.InsertAt(this._entryAllocaCount++,
+      new IrAlloca(IrType.I16) { Count = words, Name = symbol.Name + ".desc" });
+    void Put(int index, IrValue value)
+      => this._b.Store(value, this._b.Gep(block, new IrConstantInt(IrType.I16, index), IrType.I16));
+    IrValue Word(int value) => new IrConstantInt(IrType.I16, value);
+    IrValue Narrow(IrValue wide) => this._b.Cast(IrCastOp.Trunc, wide, IrType.I16);
+
+    if (arr.IsDynamic || symbol.Storage == VariableStorage.Parameter) {
+      // A dynamic array's block lives in the runtime's one far array heap, so its segment is that
+      // heap's own cell - the same rt_arrseg the direct emitter loads ES from - and the pointer's
+      // near half is the offset within it.
+      var descriptor = this.DynDescriptor(symbol, arr.Rank);
+      // Forwarding a parameter onward: its two words are already the pair this block wants, and its
+      // segment is whatever the original caller's was rather than necessarily the array heap's.
+      if (descriptor.Segment is { } forwarded) {
+        Put(0, this._b.Load(IrType.I16, forwarded));
+        Put(1, this._b.Load(IrType.I16, descriptor.Data));
+      } else {
+        Put(0, this._b.Load(IrType.I16, this.RuntimeCell("rt_arrseg", IrType.I16)));
+        Put(1, this._b.Cast(IrCastOp.PtrToInt, this._b.Load(IrType.FarPtr, descriptor.Data), IrType.I16));
+      }
+      for (var k = 0; k < arr.Rank; ++k) {
+        Put(4 + k * 2, Narrow(this._b.Load(IrType.I32, descriptor.Lo[k])));
+        Put(5 + k * 2, Narrow(this._b.Load(IrType.I32, descriptor.Size[k])));
+      }
+    } else {
+      if (arr.StaticBounds is not { } bounds || bounds.Count != arr.Rank)
+        throw new IrLoweringException($"an argument of the static array {symbol.Name} without bounds");
+      Put(0, this._b.Call(IrType.I16, this.RuntimeFn("rt_varseg", IrType.I16)));   // near storage: DS
+      Put(1, this._b.Cast(IrCastOp.PtrToInt, this.SlotFor(symbol), IrType.I16));
+      for (var k = 0; k < arr.Rank; ++k) {
+        Put(4 + k * 2, Word(bounds[k].Lower));
+        Put(5 + k * 2, Word(bounds[k].Upper - bounds[k].Lower + 1));
+      }
+    }
+    Put(2, Word(ElementByteSize(arr)));
+    Put(3, Word(arr.Rank));
+    return block;
+  }
+
+  /// <summary>The descriptor's element-size field: what one subscript step advances the data pointer by.</summary>
+  private static int ElementByteSize(ArrayType arr)
+    => arr.Element is StringType or FlexType ? 2 : arr.Element.Size;
 
   private static IrCallConvention IrConventionOf(CallConvention convention) => convention switch {
     CallConvention.Basic => IrCallConvention.Basic,
