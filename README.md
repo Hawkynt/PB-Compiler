@@ -356,10 +356,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 197 | 66 | 144 | 407 |
+| O — optimization passes | 198 | 66 | 143 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **211** | **66** | **144** | **421** |
+| **all** | **212** | **66** | **143** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -434,7 +434,7 @@ next free number rather than displacing anything.
 | ✅ | [O0060](docs/optimizations/O0060-memory-ssa.md) | Memory SSA / alias analysis | Dependency edges for loads and stores, so loads hoist and GVN sees through memory. |
 | 🟡 | [O0061](docs/optimizations/O0061-reassociation.md) | Reassociation | Integer chains reassociate to expose common subexpressions and `LEA` shapes. |
 | 🟡 | [O0062](docs/optimizations/O0062-loop-restructuring.md) | Loop rotation, IV simplification, fusion | Rotate pre-test loops, simplify derived induction variables, fuse adjacent same-trip loops. |
-| ⬜ | [O0063](docs/optimizations/O0063-duff-unrolling.md) | Duff's-device unrolling | Variable-trip loops unroll by 2/4/8 with a computed-jump entry instead of a scalar prologue. |
+| ✅ | [O0063](docs/optimizations/O0063-duff-unrolling.md) | Duff's-device unrolling | Variable-trip loops unroll by 2/4/8 with a computed-jump entry instead of a scalar prologue. |
 | ✅ | [O0064](docs/optimizations/O0064-lea-fusion.md) | `LEA` multiply-add fusion | `a + b + const` becomes one `LEA`; scaled 386 forms cover `x*3`, `x*5`, `x*9` and `y*320+x`. |
 | 🟡 | [O0065](docs/optimizations/O0065-dead-frame-store-elimination.md) | Dead frame-store elimination | Once load forwarding removes a spill cell's last reader, the store into it is dead. |
 | ✅ | [O0066](docs/optimizations/O0066-unrolled-counter-propagation.md) | Unrolled-counter propagation | Each unrolled copy sees its counter as a literal, so subscripts and arithmetic fold. |
