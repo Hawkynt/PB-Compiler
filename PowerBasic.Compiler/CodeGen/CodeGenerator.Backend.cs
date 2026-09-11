@@ -119,7 +119,7 @@ public sealed partial class CodeGenerator {
   private static string? BackendAbiShapeReason(ProcedureSymbol proc) {
     // a FUNCTION with no resolved return type is refused along with the rest, exactly as the pattern
     // this replaced did - `null is not ScalarType{...}` was true, and the shape has no ABI either way
-    if (proc.IsFunction && (proc.ReturnType is not { } returnType || !IsBackendAbiType(returnType)))
+    if (proc.IsFunction && (proc.ReturnType is not { } returnType || !IsBackendResultAbiType(returnType)))
       return $"filter: return type outside the routed ABI "
         + $"({(proc.ReturnType is null ? "unresolved" : DescribeType(proc.ReturnType))})";
     foreach (var parameter in proc.Parameters) {
@@ -144,16 +144,25 @@ public sealed partial class CodeGenerator {
   /// AX (the byte forms consume/produce AL while retaining PB's word-sized stack slot), LONG in DX:AX,
   /// SINGLE/DOUBLE/EXT reals in ST(0), and a dynamic-string handle in AX. EXT arguments keep their
   /// native ten-byte TBYTE stack representation. Records are supported only BYREF (their ABI value is
-  /// one near pointer). BYVAL FIX is admitted separately because its stack representation is the raw
-  /// scaled i64 cell; FIX results, BCD values and array values still need routed ABI work.
+  /// one near pointer). FIX is admitted on both sides, each at its own representation; BCD values and
+  /// array values still need routed ABI work.
   /// </summary>
   /// <summary>
   /// Value shapes a BYVAL stack parameter can carry. FIX is special: its call representation is the
   /// scaled i64 CELL, not the numeric value, so the existing qword stack transport is exactly its ABI.
-  /// The callee converts that cell through rt_fix_down when the parameter is read. This deliberately
-  /// does not make FIX a general result shape: returning the raw i64 would expose the scaled integer.
+  /// The callee converts that cell through rt_fix_down when the parameter is read.
   /// </summary>
   private static bool IsBackendByValParameterAbiType(PbType type)
+    => IsBackendAbiType(type) || type is BcdType { IsFixedPoint: true };
+
+  /// <summary>
+  /// Value shapes a FUNCTION result can carry. FIX is admitted here at the OTHER representation from
+  /// the one a FIX parameter uses, and the asymmetry is the direct emitter's, not a choice: a FIX
+  /// argument crosses as the scaled i64 cell, while the epilogue converts a FIX result through
+  /// rt_fixdn and returns the numeric value in ST(0). Matching each side separately is what lets a
+  /// routed callee and a direct caller agree.
+  /// </summary>
+  private static bool IsBackendResultAbiType(PbType type)
     => IsBackendAbiType(type) || type is BcdType { IsFixedPoint: true };
 
   private static bool IsBackendAbiType(PbType type)

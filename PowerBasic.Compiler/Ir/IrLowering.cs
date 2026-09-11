@@ -227,6 +227,12 @@ public sealed partial class IrLowering {
     if (proc.IsFunction) {
       if (proc.ReturnType is StringType)
         ret = IrType.Ptr;                              // a string result IS its runtime handle
+      else if (proc.ReturnType is BcdType { IsFixedPoint: true })
+        // A FIX cell is a scaled i64, but a FIX RESULT is not: the direct emitter's epilogue loads the
+        // cell with FILD and calls rt_fixdn, so what crosses the boundary is the NUMERIC value in
+        // ST(0). Returning the raw cell instead would be a second, incompatible convention - a routed
+        // callee and a direct caller would disagree by a factor of ten to the pbvFixDigits power.
+        ret = IrType.F80;
       else if (proc.ReturnType is null || !IrTypeMapper.TryMap(proc.ReturnType, out ret) || ret.IsMbf)
         return false;
     }
@@ -437,11 +443,17 @@ public sealed partial class IrLowering {
 
   private void ReturnFromFunction() {
     this.ReleaseOwnedProcedureStrings();
-    if (this._resultVar is not null)
-      this._b.Ret(this._b.Load(this._resultVar.Type is StringType ? IrType.Ptr : MapType(this._resultVar.Type),
-        this.SlotFor(this._resultVar)));
-    else
+    if (this._resultVar is null) {
       this._b.Ret();
+      return;
+    }
+    var cell = this._b.Load(this._resultVar.Type is StringType ? IrType.Ptr : MapType(this._resultVar.Type),
+      this.SlotFor(this._resultVar));
+    // The FIX result channel is the numeric value, not the scaled cell - see TrySignature. Coerce does
+    // exactly the epilogue's FILD + rt_fixdn, because that is the same conversion spelled once.
+    this._b.Ret(this._resultVar.Type is BcdType { IsFixedPoint: true } fix
+      ? this.Coerce(cell, fix, PbType.Ext)
+      : cell);
   }
 
   /// <summary>
@@ -4581,7 +4593,15 @@ public sealed partial class IrLowering {
           ? this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), p.Type)
           : this.AddressOfArgument(arguments[i], p.Type));
     }
-    var result = this._b.Call(callee.ReturnType, callee, IrConventionOf(proc.CallConv), args);
+    var call = this._b.Call(callee.ReturnType, callee, IrConventionOf(proc.CallConv), args);
+    // A FIX result arrives as the numeric value in ST(0) (see TrySignature), while every expression
+    // around this call is typed FIX and therefore expects the scaled cell. Scaling it straight back is
+    // not a round trip introduced here: the direct emitter does the identical pair - rt_fixdn in the
+    // callee's epilogue, rt_fixup where the caller stores the result - and pbvFixDigits is a runtime
+    // cell, so neither half may be folded away.
+    var result = proc.ReturnType is BcdType { IsFixedPoint: true } fix
+      ? this.Coerce(call, PbType.Ext, fix)
+      : call;
     foreach (var temporary in stringTemporaries)
       this.FreeOwnedStringSlot(temporary);
     return result;

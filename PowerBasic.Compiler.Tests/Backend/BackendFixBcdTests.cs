@@ -242,4 +242,55 @@ public sealed class BackendFixBcdTests {
       Assert.That(output, Is.EqualTo("1.23 | 2.46"), "quantized at the store, then read back and doubled");
     });
   }
+
+  /// <summary>
+  /// A FIX RESULT crosses at the other representation from a FIX argument: the callee's epilogue
+  /// converts the scaled cell through rt_fixdn and returns the NUMERIC value in ST(0), where a FIX
+  /// parameter travels as the raw scaled cell. The asymmetry is the direct emitter's, and matching it
+  /// exactly is what lets a routed callee and a direct caller agree.
+  ///
+  /// <para>
+  /// pbvFixDigits is moved to four BEFORE the calls and the argument is not representable at two
+  /// places, so a compile-time scale, a missing conversion, or a conversion applied twice all print
+  /// something else. Two call sites with different arguments keep IPCP from proving either constant,
+  /// and the negative one pins that the quantization rounds to nearest rather than toward zero.
+  /// </para>
+  /// </summary>
+  [TestCase(true)]
+  [TestCase(false)]
+  public void Route_GivenFixFunctionResult_ThenTheNumericValueCrossesInSt0(bool optimize) {
+    const string source = """
+      FUNCTION F(BYVAL a AS DOUBLE) AS FIX NOINLINE
+        F = a / 8
+      END FUNCTION
+      pbvFixDigits = 4
+      DIM r@
+      r@ = F(9.87654)
+      PRINT r@
+      r@ = F(-9.87654)
+      PRINT r@
+      PRINT F(1.0) * 3
+      """;
+
+    (string Output, IEnumerable<string> Routed) Compile(bool routed) {
+      var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
+        Dialect.Pb36);
+      Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+      var cg = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+      var image = cg.EmitExecutable();
+      Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
+      return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
+    }
+
+    var (output, names) = Compile(routed: true);
+
+    Assert.Multiple(() => {
+      Assert.That(names, Does.Contain("F"),
+        "the FIX-returning function did not route - the comparison would compare the same image twice");
+      Assert.That(output, Is.EqualTo(Compile(routed: false).Output), "the two emitters disagree");
+      Assert.That(output, Is.EqualTo("1.2346 |-1.2346 | .375"),
+        "9.87654/8 is 1.2345675, which only reaches 1.2346 if the four-digit runtime scale survived "
+        + "the return; 1/8 quantized and then tripled is .375");
+    });
+  }
 }
