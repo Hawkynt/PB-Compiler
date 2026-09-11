@@ -311,9 +311,9 @@ public sealed class AggregateZeroCostTests {
 
   [Test]
   public void Pipeline_GivenWholeUnionCopyAcrossDifferentViews_WhenOptimized_ThenMemcpyAndSharedStorageRemain() {
-    // The source writes the LONG view while the destination reads INTEGER. Those regions overlap with
-    // incompatible extents, so decomposing the copy into independent scalar slots would destroy the
-    // very aliasing UNION exists to expose.
+    // The source writes the LONG view; the destination is then read through both views. Those two
+    // destination regions overlap with incompatible extents, so decomposing the copy into independent
+    // scalar slots would destroy the very aliasing UNION exists to expose.
     var module = Optimize("""
       UNION Overlay
         I AS INTEGER
@@ -326,7 +326,7 @@ public sealed class AggregateZeroCostTests {
         DIM b AS Overlay
         a.L = x&
         b = a
-        UnionCopy& = b.I
+        UnionCopy& = b.L - b.I
       END FUNCTION
       """);
     var probe = module.Functions.Single(f => f.Name.Equals("UnionCopy", StringComparison.OrdinalIgnoreCase));

@@ -160,6 +160,23 @@ public sealed class BackendRuntimeCallTests {
     END
     """;
 
+  // Same record, but the copy lands in an array element rather than a scalar-replaceable local, so
+  // O0059's dead-field pruning cannot retire it and the seven-byte block copy reaches the selector.
+  private const string _udtArrayCopyProgram = """
+    TYPE Odd7
+      A AS INTEGER
+      Spare AS BYTE
+      B AS LONG
+    END TYPE
+    DIM sourceValue AS Odd7
+    DIM records(1 TO 2) AS Odd7
+    sourceValue.A = -123
+    sourceValue.B = 987654
+    records(2) = sourceValue
+    PRINT records(2).A; records(2).B
+    END
+    """;
+
   private const string _staticEraseProgram = """
     DIM values(1 TO 5) AS INTEGER
     FOR i% = 1 TO 5
@@ -724,7 +741,7 @@ public sealed class BackendRuntimeCallTests {
 
   [Test]
   public void Select_GivenWholeUdtCopy_ThenUsesTheSegmentedMemoryCopyKernel() {
-    var m = Select(_udtCopyProgram, "main");
+    var m = Select(_udtArrayCopyProgram, "main");
 
     Assert.That(m.AllInstructions, Has.Some.Matches<MInstr>(instruction => instruction.Opcode == MOpcode.Call
       && instruction.Operands is [MOperand.LabelRef { Name: "rt_memcpy" }]));
