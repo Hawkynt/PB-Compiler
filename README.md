@@ -17,8 +17,9 @@
 [![Nightly](https://img.shields.io/github/v/release/Hawkynt/PB-Compiler?include_prereleases&sort=date&filter=nightly*&label=nightly&color=FF9800)](https://github.com/Hawkynt/PB-Compiler/releases)
 [![Downloads](https://img.shields.io/github/downloads/Hawkynt/PB-Compiler/total)](https://github.com/Hawkynt/PB-Compiler/releases)
 
-**A from-scratch PowerBASIC-family compiler that turns vintage BASIC into real
-16-bit DOS executables — written in modern C#, runnable on any 64-bit host.**
+> A from-scratch PowerBASIC-family compiler that turns vintage BASIC into real 16-bit DOS
+> executables — written in modern C#, runnable on any 64-bit host, and driven against the
+> original compilers until its programs behave identically, documented bugs and all.
 
 PB-Compiler (`pbc`) reads unmodified BASIC source from the DOS era and emits real
 binaries you can run on actual DOS or in DOSBox:
@@ -40,19 +41,26 @@ behaving exactly as it did.
 diffs after running both executables. Nothing compares compiled images; the contract is that a
 program behaves the same and its artefacts are usable the same way.)
 
-## Why
+## 🧭 Vision
 
-PowerBASIC for DOS is proprietary, 16-bit and long out of print — it cannot run
-on modern 64-bit hosts. PB-Compiler is a clean-room, cross-platform
-reimplementation so that PB codebases (such as
-[PB-SvgaLibrary](https://github.com/Hawkynt/PB-SvgaLibrary)) can be built and
-verified on modern machines and CI, while the binaries it produces still run on
-the original target: 8086+ real mode under DOS or DOSBox. Along the way it grew
-into a broader DOS-BASIC toolchain — Turbo Basic, QuickBASIC and BASIC PDS — and
-into `pb36`, a what-if "next PowerBASIC" that keeps the language but rebuilds the
-back end around modern optimization.
+PowerBASIC for DOS is proprietary, 16-bit and long out of print, which means the programs written in
+it are slowly becoming unbuildable. This is a compiler for that language family written from scratch
+in C#, running on hardware that still exists and emitting binaries that still run.
 
-## Supported dialects
+Fidelity is the contract, not the aspiration: the historic dialects are driven against the original
+compilers until behaviour matches, documented bugs included, because a compiler that is *nearly*
+compatible is a compiler you cannot trust with old source. On top of that sits a forward path — a
+real optimization pipeline and a lean backend — that existing programs opt into without changing.
+
+## ✨ Features
+
+- Reads unmodified DOS-era BASIC and emits real DOS MZ `.EXE`, compiled units (`.PBU`) and unit libraries (`.PBL`)
+- Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
+- An SSA-based optimization pipeline available in every dialect via `--optimize`
+- A `pb36` superset that adds language features while leaving existing programs behaving as they did
+- Runs on any 64-bit host; the output runs on real DOS or in DOSBox
+
+## 🧩 Support matrix
 
 The dialect is chosen with `--dialect` (default `pb35`). Selecting an older
 dialect both **gates** newer language features (they raise a diagnostic) and
@@ -83,7 +91,82 @@ both `pbc` and the original and asserts the outputs match byte for byte. See
 [docs/CONFORMANCE.md](docs/CONFORMANCE.md) for the positive, negative, syntax-oracle and runtime-oracle test lanes, and
 [docs/BASIC-FAMILY.md](docs/BASIC-FAMILY.md) for the cross-family lineage.
 
-## PowerBASIC 3.6 — what's new
+## 📦 Installation
+
+### Build
+
+```bash
+git clone https://github.com/Hawkynt/PB-Compiler
+cd PB-Compiler
+dotnet build -c Release
+```
+
+`pbc` (the CLI front end) is built from `pbc/`; the compiler itself lives in the
+`PowerBasic.Compiler/` library.
+
+### Compile a program
+
+```basic
+' HELLO.BAS
+PRINT "Hello, World!"
+```
+
+```bash
+dotnet run --project pbc -- HELLO.BAS        # -> HELLO.EXE (DOS MZ, real mode)
+```
+
+Then run the result in DOSBox:
+
+```bash
+dosbox -c "mount c ." -c "c:" -c "HELLO.EXE"
+```
+
+### Usage
+
+```bash
+pbc HELLO.BAS                 # -> HELLO.EXE (DOS MZ, real mode)
+pbc --dialect pb36 HELLO.BAS  # pb36 syntax features (optimizer on by default)
+pbc --dialect qb45 OLD.BAS    # compile a QuickBASIC 4.5 source
+pbc --optimize OLD.BAS        # run the optimizer for any dialect
+pbc --no-optimize APP.BAS     # disable the optimizer (faithful codegen)
+pbc --x-backend FAST.BAS      # opt into the IR -> native x86-16 backend
+pbc -G386 TEST.BAS            # allow 80386 instructions ($CPU 80386)
+pbc UNIT.BAS                  # $COMPILE UNIT inside -> UNIT.PBU
+pbc MAIN.BAS                  # $LINK "UNIT.PBU" / "MY.PBL" inside -> linked EXE
+pbc --emit-c PROG.BAS         # optimize through the IR and emit portable C99
+pbc --emit-llvm PROG.BAS      # ... or textual LLVM for the native toolchain
+pbc lib build MY.PBL *.PBU    # bundle units into a library
+pbc lib list MY.PBL           # show exports/imports of a library or unit
+```
+
+Useful options: `-O <file>` (output name), `-I <dir>` (`$INCLUDE` search path),
+`-L <dir>` (`$LINK` search path), the runtime-check switches `-EB`/`-EN`/`-EO`/`-ES`
+(bounds/numeric/overflow/stack), and `-OZF` (`$OPTIMIZE SPEED`). Run `pbc --help`
+for the full list.
+
+## 🚀 Quick start
+
+```bash
+pbc HELLO.BAS -o HELLO.EXE          # a DOS MZ executable
+pbc HELLO.BAS -o HELLO.EXE --optimize
+```
+
+Run the result on DOS or in DOSBox. [Getting started](#-installation) below covers the dialect
+selection and the unit/library forms.
+
+## ❓ Why
+
+PowerBASIC for DOS is proprietary, 16-bit and long out of print — it cannot run
+on modern 64-bit hosts. PB-Compiler is a clean-room, cross-platform
+reimplementation so that PB codebases (such as
+[PB-SvgaLibrary](https://github.com/Hawkynt/PB-SvgaLibrary)) can be built and
+verified on modern machines and CI, while the binaries it produces still run on
+the original target: 8086+ real mode under DOS or DOSBox. Along the way it grew
+into a broader DOS-BASIC toolchain — Turbo Basic, QuickBASIC and BASIC PDS — and
+into `pb36`, a what-if "next PowerBASIC" that keeps the language but rebuilds the
+back end around modern optimization.
+
+## 🆕 PowerBASIC 3.6 — what's new
 
 `pb36` answers a simple question: *what if there had been one more DOS release?*
 It is the **language-features** dialect — a strict superset of `pb35` that adds
@@ -240,7 +323,7 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 > procedure (e.g. returned to outlive its frame) is roadmap, to be backed by a
 > heap environment (see [docs/PB36.md](docs/PB36.md)).
 
-## Optimizations
+## ⚡ Optimizations
 
 The optimizer sits between the binder and the emitter, working on the bound
 `SemanticModel` — the shared intermediate representation every dialect produces.
@@ -801,60 +884,7 @@ roadmap — each page says which. The switches that select pass sets
 (`$OPTIMIZE SPEED|SIZE|OFF`, `$CPU`, `$ERROR`) are described on the pages that
 depend on them and in [docs/PB36.md](docs/PB36.md).
 
-## Getting started
-
-### Build
-
-```bash
-git clone https://github.com/Hawkynt/PB-Compiler
-cd PB-Compiler
-dotnet build -c Release
-```
-
-`pbc` (the CLI front end) is built from `pbc/`; the compiler itself lives in the
-`PowerBasic.Compiler/` library.
-
-### Compile a program
-
-```basic
-' HELLO.BAS
-PRINT "Hello, World!"
-```
-
-```bash
-dotnet run --project pbc -- HELLO.BAS        # -> HELLO.EXE (DOS MZ, real mode)
-```
-
-Then run the result in DOSBox:
-
-```bash
-dosbox -c "mount c ." -c "c:" -c "HELLO.EXE"
-```
-
-### Usage
-
-```bash
-pbc HELLO.BAS                 # -> HELLO.EXE (DOS MZ, real mode)
-pbc --dialect pb36 HELLO.BAS  # pb36 syntax features (optimizer on by default)
-pbc --dialect qb45 OLD.BAS    # compile a QuickBASIC 4.5 source
-pbc --optimize OLD.BAS        # run the optimizer for any dialect
-pbc --no-optimize APP.BAS     # disable the optimizer (faithful codegen)
-pbc --x-backend FAST.BAS      # opt into the IR -> native x86-16 backend
-pbc -G386 TEST.BAS            # allow 80386 instructions ($CPU 80386)
-pbc UNIT.BAS                  # $COMPILE UNIT inside -> UNIT.PBU
-pbc MAIN.BAS                  # $LINK "UNIT.PBU" / "MY.PBL" inside -> linked EXE
-pbc --emit-c PROG.BAS         # optimize through the IR and emit portable C99
-pbc --emit-llvm PROG.BAS      # ... or textual LLVM for the native toolchain
-pbc lib build MY.PBL *.PBU    # bundle units into a library
-pbc lib list MY.PBL           # show exports/imports of a library or unit
-```
-
-Useful options: `-O <file>` (output name), `-I <dir>` (`$INCLUDE` search path),
-`-L <dir>` (`$LINK` search path), the runtime-check switches `-EB`/`-EN`/`-EO`/`-ES`
-(bounds/numeric/overflow/stack), and `-OZF` (`$OPTIMIZE SPEED`). Run `pbc --help`
-for the full list.
-
-## Status
+## 📋 Status
 
 Under construction — see [REQUIREMENTS.md](REQUIREMENTS.md) for the MoSCoW
 breakdown and [CHANGELOG.md](CHANGELOG.md) for progress. In short: the full
@@ -865,7 +895,7 @@ cross-vendor dialects, the `pb36` language features, and the optimizer (run acro
 every dialect) are validated by the oracle differential harness and DOSBox
 execution tests.
 
-## Layout
+## 📁 Layout
 
 | Path | What |
 |------|------|
@@ -878,22 +908,7 @@ execution tests.
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | The open frontier, and the evidence behind each closed item |
 | [`INDEX.md`](INDEX.md) | Symbol locator - every type, method and global with its `file:line` |
 
-## Contributing
-
-Contributions are welcome. The bar is the same one the project holds itself to:
-historic-dialect changes must stay byte-identical under the differential harness,
-and the test suite (NUnit, Given-When-Then) must stay green. Start with
-[REQUIREMENTS.md](REQUIREMENTS.md) and the docs above; [docs/ROADMAP.md](docs/ROADMAP.md)
-carries the open items and what closing the earlier ones actually took.
-
-## Support
-
-If this project saves you time or money, consider supporting its development:
-
-[![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-EA4AAA?logo=githubsponsors)](https://github.com/sponsors/Hawkynt)
-[![PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?logo=paypal)](https://www.paypal.me/hawkynt)
-
-## Keywords
+## 🔤 Keywords
 
 PowerBASIC compiler · PB 3.5 · PowerBASIC 3.x · Turbo Basic · QuickBASIC · QBasic ·
 GW-BASIC · BASICA · Microsoft BASIC PDS 7.1 · BASIC compiler · retro BASIC ·
@@ -904,6 +919,31 @@ peephole, instruction scheduling) · written in C# / .NET · cross-platform DOS
 toolchain · OMF object files · PBU units · PBL libraries · EMS/XMS memory ·
 coroutines, generics and pattern matching for BASIC (the pb3.6 dialect).
 
-## License
+## 🛠️ Building
+
+```bash
+dotnet build -c Release
+dotnet test
+```
+
+The oracle harness additionally needs DOSBox: it runs this compiler's output and the original
+compiler's output side by side and diffs what the programs actually do.
+
+## 🤝 Contributing
+
+Contributions are welcome. The bar is the same one the project holds itself to:
+historic-dialect changes must stay byte-identical under the differential harness,
+and the test suite (NUnit, Given-When-Then) must stay green. Start with
+[REQUIREMENTS.md](REQUIREMENTS.md) and the docs above; [docs/ROADMAP.md](docs/ROADMAP.md)
+carries the open items and what closing the earlier ones actually took.
+
+## ❤️ Support
+
+If this project saves you time or money, consider supporting its development:
+
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-EA4AAA?logo=githubsponsors)](https://github.com/sponsors/Hawkynt)
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?logo=paypal)](https://www.paypal.me/hawkynt)
+
+## 📜 License
 
 Licensed under LGPL-3.0-or-later — see [LICENSE](LICENSE).
