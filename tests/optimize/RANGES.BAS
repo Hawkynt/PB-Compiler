@@ -45,6 +45,7 @@ DECLARE SUB Opaque()
 
 IndexRangeFromCounter
 IndexRangeUnknownKeepsCheck 4
+IndexRangeUnknownKeepsCheck 7
 DerivedRangeFromCounter
 MaskedIndexNeedsNoCheck 19
 ModuloIndexNeedsNoCheck
@@ -84,6 +85,12 @@ END SUB
 ' @what     the same store indexed by a parameter of unknown range
 ' @expect   the check MUST stay - this is the control proving the lattice is
 '           not simply dropping every check it sees
+' @note     TWO call sites with different values, and that is load-bearing. With
+'           one constant site the routed back end's interprocedural propagation
+'           proves k% in range and drops the check ENTIRELY - correctly, and
+'           more than the direct emitter manages. A control whose premise an
+'           optimizer can discharge is not a control, so the range is made
+'           genuinely unknown rather than merely written as a parameter.
 ' @assert   present-call rt_raise
 ' @status   done
 ' ---------------------------------------------------------------------------

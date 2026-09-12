@@ -2361,17 +2361,41 @@ public sealed class OptimizerTests {
     // INCR of an array element needs an address computation and stages the amount through AX.
     const string direct = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a% = n%\n  INCR a%, 5\n  INCR a%, 6\n  PRINT a%\nEND SUB";
     const string array = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  DIM z%(0 TO 3)\n  z%(1) = n%\n  INCR z%(1), 5\n  INCR z%(1), 6\n  PRINT z%(1)\nEND SUB";
-    Assert.That(CountAddMemImm(Compile(direct, Dialect.Pb36)), Is.GreaterThan(CountAddMemImm(Compile(array, Dialect.Pb36))),
+    Assert.That(CountAddMemImm(ProcedureBytes(direct, "s")), Is.GreaterThan(CountAddMemImm(ProcedureBytes(array, "s"))),
       "INCR of a direct cell with a constant amount uses ADD [mem],imm; an array element does not");
   }
 
   // 83 /0 with a memory mod field = ADD word [mem], imm8 (sign-extended) - the memory add-immediate
-  private static int CountAddMemImm(byte[] image) {
+  private static int CountAddMemImm(ReadOnlySpan<byte> code) {
     var count = 0;
-    for (var i = 0; i + 1 < image.Length; ++i)
-      if (image[i] == 0x83 && (image[i + 1] & 0x38) == 0 && (image[i + 1] & 0xC0) != 0xC0)
+    for (var i = 0; i + 1 < code.Length; ++i)
+      if (code[i] == 0x83 && (code[i + 1] & 0x38) == 0 && (code[i + 1] & 0xC0) != 0xC0)
         ++count;
     return count;
+  }
+
+  /// <summary>
+  /// Just the named procedure's bytes. A claim about ONE procedure's instruction selection has to be
+  /// measured over that procedure: scanning the whole image counts matches in the runtime and in
+  /// every other body, so any change that shifts bytes anywhere can invent or destroy one. This test
+  /// failed exactly that way when local arrays began being zeroed on entry - the extra prologue in
+  /// the array variant brought its whole-image count up to the other's without either INCR changing.
+  /// </summary>
+  private static ReadOnlySpan<byte> ProcedureBytes(string source, string procedure) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    var listing = generator.DescribeImage();
+    var code = exe.AsSpan(BitConverter.ToUInt16(exe, 8) * 16).ToArray();
+    var target = listing.Procedures.First(p => p.Name.Equals(procedure, StringComparison.OrdinalIgnoreCase));
+    var end = listing.Procedures.Where(p => p.CodeOffset > target.CodeOffset).Select(p => p.CodeOffset)
+      .Concat(listing.RuntimeLabels.Where(l => l.Offset > target.CodeOffset).Select(l => l.Offset))
+      .Append(Math.Min(listing.CodeLength, code.Length))
+      .Min();
+    return code.AsSpan(target.CodeOffset, Math.Min(end, code.Length) - target.CodeOffset);
   }
 
   [Test]
