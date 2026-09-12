@@ -75,6 +75,12 @@ Where that leaves the two gates today:
 
 ### 4. Optimizer replacement
 
+**Measured.** `OptimizationBatteryTests.Battery_GivenScenarios_WhenTheBackEndIsForced_ThenTheUnmetListDoesNotGrow` runs the battery's expectations with routing forced: **12 of 55 are unmet** (CODEGEN 9, RANGES 3), recorded as a baseline so the list can only shrink.
+
+Reported rather than gating, because almost every assertion names a specific INSTRUCTION and a routed sequence reaching the same result by another shape is not a regression. Telling a missing optimization from a fixture that merely encodes the legacy instruction sequence is done one at a time, by argument.
+
+**An unmet byte-pattern expectation is not a behavioural one**, and the clearest case is the scariest-looking: `IndexRangeUnknownKeepsCheck` is the control proving the range lattice does not simply drop every bounds check, it asserts `present-call rt_raise`, and the routed image calls no raise routine at all. It nonetheless traps an out-of-range index with error 9 in both optimizer modes — the routed path performs the check INLINE and jumps to the handler. The assertion encodes the direct emitter's mechanism, not the language's promise, and is one of the fixtures the note below says to rewrite.
+
 The forced-backend optimizer fixture is a separate gate from semantic coverage. Its remaining failures are a work list for IR or machine passes, not reasons to preserve syntax-to-machine lowering. Move a transformation according to what it knows:
 
 - language/semantic facts -> IR analysis/pass;

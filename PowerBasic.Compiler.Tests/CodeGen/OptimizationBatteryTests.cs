@@ -113,6 +113,69 @@ public sealed class OptimizationBatteryTests {
       yield return Path.GetFileName(file);
   }
 
+
+  /// <summary>
+  /// Gate 4 of the direct-emitter retirement: the same expectations with the x86-16 back end FORCED.
+  /// What the routed path does not meet is the work list for the IR and machine passes - it is not a
+  /// reason to keep syntax-to-machine lowering, and it is not a reason to reproduce the direct
+  /// emitter's instruction shapes either.
+  ///
+  /// <para>
+  /// Reported against a recorded baseline rather than gating, because most of these assertions name a
+  /// specific INSTRUCTION, and a routed sequence that reaches the same result by another shape is not
+  /// a regression. The baseline is what stops the list growing quietly.
+  /// </para>
+  /// <para>
+  /// <b>An unmet byte-pattern expectation is not a behavioural one.</b> The clearest case here is
+  /// <c>IndexRangeUnknownKeepsCheck</c>, the control that proves the range lattice does not simply
+  /// drop every bounds check: it asserts <c>present-call rt_raise</c>, and the routed image calls no
+  /// raise routine at all - yet an out-of-range index traps with error 9 in both optimizer modes,
+  /// because the routed path performs the check INLINE and jumps to the handler. The assertion
+  /// encodes the direct emitter's mechanism, not the language's promise.
+  /// </para>
+  /// </summary>
+  [TestCaseSource(nameof(Batteries))]
+  public void Battery_GivenScenarios_WhenTheBackEndIsForced_ThenTheUnmetListDoesNotGrow(string battery) {
+    var file = Path.Combine(_batteryDir, battery);
+    var source = File.ReadAllText(file);
+    var scenarios = ParseScenarios(source);
+    Assert.That(scenarios, Is.Not.Empty, $"{Path.GetFileName(file)} declares no @scenario blocks");
+
+    var optimized = Compile(source, file, optimize: true, routed: true);
+    var plain = Compile(source, file, optimize: false, routed: true);
+
+    var unmet = new List<string>();
+    foreach (var scenario in scenarios) {
+      if (!optimized.Extents.ContainsKey(scenario.Name)) {
+        unmet.Add($"{scenario.Name}: absent from the routed image");
+        continue;
+      }
+      foreach (var assertion in scenario.Asserts) {
+        var (ok, detail) = Evaluate(assertion, scenario.Name, optimized, plain);
+        if (!ok)
+          unmet.Add($"{scenario.Name}: {assertion} -> {detail}");
+      }
+    }
+
+    TestContext.Out.WriteLine($"{Path.GetFileName(file)}: {scenarios.Count} scenarios, {unmet.Count} unmet with routing forced"
+      + (unmet.Count == 0 ? "" : Environment.NewLine + "  " + string.Join(Environment.NewLine + "  ", unmet)));
+    Assert.That(unmet.Count, Is.LessThanOrEqualTo(_forcedBackendUnmet[Path.GetFileName(file)]),
+      "the routed path now misses MORE of the battery's expectations than the recorded baseline:"
+        + Environment.NewLine + "  " + string.Join(Environment.NewLine + "  ", unmet));
+  }
+
+  /// <summary>
+  /// How many of each battery's expectations the routed path does not meet today. Recorded so the
+  /// number can only go down: every one of them is either an IR/machine pass still to write or a
+  /// fixture that encodes the legacy instruction sequence and wants rewriting, and telling those two
+  /// apart is done one at a time, by argument, not by relaxing the gate.
+  /// </summary>
+  private static readonly IReadOnlyDictionary<string, int> _forcedBackendUnmet =
+    new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) {
+      ["CODEGEN.BAS"] = 9,
+      ["RANGES.BAS"] = 3,
+    };
+
   [TestCaseSource(nameof(Batteries))]
   public void Battery_GivenScenarios_WhenCompiledOptimized_ThenEachExpectationHolds(string battery) {
     var file = Path.Combine(_batteryDir, battery);
@@ -220,8 +283,10 @@ public sealed class OptimizationBatteryTests {
     return model;
   }
 
-  private static Compiled Compile(string source, string path, bool optimize) {
-    var generator = new CodeGenerator(Bind(source, path)) { Optimize = optimize };
+  private static Compiled Compile(string source, string path, bool optimize) => Compile(source, path, optimize, routed: false);
+
+  private static Compiled Compile(string source, string path, bool optimize, bool routed) {
+    var generator = new CodeGenerator(Bind(source, path)) { Optimize = optimize, UseExperimentalBackend = routed };
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     var listing = generator.DescribeImage();
