@@ -232,6 +232,7 @@ public sealed partial class DosRuntime {
     ("pow", this.EmitPow),
     ("rounding", this.EmitRounding),
     ("round_away", this.EmitRoundAway),
+    ("mbf", this.EmitMbf),
     ("long_helpers", this.EmitLongHelpers),
     ("memory", this.EmitMemoryProcedures),
     ("strings", this.EmitStringProcedures),

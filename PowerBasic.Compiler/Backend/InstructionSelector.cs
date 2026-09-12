@@ -739,6 +739,15 @@ public sealed partial class InstructionSelector {
     if (this.RefusesMbf(instr))
       return false;
     switch (instr) {
+      // MBF: the load and the FPToMbf cast emit NOTHING - the work happens at the conversion and at
+      // the store, which are the only points where both the cell and the value are known.
+      case IrLoad { Type.IsMbf: true }:
+      case IrCast { Op: IrCastOp.FPToMbf }:
+        return true;
+      case IrCast { Op: IrCastOp.MbfToFP } mbfLoad:
+        return this.SelectMbfLoad(mbfLoad);
+      case IrStore { Value: IrCast { Op: IrCastOp.FPToMbf } } mbfStore:
+        return this.SelectMbfStore(mbfStore);
       case IrBinary bin when bin.Type.IsFloat:
         return this.SelectFloatBinary(bin);
       case IrLoad load when load.Type.IsFloat:
@@ -2579,9 +2588,33 @@ public sealed partial class InstructionSelector {
   /// CARRIES the format rather than refusing to lower it, which makes checking for it the back end's
   /// job; treating mbf32 as f32 would read a different number.
   /// </summary>
+
+  /// <summary>
+  /// Whether <paramref name="instruction"/> is one of the four an MBF number legitimately takes part
+  /// in: the load feeding its conversion, the conversion, the conversion back, and the store that
+  /// consumes it. Matching on the CONSUMER is how the existing FPToSI/SIToFP pair is recognised -
+  /// selection walks in order and would otherwise decline the first half before the second was known.
+  /// </summary>
+  private static bool IsMbfConversionShape(IrInstruction instruction) => instruction switch {
+    IrLoad { Type.IsMbf: true } load => load.Users is [IrCast { Op: IrCastOp.MbfToFP }],
+    IrCast { Op: IrCastOp.MbfToFP } cast => cast.Value is IrLoad { Type.IsMbf: true },
+    IrCast { Op: IrCastOp.FPToMbf } cast => cast.Users is [IrStore],
+    IrStore { Value: IrCast { Op: IrCastOp.FPToMbf } } => true,
+    _ => false,
+  };
+
   private bool RefusesMbf(IrInstruction instruction) {
+    // The three that only MOVE or CONVERT the bits are allowed through; see SelectMbfLoad. A load
+    // whose consumer is the MbfToFP cast, that cast, and the FPToMbf/store pair are the whole surface
+    // - anything that would COMPUTE on MBF bits still declines, because the x87 cannot.
+    if (IsMbfConversionShape(instruction))
+      return false;
     if (instruction.Type.IsMbf)
-      return this.Decline($"Microsoft Binary Format ({instruction.Type}) needs the MBF/IEEE load-store conversion");
+      // The instruction KIND is named, not just the type. Every MBF decline looks alike otherwise,
+      // and the one that mattered here was a cast feeding a PHI - which said that mem2reg had
+      // promoted the cell, so the conversions had no address left to work through.
+      return this.Decline($"Microsoft Binary Format ({instruction.Type} in {instruction.GetType().Name}) "
+        + "outside the load/convert/store shape");
     foreach (var operand in instruction.Operands)
       if (operand.Type.IsMbf)
         return this.Decline($"an operand in Microsoft Binary Format ({operand.Type})");
@@ -3919,6 +3952,65 @@ public sealed partial class InstructionSelector {
   /// <see cref="SelectFloatToInt"/> wants exactly the nearest-with-ties-to-even <c>FISTP</c> gives.
   /// </para>
   /// </summary>
+  /// <summary>
+  /// <c>MbfToFP</c>: the cell's near offset into AX, <c>rt_mbfld</c>, and the converted value comes
+  /// back on the x87 where every other float in this back end lives. The LOAD feeding this emitted
+  /// nothing - see IsMbfConversionShape - because the address is what the routine wants, not the
+  /// bits, and only here are both the cell and its consumer known.
+  /// </summary>
+  private bool SelectMbfLoad(IrCast cast) {
+    if (cast.Value is not IrLoad load || !this.TryNearAddress(load.Pointer, out var address))
+      return false;
+    this.EmitMbfCall("rt_mbfld", address);
+    this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
+    return true;
+  }
+
+  /// <summary>
+  /// <c>FPToMbf</c> and the store that consumes it: the value onto the x87, the cell's near offset
+  /// into AX, and <c>rt_mbfst</c> writes the four bytes where they belong. The cast itself emitted
+  /// nothing, for the reason the load did.
+  /// </summary>
+  private bool SelectMbfStore(IrStore store) {
+    if (store.Value is not IrCast { Op: IrCastOp.FPToMbf } cast
+        || !this.TryFloatOperand(cast.Value, out var source)
+        || !this.TryNearAddress(store.Pointer, out var address))
+      return false;
+    this.EmitX87(MOpcode.Fld, source, reads: true);
+    this.EmitMbfCall("rt_mbfst", address);
+    return true;
+  }
+
+  /// <summary>Stages the cell address in AX and calls one of the MBF conversions.</summary>
+  private void EmitMbfCall(string routine, MOperand address) {
+    var destination = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, address],
+      MovEffect(destination, address)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(routine)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: _callClobbers));
+  }
+
+  /// <summary>
+  /// The NEAR OFFSET of the storage <paramref name="pointer"/> names, for a routine that converts in
+  /// place. A module cell has one the codegen laid out and a computed pointer is already one; a frame
+  /// slot has none the selector can name, because its displacement is settled later, in the emitter -
+  /// so an MBF LOCAL declines rather than being handed an address that is not its own.
+  /// </summary>
+  private bool TryNearAddress(IrValue pointer, out MOperand address) {
+    if (pointer is IrGlobalVariable global && IsAddressableGlobal(global)) {
+      address = new MOperand.DataOffset(global.Name, 0);
+      return true;
+    }
+    if (this._vregs.TryGetValue(pointer, out var register)) {
+      address = new MOperand.Register(register with { Size = MRegSize.Word });
+      return true;
+    }
+    address = null!;
+    return this.Decline($"Microsoft Binary Format: no near address for {pointer.GetType().Name}");
+  }
+
   private bool SelectTruncationTowardZero(IrCast toInteger, IrCast backToFloat) {
     if (!this.TryFloatOperand(toInteger.Value, out var source))
       return false;

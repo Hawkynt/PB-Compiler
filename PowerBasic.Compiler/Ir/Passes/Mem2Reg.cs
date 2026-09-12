@@ -74,6 +74,14 @@ public static class Mem2Reg {
   /// aggregate field views are not.
   /// </summary>
   internal static bool IsPromotable(IrAlloca a) {
+    // Microsoft Binary Format is STORAGE whose bits no target computes on: BASICA/GW keep floats in
+    // it, and every read converts to IEEE while every write converts back. Promoting such a cell to
+    // an SSA value hands the rest of the compiler a value in a format it has no operations for - the
+    // x86-16 back end reaches the conversions through the cell's ADDRESS, and a phi has none. It is
+    // refused here rather than at each consumer because the cell is the thing that is foreign, not
+    // any particular use of it.
+    if (a.Allocated.IsMbf)
+      return false;
     foreach (var user in a.Users)
       switch (user) {
         case IrLoad load when ReferenceEquals(load.Pointer, a) && load.Type.SameStorage(a.Allocated):

@@ -60,15 +60,16 @@ String ownership, error-handler state, DATA/RESTORE state, dynamic-array descrip
 Where that leaves the two gates today:
 
 - the pb36 corpus compiles **completely** with routing mandatory, in both optimizer modes — `MandatoryRoutingTests` pins it, and pins that the mode really does reject the constructs that decline, so it cannot pass vacuously;
-- the genuine-compiler battery run with routing mandatory scores **546 pass / 1 fail**, against **548 / 0 / 0** with the fallback. Those 11 are the whole remaining distance for this gate, and they are all historic dialects, which is why the pb36 corpus does not see them:
+- the genuine-compiler battery run with routing mandatory scores **548 pass / 0 fail / 0 skip** — the same as with the fallback. Every program in the battery, in every dialect, in both the direct and the round-trip lane, compiles with the direct emitter forbidden from taking any body. Those 11 are the whole remaining distance for this gate, and they are all historic dialects, which is why the pb36 corpus does not see them:
 
-One program remains: `basica/DIFF01`, on `selection: Microsoft Binary Format (mbf32) needs the MBF/IEEE load-store conversion`. BASICA/GW floats are stored in Microsoft Binary Format, which the x87 cannot compute on — every load converts to IEEE and every store converts back. The IR already CARRIES the format (`MbfToFP` / `FPToMbf` casts) rather than refusing to lower it, so this is a selector gap, not a lowering one. It wants runtime routines for the same reason the BASCOM rounding did: the conversion branches, and the selector emits within one block.
-
-Closed while measuring:
+**This gate is now met for the battery.** It was 526/11 when the measurement first existed. What closed, in the order it was found:
 
 - **BASCOM half-away-from-zero rounding** (6 programs) — not a missing ABI row; no such routine existed. `rt_rndaway` is `rt_round`'s body without the decimal-places scaling, in a runtime section of its own, because the trimmer emits per section and sharing `rounding` would have added its bytes to every program that rounds at all.
 - **A whole integer constant on the float path** (2 programs) — a constant the front end typed as a float and the folder left whole (`32767 + 1` promoted past INTEGER). It goes in the same qword pool as any float literal, guarded on round-tripping so a value the pool cannot hold still declines rather than being quietly rounded.
-- **BASICA/GW source control cannot reach** (2 programs) — `DEADTEXT`'s line 40 is arbitrary text a `GOTO` skips, and the language never parses a line execution does not reach. `LowerIf` already folded a constant IF so a dead ARM never reached the lowering, but this is a top-level statement. The direct emitter's own reachability set is handed in rather than recomputed: two analyses would be two answers to a question that must have one. A deferred line that IS reachable still declines.
+- **BASICA/GW source control cannot reach** (2 programs) — `DEADTEXT`'s line 40 is arbitrary text a `GOTO` skips, and the language never parses a line execution does not reach. The direct emitter's own reachability set is handed in rather than recomputed: two analyses would be two answers to a question that must have one. A deferred line that IS reachable still declines.
+- **Microsoft Binary Format** (1 program) — BASICA/GW floats are stored in MBF, which the x87 cannot compute on, so every load converts to IEEE and every store converts back. `rt_mbfld`/`rt_mbfst` are those conversions as routines, because the conversion branches while the selector emits within one block; they take the cell's near OFFSET, so an MBF number is converted where it lies and never becomes a register-resident value. What actually blocked it was a level up: `mem2reg` had promoted the MBF cell, and a phi has no address for the conversions to work through — so an MBF cell is now refused promotion, the cell being the thing that is foreign rather than any particular use of it.
+
+**Every figure here was taken with the strict flag verified live** — against a construct that must decline, and against the same construct compiling cleanly without it. An earlier measurement reported a clean strict sweep that was really the ordinary gate with the flags silently ignored, because the branch predated the flag.
 
 ### 4. Optimizer replacement
 
