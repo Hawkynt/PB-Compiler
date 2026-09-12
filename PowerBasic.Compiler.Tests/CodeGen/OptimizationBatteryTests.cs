@@ -24,6 +24,13 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// <list type="bullet">
 ///   <item><c>present &lt;pattern&gt;</c> / <c>absent &lt;pattern&gt;</c> - a named byte
 ///     pattern from <see cref="_patterns"/> occurs (or not) inside the SUB's code.</item>
+///   <item>A pattern may name ALTERNATIVES as <c>a|b</c>, holding when any of them occurs. That is
+///     for an expectation about the OPERATION rather than one encoding of it: the reciprocal
+///     multiply is the same optimization whether the allocator parked the magic number in BX or in
+///     CX, so <c>present imul-bx|imul-cx</c> says what the scenario means and
+///     <c>present imul-bx</c> only says what one emitter happened to do. Keep the alternatives to
+///     encodings of a single operation - a list spanning two different instructions asserts
+///     nothing.</item>
 ///   <item><c>present-call &lt;label&gt;</c> / <c>absent-call &lt;label&gt;</c> - the SUB
 ///     contains (or not) a near call whose target is that runtime label or procedure.</item>
 ///   <item><c>count &lt;pattern&gt; &lt;n&gt;</c> - the pattern occurs exactly n times (says what
@@ -50,12 +57,17 @@ public sealed class OptimizationBatteryTests {
   /// </summary>
   private static readonly Dictionary<string, byte[]> _patterns = new(StringComparer.OrdinalIgnoreCase) {
     ["imul-bx"] = [0xF7, 0xEB],          // IMUL BX   - signed 16x16 -> 32 in DX:AX
+    ["imul-cx"] = [0xF7, 0xE9],          // IMUL CX   - the same multiply out of the other register
     ["mul-bx"] = [0xF7, 0xE3],           // MUL BX    - unsigned 16x16 -> 32
     ["idiv-bx"] = [0xF7, 0xFB],          // IDIV BX   - signed 32/16 divide
     ["div-bx"] = [0xF7, 0xF3],           // DIV BX    - unsigned 32/16 divide
     ["cmp-ax-bx"] = [0x39, 0xD8],        // CMP AX,BX - a 16-bit comparison
+    ["cmp-ax-frame"] = [0x3B, 0x46],     // CMP AX,[BP+disp8] - the same comparison against an
+                                         // operand left in the frame instead of staged through BX
     ["cmp-dx-cx"] = [0x39, 0xCA],        // CMP DX,CX - the high-word compare of a signed 32-bit fold
     ["cmp-ax-imm"] = [0x83, 0xF8],       // CMP AX,imm8 - a comparison against a small constant
+    ["cmp-frame-imm"] = [0x83, 0x7E],    // CMP WORD PTR [BP+disp8],imm8 - the same against a frame
+                                         // cell, without loading it into the accumulator first
     ["and-ax-imm8"] = [0x83, 0xE0],      // AND AX,imm8 - a bit mask materialized (the bit test avoids it)
     ["sub-ax-bx"] = [0x29, 0xD8],        // SUB AX,BX
     ["sbb-dx-cx"] = [0x19, 0xCA],        // SBB DX,CX - the 2nd instruction of every 32-bit compare/subtract
@@ -68,7 +80,9 @@ public sealed class OptimizationBatteryTests {
     ["mov-ax-frame"] = [0x8B, 0x46],     // MOV AX,[BP+disp8] - a read of a frame cell
     ["add-ax-mem-bx"] = [0x03, 0x87],    // ADD AX,[BX+disp16] - an array element fused into the op
     ["add-di-mem-bx"] = [0x03, 0x3F],
-    ["add-di-mem-bp"] = [0x03, 0x7E],    // ADD DI,[BP+disp8] - accumulate a frame scratch into the resident register    // ADD DI,[BX] - the element accumulated straight into the resident register
+    ["add-di-mem-bp"] = [0x03, 0x7E],    // ADD DI,[BP+disp8] - accumulate a frame scratch into the resident register
+    ["add-si-ax"] = [0x01, 0xC6],        // ADD SI,AX - the same accumulate with the term already
+                                         // in a register, so nothing goes through the frame at all
     ["add-bx-2"] = [0x83, 0xC3, 0x02],   // ADD BX,2  - the element pointer stepping over 2-byte elements
     ["mov-bx-ax"] = [0x89, 0xC3],        // MOV BX,AX - an address computed into the index register
     ["mov-ax-minus1"] = [0xB8, 0xFF, 0xFF],  // MOV AX,-1 - PB's TRUE, materialized from a comparison
@@ -169,11 +183,27 @@ public sealed class OptimizationBatteryTests {
   /// number can only go down: every one of them is either an IR/machine pass still to write or a
   /// fixture that encodes the legacy instruction sequence and wants rewriting, and telling those two
   /// apart is done one at a time, by argument, not by relaxing the gate.
+  ///
+  /// <para>
+  /// The three left are one missing pass, not three. <c>AccumulateOverArrayIsHandQuality</c> and
+  /// <c>MaxScanReadsEachElementOnce</c> both walk an array by index, and the routed path recomputes
+  /// <c>base + i*2</c> from scratch every iteration - sign-extending a 16-bit counter into 32 bits
+  /// to do it - where the direct emitter strength-reduces the index to a pointer it steps by 2.
+  /// That is induction-variable strength reduction, and it is the last thing between the routed
+  /// path and this battery.
+  /// </para>
+  /// <para>
+  /// What the earlier, larger number mostly was: scenarios driven from the main body with ONE
+  /// literal argument, which the routed path's interprocedural propagation folded away entirely -
+  /// so the construct under test no longer existed to assert about. A second call site restores it.
+  /// See the <c>@note</c> on each, and <c>IndexRangeUnknownKeepsCheck</c>, where the same thing was
+  /// found first.
+  /// </para>
   /// </summary>
   private static readonly IReadOnlyDictionary<string, int> _forcedBackendUnmet =
     new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) {
-      ["CODEGEN.BAS"] = 9,
-      ["RANGES.BAS"] = 2,
+      ["CODEGEN.BAS"] = 3,
+      ["RANGES.BAS"] = 0,
     };
 
   [TestCaseSource(nameof(Batteries))]
@@ -297,7 +327,7 @@ public sealed class OptimizationBatteryTests {
     // a procedure runs to the next thing bound after it - the next procedure, the first runtime
     // label past it, or the end of the code
     var boundaries = listing.Procedures.Where(p => p.CodeOffset >= 0).Select(p => p.CodeOffset)
-      .Concat(listing.RuntimeLabels.Select(l => l.Offset))
+      .Concat(listing.RuntimeLabels.Where(l => !l.IsConstant).Select(l => l.Offset))
       .Append(Math.Min(listing.CodeLength, code.Length))
       .Distinct().OrderBy(o => o).ToList();
     var extents = new Dictionary<string, (int Start, int End)>(StringComparer.OrdinalIgnoreCase);
@@ -321,14 +351,20 @@ public sealed class OptimizationBatteryTests {
     switch (verb.ToLowerInvariant()) {
       case "present":
       case "absent": {
-        if (!_patterns.TryGetValue(argument, out var pattern))
-          return (false, $"unknown byte pattern '{argument}' (known: {string.Join(", ", _patterns.Keys.Order())})");
-        if (verb.Equals("absent", StringComparison.OrdinalIgnoreCase)
-            && _absenceSignatures.TryGetValue(argument, out var absenceSignature))
-          pattern = absenceSignature;
-        var found = code.IndexOf(pattern) >= 0;
-        var want = verb.Equals("present", StringComparison.OrdinalIgnoreCase);
-        return (found == want, found ? $"{argument} is present" : $"{argument} is absent");
+        var absent = verb.Equals("absent", StringComparison.OrdinalIgnoreCase);
+        var alternatives = argument.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var hit = (string?)null;
+        foreach (var alternative in alternatives) {
+          if (!_patterns.TryGetValue(alternative, out var pattern))
+            return (false, $"unknown byte pattern '{alternative}' (known: {string.Join(", ", _patterns.Keys.Order())})");
+          if (absent && _absenceSignatures.TryGetValue(alternative, out var absenceSignature))
+            pattern = absenceSignature;
+          if (code.IndexOf(pattern) >= 0) {
+            hit = alternative;
+            break;
+          }
+        }
+        return (hit is not null == !absent, hit is not null ? $"{hit} is present" : $"{argument} is absent");
       }
 
       case "present-call":
@@ -381,7 +417,7 @@ public sealed class OptimizationBatteryTests {
   /// </summary>
   private static HashSet<string> CallTargets(Compiled battery, string procedure) {
     var byOffset = new Dictionary<int, string>();
-    foreach (var label in battery.Listing.RuntimeLabels)
+    foreach (var label in battery.Listing.RuntimeLabels.Where(l => !l.IsConstant))
       byOffset.TryAdd(label.Offset, label.Name);
     foreach (var proc in battery.Listing.Procedures.Where(p => p.CodeOffset >= 0))
       byOffset.TryAdd(proc.CodeOffset, proc.Name);

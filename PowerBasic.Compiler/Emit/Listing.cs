@@ -56,7 +56,9 @@ public static class Listing {
       text.AppendLine("  (none)");
     else
       foreach (var label in info.RuntimeLabels)
-        text.AppendLine($"  {label.Offset:X4}  {label.Name}");
+        text.AppendLine(label.IsConstant
+          ? $"  ={label.Offset:X4}  {label.Name}"     // a value, not a place - see ListingSymbol
+          : $"  {label.Offset:X4}  {label.Name}");
     text.AppendLine();
 
     // module data layout

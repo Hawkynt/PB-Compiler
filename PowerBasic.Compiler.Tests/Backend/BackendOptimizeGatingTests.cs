@@ -84,7 +84,7 @@ public sealed class BackendOptimizeGatingTests {
     var entry = listing.Procedures.Single(p => p.Name.Equals(procedure, StringComparison.OrdinalIgnoreCase));
     Assert.That(entry.CodeOffset, Is.GreaterThanOrEqualTo(0), $"{procedure} was not emitted");
     var end = listing.Procedures.Where(p => p.CodeOffset > entry.CodeOffset).Select(p => p.CodeOffset)
-      .Concat(listing.RuntimeLabels.Select(l => l.Offset).Where(o => o > entry.CodeOffset))
+      .Concat(listing.RuntimeLabels.Where(l => !l.IsConstant).Select(l => l.Offset).Where(o => o > entry.CodeOffset))
       .Append(Math.Min(listing.CodeLength, code.Length))
       .Min();
     return code[entry.CodeOffset..Math.Min(end, code.Length)];

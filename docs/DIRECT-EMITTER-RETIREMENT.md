@@ -84,7 +84,7 @@ Where that leaves the two gates today:
 
 ### 4. Optimizer replacement
 
-**Measured.** `OptimizationBatteryTests.Battery_GivenScenarios_WhenTheBackEndIsForced_ThenTheUnmetListDoesNotGrow` runs the battery's expectations with routing forced: **11 of 55 are unmet** (CODEGEN 9, RANGES 2), recorded as a baseline so the list can only shrink.
+**Measured.** `OptimizationBatteryTests.Battery_GivenScenarios_WhenTheBackEndIsForced_ThenTheUnmetListDoesNotGrow` runs the battery's expectations with routing forced: **3 of 55 are unmet** (CODEGEN 3, RANGES 0), recorded as a baseline so the list can only shrink. It was 11; section 4c is what the other eight turned out to be.
 
 Reported rather than gating, because almost every assertion names a specific INSTRUCTION and a routed sequence reaching the same result by another shape is not a regression. Telling a missing optimization from a fixture that merely encodes the legacy instruction sequence is done one at a time, by argument.
 
@@ -119,6 +119,24 @@ The one genuine behavioural regression the measurement found has been fixed, and
 
 **Run it with the emulator.** The first measurement skipped 279 tests without `DOSBOX_EXE`, including both tail-recursion cases and the whole corpus run — and would have reported a smaller number that had never executed the program which found the bug.
 
+#### Re-measured: 62 of 6493, and none of them behavioural
+
+| | count |
+|---|---|
+| emitted-code assertions | 57 |
+| the interpreter missing an opcode | 3 |
+| pre-existing TIMER corpus case | 2 |
+| **behavioural failures caused by routing** | **0** |
+
+The three that looked behavioural were not. `Rotate32_*` asserts CF/OF against the 386 definition and died with *"unimplemented opcode 66 D1"* — the direct emitter reaches for the imm8 form of the dword shift group even when the count is one, the routed emitter uses the shorter `D1` encoding, and `Cpu8086` only decoded the former. Same instruction; `Shift32` already carried the flag definition for all eight operations. That is the strict oracle needing an opcode, not the routed path needing a fix.
+
+**The 57 are not uniformly re-pointable, and two worked examples say why.** Each has to be read before it is rewritten, because a fixture failing under routing can be failing for a reason that has nothing to do with routing:
+
+- `DialectMetaClaims` drove three claims — `cpu.tier`, `optimize.speed`, `error.overflow` — from a body assigning both operands as literals. A strong enough optimizer computes the result at compile time, and then there is no arithmetic for `$ERROR OVERFLOW` to wrap, no multiply for a CPU tier to widen and nothing for `$OPTIMIZE` to choose between. Reading the operands instead takes pb36 from **3/7 to 5/7 on the ordinary build**: those claims were never failing, they were unmeasured, and the direct emitter only scored better because its propagation is weaker.
+- `FloatResultForwardingTests` looks for `FLD [BP+disp8]` immediately before `MOV SP,BP`, across the WHOLE image — so it answers "does any procedure here reload a float before tearing down", which is true of the caller whatever the function under test does. Scoped to the function, routed and direct emit **byte-identical** code, and both contain the marker: O0102 keeps an `FSTP`/`FLD` pair for a float on purpose, to a scratch cell, because that round trip is what rounds the 80-bit x87 value down to SINGLE. The detector cannot tell the eliminated frame-slot reload from the deliberately-kept narrowing one. There is no routing difference here to re-point — the fixture needs the result slot's offset to say what it means, which is a fixture-design change rather than a retirement one.
+
+So the 57 are a real work list, but the unit of work is "read the fixture, find what it actually measures", not "swap an instruction name". Two of the first three examined turned out to be measuring nothing on either path.
+
 ### 4b. What the gate-4 work actually turns up
 
 Working the first item on the list produced a chain worth recording, because each step found the next and none of them was the missing optimization the list appeared to name.
@@ -129,6 +147,69 @@ Working the first item on the list produced a chain worth recording, because eac
 4. Fixing that invalidated the battery golden — the value recorded there **was** the bug — and broke `Emit_GivenIncrWithAmount_WhenPb36_ThenMemoryAddImmediate`, which scans the WHOLE IMAGE for a byte pattern: the extra prologue in its array variant lifted that variant's count to equal the other's without either `INCR` changing. It now scans the procedure's own extent, which is what its claim is about.
 
 The lesson for the rest of the list: an unmet expectation is a question, not a defect report. Two of the four steps above were the routed path being right.
+
+### 4c. Working the rest of the list: 11 unmet down to 3
+
+Asking that question of the remaining ten produced three answers, and only one of them was a missing optimization.
+
+**Five were the scenario folding away.** Each is a `NOINLINE` SUB driven from the main body by a single literal argument, and the routed path's interprocedural propagation substitutes it and evaluates the whole body at compile time — so the construct the scenario exists to measure is no longer in the image to assert about:
+
+| scenario | direct | routed | what survives routing |
+|---|---|---|---|
+| `DivideByConstantIsReciprocal` | 55 B | 19 B | `MOV AX,0019` — the division done at compile time |
+| `ConstantStoredAsImmediate` | 53 B | 25 B | `MOV AX,8001` — the whole conditional resolved |
+| `IntegerMaxFoldsWithoutFpu` | 123 B | 56 B | `MOV AX,0008` |
+| `IntegerSignIsBranchless` | 181 B | 72 B | `MOV AX,1` / `MOV AX,FFFF` / `XOR AX,AX` |
+| `MinMaxDiamondFolds` | 281 B | 109 B | `MOV AX,0008` |
+
+This is `IndexRangeUnknownKeepsCheck` again, and the fix is the same: a second call site with a different value, so the argument is genuinely unknown on both paths. Each second site was also chosen to take the *other* arm of its scenario's branches, so it earns its place on the direct path too. Varying one argument is not always enough — `IntegerMaxFoldsWithoutFpu` needed both, because leaving `b%` a literal turns the compare into `CMP AX,imm`.
+
+**Three were the same operation in a different operand form.** Not a different result, not a worse one — the assertion simply named one encoding:
+
+| scenario | direct | routed |
+|---|---|---|
+| `DivideByConstantIsReciprocal` | `MOV BX,6667` / `IMUL BX` | `MOV CX,6667` / **`IMUL CX`** |
+| `IntegerMaxFoldsWithoutFpu`, `MinMaxDiamondFolds` | stage into BX, `CMP AX,BX` | **`CMP AX,[BP+4]`** |
+| `LongCompareNarrowedToWord` | stage both sides, `CMP AX,BX` | **`CMP WORD PTR [BP-6],50`** |
+| `HotAccumulatorWinsTheRegister` | `ADD DI,[BP-4]` — scratch from memory | **`ADD SI,AX`** — neither operand in the frame |
+
+A `present` assertion may now name alternatives as `a|b`, holding when any occurs, so a fixture states which encodings of an operation it accepts rather than which one emitter happened to pick. The last row is the sharpest: that scenario is *titled* `HotAccumulatorWinsTheRegister`, and the routed path keeps both operands in registers with no frame at all (30 bytes against 85) — naming only `add-di-mem-bp` would have failed the emitter that does the thing better.
+
+**One was not a code difference at all.** `LongCompareNarrowedToWord` measured 16 bytes under routing — a prologue cut mid-`REP STOSW`. `ListingInfo.RuntimeLabels` reports every bound `rt_*` label as an offset, but a few are bound `IsConstant` and are *values*: `rt_bss_words` is a word count. On the routed layout that count (1156) happened to fall inside the procedure, and four separate fixtures were using those offsets as code boundaries. `ListingSymbol` now carries `IsConstant`, the fixtures skip them, and `--list` prints a constant as `=XXXX` so it cannot be misread as a place. The procedure is 221 bytes and had narrowed correctly all along.
+
+**The three that remain are one missing pass.** `AccumulateOverArrayIsHandQuality` (2) and `MaxScanReadsEachElementOnce` (1) both walk an array by index, and the routed path recomputes the address every iteration where the direct emitter steps a pointer:
+
+```
+routed:  89CA 01D2 19D2   sign-extend CX into DX — a 16-bit index, widened to 32
+         89CE D1E6 D1D2   SI = CX*2
+         8D38             LEA DI,[BX+SI]
+         8B15 01D0 41     MOV DX,[DI] / ADD AX,DX / INC CX
+direct:  033F 83C302      ADD DI,[BX] / ADD BX,2
+```
+
+That is induction-variable strength reduction, and the 32-bit widening in it is the same habit that drives the register pressure recorded above. It is the last thing between the routed path and this battery.
+
+### 4d. Why the last three are not a small change
+
+`InductionVariableSimplification` already exists and already runs. It does not fire here for a reason it states itself: *"Values from other phis, casts, division/right shifts, calls and memory are rejected."* The index reaches the address through a cast —
+
+```llvm
+%i = phi i16 [ 0, %entry ], [ %5, %for.body1 ]
+%1 = sext i16 %i to i32
+%2 = shl i32 %1, 1
+%3 = getelementptr i8, ptr %v, i32 %2
+```
+
+— so the affine matcher stops at `%1`. Accepting a **widening of the counter itself** is sound whenever the extension is exact over the loop's own trip count (`sext(i + step) = sext(i) + step` while the narrow add does not wrap; a zero-extension additionally needs the value non-negative), and `CountedLoop` already carries the exact `Trips` needed to decide it.
+
+That was tried. It produces precisely the intended IR — the `sext` and `shl` disappear, an offset phi advances by 2 — and the loop body drops from 24 bytes to 21, losing two shifts and a sign-extension per iteration. **It is still not shippable, for two reasons found only by running the whole suite:**
+
+1. **Four corpus main bodies stop routing** (`DIFF53`, `DIFF91`, `DIFF92`, `DIFF93`), against a `BackendCoverageTests` baseline of zero. A change made to advance retirement moved four programs the wrong way.
+2. **It breaks the IR→BASIC round trip.** `IrBasicWriter.Undo` reverses a byte offset syntactically — `mul`, `shl`, or a constant — and a strength-reduced offset is an opaque phi, so it raises *"a subscript whose byte offset is not a multiple of 2"*. That writer is how `IrPassObservableEquivalenceTests` proves a pass observable-equivalent, so every IR pass has to keep the module writable back to BASIC. Reversing the recurrence means recognising the offset phi and re-deriving the index from the counter phi beside it — the exact inverse of the transform, and a bounded pattern, but it has to be written.
+
+And the IR is still one layer short even then: the offset recurrence is **i32**, so the emitted loop carries `ADC DX,0` for a high word that cannot be nonzero over a 50-element array. The root is `IrLowering.cs`, where every subscript is `Coerce(..., PbType.Long)` before the index arithmetic. Narrowing it is its own piece of work — the bounds check needs the wide value so an out-of-range LONG subscript traps rather than wraps, so only the arithmetic *after* a passing check can be narrowed, and only where a check ran.
+
+So the remaining three are: one pass change that is written and understood, plus a writer inverse, plus an index-width narrowing — in that order, each measured against the corpus census rather than against the battery alone.
 
 ### 5. Production routing becomes mandatory
 

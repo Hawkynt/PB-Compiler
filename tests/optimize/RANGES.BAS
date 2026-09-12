@@ -62,6 +62,7 @@ ZeroTripLoopDropped
 ImpossibleByBits 7
 ImpossibleByCongruence 7
 PossibleValuesSurvive 8
+PossibleValuesSurvive 3
 RedundantOpsRemoved 9
 END
 
@@ -191,9 +192,14 @@ END SUB
 ' ---------------------------------------------------------------------------
 ' @scenario LongCompareNarrowedToWord
 ' @what     a LONG comparison whose operands both provably fit one word
-' @expect   the nine-instruction 32-bit compare collapses to one CMP AX,BX
+' @expect   the nine-instruction 32-bit compare collapses to a single 16-bit one
+' @note     the absent half is what carries this: no SBB DX,CX means the high word
+'           is gone. The present half only confirms a compare still happens, so it
+'           accepts whichever operand form the emitter picked - the direct path
+'           stages both sides through registers, the routed one compares the frame
+'           cell against the immediate in place.
 ' @assert   absent sbb-dx-cx
-' @assert   present cmp-ax-bx
+' @assert   present cmp-ax-bx|cmp-ax-frame|cmp-ax-imm|cmp-frame-imm
 ' @status   done
 ' ---------------------------------------------------------------------------
 SUB LongCompareNarrowedToWord() NOINLINE
@@ -343,6 +349,11 @@ END SUB
 ' @expect   nothing folds - the domains must exclude only what is truly
 '           impossible, so these comparisons stay in the emitted code (against a
 '           constant, so CMP AX,imm rather than CMP AX,BX)
+' @note     TWO call sites, and that is load-bearing for the same reason as in
+'           IndexRangeUnknownKeepsCheck: from a single literal one the routed back
+'           end propagates n% in, resolves both IFs and prints a folded constant, so
+'           a control asserting that nothing folds is itself folded away. The second
+'           site reaches NEITHER arm, which is the case the first one does not cover.
 ' @assert   present cmp-ax-imm
 ' @status   done
 ' ---------------------------------------------------------------------------
