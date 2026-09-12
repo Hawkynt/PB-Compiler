@@ -1164,7 +1164,7 @@ public sealed partial class IrLowering {
   /// </para>
   /// </summary>
   private (IrValue Address, PbType Element) AbsoluteElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
-    if (!this._absoluteSegments.TryGetValue(symbol, out var segment))
+    if (!this._absoluteSegments.TryGetValue(symbol, out var segmentCell))
       throw new IrLoweringException($"element of {symbol.Name} before its DIM ... AT was lowered");
     if (expr.Arguments.Count != arr.Rank)
       throw new IrLoweringException("ABSOLUTE array rank mismatch");
@@ -1186,7 +1186,7 @@ public sealed partial class IrLowering {
       flat = this._b.Add(this._b.Mul(flat, this._b.Load(IrType.I32, descriptor.Size[k])), relative[k]);
 
     var offset = this._b.Trunc(this._b.Mul(flat, new IrConstantInt(IrType.I32, Math.Max(arr.Element.Size, 1))), IrType.I16);
-    return (this._b.FarPtr(new IrConstantInt(IrType.I16, segment), offset), arr.Element);
+    return (this._b.FarPtr(this._b.Load(IrType.I16, segmentCell), offset), arr.Element);
   }
 
   private VariableSymbol SymbolOf(Expression target) =>
@@ -1822,8 +1822,8 @@ public sealed partial class IrLowering {
         throw new IrLoweringException($"VARSEG of an element of the {array.ArrayClass} array {array.Name}");
       this.ElementAddress(indexed, farAllowed: true);
       if (array.ArrayClass == ArrayClass.Absolute)
-        return this._absoluteSegments.TryGetValue(array, out var segment)
-          ? new IrConstantInt(IrType.I16, segment)
+        return this._absoluteSegments.TryGetValue(array, out var segmentCell)
+          ? this._b.Load(IrType.I16, segmentCell)
           : throw new IrLoweringException($"VARSEG of {array.Name} before its DIM ... AT was lowered");
       if (element.IsDynamic)
         return this._b.Load(IrType.I16, this.RuntimeCell("rt_arrseg", IrType.I16));
@@ -2872,10 +2872,17 @@ public sealed partial class IrLowering {
     foreach (var name in e.Arrays) {
       if (!this._model.VariableBindings.TryGetValue(name, out var symbol) || symbol.Type is not ArrayType arr)
         throw new IrLoweringException("ERASE of a non-array");
-      // ERASE on an ABSOLUTE array UNMAPS it - the memory is not the program's to free or to zero -
-      // and an unmapped array has no segment for a later access to name
-      if (symbol.ArrayClass == ArrayClass.Absolute)
-        throw new IrLoweringException($"ERASE of the ABSOLUTE array {symbol.Name}");
+      // ERASE on an ABSOLUTE array UNMAPS it: the memory is not the program's to free or to zero, so
+      // the only thing to undo is the view itself. Clearing the segment cell is what the direct
+      // emitter does (MOV WORD PTR [slot],0), and a later access then names segment 0 exactly as it
+      // did there. Genuine PBC 3.50 terminates the program on such an access instead, which neither
+      // emitter reproduces - tests/diff/DIFF125.BAS records the oracle and stops short of it.
+      if (symbol.ArrayClass == ArrayClass.Absolute) {
+        if (!this._absoluteSegments.TryGetValue(symbol, out var segmentCell))
+          throw new IrLoweringException($"ERASE of {symbol.Name} before its DIM ... AT was lowered");
+        this._b.Store(new IrConstantInt(IrType.I16, 0), segmentCell);
+        continue;
+      }
       if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
         this.LowerPagedErase(symbol, arr);
         continue;
@@ -3322,7 +3329,14 @@ public sealed partial class IrLowering {
   /// a use before the DIM, or an array declared in another function - finds nothing and declines
   /// rather than guessing a segment.
   /// </summary>
-  private readonly Dictionary<VariableSymbol, short> _absoluteSegments = new(ReferenceEqualityComparer.Instance);
+  /// <summary>
+  /// The cell holding each ABSOLUTE array's segment. A cell rather than the constant itself, because
+  /// <c>ERASE</c> unmaps the view by clearing it - the direct emitter's <c>MOV WORD PTR [slot],0</c> -
+  /// and a compile-time constant has nowhere for that to land. It costs nothing where no ERASE
+  /// intervenes: the cell is an alloca stored once with a literal, so mem2reg promotes it and SCCP
+  /// folds the load straight back to the immediate.
+  /// </summary>
+  private readonly Dictionary<VariableSymbol, IrValue> _absoluteSegments = new(ReferenceEqualityComparer.Instance);
 
   /// <summary>
   /// <c>DIM a(lo TO hi) AT segment</c>: records the bounds in the same descriptor slots a dynamic
@@ -3364,7 +3378,10 @@ public sealed partial class IrLowering {
         this._b.Store(lo, descriptor.Lo[k]);
         this._b.Store(this._b.Add(this._b.Sub(hi, lo), new IrConstantInt(IrType.I32, 1)), descriptor.Size[k]);
       }
-      this._absoluteSegments[symbol] = unchecked((short)segment);
+      var segmentCell = this._entry.InsertAt(this._entryAllocaCount++,
+        new IrAlloca(IrType.I16) { Name = symbol.Name + ".seg" });
+      this._b.Store(new IrConstantInt(IrType.I16, unchecked((short)segment)), segmentCell);
+      this._absoluteSegments[symbol] = segmentCell;
     }
   }
 

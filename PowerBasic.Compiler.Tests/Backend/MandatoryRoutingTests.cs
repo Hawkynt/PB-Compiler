@@ -19,6 +19,18 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// A bodiless EXTERNAL declaration is exempt and that is not a loophole: it is a link import with no
 /// code to emit on either path, so it is nobody's coverage.
 /// </para>
+///
+/// <para>
+/// <b>This fixture used to carry its own premise, and no longer can.</b> Two tests sat below: one
+/// compiled a construct the routing refused and required the compile to fail with the routing's own
+/// reason, the other required the SAME construct to build clean without <c>RequireBackend</c>, so a
+/// mandatory-routing failure could be told apart from a broken program. Their subject kept expiring
+/// as classes closed - procedure-local error handling, then FASTCALL, then an array parameter, then
+/// a BCD result, then <c>ERASE</c> of an ABSOLUTE array - and with that last one routing, there is
+/// no construct left to point them at. They said so themselves and asked to be deleted rather than
+/// re-pointed, which is what happened: a routing that refuses nothing cannot demonstrate refusing.
+/// The census in <c>BackendCoverageTests</c> is what now shows the measurement is live.
+/// </para>
 /// </summary>
 [TestFixture]
 public sealed class MandatoryRoutingTests {
@@ -66,55 +78,5 @@ public sealed class MandatoryRoutingTests {
     Assert.That(refused, Is.Empty,
       $"{refused.Count} of {programs} corpus programs would not compile without the direct emitter:"
         + Environment.NewLine + string.Join(Environment.NewLine, refused.Take(25)));
-  }
-
-  /// <summary>
-  /// The premise, which the test above cannot establish on its own: a corpus that happens to contain
-  /// nothing the routing refuses would pass it whether or not <c>RequireBackend</c> does anything at
-  /// all. This construct DOES decline, so it must fail - and must fail with the routing's own reason
-  /// rather than some unrelated diagnostic.
-  ///
-  /// <para>
-  /// The subject keeps needing replacement as classes close: it has been a string array parameter's
-  /// assignment and then a BCD result, and both now route. <c>ERASE</c> of an ABSOLUTE array is what
-  /// is left - the routed lowering refuses to invent a meaning for unmapping memory the program does
-  /// not own - and when that closes too this test wants deleting rather than re-pointing: a routing
-  /// which refuses nothing cannot be shown to be refusing. <c>BackendRoutingGateTests</c> holds the
-  /// current list.
-  /// </para>
-  /// </summary>
-  [TestCase("""
-    DIM v%(0 TO 3) AT &HB800
-    v%(0) = 7
-    ERASE v%
-    PRINT "ok"
-    """, "did not lower")]
-  public void Compile_GivenAConstructTheRoutingRefuses_ThenMandatoryRoutingFailsTheCompile(string source, string expected) {
-    var refused = MandatoryRoutingErrors(source, optimize: false);
-
-    Assert.That(refused, Is.Not.Empty, "RequireBackend accepted a construct the routing declines");
-    Assert.That(string.Join(" | ", refused), Does.Contain(expected));
-  }
-
-  /// <summary>
-  /// And the other half of the premise: the SAME construct compiles clean without
-  /// <c>RequireBackend</c>, because the direct emitter picks it up. Without this, a mandatory-routing
-  /// failure could not be distinguished from the program being broken.
-  /// </summary>
-  [Test]
-  public void Compile_GivenAConstructTheRoutingRefuses_ThenTheOrdinaryBuildStillSucceeds() {
-    const string source = """
-      DIM v%(0 TO 3) AT &HB800
-      v%(0) = 7
-      ERASE v%
-      PRINT "ok"
-      """;
-    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    var generator = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
-
-    var image = generator.EmitExecutable();
-
-    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
-    Assert.That(image, Is.Not.Empty);
   }
 }
