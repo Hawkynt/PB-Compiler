@@ -4481,6 +4481,21 @@ public sealed partial class InstructionSelector {
       return this.FarMemory(far, size);
     if (pointer is IrAlloca { Count: 1 } scalar && this._slots.TryGetValue(scalar, out var own))
       return new MOperand.StackSlot(own, size);
+    // A GEP at a CONSTANT displacement is an addressing mode, not an address. SelectGep has already
+    // put its LEA result in a vreg, and using that vreg here spends a base register per FIELD: six
+    // reads of one descriptor became six distinct bases, where the identical body over a shared
+    // array - whose fields are absolute data cells - needed three in total and allocated. Folding the
+    // displacement into the access instead leaves every field sharing the ONE base its object needs.
+    // A value used as a memory base is also the one thing the spiller cannot relocate, so these are
+    // exactly the registers whose exhaustion reports as "nothing left that can move to memory".
+    if (pointer is IrGep { ByteOffset: IrConstantInt fixedOffset } folded
+        && this._vregs.TryGetValue(folded.BasePtr, out var foldedBase)) {
+      var stride = folded.ElementType is { } element ? SizeOf(element) : 1;
+      var bytes = fixedOffset.Value * stride;
+      if (bytes is >= short.MinValue and <= short.MaxValue)
+        return new MOperand.Memory(foldedBase, null, 1, (int)bytes, size,
+          SegmentCell: SegmentCellOf(folded.Type));
+    }
     if (this._vregs.TryGetValue(pointer, out var reg))
       return new MOperand.Memory(reg, null, 1, 0, size, SegmentCell: SegmentCellOf(pointer.Type));
     if (pointer is IrGlobalVariable g) {

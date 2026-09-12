@@ -229,4 +229,76 @@ public sealed class BackendArrayParameterRoutingTests {
       Assert.That(image, Is.Not.Empty);
     });
   }
+
+  /// <summary>
+  /// The bodies that used to exhaust the register allocator. None of them is exotic: bounds plus a
+  /// read-modify-write, and a summing loop over the whole array. They declined with
+  /// <c>allocation: no register assignment, and nothing left that can move to memory</c> while the
+  /// IDENTICAL body over a shared dynamic array allocated fine - the difference was that a shared
+  /// array's descriptor fields are absolute data cells, while a parameter's are reached through a
+  /// pointer, and every field's GEP was materialized into a base register of its own.
+  ///
+  /// <para>
+  /// These are execution tests rather than "it routes" tests on purpose: the allocator declining is a
+  /// safe fallback today, so the thing worth pinning is that the routed image is CORRECT once it
+  /// stops declining. They matter for retirement specifically - after the direct emitter is gone, a
+  /// decline here is a compile failure, not a fallback.
+  /// </para>
+  /// </summary>
+  private const string _boundsAndReadModifyWrite = """
+    SUB S(a%()) NOINLINE
+      PRINT LBOUND(a%); UBOUND(a%)
+      a%(2) = a%(1) * 10
+    END SUB
+    DIM v%(1 TO 4)
+    v%(1) = 7
+    S v%()
+    PRINT v%(2)
+    """;
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Route_GivenBoundsAndAReadModifyWrite_ThenTheAllocatorStillFindsRegisters(bool optimize)
+    => AssertRoutedMatchesDirect(_boundsAndReadModifyWrite, "S", optimize);
+
+  private const string _summingLoop = """
+    FUNCTION Total%(a%()) NOINLINE
+      DIM t%
+      FOR i% = LBOUND(a%) TO UBOUND(a%)
+        t% = t% + a%(i%)
+      NEXT i%
+      Total% = t%
+    END FUNCTION
+    DIM p%(1 TO 3), q%(2 TO 6)
+    FOR i% = 1 TO 3
+      p%(i%) = i%
+    NEXT i%
+    FOR i% = 2 TO 6
+      q%(i%) = i% * 2
+    NEXT i%
+    PRINT Total%(p%()); Total%(q%())
+    """;
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Route_GivenALoopOverTheWholeArray_ThenBothCallersGetTheirOwnBounds(bool optimize)
+    => AssertRoutedMatchesDirect(_summingLoop, "Total", optimize);
+
+  private const string _severalElementsAndBounds = """
+    SUB S(a%()) NOINLINE
+      PRINT LBOUND(a%); UBOUND(a%)
+      PRINT a%(3); a%(5)
+      a%(4) = a%(3) + a%(5)
+    END SUB
+    DIM v%(3 TO 5)
+    v%(3) = 11
+    v%(5) = 22
+    S v%()
+    PRINT v%(3); v%(4); v%(5)
+    """;
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Route_GivenSeveralElementsAndBothBounds_ThenTheRoutedImageStillAgrees(bool optimize)
+    => AssertRoutedMatchesDirect(_severalElementsAndBounds, "S", optimize);
 }
