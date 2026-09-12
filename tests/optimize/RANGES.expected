@@ -19,4 +19,5 @@ congruence 70
 reachable-even
 reachable-mul10
 possible 88
+possible 32
 redundant 9  0  1  0  9  1

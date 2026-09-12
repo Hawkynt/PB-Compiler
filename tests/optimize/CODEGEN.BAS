@@ -57,7 +57,9 @@ CommonSubexpressionReused 5, 6
 MultiplyByPowerOfTwoIsShifts 7
 MultiplyByFourBitConstIsShifts 3
 IntegerMaxFoldsWithoutFpu 3, 8
+IntegerMaxFoldsWithoutFpu -7, -3
 IntegerSignIsBranchless 3
+IntegerSignIsBranchless -4
 SwapIsInline 3, 8
 LenZeroIsHandleTest 2
 OnGotoIsJumpTable 0
@@ -67,9 +69,11 @@ OnGotoIsJumpTable 5
 PrintChrIsDirect 2
 BitTestUsesTest 5
 MinMaxDiamondFolds 3, 8
+MinMaxDiamondFolds -12, 3
 LongMaxFoldsWithoutFpu 100000, 70000
 DivideByPowerOfTwoIsShifts 64
 DivideByConstantIsReciprocal 250
+DivideByConstantIsReciprocal -37
 TrivialFunctionInlined 8
 PureCallFoldedAtCompileTime
 ZeroUsesXorIdiom
@@ -86,6 +90,7 @@ LongArithmeticStaysOffTheFpu 4
 AccumulateOverArrayIsHandQuality 3
 ComparisonBranchesOnItsOwnFlags 9
 ConstantStoredAsImmediate 4
+ConstantStoredAsImmediate 0
 MaxScanReadsEachElementOnce
 BoundedMultiplyStaysOffTheFpu 9
 HotAccumulatorWinsTheRegister 7
@@ -175,8 +180,14 @@ END SUB
 ' @scenario IntegerMaxFoldsWithoutFpu
 ' @what     MAX% over two INTEGER arguments
 ' @expect   O0108/O0248 fold it with a signed integer compare - no x87 round-trip
+' @note     TWO call sites, and that is load-bearing: from a single literal one
+'           the routed back end propagates a% and b% in and folds MAX% to a
+'           constant, leaving no compare to assert about. The second site makes
+'           BOTH arguments genuinely unknown - varying only a% leaves b% a
+'           literal and the compare becomes CMP AX,imm - and takes the other
+'           arm of MIN%(-5, a%) as well.
 ' @assert   absent fild-dword
-' @assert   present cmp-ax-bx
+' @assert   present cmp-ax-bx|cmp-ax-frame
 ' @status   done
 ' ---------------------------------------------------------------------------
 SUB IntegerMaxFoldsWithoutFpu(BYVAL a%, BYVAL b%) NOINLINE
@@ -189,6 +200,10 @@ END SUB
 ' @scenario IntegerSignIsBranchless
 ' @what     SGN over an INTEGER argument
 ' @expect   O0249 emits the branchless cwd/neg/adc sign - no x87 round-trip, no branch
+' @note     TWO call sites, and that is load-bearing: from a single literal one
+'           the routed back end folds every SGN here to a constant, so there is
+'           no sign left to compute branchlessly. The second site is negative,
+'           which also swaps which arm each SGN answers.
 ' @assert   absent fild-dword
 ' @assert   present cwd
 ' @status   done
@@ -296,7 +311,11 @@ END SUB
 ' @scenario MinMaxDiamondFolds
 ' @what     IF a% > b% THEN m% = a% ELSE m% = b% - the hand-written max diamond
 ' @expect   O0248 folds it to the integer CMP/keep the MAX% intrinsic emits
-' @assert   present cmp-ax-bx
+' @note     TWO call sites, and that is load-bearing: from a single literal one
+'           the routed back end folds all six diamonds to constants, so nothing
+'           compares anything. The second site takes the OPPOSITE arm of every
+'           one of them, which is worth having on the direct path too.
+' @assert   present cmp-ax-bx|cmp-ax-frame
 ' @status   done
 ' ---------------------------------------------------------------------------
 SUB MinMaxDiamondFolds(BYVAL a%, BYVAL b%) NOINLINE
@@ -356,8 +375,12 @@ END SUB
 ' @scenario DivideByConstantIsReciprocal
 ' @what     n% \ 10 - a non-power-of-two constant divisor
 ' @expect   the verified reciprocal multiply replaces IDIV entirely
+' @note     TWO call sites, and that is load-bearing: from a single literal one
+'           the routed back end divides at compile time and emits neither IDIV
+'           nor the reciprocal. The second site is negative, which is the case
+'           the signed correction after the multiply exists for.
 ' @assert   absent idiv-bx
-' @assert   present imul-bx
+' @assert   present imul-bx|imul-cx
 ' @status   done
 ' ---------------------------------------------------------------------------
 SUB DivideByConstantIsReciprocal(BYVAL n%) NOINLINE
@@ -646,6 +669,9 @@ END SUB
 '           the literal is LONG and the negation is float-promoted, so the plain
 '           path drives it through the x87 (FILD / FCHS / FISTP) to land two
 '           bytes in a cell whose value is known at compile time
+' @note     TWO call sites, and that is load-bearing: from a single literal one
+'           the routed back end resolves the IF and prints a folded constant, so
+'           nothing is ever stored. The second site takes the other branch.
 ' @assert   absent fild-dword
 ' @assert   present mov-mem-imm
 ' @assert   smaller-than-unoptimized
@@ -716,9 +742,14 @@ END SUB
 '           is recomputed and dies each pass. The scratch reaches the ALU op from
 '           memory (add di,[scratch]); parking the scratch in DI instead would
 '           leave the hot accumulator in memory, load/store every iteration. So
-'           the accumulate is a memory-source add straight into the resident
-'           register, and there is no per-iteration load+store of the accumulator
-' @assert   present add-di-mem-bp
+'           the accumulate is an add straight into the resident register, and there
+'           is no per-iteration load+store of the accumulator
+' @note     what the accumulate READS is not part of the expectation. The direct
+'           emitter takes the scratch from memory (ADD DI,[BP-4]); the routed one
+'           keeps BOTH in registers (ADD SI,AX) and needs no frame at all, which
+'           is this scenario's point carried further rather than missed. Naming
+'           only the first would fail the emitter that does better.
+' @assert   present add-di-mem-bp|add-si-ax
 ' @assert   absent push-ax-pop-ax
 ' @assert   smaller-than-unoptimized
 ' @status   done
