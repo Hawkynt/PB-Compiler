@@ -173,7 +173,7 @@ public sealed class OptimizationBatteryTests {
   private static readonly IReadOnlyDictionary<string, int> _forcedBackendUnmet =
     new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) {
       ["CODEGEN.BAS"] = 9,
-      ["RANGES.BAS"] = 3,
+      ["RANGES.BAS"] = 2,
     };
 
   [TestCaseSource(nameof(Batteries))]

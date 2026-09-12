@@ -84,11 +84,19 @@ Where that leaves the two gates today:
 
 ### 4. Optimizer replacement
 
-**Measured.** `OptimizationBatteryTests.Battery_GivenScenarios_WhenTheBackEndIsForced_ThenTheUnmetListDoesNotGrow` runs the battery's expectations with routing forced: **12 of 55 are unmet** (CODEGEN 9, RANGES 3), recorded as a baseline so the list can only shrink.
+**Measured.** `OptimizationBatteryTests.Battery_GivenScenarios_WhenTheBackEndIsForced_ThenTheUnmetListDoesNotGrow` runs the battery's expectations with routing forced: **11 of 55 are unmet** (CODEGEN 9, RANGES 2), recorded as a baseline so the list can only shrink.
 
 Reported rather than gating, because almost every assertion names a specific INSTRUCTION and a routed sequence reaching the same result by another shape is not a regression. Telling a missing optimization from a fixture that merely encodes the legacy instruction sequence is done one at a time, by argument.
 
-**An unmet byte-pattern expectation is not a behavioural one**, and the clearest case is the scariest-looking: `IndexRangeUnknownKeepsCheck` is the control proving the range lattice does not simply drop every bounds check, it asserts `present-call rt_raise`, and the routed image calls no raise routine at all. It nonetheless traps an out-of-range index with error 9 in both optimizer modes — the routed path performs the check INLINE and jumps to the handler. The assertion encodes the direct emitter's mechanism, not the language's promise, and is one of the fixtures the note below says to rewrite.
+**An unmet expectation can mean the routed path is BETTER, and the first one examined was exactly that.** `IndexRangeUnknownKeepsCheck` is the control proving the range lattice does not simply drop every bounds check, and under routing it emitted no `rt_raise` call at all. It was not a missing check: measured by call count in the procedure's extent,
+
+| call shape | direct | routed |
+|---|---|---|
+| `Keep 4` — one constant site | 2 | **0** |
+| `Keep 4` and `Keep 7` | 2 | 1 |
+| index from `VAL(COMMAND$)` | 2 | 2 |
+
+the routed back end's interprocedural propagation **proves** the index in range from a single constant call site and drops the check correctly — more than the direct emitter manages. A control whose premise an optimizer can discharge is not a control, so the scenario now has two call sites with different values and the range is genuinely unknown. That is one fixture rewritten rather than one pass written, which is the distinction the note below is about.
 
 The forced-backend optimizer fixture is a separate gate from semantic coverage. Its remaining failures are a work list for IR or machine passes, not reasons to preserve syntax-to-machine lowering. Move a transformation according to what it knows:
 
@@ -110,6 +118,17 @@ Measured by flipping the default and running the suite **with `DOSBOX_EXE` set**
 The one genuine behavioural regression the measurement found has been fixed, and it was **not** a retirement-only defect: a routed BYTE/SBYTE FUNCTION returned its result in AL alone, leaving AH as whatever ran last, while the direct emitter loads a byte result zero- or sign-extended into AX. A directly-emitted caller therefore read garbage in the high byte. `FileUtil_CanRead` answered -255 where it meant 1; the comparison against 1 simply failed and the program carried on. It is invisible while both sides route, which is why it survived. `BackendByteResultTests` pins it, with a callee that dirties AH on purpose and an assertion that the mixed boundary is real.
 
 **Run it with the emulator.** The first measurement skipped 279 tests without `DOSBOX_EXE`, including both tail-recursion cases and the whole corpus run — and would have reported a smaller number that had never executed the program which found the bug.
+
+### 4b. What the gate-4 work actually turns up
+
+Working the first item on the list produced a chain worth recording, because each step found the next and none of them was the missing optimization the list appeared to name.
+
+1. `IndexRangeUnknownKeepsCheck` is a CONTROL. Under routing it emitted no `rt_raise` call, and the reason was that the routed interprocedural propagation **proves** the index in range from the scenario's single constant call site and drops the check — correctly, and more than the direct emitter manages. A control whose premise an optimizer can discharge is not a control, so it now has two call sites with different values.
+2. That made the two paths DISAGREE on the second call: direct answered `unknown 7`, routed `unknown 0`. Genuine PBC 3.50 answers **0** — a local `DIM` array is re-zeroed on every entry.
+3. So the direct emitter was wrong: `StackLocalsOf` excludes arrays, so a local array gets a data-segment slot that the frame's `REP STOSW` never reaches, and it kept whatever the previous call left. It is now cleared on entry, excluding `STATIC` (persisting is its meaning), parameters (the storage is the caller's), `STACK` arrays (already in the cleared frame) and dynamic ones (no storage until `DIM`/`REDIM`, which zeroes what it returns).
+4. Fixing that invalidated the battery golden — the value recorded there **was** the bug — and broke `Emit_GivenIncrWithAmount_WhenPb36_ThenMemoryAddImmediate`, which scans the WHOLE IMAGE for a byte pattern: the extra prologue in its array variant lifted that variant's count to equal the other's without either `INCR` changing. It now scans the procedure's own extent, which is what its claim is about.
+
+The lesson for the rest of the list: an unmet expectation is a question, not a defect report. Two of the four steps above were the routed path being right.
 
 ### 5. Production routing becomes mandatory
 

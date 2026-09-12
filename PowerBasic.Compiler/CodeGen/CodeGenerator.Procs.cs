@@ -172,6 +172,40 @@ public sealed partial class CodeGenerator {
     return false;
   }
 
+
+  /// <summary>
+  /// The local arrays a procedure must re-zero when it is entered: ordinary DIM arrays with
+  /// compile-time bounds, held in data-segment slots.
+  ///
+  /// <para>
+  /// A STATIC one is excluded because persisting IS its meaning, a parameter because the storage is
+  /// the caller's, and a pb36 STACK array because it lives in the frame the prologue already clears.
+  /// A DYNAMIC array is excluded too: it has no storage until its DIM or REDIM runs, and that
+  /// allocation zeroes what it hands back.
+  /// </para>
+  /// </summary>
+  private static IEnumerable<VariableSymbol> LocalArraysZeroedOnEntry(ProcedureSymbol proc) {
+    var seen = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
+    foreach (var symbol in proc.Variables.Values)
+      if (symbol is { Storage: VariableStorage.Local, IsArray: true, ArrayClass: ArrayClass.Default }
+          && symbol.Type is ArrayType { IsDynamic: false, StaticBounds: not null, Size: > 0 }
+          && seen.Add(symbol))
+        yield return symbol;
+  }
+
+  /// <summary>Clears one local array's data-segment block, the same REP STOSW an ERASE of it writes.</summary>
+  private void EmitZeroLocalArray(VariableSymbol symbol) {
+    var asm = this._asm;
+    var bytes = ((ArrayType)symbol.Type).Size;
+    asm.Push(Reg.DS);
+    asm.Pop(Reg.ES);
+    asm.Mov(Reg.DI, Imm.OffsetOf(this.SlotOf(symbol)));
+    asm.Mov(Reg.CX, (bytes + 1) / 2);
+    asm.Xor(Reg.AX, Reg.AX);
+    asm.Rep();
+    asm.Stosw();
+  }
+
   private void EmitProcedure(ProcedureSymbol proc) {
     var asm = this._asm;
     this._currentProc = proc;
@@ -263,6 +297,15 @@ public sealed partial class CodeGenerator {
       foreach (var local in stackLocals)
         if (local.Type is StringType or FlexType)
           asm.Mov(Mem.Word(Reg.BP, local.Offset), (Imm)0);
+
+    // A local array starts ZEROED on every entry, and this is where that happens for the direct
+    // path. Its storage is a data-segment slot rather than a frame one - StackLocalsOf excludes
+    // arrays - so the frame's REP STOSW never reaches it, and it kept whatever the previous call
+    // left: a SUB called twice answered 7 for an element only the FIRST call wrote. Genuine PBC
+    // 3.50 answers 0 there, which is what the routed path already did; the two disagreeing is how
+    // it surfaced.
+    foreach (var local in LocalArraysZeroedOnEntry(proc))
+      this.EmitZeroLocalArray(local);
 
     // PB 3.6 capturing lambda: save the far environment pointer into its hidden local.
     // It arrived in BX:CX; BX survives the frame setup and the segment was parked in DX
