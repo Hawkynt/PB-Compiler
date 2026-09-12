@@ -410,6 +410,17 @@ public sealed class BackendRoutingGateTests {
       S v$()
       PRINT v$(2)
       """, "S"),
+    // A BCD cell is ten bytes of x87 extended - the same value channel EXT crosses on - so a BCD
+    // parameter and result need no representation of their own. The row uses a value with a
+    // fractional part so a silently narrowed one would print differently.
+    new("BCD parameter and result", """
+      FUNCTION F(BYVAL a AS BCD) AS BCD
+        F = a * 2 + 1
+      END FUNCTION
+      DIM x AS BCD
+      x = 1.25
+      PRINT F(x)
+      """, "F"),
     // Both register conventions overflow their register file here - FASTCALL has three registers and
     // WATCALL four - so the row covers the boundary with the stack arguments behind them rather than
     // only the registers. Execution equivalence is proven separately by
@@ -449,16 +460,20 @@ public sealed class BackendRoutingGateTests {
     // is one HANDLE word, and both consumers of its address move exactly that word rather than
     // handing the address to a string routine.
     //
-    // BCD is what is left, and it is a real class rather than a placeholder: the ten-byte decimal
-    // cell is a result shape the routed ABI does not carry, while the DIRECT emitter returns one
-    // with FLD TBYTE. Keeping a row here is also what keeps this fixture honest - a decline list
-    // that emptied would stop proving that the routing still refuses anything at all.
-    new("BCD result", """
-      FUNCTION F(BYVAL a%) AS BCD
-        F = a% / 2
-      END FUNCTION
-      PRINT F(3)
-      """, "F", "filter: return type outside the routed ABI (BCD)"),
+    // BCD has moved to the routing list as well: a BCD cell IS ten bytes of x87 extended, which is
+    // the channel EXT already crosses on, so admitting it was removing a restriction rather than
+    // adding a representation.
+    //
+    // What is left is the ABSOLUTE array. ERASE of one UNMAPS it - the memory is not the program's
+    // to free or zero - and the routed lowering refuses that rather than inventing a meaning, while
+    // the direct emitter simply clears the descriptor word. It is a genuine routing class, not a
+    // placeholder: the direct build compiles and runs, which is exactly what a row here must show.
+    new("ERASE of an ABSOLUTE array", """
+      DIM v%(0 TO 3) AT &HB800
+      v%(0) = 7
+      ERASE v%
+      PRINT "ok"
+      """, "main", "lowering: the module did not lower to IR"),
   ];
 
   private static SemanticModel Bind(string source) {
