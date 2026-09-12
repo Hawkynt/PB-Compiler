@@ -150,9 +150,27 @@ declared CPU, so the direct emitter picks it up and the production build is byte
 `BackendInlineAsmVirtualizationTests` pins that on the PRODUCTION configuration, with no
 `UseExperimentalBackend` in it, so it cannot be hidden the same way twice.
 
-**This is why the fallback is still load-bearing, and why `CodeGen/` cannot simply be deleted.** ISA
-emulation for inline assembly is the one thing it does that `Ir/` cannot. Closing that means teaching
-the IR path to emulate — not deleting the emulator.
+**That looked like the reason `CodeGen/` could not be deleted, and it turned out to be the reason it
+nearly could.** ISA emulation was the one thing the direct emitter did that the routed path could
+not — but the emulator does not depend on the direct emitter at all. It operates on inline-asm TEXT
+and an `Assembler`, which both paths have. It was only ever *reached* through the direct emitter.
+
+`MachineEmitter.EmitFunction` now takes the target's ISA policy as a callback, exactly as it takes
+callee labels and data cells, and for the same reason: what a target can execute is knowledge the
+code generator holds, and the machine emitter should not grow a second copy of it. The routed path
+reaches the same emulator, so `$CPU 8086` with `! PADDW MM0, MM1` emits no `0F FD` on either path and
+the body still routes — the alternative, declining it, would have been correct and would have cost
+the routing every program with a line of portable SIMD in it.
+
+`InlineAsmZeroOverheadTests` and `RuntimeTargetPolicyTests` came off the pin with that change: 27
+assertions back to covering production, and the `$OPTIMIZE SPEED` erasure of a provable no-op
+identity works routed too, because it lives behind the same policy entry.
+
+So the emulator is shared infrastructure, not direct-emitter code, and it survives the deletion on
+its own merits. What is left pinned is 30 assertions in five fixtures, and those are genuine missing
+optimizations rather than missing features: auto-vectorization, the O0308 array preflight, search
+selection, dead-global cascades and float result forwarding. A program compiled without them is
+correct, just larger.
 
 The three that looked behavioural were not. `Rotate32_*` asserts CF/OF against the 386 definition and died with *"unimplemented opcode 66 D1"* — the direct emitter reaches for the imm8 form of the dword shift group even when the count is one, the routed emitter uses the shorter `D1` encoding, and `Cpu8086` only decoded the former. Same instruction; `Shift32` already carried the flag definition for all eight operations. That is the strict oracle needing an opcode, not the routed path needing a fix.
 

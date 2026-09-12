@@ -7,7 +7,7 @@ public sealed partial class CodeGenerator {
   private const int GpShiftCountScratch = 96;
 
   /// <summary>Pre-386 lowering for 386 operations that are not ordinary two-operand ALU forms.</summary>
-  private bool TryEmitVirtualGp32ExtendedInstruction(InlineInstruction instruction, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryEmitVirtualGp32ExtendedInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     var mnemonic = instruction.Mnemonic;
     if (mnemonic is not ("CWDE" or "CDQ" or "PUSH" or "POP" or "SHL" or "SAL" or "SHR" or "SAR"))

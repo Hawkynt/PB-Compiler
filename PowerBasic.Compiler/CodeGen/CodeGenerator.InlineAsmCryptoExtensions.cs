@@ -24,7 +24,7 @@ public sealed partial class CodeGenerator {
   private static bool IsAesInstruction(string mnemonic) => mnemonic is
     "AESIMC" or "AESENC" or "AESENCLAST" or "AESDEC" or "AESDECLAST" or "AESKEYGENASSIST";
 
-  private bool TryEmitNativeCryptoInstruction(InlineInstruction instruction, InlineAsmResolver resolver, out string? error) {
+  private bool TryEmitNativeCryptoInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, out string? error) {
     error = null;
     if (!IsAesInstruction(instruction.Mnemonic) && instruction.Mnemonic != "PCLMULQDQ")
       return false;
@@ -105,7 +105,7 @@ public sealed partial class CodeGenerator {
     }
   }
 
-  private bool TryEmitVirtualCryptoInstruction(InlineInstruction instruction, InlineAsmResolver resolver,
+  private bool TryEmitVirtualCryptoInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver,
       RuntimeTarget target, out string? error) {
     error = null;
     if (!IsAesInstruction(instruction.Mnemonic) && instruction.Mnemonic != "PCLMULQDQ")

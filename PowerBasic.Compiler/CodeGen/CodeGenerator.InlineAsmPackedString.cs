@@ -21,7 +21,7 @@ public sealed partial class CodeGenerator {
   /// architectural validity override, aggregation, polarity and implicit-result rules rather than
   /// approximating the instructions with a library string comparison.
   /// </summary>
-  private bool TryEmitVirtualPackedStringInstruction(InlineInstruction instruction, InlineAsmResolver resolver,
+  private bool TryEmitVirtualPackedStringInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver,
       RuntimeTarget target, out string? error) {
     error = null;
     if (instruction.Mnemonic is not ("PCMPESTRI" or "PCMPESTRM" or "PCMPISTRI" or "PCMPISTRM"))

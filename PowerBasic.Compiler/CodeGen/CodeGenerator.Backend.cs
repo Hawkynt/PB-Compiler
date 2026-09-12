@@ -349,13 +349,6 @@ public sealed partial class CodeGenerator {
       // Every one of these rejections is RECORDED rather than merely skipped. A skipped procedure
       // falls back to the direct emitter today and will be a compile failure once CodeGen/ is gone,
       // so it belongs in the same census as a selection decline - see BackendFilterReason.
-      // Inline assembly the declared CPU cannot execute is emulated by the direct emitter and
-      // passed through verbatim by this one, so a body carrying it must not route - see
-      // CodeGenerator.BackendInlineAsm.cs.
-      if (proc.Body is { } body && this.InlineAsmAboveTarget(body) is { } above) {
-        this._backendDeclines.Add((proc.Name, $"filter: inline asm needing ISA emulation ({above})"));
-        continue;
-      }
       if (BackendFilterReason(proc) is { } filtered) {
         this._backendDeclines.Add((proc.Name, filtered));
         continue;
@@ -586,8 +579,6 @@ public sealed partial class CodeGenerator {
     // procedure inherits every blind spot the procedure filter has.
     if (this._isUnit)
       return this.DeclineMain("filter: a $COMPILE UNIT has no module body to own");
-    if (this.InlineAsmAboveTarget(model.MainBody) is { } aboveTarget)
-      return this.DeclineMain($"filter: inline asm needing ISA emulation ({aboveTarget})");
     if (this._backendModule is null)
       return this.DeclineMain("lowering: the module did not lower to IR");
     if (this._backendModule.FindFunction("main") is not { IsDeclaration: false } main)
@@ -644,7 +635,7 @@ public sealed partial class CodeGenerator {
       asm => {
         asm.Mov(Asm.Reg.AL, (Asm.Imm)0);
         asm.Jmp(this._rt.Exit);
-      }, alignLoops: this.Optimize && this.Cost.AlignHotLoops);
+      }, alignLoops: this.Optimize && this.Cost.AlignHotLoops, emitInlineAsm: this.EmitRoutedInlineAsm);
     this.EmitBackendSemanticMerges();
     this.EmitBackendGeneratedFunctions();
   }
@@ -1234,7 +1225,8 @@ public sealed partial class CodeGenerator {
     // the epilogue's MOV SP,BP rather than popped.
     var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
     MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
-      alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame, registerSpills: spillRegs);
+      alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame, registerSpills: spillRegs,
+      emitInlineAsm: this.EmitRoutedInlineAsm);
     this.EmitBackendSemanticMerges();
     this.EmitBackendGeneratedFunctions();
   }

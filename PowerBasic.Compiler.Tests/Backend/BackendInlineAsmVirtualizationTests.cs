@@ -21,6 +21,12 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// here is deliberately on the PRODUCTION configuration - no <c>UseExperimentalBackend</c> in sight -
 /// so it cannot be hidden the same way twice.
 /// </para>
+/// <para>
+/// The fix is not a decline. <see cref="Backend.MachineEmitter"/> takes the target's ISA policy as a
+/// callback, so the routed path reaches the SAME emulator the direct emitter uses and keeps the body.
+/// Declining would also have been correct and would have cost the routing every program with a line
+/// of portable SIMD in it.
+/// </para>
 /// </summary>
 [TestFixture]
 public sealed class BackendInlineAsmVirtualizationTests {
@@ -62,8 +68,9 @@ public sealed class BackendInlineAsmVirtualizationTests {
     Assert.Multiple(() => {
       Assert.That(ContainsPaddw(image), Is.False,
         $"$CPU {cpu} got a raw PADDW; the declared target cannot execute it");
-      Assert.That(routed, Does.Not.Contain("main"),
-        "the body needs ISA emulation, which only the direct emitter does - it must decline rather than pass the instruction through");
+      Assert.That(routed, Does.Contain("main"),
+        "emulating it is the routed path's job now, so the body must still route - a decline here "
+        + "would mean the ISA policy callback stopped reaching MachineEmitter");
     });
   }
 
@@ -82,17 +89,18 @@ public sealed class BackendInlineAsmVirtualizationTests {
   }
 
   /// <summary>
-  /// And the equivalence that matters to a user: below the tier, the production build must produce
-  /// exactly what the direct emitter produces, because it IS the direct emitter picking the body up.
+  /// Both emitters must reach the same conclusion about the same instruction, which is the property
+  /// that stops them drifting apart again. Not byte identity - the two lay a program out differently
+  /// and always have - but the one thing that matters here: neither emits an encoding the declared
+  /// target cannot execute.
   /// </summary>
   [TestCase("8086")]
   [TestCase("80386")]
   [TestCase("SSE2")]
-  public void Compile_GivenInlineAsmAboveTheDeclaredCpu_ThenProductionMatchesTheDirectBuild(string cpu) {
-    var production = Compile(cpu).Image;
-    var direct = Compile(cpu, routed: false).Image;
-
-    Assert.That(production, Is.EqualTo(direct),
-      $"$CPU {cpu} declined to the direct emitter, so the images must be identical");
+  public void Compile_GivenInlineAsmAboveTheDeclaredCpu_ThenNeitherEmitterPassesItThrough(string cpu) {
+    Assert.Multiple(() => {
+      Assert.That(ContainsPaddw(Compile(cpu, routed: true).Image), Is.False, $"routed, $CPU {cpu}");
+      Assert.That(ContainsPaddw(Compile(cpu, routed: false).Image), Is.False, $"direct, $CPU {cpu}");
+    });
   }
 }

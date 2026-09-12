@@ -36,6 +36,27 @@ namespace PowerBasic.Compiler.CodeGen;
 public sealed partial class CodeGenerator {
 
   /// <summary>
+  /// Emits one inline-asm statement for the ROUTED path through the target's ISA policy - the same
+  /// entry the direct emitter uses, so the two reach the same decision about the same instruction.
+  ///
+  /// <para>
+  /// <see cref="Backend.MachineEmitter"/> takes this as a callback rather than calling the policy
+  /// itself, for the reason it takes callee labels and data cells that way: what a target can execute
+  /// is knowledge the CODE GENERATOR holds, and the machine emitter should not have to grow a second
+  /// copy of it. Returning false leaves the emitter to assemble the text verbatim, which is the right
+  /// answer for everything the policy has no opinion about.
+  /// </para>
+  /// </summary>
+  private bool EmitRoutedInlineAsm(string text, Asm.IAsmSymbolResolver resolver) {
+    var target = this.RuntimeTargetForRuntime();
+    if (!this.TryEmitPolicyInlineAsm(text, resolver, target, out var error))
+      return false;
+    if (error != null)
+      this.Errors.Add(new(new("", 0, 0), $"inline asm '{text.Trim()}': {error}"));
+    return true;
+  }
+
+  /// <summary>
   /// The inline-asm mnemonic in <paramref name="statements"/> that the declared target cannot
   /// execute, or null when every one of them can.
   ///

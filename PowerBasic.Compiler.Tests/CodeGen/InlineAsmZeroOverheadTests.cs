@@ -10,7 +10,7 @@ public sealed class InlineAsmZeroOverheadTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "zero-overhead.bas", Dialect.Pb36), "zero-overhead.bas", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = true, OptimizeSpeed = speed, UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model) { Optimize = true, OptimizeSpeed = speed };
     image = generator.EmitExecutable();
     return generator;
   }

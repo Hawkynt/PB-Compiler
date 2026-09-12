@@ -4,7 +4,7 @@ using PowerBasic.Compiler.Runtime;
 namespace PowerBasic.Compiler.CodeGen;
 
 public sealed partial class CodeGenerator {
-  private bool TryEmitVirtualCrc32Instruction(InlineInstruction instruction, InlineAsmResolver resolver,
+  private bool TryEmitVirtualCrc32Instruction(InlineInstruction instruction, IAsmSymbolResolver resolver,
       RuntimeTarget target, out string? error) {
     error = null;
     if (instruction.Mnemonic != "CRC32")
