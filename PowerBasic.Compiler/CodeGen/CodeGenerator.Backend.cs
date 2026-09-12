@@ -769,8 +769,14 @@ public sealed partial class CodeGenerator {
         else
           ++routed;
       }
+      // A procedure that RECEIVES the array is a user of it too, and naming is blind to that: the
+      // callee refers to its own parameter, so a name walk over its body never mentions the array.
+      // DIFF124 is the case - a directly-emitted SUB REDIMs its array parameter, which rewrites the
+      // DIRECT descriptor, while a routed module body reads its own .dyn cells and still answers the
+      // old bound. Both halves ran, neither faulted, and the program printed a stale number.
+      var receivers = this.ProceduresReceiving(symbol.Name);
       foreach (var proc in model.ProcedureList) {
-        if (proc.Body is not { } body || !ReferencesVariable(body, symbol.Name))
+        if (proc.Body is not { } body || (!ReferencesVariable(body, symbol.Name) && !receivers.Contains(proc)))
           continue;
         if (this._backendProcs.ContainsKey(proc))
           ++routed;
@@ -781,6 +787,48 @@ public sealed partial class CodeGenerator {
         return false;
     }
     return true;
+  }
+
+
+  /// <summary>
+  /// The procedures <paramref name="name"/> is passed to as a whole-array argument, anywhere in the
+  /// program. They reach the array through a parameter rather than by name, so
+  /// <see cref="ReferencesVariable"/> cannot see them, and an ownership question asked only by name
+  /// counts them as non-users - which is how a directly-emitted callee came to rewrite a descriptor
+  /// its routed caller was not reading.
+  /// </summary>
+  private HashSet<ProcedureSymbol> ProceduresReceiving(string name) {
+    var receivers = new HashSet<ProcedureSymbol>(ReferenceEqualityComparer.Instance);
+    foreach (var body in AllBodies(model))
+      foreach (var node in OptReachability.DescendantNodes(body)) {
+        var (arguments, site) = node switch {
+          Syntax.Ast.CallStmt call => ((IReadOnlyList<Syntax.Ast.Expression>?)call.Arguments, (object)call),
+          Syntax.Ast.CallOrIndexExpr call => (call.Arguments, call),
+          _ => (null, null!),
+        };
+        if (arguments is null || !model.CallBindings.TryGetValue(site, out var callee))
+          continue;
+        foreach (var argument in arguments)
+          if (NamesWholeArray(argument, name)) {
+            receivers.Add(callee);
+            break;
+          }
+      }
+    return receivers;
+  }
+
+  /// <summary>The whole-array argument spelling: the bare name, or the name with an empty subscript list.</summary>
+  private static bool NamesWholeArray(Syntax.Ast.Expression argument, string name) => argument switch {
+    Syntax.Ast.NameExpr n => n.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase),
+    Syntax.Ast.CallOrIndexExpr { Arguments.Count: 0 } c => c.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase),
+    _ => false,
+  };
+
+  private static IEnumerable<IReadOnlyList<Syntax.Ast.Statement>> AllBodies(SemanticModel model) {
+    yield return model.MainBody;
+    foreach (var proc in model.ProcedureList)
+      if (proc.Body is { } body)
+        yield return body;
   }
 
   /// <summary>
@@ -1111,9 +1159,19 @@ public sealed partial class CodeGenerator {
     // A shared stack convention is necessary but not sufficient: the routed caller must also be able
     // to transport every argument/result VALUE shape. Otherwise a direct FIX-returning callee, for
     // example, hands back its scaled cell through an ABI the routed call cannot interpret.
+    //
+    // An ARRAY parameter is refused outright, and not because the pointer is hard to push. The two
+    // paths DESCRIBE an array differently - the routed side in its own .dyn cells, the direct side in
+    // a packed data-segment block - so a routed caller hands over a descriptor it built for the call,
+    // and a direct callee that REDIMs the parameter rewrites that snapshot rather than the caller's
+    // own description. DIFF124 is the case: the callee's new upper bound was invisible to the caller,
+    // which kept answering the old one while element writes landed in the new block. Nothing faults;
+    // it prints a stale number. This was covered incidentally until array parameters began routing,
+    // because the shape check refused them for every purpose at once.
     return matches.Count == 1
       && IsBackendAbiConvention(matches[0])
       && BackendAbiShapeReason(matches[0]) is null
+      && !matches[0].Parameters.Any(parameter => parameter.Type is ArrayType)
         ? matches[0]
         : null;
   }

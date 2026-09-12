@@ -128,6 +128,14 @@ public sealed partial class IrLowering {
     // statement that registered it - through DS, and with no segment of its own to check against.
     foreach (var symbol in FieldTargets(model))
       escapes.Add(symbol);
+    // An array PASSED to a procedure escapes into it, and naming cannot see that: the callee refers
+    // to its own parameter, so ModuleVariablesUsedByProcedures never mentions the array. Left in a
+    // frame slot, its descriptor is private to this body while the callee - which receives a pointer
+    // to the DIRECT emitter's packed block - rewrites that one instead. A REDIM in the callee then
+    // lands somewhere the caller does not read: DIFF124 answered the OLD upper bound with the new
+    // block's contents visible through it, which prints a stale number rather than faulting.
+    foreach (var symbol in ArraysPassedToProcedures(model))
+      escapes.Add(symbol);
     var main = new IrFunction("main", IrType.Void);
     module.AddFunction(main);
     try {
@@ -159,6 +167,37 @@ public sealed partial class IrLowering {
   /// to an SSA register - so keeping the analysis precise is what stops "correct globals" from
   /// costing the optimizer its best case.
   /// </summary>
+
+  /// <summary>
+  /// The module arrays handed to a procedure as a whole-array argument, anywhere in the program.
+  /// They reach the callee through a parameter rather than by name, which is exactly what a
+  /// name-based escape analysis cannot see.
+  /// </summary>
+  private static IEnumerable<VariableSymbol> ArraysPassedToProcedures(SemanticModel model) {
+    foreach (var body in AllProgramBodies(model))
+      foreach (var node in CodeGen.OptReachability.DescendantNodes(body)) {
+        var arguments = node switch {
+          CallStmt call when model.CallBindings.ContainsKey(call) => call.Arguments,
+          CallOrIndexExpr call when model.CallBindings.ContainsKey(call) => call.Arguments,
+          _ => null,
+        };
+        if (arguments is null)
+          continue;
+        foreach (var argument in arguments)
+          if (argument is NameExpr or CallOrIndexExpr { Arguments.Count: 0 }
+              && model.VariableBindings.TryGetValue(argument, out var symbol)
+              && symbol.Type is ArrayType)
+            yield return symbol;
+      }
+  }
+
+  private static IEnumerable<IReadOnlyList<Statement>> AllProgramBodies(SemanticModel model) {
+    yield return model.MainBody;
+    foreach (var proc in model.Procedures.Values)
+      if (proc.Body is { } body)
+        yield return body;
+  }
+
   private static HashSet<VariableSymbol> ModuleVariablesUsedByProcedures(SemanticModel model) {
     var used = new HashSet<VariableSymbol>(ReferenceEqualityComparer.Instance);
     foreach (var proc in model.Procedures.Values) {
@@ -1034,10 +1073,8 @@ public sealed partial class IrLowering {
   /// </para>
   /// </summary>
   private DynArr MutableDynDescriptor(VariableSymbol symbol, int rank, string what) {
-    var descriptor = this.DynDescriptor(symbol, rank);
-    if (descriptor.Segment is not null)
-      throw new IrLoweringException($"{what} of the array PARAMETER {symbol.Name} (its descriptor belongs to the caller)");
-    return descriptor;
+    _ = what;
+    return this.DynDescriptor(symbol, rank);
   }
 
   /// <summary>The address of one runtime-allocated element in PowerBASIC's first-subscript-fastest layout.</summary>
@@ -2768,7 +2805,37 @@ public sealed partial class IrLowering {
         ? this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_alloc_ptr", IrType.FarPtr, IrType.I32), count!)      // count target-pointers
         : this._b.Call(IrType.FarPtr, this.RuntimeFn("rt_arr_alloc", IrType.FarPtr, IrType.I32), this.ArrayBytes(count!, arr));
     }
+    if (descriptor.Segment is { } segmentCell) {
+      // A PARAMETER's block address is two separate words, and the second half of the job is the
+      // caller's own descriptor: the callee holds a widened copy, so a REDIM that stopped here would
+      // leave the caller describing a block this call has just freed.
+      this._b.Store(this._b.Load(IrType.I16, this.RuntimeCell("rt_arrseg", IrType.I16)), segmentCell);
+      this._b.Store(this._b.Cast(IrCastOp.PtrToInt, data, IrType.I16), descriptor.Data);
+      this.WriteBackParameterDescriptor(symbol, arr, descriptor);
+      return;
+    }
     this._b.Store(data, descriptor.Data);
+  }
+
+  /// <summary>
+  /// Copies a widened parameter descriptor back into the caller's own block, in the direct emitter's
+  /// layout (see <see cref="ParameterDynDescriptor"/>). Only a REDIM or an ERASE needs this: an
+  /// element write travels through the data pointer to storage both sides already share, while these
+  /// two change the DESCRIPTION, and the description is the caller's.
+  /// </summary>
+  private void WriteBackParameterDescriptor(VariableSymbol symbol, ArrayType arr, DynArr descriptor) {
+    if (!this._addr.TryGetValue(symbol, out var block))
+      throw new IrLoweringException($"array parameter {symbol.Name} has no incoming descriptor pointer");
+    void Put(int index, IrValue value)
+      => this._b.Store(value, this._b.Gep(block, new IrConstantInt(IrType.I16, index), IrType.I16));
+    Put(0, this._b.Load(IrType.I16, descriptor.Segment!));
+    Put(1, this._b.Load(IrType.I16, descriptor.Data));
+    Put(2, new IrConstantInt(IrType.I16, ElementByteSize(arr)));
+    Put(3, new IrConstantInt(IrType.I16, arr.Rank));
+    for (var k = 0; k < arr.Rank; ++k) {
+      Put(4 + k * 2, this._b.Cast(IrCastOp.Trunc, this._b.Load(IrType.I32, descriptor.Lo[k]), IrType.I16));
+      Put(5 + k * 2, this._b.Cast(IrCastOp.Trunc, this._b.Load(IrType.I32, descriptor.Size[k]), IrType.I16));
+    }
   }
 
   private void LowerErase(EraseStmt e) {
@@ -4689,12 +4756,13 @@ public sealed partial class IrLowering {
       throw new IrLoweringException("argument count mismatch (optional/CDECL not modelled)");
     var args = new List<IrValue>(arguments.Count);
     var stringTemporaries = new List<IrValue>();
+    var arrayArguments = new List<(IrValue Block, VariableSymbol Symbol, ArrayType Array)>();
     for (var i = 0; i < arguments.Count; ++i) {
       var p = proc.Parameters[i];
       args.Add(p.Type is UdtType
         ? this.UdtAddress(arguments[i])                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
         : p.Type is ArrayType
-          ? this.ArrayDescriptorArgument(arguments[i])  // an array argument passes a descriptor, never element storage
+          ? this.ArrayDescriptorArgument(arguments[i], arrayArguments)  // an array argument passes a descriptor, never element storage
         : p.Type is StringType
           ? this.StringArgument(arguments[i], p.ByVal, stringTemporaries)
         : p.ByVal
@@ -4702,6 +4770,11 @@ public sealed partial class IrLowering {
           : this.AddressOfArgument(arguments[i], p.Type));
     }
     var call = this._b.Call(callee.ReturnType, callee, IrConventionOf(proc.CallConv), args);
+    // The descriptor handed over is a block built for this call, so a REDIM or ERASE inside the
+    // callee changed THAT and not the caller's own cells. Reading it back is what makes the caller
+    // see the new bounds - which is what genuine PBC 3.50 does, and what tests/diff/DIFF124.BAS pins.
+    foreach (var (block, symbol, array) in arrayArguments)
+      this.ReadBackArrayDescriptor(block, symbol, array);
     // A FIX result arrives as the numeric value in ST(0) (see TrySignature), while every expression
     // around this call is typed FIX and therefore expects the scaled cell. Scaling it straight back is
     // not a round trip introduced here: the direct emitter does the identical pair - rt_fixdn in the
@@ -4734,7 +4807,8 @@ public sealed partial class IrLowering {
   /// address that reads the wrong memory rather than failing.
   /// </para>
   /// </summary>
-  private IrValue ArrayDescriptorArgument(Expression argument) {
+  private IrValue ArrayDescriptorArgument(Expression argument,
+      List<(IrValue Block, VariableSymbol Symbol, ArrayType Array)>? record = null) {
     if (!this._model.VariableBindings.TryGetValue(argument, out var symbol) || symbol.Type is not ArrayType arr)
       throw new IrLoweringException("array argument that is not an array");
     if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms or ArrayClass.Absolute)
@@ -4778,7 +4852,36 @@ public sealed partial class IrLowering {
     }
     Put(2, Word(ElementByteSize(arr)));
     Put(3, Word(arr.Rank));
+    // Only a DYNAMIC array can be re-described by the callee; a static one has its bounds in the
+    // compiler and no block to reallocate, so reading anything back would be inventing a change.
+    if (record is not null && (arr.IsDynamic || symbol.Storage == VariableStorage.Parameter))
+      record.Add((block, symbol, arr));
     return block;
+  }
+
+  /// <summary>
+  /// Reloads the caller's description of an array from the block a call may have rewritten. The
+  /// mirror of <see cref="WriteBackParameterDescriptor"/>, and needed for the same reason: the two
+  /// sides describe one array through two sets of cells while the direct emitter still exists.
+  /// </summary>
+  private void ReadBackArrayDescriptor(IrValue block, VariableSymbol symbol, ArrayType arr) {
+    var descriptor = this.DynDescriptor(symbol, arr.Rank);
+    IrValue Word(int index) => this._b.Load(IrType.I16, this._b.Gep(block, new IrConstantInt(IrType.I16, index), IrType.I16));
+    if (descriptor.Segment is { } segmentCell) {
+      this._b.Store(Word(0), segmentCell);
+      this._b.Store(Word(1), descriptor.Data);
+    } else {
+      // The routed backend's far pointers are all relative to the ONE far array heap segment
+      // (SegmentCellOf answers rt_arrseg for every far pointer), so the offset alone reconstitutes
+      // the pointer - and a composed IrFarPtr could not be stored anyway, being an address former
+      // with no register to hold it. The segment word is read and discarded deliberately: a REDIM
+      // allocates from that same heap, so it cannot disagree.
+      this._b.Store(this._b.Cast(IrCastOp.IntToPtr, Word(1), IrType.FarPtr), descriptor.Data);
+    }
+    for (var k = 0; k < arr.Rank; ++k) {
+      this._b.Store(this._b.Cast(IrCastOp.SExt, Word(4 + k * 2), IrType.I32), descriptor.Lo[k]);
+      this._b.Store(this._b.Cast(IrCastOp.ZExt, Word(5 + k * 2), IrType.I32), descriptor.Size[k]);
+    }
   }
 
   /// <summary>The descriptor's element-size field: what one subscript step advances the data pointer by.</summary>
