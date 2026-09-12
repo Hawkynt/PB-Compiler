@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -9,10 +11,22 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </summary>
 public static class CorrelatedValueProp {
 
+  /// <summary>Compatibility entry point for the existing production pipeline.</summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return Run(fn, new IrAnalysisManager(fn)).Changes;
+  }
+
+  /// <summary>Runs correlated propagation using shared cached analyses.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
     if (fn.Entry is null)
-      return 0;
-    var dom = IrDominators.Build(fn)!;
+      return IrPassResult.Unchanged;
+
+    var dom = analyses.Get(IrAnalyses.Dominators)!;
     var changed = 0;
 
     foreach (var block in fn.Blocks) {
@@ -38,7 +52,11 @@ public static class CorrelatedValueProp {
             ++changed;
       }
     }
-    return changed;
+
+    // Operand substitution cannot change reachability, predecessor sets or the dominator tree.
+    return changed == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreserving(changed, IrAnalyses.Dominators);
   }
 
   private static bool ReplaceOperandIn(IrInstruction inst, IrValue from, IrValue to) {
