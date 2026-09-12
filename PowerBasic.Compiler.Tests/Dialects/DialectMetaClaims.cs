@@ -37,12 +37,20 @@ internal static class DialectMetaClaims {
   internal sealed record Claim(string Id, string Directive, string Against, string Body, string Why,
     Kind Kind = Kind.ImagesDiffer, Func<Dialect, bool>? Applies = null);
 
+  /// <summary>
+  /// The operands are READ, not assigned, and that is load-bearing. With <c>a = 100000 : b = 7</c>
+  /// the whole expression is a constant, so a strong enough optimizer computes <c>c</c> at compile
+  /// time and there is no arithmetic left for <c>$ERROR OVERFLOW</c> to wrap, no multiply for a CPU
+  /// tier to widen and nothing for <c>$OPTIMIZE</c> to choose between - every claim over this body
+  /// then reports the directive changing nothing, when what changed is that the body stopped being
+  /// a body. A probe that a better compiler defeats is measuring the compiler's weakness.
+  /// </summary>
   private const string _arithmetic = """
     DIM a AS LONG
     DIM b AS LONG
     DIM c AS LONG
-    a = 100000
-    b = 7
+    INPUT a
+    INPUT b
     c = a * b + a \ b
     PRINT c
     END
