@@ -208,7 +208,7 @@ public sealed partial class CodeGenerator {
     if (!this.UseExperimentalBackend)
       return this._backendProcs;
 
-    var module = IrLowering.TryLowerModule(model, out var moduleDeclinedBecause);
+    var module = IrLowering.TryLowerModule(model, this._unreachableDeferred, out var moduleDeclinedBecause);
     if (module is null) {
       // Every procedure in the program goes with it, and each is recorded rather than left out: a
       // whole-module lowering failure costs the same coverage as a procedure-by-procedure one, and

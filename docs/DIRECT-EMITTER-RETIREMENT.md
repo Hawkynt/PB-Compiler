@@ -60,21 +60,15 @@ String ownership, error-handler state, DATA/RESTORE state, dynamic-array descrip
 Where that leaves the two gates today:
 
 - the pb36 corpus compiles **completely** with routing mandatory, in both optimizer modes — `MandatoryRoutingTests` pins it, and pins that the mode really does reject the constructs that decline, so it cannot pass vacuously;
-- the genuine-compiler battery run with routing mandatory scores **538 pass / 5 fail**, against **548 / 0 / 0** with the fallback. Those 11 are the whole remaining distance for this gate, and they are all historic dialects, which is why the pb36 corpus does not see them:
+- the genuine-compiler battery run with routing mandatory scores **546 pass / 1 fail**, against **548 / 0 / 0** with the fallback. Those 11 are the whole remaining distance for this gate, and they are all historic dialects, which is why the pb36 corpus does not see them:
 
-| count | reason | programs |
-|---|---|---|
-| 2 | `lowering: the module did not lower to IR` | BASICA/GW deferred interpreter text (`DEADTEXT`) |
-| 2 | `selection: floating point: IrConstantInt has no cell` | `tb10`/`tb11` |
-| 1 | `selection: Microsoft Binary Format (mbf32) needs the MBF/IEEE load-store conversion` | `basica` |
+One program remains: `basica/DIFF01`, on `selection: Microsoft Binary Format (mbf32) needs the MBF/IEEE load-store conversion`. BASICA/GW floats are stored in Microsoft Binary Format, which the x87 cannot compute on — every load converts to IEEE and every store converts back. The IR already CARRIES the format (`MbfToFP` / `FPToMbf` casts) rather than refusing to lower it, so this is a selector gap, not a lowering one. It wants runtime routines for the same reason the BASCOM rounding did: the conversion branches, and the selector emits within one block.
 
-`rt_round_half_away` was the largest of these (six programs) and is closed. It was not a missing table row: no such routine existed. The BASCOM lineage (QB 1.0–3.0, BASICA/GW) rounds float-to-integer half AWAY from zero and the direct emitter expands that inline, while the IR names the rule abstractly so each back end can render it its own way. `rt_rndaway` is now that routine — `rt_round`'s body without the decimal-places scaling — in a runtime section of its own, because the trimmer emits per section and sharing `rounding` would have added its bytes to every program that rounds at all.
+Closed while measuring:
 
-
-
-The routed backend corpus differential is the correctness gate. Image byte identity with the AX-serial direct emitter is not required; observable behavior is. The differential battery must remain at zero routed/direct disagreements while each new class starts routing.
-
-Before final deletion, run the genuine-compiler differential/golden gates with routing mandatory so the comparison is no longer accidentally exercising the fallback.
+- **BASCOM half-away-from-zero rounding** (6 programs) — not a missing ABI row; no such routine existed. `rt_rndaway` is `rt_round`'s body without the decimal-places scaling, in a runtime section of its own, because the trimmer emits per section and sharing `rounding` would have added its bytes to every program that rounds at all.
+- **A whole integer constant on the float path** (2 programs) — a constant the front end typed as a float and the folder left whole (`32767 + 1` promoted past INTEGER). It goes in the same qword pool as any float literal, guarded on round-tripping so a value the pool cannot hold still declines rather than being quietly rounded.
+- **BASICA/GW source control cannot reach** (2 programs) — `DEADTEXT`'s line 40 is arbitrary text a `GOTO` skips, and the language never parses a line execution does not reach. `LowerIf` already folded a constant IF so a dead ARM never reached the lowering, but this is a top-level statement. The direct emitter's own reachability set is handed in rather than recomputed: two analyses would be two answers to a question that must have one. A deferred line that IS reachable still declines.
 
 ### 4. Optimizer replacement
 

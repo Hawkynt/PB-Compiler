@@ -35,6 +35,14 @@ public sealed partial class IrLowering {
 
   /// <summary>Module-level symbols some PROCEDURE reads or writes, so main cannot keep them in its frame.</summary>
   private readonly HashSet<VariableSymbol>? _escapesToProcedures;
+
+  /// <summary>
+  /// BASICA/GW source lines control can never reach. Their text was never parsed - that is what
+  /// <see cref="DeferredSourceStmt"/> means - so lowering one would decline on syntax the language
+  /// says is never examined. The DIRECT emitter skips exactly this set, and it is handed in rather
+  /// than recomputed so both paths agree about which lines are dead.
+  /// </summary>
+  private readonly IReadOnlySet<DeferredSourceStmt>? _unreachableDeferred;
   private readonly Stack<LoopContext> _loops = new();
   private readonly Dictionary<string, IrBasicBlock> _labels = new(StringComparer.OrdinalIgnoreCase);
   private readonly ConstantFolder _folder;
@@ -66,7 +74,9 @@ public sealed partial class IrLowering {
   private readonly record struct LoopContext(ExitKind Kind, IrBasicBlock Exit, IrBasicBlock Continue);
 
   private IrLowering(SemanticModel model, IReadOnlyDictionary<ProcedureSymbol, IrFunction>? procMap, IrModule? module,
-      Dictionary<VariableSymbol, IrGlobalVariable>? sharedStorage = null, HashSet<VariableSymbol>? escapesToProcedures = null) {
+      Dictionary<VariableSymbol, IrGlobalVariable>? sharedStorage = null, HashSet<VariableSymbol>? escapesToProcedures = null,
+      IReadOnlySet<DeferredSourceStmt>? unreachableDeferred = null) {
+    this._unreachableDeferred = unreachableDeferred;
     this._sharedStorage = sharedStorage;
     this._escapesToProcedures = escapesToProcedures;
     this._model = model;
@@ -98,7 +108,16 @@ public sealed partial class IrLowering {
   /// instead of a generic "unsupported", which is the difference between a usable message and a
   /// shrug.
   /// </summary>
-  public static IrModule? TryLowerModule(SemanticModel model, out string? declinedBecause) {
+  public static IrModule? TryLowerModule(SemanticModel model, out string? declinedBecause)
+    => TryLowerModule(model, null, out declinedBecause);
+
+  /// <summary>
+  /// As above, with the BASICA/GW lines control cannot reach. The caller computes that set because the
+  /// DIRECT emitter needs the identical one; recomputing it here would be a second answer to a
+  /// question that must have one.
+  /// </summary>
+  public static IrModule? TryLowerModule(SemanticModel model,
+      IReadOnlySet<DeferredSourceStmt>? unreachableDeferred, out string? declinedBecause) {
     declinedBecause = null;
     var module = new IrModule(model.FileName, model.Dialect, model.CompatDialect);
     var procMap = new Dictionary<ProcedureSymbol, IrFunction>(ReferenceEqualityComparer.Instance);
@@ -139,7 +158,7 @@ public sealed partial class IrLowering {
     var main = new IrFunction("main", IrType.Void);
     module.AddFunction(main);
     try {
-      new IrLowering(model, procMap, module, shared, escapes).LowerBodyInto(main, model.MainBody, null);
+      new IrLowering(model, procMap, module, shared, escapes, unreachableDeferred).LowerBodyInto(main, model.MainBody, null);
     } catch (IrLoweringException e) {
       declinedBecause = e.Message;
       return null;
@@ -1356,6 +1375,11 @@ public sealed partial class IrLowering {
         break;
       // CommandStmt is a catch-all for a dozen unrelated statements (KILL, POKE, OUT, RANDOMIZE...),
       // so it names the keyword: "unsupported statement: CommandStmt" ranks nothing
+      // a line control cannot reach: never parsed, so there is nothing here to lower and nothing to
+      // decline over. Reaching one that IS reachable still declines, below.
+      case DeferredSourceStmt dead when this._unreachableDeferred?.Contains(dead) == true:
+        break;
+
       default: throw new IrLoweringException(statement is CommandStmt command
         ? $"unsupported statement: {command.Keyword}"
         : $"unsupported statement: {statement.GetType().Name}");
