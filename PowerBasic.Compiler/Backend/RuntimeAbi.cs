@@ -910,6 +910,11 @@ internal static class RuntimeAbi {
     // pbvFixDigits power (what reading a FIX cell means) and rt_fixup multiplies and rounds to the
     // nearest integer (what writing one means). The exponent is a RUNTIME cell, which is the whole
     // reason these are calls: a compile-time divide would be right only until pbvFixDigits changed.
+    // The BASCOM lineage rounds float-to-integer half AWAY from zero. It is a CALL rather than an
+    // instruction pattern for the reason rt_trunc is: the two emitters write into one image and a
+    // program must not round two ways.
+    ["rt_round_half_away"] = new("rt_rndaway", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
+
     ["rt_fix_down"] = new("rt_fixdn", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
     ["rt_fix_up"] = new("rt_fixup", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
 

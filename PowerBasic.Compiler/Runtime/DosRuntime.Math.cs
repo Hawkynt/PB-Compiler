@@ -23,6 +23,45 @@ public sealed partial class DosRuntime {
     asm.Ret();
   }
 
+  /// <summary>
+  /// <c>rt_rndaway</c>: ST(0) rounded half AWAY from zero, the BASCOM lineage's float-to-integer rule
+  /// (QuickBASIC 1.0-3.0, BASICA/GW). <c>CINT(2.5)</c> is 3 and <c>CINT(-2.5)</c> is -3, where PB and
+  /// QB 4.x take the FPU's round-to-nearest-EVEN and answer 2 and -2.
+  ///
+  /// <para>
+  /// A section of its own, deliberately. The trimmer works at section granularity and emits only what
+  /// a program references, so putting this beside <c>rt_trunc</c> in "rounding" would add its bytes to
+  /// every program that rounds at all - and the golden gate requires byte identity with the genuine
+  /// compiler for programs that have nothing to do with BASCOM.
+  /// </para>
+  /// <para>
+  /// The body is <see cref="EmitRounding"/>'s <c>rt_round</c> without the decimal-places scaling:
+  /// remember the sign, bias the magnitude by a half, truncate, put the sign back. The direct emitter
+  /// writes the same sequence inline; this exists because the ROUTED path reaches it through a call,
+  /// the IR having named the rule abstractly so each back end can render it its own way.
+  /// </para>
+  /// </summary>
+  private void EmitRoundAway(Assembler asm) {
+    var positive = asm.DefineLabel();
+    asm.MarkLabel("rt_rndaway");
+    asm.Push(Reg.AX);
+    asm.Ftst();
+    asm.Fstsw(Mem.Word(this._scratch, 16));
+    asm.Mov(Reg.AX, Mem.Word(this._scratch, 16));
+    asm.Sahf();
+    asm.Pushf();                                   // CF = the operand was negative
+    asm.Fabs();
+    asm.Fld(Mem.Qword(asm.Lbl("rt_half")));
+    asm.Faddp(St.St1);
+    asm.Call(asm.Lbl("rt_trunc"));
+    asm.Popf();
+    asm.Jnc(positive);
+    asm.Fchs();
+    asm.MarkLabel(positive);
+    asm.Pop(Reg.AX);
+    asm.Ret();
+  }
+
   private void EmitRounding(Assembler asm) {
     void Emit(string label, int rcBits) {
       asm.MarkLabel(label);

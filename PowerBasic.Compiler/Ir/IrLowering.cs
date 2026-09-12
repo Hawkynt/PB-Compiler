@@ -5373,8 +5373,16 @@ public sealed partial class IrLowering {
     // number.
     if (this._checkOverflow && st.Signed)
       this.RaiseWhen(this.OutsideIntegerRange(value, st), 6, "overflow");
-    if (st.Signed && this._model.EffectiveDialect.IsBascomRuntime())
-      return this._b.Call(toTy, this.RuntimeFn("rt_round_half_away", toTy, value.Type), value);
+    if (st.Signed && this._model.EffectiveDialect.IsBascomRuntime()) {
+      // The call ANSWERS A FLOAT and the narrowing is a separate cast, which is what lets the x86-16
+      // back end reach it: a routine that answered the integer directly would need one ABI per result
+      // width, where this one is the ordinary ST(0)-in, ST(0)-out shape rt_fix_down already uses. The
+      // narrowing is exact rather than a second rounding - the operand is integral by construction,
+      // so FPToSIRound and a truncation agree on it, and FPToSIRound is the one every back end
+      // already selects for CINT.
+      var rounded = this._b.Call(IrType.F80, this.RuntimeFn("rt_round_half_away", IrType.F80, value.Type), value);
+      return this._b.Cast(IrCastOp.FPToSIRound, rounded, toTy);
+    }
     // Both arms ROUND. The unsigned one is a separate opcode rather than the truncating FPToUI for
     // the reason the signed pair is two opcodes: PB's b?? = 3.5 is 4 exactly as its i% = 3.5 is, and
     // spelling it FPToUI made the C and LLVM back ends answer 3 while the x86-16 one answered 4.

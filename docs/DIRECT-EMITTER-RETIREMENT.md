@@ -60,16 +60,15 @@ String ownership, error-handler state, DATA/RESTORE state, dynamic-array descrip
 Where that leaves the two gates today:
 
 - the pb36 corpus compiles **completely** with routing mandatory, in both optimizer modes — `MandatoryRoutingTests` pins it, and pins that the mode really does reject the constructs that decline, so it cannot pass vacuously;
-- the genuine-compiler battery run with routing mandatory scores **526 pass / 11 fail**, against **548 / 0 / 0** with the fallback. Those 11 are the whole remaining distance for this gate, and they are all historic dialects, which is why the pb36 corpus does not see them:
+- the genuine-compiler battery run with routing mandatory scores **538 pass / 5 fail**, against **548 / 0 / 0** with the fallback. Those 11 are the whole remaining distance for this gate, and they are all historic dialects, which is why the pb36 corpus does not see them:
 
-| count | reason |
-|---|---|
-| 6 | `selection: call: rt_round_half_away (runtime declaration - not in the runtime ABI table)` |
-| 2 | `selection: floating point: IrConstantInt has no cell` |
-| 2 | `lowering: the module did not lower to IR` (BASICA/GW deferred interpreter text) |
-| 1 | `selection: Microsoft Binary Format (mbf32) needs the MBF/IEEE load-store conversion` |
+| count | reason | programs |
+|---|---|---|
+| 2 | `lowering: the module did not lower to IR` | BASICA/GW deferred interpreter text (`DEADTEXT`) |
+| 2 | `selection: floating point: IrConstantInt has no cell` | `tb10`/`tb11` |
+| 1 | `selection: Microsoft Binary Format (mbf32) needs the MBF/IEEE load-store conversion` | `basica` |
 
-`rt_round_half_away` is the largest and is not a missing table row: no such runtime routine exists. The BASCOM lineage (QB 1.0–3.0, BASICA/GW) rounds float-to-integer half AWAY from zero, and the direct emitter expands that inline — `FTST`/`FSTSW`/`SAHF`, bias by ±0.5, then `CALL rt_trunc`. The IR names it abstractly so the C and LLVM renderers can each write their own; the x86-16 selector needs either the same inline expansion or a real routine to call.
+`rt_round_half_away` was the largest of these (six programs) and is closed. It was not a missing table row: no such routine existed. The BASCOM lineage (QB 1.0–3.0, BASICA/GW) rounds float-to-integer half AWAY from zero and the direct emitter expands that inline, while the IR names the rule abstractly so each back end can render it its own way. `rt_rndaway` is now that routine — `rt_round`'s body without the decimal-places scaling — in a runtime section of its own, because the trimmer emits per section and sharing `rounding` would have added its bytes to every program that rounds at all.
 
 
 
