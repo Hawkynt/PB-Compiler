@@ -868,6 +868,20 @@ public sealed class Cpu8086 {
         this.WriteDword(address, result);
       return;
     }
+    // ...and the same group by 1 or by CL. Only the imm8 form was here because the direct emitter
+    // reaches for it even for a count of one; the routed emitter uses the shorter D1 encoding, which
+    // is the same instruction. Shift32 already carries the 386 CF/OF definition for all eight.
+    if (opcode is 0xD1 or 0xD3 && repeat == 0) {          // SHL/SHR/SAR/ROL/ROR/RCL/RCR dword,1|CL
+      var (mode, operation, address) = this.ModRm();
+      var count = opcode == 0xD3 ? this.Reg8(_CX) : (byte)1;
+      var value = mode == 3 ? this.Reg32(address) : this.ReadDword(address);
+      var result = this.Shift32(operation, value, count);
+      if (mode == 3)
+        this.SetReg32(address, result);
+      else
+        this.WriteDword(address, result);
+      return;
+    }
     if (opcode == 0x0F && repeat == 0) {
       this.StepDwordTwoByte();
       return;
