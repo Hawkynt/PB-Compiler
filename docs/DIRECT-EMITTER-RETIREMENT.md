@@ -119,6 +119,24 @@ The one genuine behavioural regression the measurement found has been fixed, and
 
 **Run it with the emulator.** The first measurement skipped 279 tests without `DOSBOX_EXE`, including both tail-recursion cases and the whole corpus run — and would have reported a smaller number that had never executed the program which found the bug.
 
+#### Re-measured: 62 of 6493, and none of them behavioural
+
+| | count |
+|---|---|
+| emitted-code assertions | 57 |
+| the interpreter missing an opcode | 3 |
+| pre-existing TIMER corpus case | 2 |
+| **behavioural failures caused by routing** | **0** |
+
+The three that looked behavioural were not. `Rotate32_*` asserts CF/OF against the 386 definition and died with *"unimplemented opcode 66 D1"* — the direct emitter reaches for the imm8 form of the dword shift group even when the count is one, the routed emitter uses the shorter `D1` encoding, and `Cpu8086` only decoded the former. Same instruction; `Shift32` already carried the flag definition for all eight operations. That is the strict oracle needing an opcode, not the routed path needing a fix.
+
+**The 57 are not uniformly re-pointable, and two worked examples say why.** Each has to be read before it is rewritten, because a fixture failing under routing can be failing for a reason that has nothing to do with routing:
+
+- `DialectMetaClaims` drove three claims — `cpu.tier`, `optimize.speed`, `error.overflow` — from a body assigning both operands as literals. A strong enough optimizer computes the result at compile time, and then there is no arithmetic for `$ERROR OVERFLOW` to wrap, no multiply for a CPU tier to widen and nothing for `$OPTIMIZE` to choose between. Reading the operands instead takes pb36 from **3/7 to 5/7 on the ordinary build**: those claims were never failing, they were unmeasured, and the direct emitter only scored better because its propagation is weaker.
+- `FloatResultForwardingTests` looks for `FLD [BP+disp8]` immediately before `MOV SP,BP`, across the WHOLE image — so it answers "does any procedure here reload a float before tearing down", which is true of the caller whatever the function under test does. Scoped to the function, routed and direct emit **byte-identical** code, and both contain the marker: O0102 keeps an `FSTP`/`FLD` pair for a float on purpose, to a scratch cell, because that round trip is what rounds the 80-bit x87 value down to SINGLE. The detector cannot tell the eliminated frame-slot reload from the deliberately-kept narrowing one. There is no routing difference here to re-point — the fixture needs the result slot's offset to say what it means, which is a fixture-design change rather than a retirement one.
+
+So the 57 are a real work list, but the unit of work is "read the fixture, find what it actually measures", not "swap an instruction name". Two of the first three examined turned out to be measuring nothing on either path.
+
 ### 4b. What the gate-4 work actually turns up
 
 Working the first item on the list produced a chain worth recording, because each step found the next and none of them was the missing optimization the list appeared to name.
