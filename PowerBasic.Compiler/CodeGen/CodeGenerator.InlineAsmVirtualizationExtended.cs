@@ -10,7 +10,7 @@ public sealed partial class CodeGenerator {
   /// ISA scratch area before any destination lane is overwritten, so source/destination aliasing has
   /// exactly the same snapshot semantics as the hardware instruction.
   /// </summary>
-  private bool TryEmitVirtualExtendedVectorInstruction(InlineInstruction instruction, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryEmitVirtualExtendedVectorInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     if (!IsExtendedVectorEmulationSupported(instruction.Mnemonic))
       return false;

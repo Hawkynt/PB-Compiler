@@ -10,7 +10,7 @@ public sealed partial class CodeGenerator {
   /// ERROR disables that fallback, NATIVE deliberately raises the hardware requirement, and EMULATE
   /// deliberately exercises the software path even on capable hardware.
   /// </summary>
-  private bool TryEmitPolicyInlineAsm(string line, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryEmitPolicyInlineAsm(string line, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     var instruction = InlineInstruction.Parse(line);
     if (instruction.Mnemonic.Length == 0)
@@ -152,7 +152,7 @@ public sealed partial class CodeGenerator {
   /// immediate count arrived with the 80186. CL forms stay native; multi-bit immediates are expanded
   /// to repeated count-one operations so an 8086 target never receives a later-generation opcode.
   /// </summary>
-  private bool TryEmit8086CompatibleShift(InlineInstruction instruction, InlineAsmResolver resolver,
+  private bool TryEmit8086CompatibleShift(InlineInstruction instruction, IAsmSymbolResolver resolver,
       RuntimeTarget target, out string? error) {
     error = null;
     if (target.CpuLevel >= 186 || !IsLegacyShiftOrRotate(instruction.Mnemonic))

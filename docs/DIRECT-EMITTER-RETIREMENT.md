@@ -126,7 +126,51 @@ The one genuine behavioural regression the measurement found has been fixed, and
 | emitted-code assertions | 57 |
 | the interpreter missing an opcode | 3 |
 | pre-existing TIMER corpus case | 2 |
-| **behavioural failures caused by routing** | **0** |
+| behavioural failures caused by routing | **1, found later — see below** |
+
+**That table was wrong, and the way it was wrong is the lesson.** A fixture failing under routing was
+classified as an "emitted-code assertion" and pinned to the direct emitter, and one family of them was
+not that at all. `$CPU 8086` with `! PADDW MM0, MM1` compiles two different programs:
+
+| | image | contains `0F FD` |
+|---|---|---|
+| direct emitter | 2003 bytes | no — it EMULATES the instruction on plain 8086 |
+| routed | 1217 bytes | **yes — the machine the source named cannot execute it** |
+
+The `CodeGen/InlineAsmVirtualization*` family lowers the packed-integer and 32-bit surfaces onto
+instructions the declared target actually has. The routed path has no such lowering: `IrInlineAsm`
+carries the text and the machine emitter assembles it verbatim. Measured across tiers, the two agree
+only where the instruction is natively supported — `$CPU MMX` agrees, `8086`, `80386` and `SSE2` all
+diverge, the last because SSE2 does not bring the MMX register file with it.
+
+An image that faults on its own target is a behaviour, not a shape. **Pinning the fixture is what hid
+it**, which is precisely the failure this document warns about elsewhere: a check that still runs,
+still passes, and measures nothing. The routing now declines a body carrying inline asm above the
+declared CPU, so the direct emitter picks it up and the production build is byte-identical to it;
+`BackendInlineAsmVirtualizationTests` pins that on the PRODUCTION configuration, with no
+`UseExperimentalBackend` in it, so it cannot be hidden the same way twice.
+
+**That looked like the reason `CodeGen/` could not be deleted, and it turned out to be the reason it
+nearly could.** ISA emulation was the one thing the direct emitter did that the routed path could
+not — but the emulator does not depend on the direct emitter at all. It operates on inline-asm TEXT
+and an `Assembler`, which both paths have. It was only ever *reached* through the direct emitter.
+
+`MachineEmitter.EmitFunction` now takes the target's ISA policy as a callback, exactly as it takes
+callee labels and data cells, and for the same reason: what a target can execute is knowledge the
+code generator holds, and the machine emitter should not grow a second copy of it. The routed path
+reaches the same emulator, so `$CPU 8086` with `! PADDW MM0, MM1` emits no `0F FD` on either path and
+the body still routes — the alternative, declining it, would have been correct and would have cost
+the routing every program with a line of portable SIMD in it.
+
+`InlineAsmZeroOverheadTests` and `RuntimeTargetPolicyTests` came off the pin with that change: 27
+assertions back to covering production, and the `$OPTIMIZE SPEED` erasure of a provable no-op
+identity works routed too, because it lives behind the same policy entry.
+
+So the emulator is shared infrastructure, not direct-emitter code, and it survives the deletion on
+its own merits. What is left pinned is 30 assertions in five fixtures, and those are genuine missing
+optimizations rather than missing features: auto-vectorization, the O0308 array preflight, search
+selection, dead-global cascades and float result forwarding. A program compiled without them is
+correct, just larger.
 
 The three that looked behavioural were not. `Rotate32_*` asserts CF/OF against the 386 definition and died with *"unimplemented opcode 66 D1"* — the direct emitter reaches for the imm8 form of the dword shift group even when the count is one, the routed emitter uses the shorter `D1` encoding, and `Cpu8086` only decoded the former. Same instruction; `Shift32` already carried the flag definition for all eight operations. That is the strict oracle needing an opcode, not the routed path needing a fix.
 
@@ -252,13 +296,55 @@ Remaining, in order:
 - finally remove `UseExperimentalBackend`, `PBC_X_BACKEND`, `--x-backend`/`--no-x-backend` and the
   split-ownership routing logic that only exists for mixed images.
 
-One construct still declines and is not in the corpus: `ERASE` of an ABSOLUTE array. The routed
-lowering keeps an absolute array's segment as a compile-time constant, so there is no runtime cell
-to clear. The oracle says less rides on this than it looks: genuine PBC 3.50 **refuses**
-`DIM v%(0 TO 3) AT &HB800` outright - *"Error 489: Array is already static"* - the declaration has to
-be `DIM DYNAMIC ... AT`, and after an `ERASE` genuine terminates the program rather than answering
-anything, which neither emitter reproduces. `tests/diff/DIFF125.BAS` pins the part that does have a
-defined answer, and passes.
+**Gate 1 is closed: the routing declines nothing.** The last row was `ERASE` of an ABSOLUTE array,
+and it was a representation problem rather than a semantic one - the routed lowering held the
+segment as a compile-time constant, so unmapping the view had nowhere to land. It now holds the
+segment in a cell, as the direct emitter always did; the cell costs nothing where no `ERASE`
+intervenes, because mem2reg promotes an alloca stored once with a literal and SCCP folds the load
+back to the immediate. `BackendRoutingGateTests`' decline list, the test consuming it, and
+`MandatoryRoutingTests`' two premise tests are deleted rather than kept empty - all three asked for
+exactly that in their own comments, because a routing that refuses nothing cannot be shown to be
+refusing. The census is the live measurement: **330/330 functions routed in both optimizer modes,
+177/177 module bodies owned**, only bodiless `EXTERNAL`s declining.
+
+The oracle corrected a language form on the way: genuine PBC 3.50 **refuses**
+`DIM v%(0 TO 3) AT &HB800` with *"Error 489: Array is already static"* - an array carrying an `AT`
+segment has to be `DYNAMIC`, and we accepted the static spelling. `DIFF125` and `DIFF126` pin the
+pair. Neither exercises an access AFTER the `ERASE`: genuine terminates the program there rather
+than answering, so there is nothing to diff, and no emitter reproduces it.
+
+### What deleting `CodeGen/` actually costs, measured
+
+Deleting the seven pure-emission files (`Expressions`, `Places`, `Intrinsics`, `Arrays`, `Io`,
+`Graphics`, `LowLevel`) and building reports **710 errors** - which sounds like deep entanglement and
+is not. Sorted by who raises them:
+
+| raised in | count | what it is |
+|---|---|---|
+| `CodeGenerator.cs` | 396 | driver and direct emission in one file; **350 of them at or after `EmitStatement`** |
+| `CodeGenerator.Optimize.cs` | 134 | the direct emitter's tier-2 passes |
+| `CodeGenerator.Procs.cs` | 80 | direct emission plus the SHARED `LayoutFrame`/`SlotOf` |
+| `Vendor` / `Extras` / `InlineAsm` / `Search` / `OnGoto` | 46 | direct emission |
+| **`Backend.cs`, `Units.cs`, `Data.cs`** | **10** | **the routed path's real dependency** |
+
+That last row is the whole boundary. Everything the routed path still needs from the direct
+emitter is **four symbols**: `TryDirectCell`, `ContainsErrorHandling`, `EmitStoreReadValue` and
+`EmitFarThunks`. Every other error is direct-emitter code referring to direct-emitter code, and
+disappears when the rest goes.
+
+So the deletion is bounded, and the shape of it is known:
+
+1. move those four (and their own dependencies) into a kept file;
+2. split `CodeGenerator.cs` - keep `EmitExecutable`, frame layout, runtime/entry and linking; drop
+   `EmitStatement` and the ~2700 lines after it, plus the ~46 earlier fold/peephole helpers;
+3. delete `Optimize`, `Vendor`, `Extras`, `Search`, `OnGoto` and the direct half of `Procs`;
+4. delete the fixtures pinned to the direct emitter - they test removed code - after moving any
+   claim that is portable onto the routed path;
+5. remove `UseExperimentalBackend`, `RequireBackend`, `PBC_X_BACKEND`, `--x-backend`,
+   `--no-x-backend` and the split-routing guards, which exist only for mixed images.
+
+Step 2 is the only one needing judgement rather than mechanism, and it is where a half-finished cut
+leaves a compiler that does not build. It wants its own session, not the tail of one.
 
 ## Reference architecture
 

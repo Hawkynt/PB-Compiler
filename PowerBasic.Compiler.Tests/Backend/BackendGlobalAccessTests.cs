@@ -204,57 +204,14 @@ public sealed class BackendGlobalAccessTests {
       "the pool is INDEXED rather than loaded whole, so it is taken as an address");
   }
 
-  /// <summary>
-  /// Two pools are only sound while nothing uses both, so a DATA reader the routing CANNOT take
-  /// costs the pool to every other reader. <c>Grab</c> here ERASEs an ABSOLUTE array - unmapping
-  /// memory the program does not own has no routed meaning, so the lowering refuses it - and it READs - so leaving the module body routed would have
-  /// it advancing <c>ir_dataptr</c> while <c>Grab</c> consults <c>rt_dataptr</c>. The whole
-  /// arrangement is refused at ROUTING time: by emission the only answer left would be an exception,
-  /// because <c>DataCellOf</c> has no cell to hand back and <c>MachineEmitter</c> raises on null.
-  ///
-  /// <para>
-  /// The subject is intentionally uncalled. That isolates DATA ownership from call compatibility:
-  /// the split exists merely because two bodies which may execute in the program would otherwise
-  /// own different cursor representations.
-  /// </para>
-  /// <para>
-  /// The unroutable shape here is load-bearing and keeps having to be replaced: this test has used
-  /// procedure-local error handling, then FASTCALL, then an array parameter, then a BCD result, and
-  /// each of them routed in turn. That is the intended
-  /// direction of travel, so when the LAST decline class closes this test does not need a new subject
-  /// - it needs deleting, because a routing that declines nothing cannot produce the split this
-  /// guards. <c>BackendRoutingGateTests</c> holds the current list.
-  /// </para>
-  /// </summary>
-  [Test]
-  public void Route_GivenAProcedureTheDirectEmitterKeepsAlsoReadingData_ThenNothingRoutes() {
-    const string source = """
-      DIM s AS STRING
-      READ s
-      PRINT s
-      DATA one, two
-      END
-
-      SUB Grab
-        DIM t AS STRING
-        READ t
-        PRINT t
-        DIM abs%(0 TO 3) AT &HB800
-        ERASE abs%
-      END SUB
-      """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
-
-    var image = routed.EmitExecutable();
-
-    Assert.Multiple(() => {
-      Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("Grab"),
-        "the premise: ERASE of an ABSOLUTE array still keeps this DATA reader on the direct emitter");
-      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("main"));
-      Assert.That(image, Is.Not.Empty);
-    });
-  }
+  // The guard's negative case used to live here: a DATA reader the routing CANNOT take, proving that
+  // two pools would disagree and so the whole arrangement must be refused at routing time. Its
+  // subject expired five times over - procedure-local error handling, then FASTCALL, then an array
+  // parameter, then a BCD result, then ERASE of an ABSOLUTE array - each routing in turn, which was
+  // always the intended direction of travel. With the last decline class closed there is no subject
+  // left, and the test said so itself: a routing that declines nothing cannot produce the split this
+  // guards, so it wanted deleting rather than a sixth subject. What remains below is the positive
+  // case, which is now the only reachable one.
 
   /// <summary>
   /// The other side of the same rule: when every DATA reader routes, they all use the IR's pool and

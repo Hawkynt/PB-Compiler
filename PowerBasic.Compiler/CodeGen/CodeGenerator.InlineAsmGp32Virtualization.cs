@@ -22,7 +22,7 @@ public sealed partial class CodeGenerator {
   /// versa; only bits 16..31 need persistent memory. ESP is deliberately excluded because using the
   /// compiler's own stack while pretending SP is an unrelated data register would be unsound.
   /// </summary>
-  private bool TryEmitVirtualGp32Instruction(InlineInstruction instruction, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryEmitVirtualGp32Instruction(InlineInstruction instruction, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     var mnemonic = instruction.Mnemonic;
     if (mnemonic is not ("MOV" or "XCHG" or "ADD" or "ADC" or "SUB" or "SBB" or "AND" or "OR" or "XOR" or "CMP" or "TEST"

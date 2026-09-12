@@ -635,7 +635,7 @@ public sealed partial class CodeGenerator {
       asm => {
         asm.Mov(Asm.Reg.AL, (Asm.Imm)0);
         asm.Jmp(this._rt.Exit);
-      }, alignLoops: this.Optimize && this.Cost.AlignHotLoops);
+      }, alignLoops: this.Optimize && this.Cost.AlignHotLoops, emitInlineAsm: this.EmitRoutedInlineAsm);
     this.EmitBackendSemanticMerges();
     this.EmitBackendGeneratedFunctions();
   }
@@ -1225,7 +1225,8 @@ public sealed partial class CodeGenerator {
     // the epilogue's MOV SP,BP rather than popped.
     var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
     MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
-      alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame, registerSpills: spillRegs);
+      alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame, registerSpills: spillRegs,
+      emitInlineAsm: this.EmitRoutedInlineAsm);
     this.EmitBackendSemanticMerges();
     this.EmitBackendGeneratedFunctions();
   }

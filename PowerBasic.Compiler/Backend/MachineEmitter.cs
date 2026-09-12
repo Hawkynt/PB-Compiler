@@ -101,10 +101,11 @@ public sealed class MachineEmitter {
   public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
       int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
       Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null, bool alignLoops = false,
-      bool allowFrameElision = false, IReadOnlyList<Asm.Reg>? registerSpills = null) {
+      bool allowFrameElision = false, IReadOnlyList<Asm.Reg>? registerSpills = null,
+      Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null) {
     var spills = registerSpills ?? [];
     var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets,
-      registerSpillBytes: spills.Count * 2);
+      registerSpillBytes: spills.Count * 2) { _emitInlineAsm = emitInlineAsm };
     var loopHeaders = alignLoops ? FindLoopHeaders(function) : null;
     var elideFrame = CanElideFrame(function, allowFrameElision && spills.Count == 0);
     var loadArgumentsThroughFrame = elideFrame && (function.HasArgumentPlan
@@ -626,6 +627,9 @@ public sealed class MachineEmitter {
   /// the OPERAND the selector chose, not of the identifier's spelling.
   /// </para>
   /// </summary>
+  /// <summary>The target's inline-asm ISA policy, when the caller has one - see <see cref="EmitInlineAsm"/>.</summary>
+  private Func<string, IAsmSymbolResolver, bool>? _emitInlineAsm;
+
   private void EmitInlineAsm(Assembler asm, MInstr instr) {
     if (instr.Operands.Count == 0 || instr.Operands[0] is not MOperand.InlineAsmText descriptor)
       throw new BackendInvariantException("MachineEmitter.EmitInlineAsm",
@@ -638,11 +642,22 @@ public sealed class MachineEmitter {
         ? AsmSymbol.OfLabel(this._labels[target.Block])
         : AsmSymbol.OfMemory(this.Mem(instr.Operands[i + 1]));
 
+    var resolver = new FrameResolver(bound, asm);
+
+    // The ISA policy first, when the caller supplied it. An instruction the DECLARED CPU cannot
+    // execute is not passed through: it is emulated, lowered onto instructions the target really has.
+    // Assembling the text directly instead produced a program carrying, say, a real PADDW under
+    // $CPU 8086 - correct-looking bytes that fault on the machine the source named. The policy lives
+    // with the rest of the target knowledge rather than here, so it arrives as a callback, the same
+    // way callee labels and data cells do.
+    if (this._emitInlineAsm is { } policy && policy(descriptor.Text, resolver))
+      return;
+
     // Not a decline any more, and no longer reachable from unsupported text: SelectInlineAsm assembles
     // the same statement through the same symbol KINDS and declines when it will not parse, so a
     // failure here means the two resolvers disagreed about a name - which is a defect in this back end
     // rather than a construct it does not cover.
-    if (!new TextAssembler(asm).TryParse(descriptor.Text, new FrameResolver(bound, asm), out var error))
+    if (!new TextAssembler(asm).TryParse(descriptor.Text, resolver, out var error))
       throw new BackendInvariantException("MachineEmitter.EmitInlineAsm",
         $"inline asm '{descriptor.Text.Trim()}' assembled at selection and not at emission: {error}");
   }
