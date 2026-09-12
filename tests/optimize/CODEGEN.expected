@@ -7,8 +7,15 @@ mul85 255
 imax 8
 imin-5
 itie 3
+imax-3
+imin-7
+itie-7
 spos 1
 sneg-1
+szero 0
+smin-1
+spos-1
+sneg 1
 szero 0
 smin-1
 swi ok
@@ -35,6 +42,12 @@ dclamp 3
 chi 3
 clo 4
 chi2 5
+dmax 3
+dmin-12
+dclamp-9
+chi-12
+clo 4
+chi2 3
 lmax 100000
 lmin-100000
 llow 100000
@@ -42,6 +55,7 @@ ldia 100000
 lclamp 50000
 divshift 8
 recip 25
+recip-3
 inline 16
 purefold 144
 zero 0
@@ -59,6 +73,7 @@ longacc 60
 accumulate 3
 cmpbranch 11
 constimm-32767  32767
+constimm-32768  32767
 maxscan 22
 boundedmul 7380
 hotacc 346

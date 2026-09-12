@@ -84,7 +84,7 @@ Where that leaves the two gates today:
 
 ### 4. Optimizer replacement
 
-**Measured.** `OptimizationBatteryTests.Battery_GivenScenarios_WhenTheBackEndIsForced_ThenTheUnmetListDoesNotGrow` runs the battery's expectations with routing forced: **11 of 55 are unmet** (CODEGEN 9, RANGES 2), recorded as a baseline so the list can only shrink.
+**Measured.** `OptimizationBatteryTests.Battery_GivenScenarios_WhenTheBackEndIsForced_ThenTheUnmetListDoesNotGrow` runs the battery's expectations with routing forced: **3 of 55 are unmet** (CODEGEN 3, RANGES 0), recorded as a baseline so the list can only shrink. It was 11; section 4c is what the other eight turned out to be.
 
 Reported rather than gating, because almost every assertion names a specific INSTRUCTION and a routed sequence reaching the same result by another shape is not a regression. Telling a missing optimization from a fixture that merely encodes the legacy instruction sequence is done one at a time, by argument.
 
@@ -129,6 +129,47 @@ Working the first item on the list produced a chain worth recording, because eac
 4. Fixing that invalidated the battery golden — the value recorded there **was** the bug — and broke `Emit_GivenIncrWithAmount_WhenPb36_ThenMemoryAddImmediate`, which scans the WHOLE IMAGE for a byte pattern: the extra prologue in its array variant lifted that variant's count to equal the other's without either `INCR` changing. It now scans the procedure's own extent, which is what its claim is about.
 
 The lesson for the rest of the list: an unmet expectation is a question, not a defect report. Two of the four steps above were the routed path being right.
+
+### 4c. Working the rest of the list: 11 unmet down to 3
+
+Asking that question of the remaining ten produced three answers, and only one of them was a missing optimization.
+
+**Five were the scenario folding away.** Each is a `NOINLINE` SUB driven from the main body by a single literal argument, and the routed path's interprocedural propagation substitutes it and evaluates the whole body at compile time — so the construct the scenario exists to measure is no longer in the image to assert about:
+
+| scenario | direct | routed | what survives routing |
+|---|---|---|---|
+| `DivideByConstantIsReciprocal` | 55 B | 19 B | `MOV AX,0019` — the division done at compile time |
+| `ConstantStoredAsImmediate` | 53 B | 25 B | `MOV AX,8001` — the whole conditional resolved |
+| `IntegerMaxFoldsWithoutFpu` | 123 B | 56 B | `MOV AX,0008` |
+| `IntegerSignIsBranchless` | 181 B | 72 B | `MOV AX,1` / `MOV AX,FFFF` / `XOR AX,AX` |
+| `MinMaxDiamondFolds` | 281 B | 109 B | `MOV AX,0008` |
+
+This is `IndexRangeUnknownKeepsCheck` again, and the fix is the same: a second call site with a different value, so the argument is genuinely unknown on both paths. Each second site was also chosen to take the *other* arm of its scenario's branches, so it earns its place on the direct path too. Varying one argument is not always enough — `IntegerMaxFoldsWithoutFpu` needed both, because leaving `b%` a literal turns the compare into `CMP AX,imm`.
+
+**Three were the same operation in a different operand form.** Not a different result, not a worse one — the assertion simply named one encoding:
+
+| scenario | direct | routed |
+|---|---|---|
+| `DivideByConstantIsReciprocal` | `MOV BX,6667` / `IMUL BX` | `MOV CX,6667` / **`IMUL CX`** |
+| `IntegerMaxFoldsWithoutFpu`, `MinMaxDiamondFolds` | stage into BX, `CMP AX,BX` | **`CMP AX,[BP+4]`** |
+| `LongCompareNarrowedToWord` | stage both sides, `CMP AX,BX` | **`CMP WORD PTR [BP-6],50`** |
+| `HotAccumulatorWinsTheRegister` | `ADD DI,[BP-4]` — scratch from memory | **`ADD SI,AX`** — neither operand in the frame |
+
+A `present` assertion may now name alternatives as `a|b`, holding when any occurs, so a fixture states which encodings of an operation it accepts rather than which one emitter happened to pick. The last row is the sharpest: that scenario is *titled* `HotAccumulatorWinsTheRegister`, and the routed path keeps both operands in registers with no frame at all (30 bytes against 85) — naming only `add-di-mem-bp` would have failed the emitter that does the thing better.
+
+**One was not a code difference at all.** `LongCompareNarrowedToWord` measured 16 bytes under routing — a prologue cut mid-`REP STOSW`. `ListingInfo.RuntimeLabels` reports every bound `rt_*` label as an offset, but a few are bound `IsConstant` and are *values*: `rt_bss_words` is a word count. On the routed layout that count (1156) happened to fall inside the procedure, and four separate fixtures were using those offsets as code boundaries. `ListingSymbol` now carries `IsConstant`, the fixtures skip them, and `--list` prints a constant as `=XXXX` so it cannot be misread as a place. The procedure is 221 bytes and had narrowed correctly all along.
+
+**The three that remain are one missing pass.** `AccumulateOverArrayIsHandQuality` (2) and `MaxScanReadsEachElementOnce` (1) both walk an array by index, and the routed path recomputes the address every iteration where the direct emitter steps a pointer:
+
+```
+routed:  89CA 01D2 19D2   sign-extend CX into DX — a 16-bit index, widened to 32
+         89CE D1E6 D1D2   SI = CX*2
+         8D38             LEA DI,[BX+SI]
+         8B15 01D0 41     MOV DX,[DI] / ADD AX,DX / INC CX
+direct:  033F 83C302      ADD DI,[BX] / ADD BX,2
+```
+
+That is induction-variable strength reduction, and the 32-bit widening in it is the same habit that drives the register pressure recorded above. It is the last thing between the routed path and this battery.
 
 ### 5. Production routing becomes mandatory
 

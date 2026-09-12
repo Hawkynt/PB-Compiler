@@ -2392,7 +2392,7 @@ public sealed class OptimizerTests {
     var code = exe.AsSpan(BitConverter.ToUInt16(exe, 8) * 16).ToArray();
     var target = listing.Procedures.First(p => p.Name.Equals(procedure, StringComparison.OrdinalIgnoreCase));
     var end = listing.Procedures.Where(p => p.CodeOffset > target.CodeOffset).Select(p => p.CodeOffset)
-      .Concat(listing.RuntimeLabels.Where(l => l.Offset > target.CodeOffset).Select(l => l.Offset))
+      .Concat(listing.RuntimeLabels.Where(l => !l.IsConstant && l.Offset > target.CodeOffset).Select(l => l.Offset))
       .Append(Math.Min(listing.CodeLength, code.Length))
       .Min();
     return code.AsSpan(target.CodeOffset, Math.Min(end, code.Length) - target.CodeOffset);

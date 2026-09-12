@@ -22,8 +22,18 @@ public sealed partial class CodeGenerator {
   /// <summary>One procedure entry in a <see cref="ListingInfo"/>.</summary>
   public readonly record struct ListingProcedure(string Name, bool IsFunction, string Signature, int CodeOffset, bool IsExternal);
 
-  /// <summary>One named offset (a bound runtime label or a module data slot) in a <see cref="ListingInfo"/>.</summary>
-  public readonly record struct ListingSymbol(string Name, int Offset, int Size);
+  /// <summary>
+  /// One named offset (a bound runtime label or a module data slot) in a <see cref="ListingInfo"/>.
+  ///
+  /// <para>
+  /// <paramref name="IsConstant"/> distinguishes the two things a bound label can be. Most are
+  /// positions - somewhere in the image the name stands for. A few are pure VALUES bound the same
+  /// way: <c>rt_bss_words</c> is a word count, not a place. Reading one of those as an offset puts
+  /// a phantom landmark in the middle of whatever code happens to sit at that number, so anything
+  /// treating this list as a map of the image must skip them.
+  /// </para>
+  /// </summary>
+  public readonly record struct ListingSymbol(string Name, int Offset, int Size, bool IsConstant = false);
 
   /// <summary>
   /// A read-only, post-emission snapshot of the compiled image for the <c>--list</c>
@@ -66,7 +76,7 @@ public sealed partial class CodeGenerator {
       .Where(kv => kv.Key.StartsWith("rt_", StringComparison.Ordinal))
       .OrderBy(kv => kv.Value)
       .ThenBy(kv => kv.Key, StringComparer.Ordinal)
-      .Select(kv => new ListingSymbol(kv.Key, kv.Value, 0))
+      .Select(kv => new ListingSymbol(kv.Key, kv.Value, 0, this._asm.Lbl(kv.Key).IsConstant))
       .ToList();
 
     var dataSlots = this._variableSlots
