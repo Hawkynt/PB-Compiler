@@ -213,14 +213,52 @@ So the remaining three are: one pass change that is written and understood, plus
 
 ### 5. Production routing becomes mandatory
 
-Once gates 1-4 are green:
+**The default is flipped: `UseExperimentalBackend` is ON.** Every program `pbc` compiles now goes
+through the IR path. `PBC_X_BACKEND=0` / `--no-x-backend` still selects the direct emitter, which is
+retained only for the fixtures below.
 
-- remove `UseExperimentalBackend`, `PBC_X_BACKEND`, `--x-backend` and `--no-x-backend`;
-- make IR lowering/selection failures compiler errors rather than fallback decisions;
-- delete direct-callee compatibility and split-ownership routing logic that only exists for mixed images;
-- remove legacy statement/expression/procedure emission;
-- keep/extract the DOS image/runtime/linking services still used by the x86-16 backend;
-- rename routed-backend tests so the IR path is simply the production backend.
+What that cost, measured rather than expected:
+
+| | |
+|---|---|
+| golden gate, routing default-on | **552 pass / 0 fail / 0 skip** |
+| behavioural failures caused by routing | **0** |
+| fixtures asserting the direct emitter's byte shapes | 57, now explicitly pinned |
+
+The golden gate is the one that matters: with the optimizer off, output is byte-identical to all 19
+genuine vintage compilers for every historic dialect, with the IR path doing the compiling.
+
+**About the pinning, because it is the part that can be done dishonestly.** The 57 fixtures were
+written when the direct emitter was the only one, and every one of them asserts an INSTRUCTION -
+`CMP AX,BX`, `IMUL BX`, `ADD DI,[BP-4]`. Routing reaches the same results by other shapes, so under
+the new default they were measuring which emitter ran rather than whether the optimization happened.
+They are not disabled and not relaxed: each now says `UseExperimentalBackend = false`, which is what
+it always meant. `OptimizerTests` already carried a `CompileWithBackend` sibling for exactly this
+distinction, so the file's own design had anticipated it.
+
+That leaves the work list, and it is the honest cost of the flip: **those 57 assertions no longer
+cover production.** The compensating coverage is `tests/optimize`, which measures the same
+optimizations on the routed path and stands at 3 of 55 unmet. Moving a fixture from `Compile` to
+`CompileWithBackend` is the unit of work, done by reading what the test means - and two of the first
+three read turned out to be measuring nothing on either path.
+
+Remaining, in order:
+
+- move the 57 pinned fixtures onto the routed path one at a time, or delete the ones that only
+  encode the legacy sequence;
+- close the last three battery expectations (section 4d);
+- then make declines errors rather than fallbacks, and delete legacy statement/expression/procedure
+  emission, keeping the DOS image/runtime/linking services the x86-16 backend still uses;
+- finally remove `UseExperimentalBackend`, `PBC_X_BACKEND`, `--x-backend`/`--no-x-backend` and the
+  split-ownership routing logic that only exists for mixed images.
+
+One construct still declines and is not in the corpus: `ERASE` of an ABSOLUTE array. The routed
+lowering keeps an absolute array's segment as a compile-time constant, so there is no runtime cell
+to clear. The oracle says less rides on this than it looks: genuine PBC 3.50 **refuses**
+`DIM v%(0 TO 3) AT &HB800` outright - *"Error 489: Array is already static"* - the declaration has to
+be `DIM DYNAMIC ... AT`, and after an `ERASE` genuine terminates the program rather than answering
+anything, which neither emitter reproduces. `tests/diff/DIFF125.BAS` pins the part that does have a
+defined answer, and passes.
 
 ## Reference architecture
 

@@ -28,7 +28,7 @@ public sealed class FloatResultForwardingTests {
   private static byte[] Compile(string source, bool optimize = true) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = optimize };
+    var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = false };
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return image;

@@ -14,11 +14,24 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 [TestFixture]
 public sealed class OptimizerTests {
 
+  /// <summary>
+  /// Compiles through the DIRECT emitter, explicitly.
+  ///
+  /// <para>
+  /// Every byte-pattern claim in this fixture is a claim about that emitter's instruction selection,
+  /// and was written when it was the only one. It now has to say so: routing became the default, and
+  /// a fixture asserting <c>CMP AX,BX</c> against a back end that reaches the same result through
+  /// <c>CMP AX,[BP+4]</c> is measuring which emitter ran, not whether the optimization happened.
+  /// <see cref="CompileWithBackend"/> is the routed sibling, and moving a test from one to the other
+  /// is the unit of work in docs/DIRECT-EMITTER-RETIREMENT.md - done by reading what the test means,
+  /// one at a time, never by relaxing the assertion.
+  /// </para>
+  /// </summary>
   private static byte[] Compile(string source, Dialect dialect) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
     var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return exe;
@@ -193,7 +206,7 @@ public sealed class OptimizerTests {
     // the short form is smaller AND the near form it replaces is an 80386 encoding.)
     static byte[] Compile(string source) {
       var model = BindModel(source);
-      var generator = new CodeGenerator(model);
+      var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
       var exe = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
       return exe;
@@ -286,7 +299,7 @@ public sealed class OptimizerTests {
       PRINT d$; "|"; e$; "|"; f$
       """;
     var model = BindModel(source);
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     Assert.That(DosBoxRunner.Normalize(DosBoxRunner.Run(exe)), Is.EqualTo("aabbcc|aabbccaa|aabbcczz\n"));
@@ -299,7 +312,7 @@ public sealed class OptimizerTests {
     // arm (with its marker literal) never reaches the image
     static bool HasMarker(string source, bool optimize) {
       var model = BindModel(source);
-      var generator = new CodeGenerator(model) { Optimize = optimize };
+      var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = false };
       var exe = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
       var marker = System.Text.Encoding.ASCII.GetBytes("XDEADX");
@@ -679,8 +692,8 @@ public sealed class OptimizerTests {
     var src = "DIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\ny = VAL(z$)\nx = ABS(y)\nPRINT x\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(src, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var opt = new CodeGenerator(model).EmitExecutable();
-    var noOpt = new CodeGenerator(model) { Optimize = false }.EmitExecutable();
+    var opt = new CodeGenerator(model) { UseExperimentalBackend = false }.EmitExecutable();
+    var noOpt = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false }.EmitExecutable();
     Assert.That(HasBranchlessAbs(opt), Is.True, "optimized ABS is branchless cwd/xor/sub");
     Assert.That(HasBranchlessAbs(noOpt), Is.False, "the faithful build keeps the test/JNS/NEG form");
 
@@ -1086,8 +1099,8 @@ public sealed class OptimizerTests {
     const string src = "DIM n AS INTEGER, d AS INTEGER, q AS INTEGER, m AS INTEGER\nLINE INPUT a$\nn = VAL(a$)\nLINE INPUT b$\nd = VAL(b$)\nq = n \\ d\nm = n MOD d\nPRINT q; m\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(src, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var opt = new CodeGenerator(model).EmitExecutable();
-    var noOpt = new CodeGenerator(model) { Optimize = false }.EmitExecutable();
+    var opt = new CodeGenerator(model) { UseExperimentalBackend = false }.EmitExecutable();
+    var noOpt = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false }.EmitExecutable();
     static int Idivs(byte[] img) {
       var n = 0;
       for (var i = 0; i < img.Length - 1; ++i)
@@ -1145,8 +1158,8 @@ public sealed class OptimizerTests {
     const string three = "DIM s AS STRING, n AS LONG\nLINE INPUT s\nn = LEN(s) + LEN(s) + LEN(s)\nPRINT n\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(three, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var opt = new CodeGenerator(model).EmitExecutable();
-    var noOpt = new CodeGenerator(model) { Optimize = false }.EmitExecutable();
+    var opt = new CodeGenerator(model) { UseExperimentalBackend = false }.EmitExecutable();
+    var noOpt = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false }.EmitExecutable();
     Assert.That(opt.Length, Is.LessThan(noOpt.Length), "repeated LEN(s$) caches to one descriptor read");
   }
 
@@ -1189,8 +1202,8 @@ public sealed class OptimizerTests {
     const string source = "DIM a AS WORD, b AS WORD, f AS INTEGER\nINPUT a\nINPUT b\nf = (a < b)\nPRINT f\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var optimized = new CodeGenerator(model).EmitExecutable();
-    var plain = new CodeGenerator(model) { Optimize = false }.EmitExecutable();
+    var optimized = new CodeGenerator(model) { UseExperimentalBackend = false }.EmitExecutable();
+    var plain = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false }.EmitExecutable();
     Assert.Multiple(() => {
       Assert.That(CountPair(optimized, 0x19, 0xC0), Is.GreaterThan(0), "SBB AX,AX materializes the unsigned-< truth value");
       Assert.That(CountPair(plain, 0x19, 0xC0), Is.Zero, "the unoptimized path keeps the MOV -1 / Jcc / MOV 0 branch");
@@ -1220,7 +1233,7 @@ public sealed class OptimizerTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
     generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return generator.DescribeImage().Procedures.Select(p => p.Name);
@@ -1235,7 +1248,7 @@ public sealed class OptimizerTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
     var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
     generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return generator.DescribeImage().RuntimeLabels.Select(l => l.Name).ToList();
@@ -2385,7 +2398,7 @@ public sealed class OptimizerTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     var listing = generator.DescribeImage();
@@ -2812,7 +2825,7 @@ public sealed class OptimizerTests {
       """, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty);
     var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
@@ -2837,7 +2850,7 @@ public sealed class OptimizerTests {
       """;
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty);
     var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
@@ -2892,7 +2905,7 @@ public sealed class OptimizerTests {
       """, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty);
     var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
