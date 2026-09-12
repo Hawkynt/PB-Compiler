@@ -171,6 +171,28 @@ direct:  033F 83C302      ADD DI,[BX] / ADD BX,2
 
 That is induction-variable strength reduction, and the 32-bit widening in it is the same habit that drives the register pressure recorded above. It is the last thing between the routed path and this battery.
 
+### 4d. Why the last three are not a small change
+
+`InductionVariableSimplification` already exists and already runs. It does not fire here for a reason it states itself: *"Values from other phis, casts, division/right shifts, calls and memory are rejected."* The index reaches the address through a cast —
+
+```llvm
+%i = phi i16 [ 0, %entry ], [ %5, %for.body1 ]
+%1 = sext i16 %i to i32
+%2 = shl i32 %1, 1
+%3 = getelementptr i8, ptr %v, i32 %2
+```
+
+— so the affine matcher stops at `%1`. Accepting a **widening of the counter itself** is sound whenever the extension is exact over the loop's own trip count (`sext(i + step) = sext(i) + step` while the narrow add does not wrap; a zero-extension additionally needs the value non-negative), and `CountedLoop` already carries the exact `Trips` needed to decide it.
+
+That was tried. It produces precisely the intended IR — the `sext` and `shl` disappear, an offset phi advances by 2 — and the loop body drops from 24 bytes to 21, losing two shifts and a sign-extension per iteration. **It is still not shippable, for two reasons found only by running the whole suite:**
+
+1. **Four corpus main bodies stop routing** (`DIFF53`, `DIFF91`, `DIFF92`, `DIFF93`), against a `BackendCoverageTests` baseline of zero. A change made to advance retirement moved four programs the wrong way.
+2. **It breaks the IR→BASIC round trip.** `IrBasicWriter.Undo` reverses a byte offset syntactically — `mul`, `shl`, or a constant — and a strength-reduced offset is an opaque phi, so it raises *"a subscript whose byte offset is not a multiple of 2"*. That writer is how `IrPassObservableEquivalenceTests` proves a pass observable-equivalent, so every IR pass has to keep the module writable back to BASIC. Reversing the recurrence means recognising the offset phi and re-deriving the index from the counter phi beside it — the exact inverse of the transform, and a bounded pattern, but it has to be written.
+
+And the IR is still one layer short even then: the offset recurrence is **i32**, so the emitted loop carries `ADC DX,0` for a high word that cannot be nonzero over a 50-element array. The root is `IrLowering.cs`, where every subscript is `Coerce(..., PbType.Long)` before the index arithmetic. Narrowing it is its own piece of work — the bounds check needs the wide value so an out-of-range LONG subscript traps rather than wraps, so only the arithmetic *after* a passing check can be narrowed, and only where a check ran.
+
+So the remaining three are: one pass change that is written and understood, plus a writer inverse, plus an index-width narrowing — in that order, each measured against the corpus census rather than against the battery alone.
+
 ### 5. Production routing becomes mandatory
 
 Once gates 1-4 are green:
