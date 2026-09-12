@@ -85,6 +85,33 @@ public sealed class IrFunction : IrGlobalValue {
   /// </summary>
   public bool NoInline { get; init; }
 
+  /// <summary>
+  /// True when an interprocedural pass replaced this function's formal parameters, so the signature
+  /// recorded here no longer describes the ABI the source declaration promised.
+  ///
+  /// <para>
+  /// It matters only for a function a source procedure DOES declare. The hybrid back end lays a
+  /// routed source frame out from that declaration, and would lay out the parameters the source
+  /// wrote rather than the ones the call sites now push; a rewritten one has to take the same
+  /// IR-derived layout a generated definition gets. See <see cref="IrModule.OwnsProcedureAbi"/> for
+  /// the permission a pass needs before setting this at all.
+  /// </para>
+  /// </summary>
+  public bool SignatureRewritten { get; internal set; }
+
+  /// <summary>
+  /// The name of the body this one was COPIED from, when a pass cloned it, or null for an original.
+  ///
+  /// <para>
+  /// The routing needs it because a clone and its original can reach the SAME storage - the DATA
+  /// cursor, a SHARED dynamic array's descriptor, a STATIC local - and each of those is owned by one
+  /// emitter. Emitting the clone from the IR while the original stayed on the direct path would give
+  /// the two halves of one program two descriptions of the same cells. It is carried as a fact on the
+  /// function so the rule can be about CLONING rather than about one producer's name pattern.
+  /// </para>
+  /// </summary>
+  public string? ClonedFrom { get; init; }
+
   /// <summary>The basic blocks; the first is the entry.</summary>
   public IReadOnlyList<IrBasicBlock> Blocks => this._blocks;
 
@@ -122,6 +149,22 @@ public sealed class IrFunction : IrGlobalValue {
     argument.Parent = this;
     this._parameters.Add(argument);
     return argument;
+  }
+
+  /// <summary>
+  /// Removes an unused formal parameter and closes the signature gap by re-indexing the survivors.
+  /// ABI-changing passes must rewrite every owned call site before calling this method.
+  /// </summary>
+  internal IrArgument RemoveParameterAt(int index) {
+    var parameter = this._parameters[index];
+    if (!parameter.HasNoUsers)
+      throw new InvalidOperationException("cannot remove a parameter that is still used");
+
+    this._parameters.RemoveAt(index);
+    parameter.Parent = null;
+    for (var i = index; i < this._parameters.Count; ++i)
+      this._parameters[i].Index = i;
+    return parameter;
   }
 
   /// <summary>Appends a block to the end of the function.</summary>

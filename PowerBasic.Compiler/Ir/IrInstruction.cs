@@ -58,7 +58,7 @@ public abstract class IrInstruction : IrValue {
   }
 
   /// <summary>Removes the operand at <paramref name="index"/>, updating the use-list.</summary>
-  protected void RemoveOperandAt(int index) {
+  internal void RemoveOperandAt(int index) {
     this._operands[index].RemoveUser(this);
     this._operands.RemoveAt(index);
   }
