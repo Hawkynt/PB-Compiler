@@ -784,23 +784,30 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   public bool OptimizeSize { get; set; }
 
   /// <summary>
-  /// Opt-in: compile eligible functions through the in-house x86-16 back end (docs/X86-BACKEND.md) -
-  /// it owns the whole function via its SSA IR (no shared cells), so it never reads an optimizer-stale
-  /// cell. Default off; enabled for verification via PBC_X_BACKEND / --x-backend.
+  /// Compile every eligible function through the in-house x86-16 back end (docs/X86-BACKEND.md) - it
+  /// owns the whole function via its SSA IR (no shared cells), so it never reads an optimizer-stale
+  /// cell. <b>Default ON.</b> Set <c>PBC_X_BACKEND=0</c> / <c>--no-x-backend</c> to compile through
+  /// the direct emitter instead, which is retained only until the fixtures that assert its byte
+  /// output have been read (docs/DIRECT-EMITTER-RETIREMENT.md).
   ///
   /// <para>
-  /// <b>Default-on for pb36 was tried and reverted, and the measurement is the reason.</b> Coverage
-  /// and behavioural equivalence are both there - 261 of 261 functions select and allocate, and the
-  /// corpus differential finds no disagreement - but routing a function takes it away from the DIRECT
-  /// emitter's optimizer, which is where pb36's optimizations actually live. Making pb36 route by
-  /// default failed 109 tests: 95 of them assertions about emitted code (string append in place,
-  /// SELECT dispatch tables, multiplier decomposition, bounds-check elision, loop unrolling), the
-  /// optimization battery, and - the ones that settle it - the two that require TAIL RECURSION to run
-  /// in constant stack. That last pair is not code quality; it is a behavioural promise, and a deep
-  /// recursion would overflow without it. See docs/BACKENDS.md for what has to happen first.
+  /// Default-on was tried and reverted once, and the reason has since gone. That measurement read
+  /// 109 failures, of which the two that settled it needed TAIL RECURSION to run in constant stack -
+  /// a behavioural promise rather than code quality. Both now run and pass. Re-measured with the
+  /// emulator actually present, default-on costs <b>62 of 6493</b>: 57 assertions about emitted
+  /// code, 3 an opcode the test interpreter did not decode, 2 the pre-existing TIMER corpus case,
+  /// and <b>zero behavioural failures</b>. The differential oracle agrees with the genuine vintage
+  /// compilers either way, and the golden gate holds.
+  /// </para>
+  /// <para>
+  /// The 57 are the remaining work, and they are not a regression: each names an INSTRUCTION the
+  /// routed path reaches by another shape. Two of the first three read turned out to be measuring
+  /// nothing on either path - a probe whose body constant-folds away, and a detector scanning a
+  /// whole image for a marker every epilogue carries.
   /// </para>
   /// </summary>
-  public bool UseExperimentalBackend { get; set; } = System.Environment.GetEnvironmentVariable("PBC_X_BACKEND") != null;
+  public bool UseExperimentalBackend { get; set; }
+    = System.Environment.GetEnvironmentVariable("PBC_X_BACKEND") is not "0";
 
   /// <summary>
   /// Routing is MANDATORY: a body the back end does not take is a compile error rather than a quiet

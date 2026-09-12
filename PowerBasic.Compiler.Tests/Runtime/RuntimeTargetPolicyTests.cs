@@ -148,7 +148,7 @@ public sealed class RuntimeTargetPolicyTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "isa-policy.bas", Dialect.Pb36), "isa-policy.bas", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model);
+    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
     executable = generator.EmitExecutable();
     return generator;
   }

@@ -497,8 +497,8 @@ public static class Driver {
     w.WriteLine("  --emit-basic   un-parse the bound (optimized) tree back to readable PowerBASIC");
     w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");
     w.WriteLine("  --emit-c       optimize through the IR middle end and emit portable C99");
-    w.WriteLine("  --x-backend    compile eligible code through the IR and native x86-16 back end");
-    w.WriteLine("  --no-x-backend disable it even when PBC_X_BACKEND is set");
+    w.WriteLine("  --x-backend    compile through the IR and native x86-16 back end (the default)");
+    w.WriteLine("  --no-x-backend compile through the legacy direct emitter instead (PBC_X_BACKEND=0)");
     w.WriteLine("  --x-backend-strict  route everything: a body the back end declines is an error, not a fallback");
     w.WriteLine("  --list         write a human-readable .LST map of the compiled image");
     w.WriteLine("  -h, --help     show this help");

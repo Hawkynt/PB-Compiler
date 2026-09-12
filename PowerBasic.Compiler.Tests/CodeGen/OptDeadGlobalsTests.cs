@@ -24,7 +24,7 @@ public sealed class OptDeadGlobalsTests {
 
   private static byte[] Emit(string source, bool optimize) {
     var model = Bind(source);
-    var generator = new CodeGenerator(model) { Optimize = optimize };
+    var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = false };
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return exe;

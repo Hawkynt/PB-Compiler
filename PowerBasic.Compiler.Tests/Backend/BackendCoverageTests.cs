@@ -629,6 +629,7 @@ public sealed class BackendCoverageTests {
     "DIFF122.BAS",   // O0302 INSTR: constant needles over the scan, verify and Horspool paths
     "DIFF123.BAS",   // OPTION BASE governs omitted lower bounds of dynamic DIM/REDIM, lexically
     "DIFF124.BAS",   // REDIM of an array PARAMETER reallocates the CALLER's array
+    "DIFF125.BAS",   // DIM DYNAMIC ... AT - genuine refuses the static spelling with Error 489
     // EXIT FAR: the unwind point and the jump through it, as intrinsics the back end expands inline;
     // both the module body and its near numeric BYREF procedure route.
     "DIFF14.BAS",
@@ -811,6 +812,7 @@ public sealed class BackendCoverageTests {
     "DIFF122.BAS",   // O0302 INSTR: constant needles over the scan, verify and Horspool paths
     "DIFF123.BAS",   // OPTION BASE governs omitted lower bounds of dynamic DIM/REDIM, lexically
     "DIFF124.BAS",   // REDIM of an array PARAMETER reallocates the CALLER's array
+    "DIFF125.BAS",   // DIM DYNAMIC ... AT - genuine refuses the static spelling with Error 489
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: segment stepping and the EMS page window
