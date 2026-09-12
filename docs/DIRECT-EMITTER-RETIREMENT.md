@@ -55,6 +55,24 @@ String ownership, error-handler state, DATA/RESTORE state, dynamic-array descrip
 
 ### 3. Behavioral equivalence
 
+**Routing can now be made mandatory, and that is the only way these gates ask a real question.** `RequireBackend` (`PBC_X_BACKEND_STRICT` / `--x-backend-strict`) turns a decline into a compile error instead of a fall back. With a fallback present every gate below is satisfied by construction: a decline is invisible, the program still compiles, and the differential still agrees — because for that body *both sides ran the same emitter*. A bodiless EXTERNAL declaration is exempt; it is a link import with no code to emit on either path.
+
+Where that leaves the two gates today:
+
+- the pb36 corpus compiles **completely** with routing mandatory, in both optimizer modes — `MandatoryRoutingTests` pins it, and pins that the mode really does reject the constructs that decline, so it cannot pass vacuously;
+- the genuine-compiler battery run with routing mandatory scores **526 pass / 11 fail**, against **548 / 0 / 0** with the fallback. Those 11 are the whole remaining distance for this gate, and they are all historic dialects, which is why the pb36 corpus does not see them:
+
+| count | reason |
+|---|---|
+| 6 | `selection: call: rt_round_half_away (runtime declaration - not in the runtime ABI table)` |
+| 2 | `selection: floating point: IrConstantInt has no cell` |
+| 2 | `lowering: the module did not lower to IR` (BASICA/GW deferred interpreter text) |
+| 1 | `selection: Microsoft Binary Format (mbf32) needs the MBF/IEEE load-store conversion` |
+
+`rt_round_half_away` is the largest and is not a missing table row: no such runtime routine exists. The BASCOM lineage (QB 1.0–3.0, BASICA/GW) rounds float-to-integer half AWAY from zero, and the direct emitter expands that inline — `FTST`/`FSTSW`/`SAHF`, bias by ±0.5, then `CALL rt_trunc`. The IR names it abstractly so the C and LLVM renderers can each write their own; the x86-16 selector needs either the same inline expansion or a real routine to call.
+
+
+
 The routed backend corpus differential is the correctness gate. Image byte identity with the AX-serial direct emitter is not required; observable behavior is. The differential battery must remain at zero routed/direct disagreements while each new class starts routing.
 
 Before final deletion, run the genuine-compiler differential/golden gates with routing mandatory so the comparison is no longer accidentally exercising the fallback.

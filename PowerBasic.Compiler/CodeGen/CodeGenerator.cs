@@ -802,6 +802,46 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// </summary>
   public bool UseExperimentalBackend { get; set; } = System.Environment.GetEnvironmentVariable("PBC_X_BACKEND") != null;
 
+  /// <summary>
+  /// Routing is MANDATORY: a body the back end does not take is a compile error rather than a quiet
+  /// fall back to the direct emitter. Off by default; <c>PBC_X_BACKEND_STRICT</c> / <c>--x-backend-strict</c>.
+  ///
+  /// <para>
+  /// This is the measurement the direct-emitter retirement needs and the one the ordinary routed
+  /// build cannot give. With a fallback present, every gate is satisfied by construction: a decline
+  /// is invisible, the program still compiles, and the differential still agrees - because both sides
+  /// ran the SAME emitter for that body. Turning declines into errors is what asks the real question,
+  /// which is whether the program would still compile if <c>CodeGen/</c> were not there.
+  /// </para>
+  /// <para>
+  /// A bodiless EXTERNAL declaration is exempt, and that is not a loophole: it is a link import with
+  /// no code to emit on either path, so it is nobody's coverage. Everything else counts.
+  /// </para>
+  /// </summary>
+  public bool RequireBackend { get; set; } = System.Environment.GetEnvironmentVariable("PBC_X_BACKEND_STRICT") != null;
+
+
+  /// <summary>
+  /// Turns every routing decline into a compile error when <see cref="RequireBackend"/> is set.
+  ///
+  /// <para>
+  /// The exemption is a bodiless EXTERNAL declaration: it is a link import, so neither emitter
+  /// produces code for it and it is nobody's coverage. Every other decline is reported with the
+  /// reason the routing itself gave, because the reason is the work item - a shape the ABI cannot
+  /// express reads differently from a body the allocator ran out of registers on.
+  /// </para>
+  /// </summary>
+  private void RaiseWhenRoutingIsMandatoryAndSomethingDeclined() {
+    if (!this.RequireBackend || !this.UseExperimentalBackend)
+      return;
+    foreach (var (name, reason) in this.BackendDeclines) {
+      if (reason.StartsWith("filter: external declaration", StringComparison.Ordinal))
+        continue;
+      this.Errors.Add(new(new("", 0, 0),
+        $"routing is mandatory and '{name}' was not taken by the x86-16 back end: {reason}"));
+    }
+  }
+
   /// <summary>Raises trappable runtime error <paramref name="code"/> when the preceding Jcc falls through.</summary>
   private void EmitRaiseWhen(Action<Label> skipJump, int code) {
     var asm = this._asm;
@@ -850,6 +890,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       if (this.OptimizeSpeed && !this._allowExternalCalls)
         OptRegParm.Apply(model, this.IsBackendRouted);   // back-end functions stay on the stack convention
     }
+
+    // Asked HERE, after the optimizer has had its say about calling conventions and before a single
+    // byte is emitted, because the routing's answer depends on both. RequireBackend is off in every
+    // ordinary build; when it is on, a decline is the program failing to compile, which is what the
+    // program would do if CodeGen/ were already gone.
+    this.RaiseWhenRoutingIsMandatoryAndSomethingDeclined();
 
     // P7: programs whose only effect is printing compile-time text lower to a
     // raw COM-style image of a few dozen bytes (docs/PB36.md) - a lean-output
