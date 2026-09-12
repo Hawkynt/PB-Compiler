@@ -55,6 +55,15 @@ The temporary mixed routed/direct architecture has duplicate representations for
 
 String ownership, error-handler state, DATA/RESTORE state, dynamic-array descriptors, COMMON/CHAIN state and file/runtime state all need explicit IR/runtime contracts rather than implicit direct-emitter lifetime.
 
+**Checked, and the ordering is structural rather than a matter of effort.** The tempting move is to unify each representation NOW so the guards can go before deletion. For DATA that is not available in either direction:
+
+- the routed side cannot adopt the direct emitter's absolute `rt_dataptr` and `rt_readdata`, because the portable runtime has no such routine — `runtime/pbc_rt.h` defines none, and the IR's blob-plus-index form is exactly what lets the C and LLVM back ends read DATA at all;
+- the direct side cannot adopt the index, because its emitted bytes are what the golden gate holds byte-identical to the genuine compilers.
+
+So each representation is correct for its own path, and neither can move while both paths exist. That is why the gate says the guards may be deleted only after there is no direct side left to observe the competing representation — the guards are a consequence of gate 5, not a prerequisite for it. The four are `DataReadersRouteTogether`, `SharedDynArrayUsersRouteTogether`, `RewrittenSignaturesRouteTogether` and `CanCallDirectCallee`.
+
+The corollary is that the critical path runs through **gate 4**, not gate 2: the 61 emitted-code fixtures that fail with routing default-on are assertions about the direct emitter's instruction sequences, and they can only be re-pointed at the routed path once the routed path delivers the optimizations they name. That is the 12/55 list above.
+
 ### 3. Behavioral equivalence
 
 **Routing can now be made mandatory, and that is the only way these gates ask a real question.** `RequireBackend` (`PBC_X_BACKEND_STRICT` / `--x-backend-strict`) turns a decline into a compile error instead of a fall back. With a fallback present every gate below is satisfied by construction: a decline is invisible, the program still compiles, and the differential still agrees — because for that body *both sides ran the same emitter*. A bodiless EXTERNAL declaration is exempt; it is a link import with no code to emit on either path.
