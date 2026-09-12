@@ -252,13 +252,55 @@ Remaining, in order:
 - finally remove `UseExperimentalBackend`, `PBC_X_BACKEND`, `--x-backend`/`--no-x-backend` and the
   split-ownership routing logic that only exists for mixed images.
 
-One construct still declines and is not in the corpus: `ERASE` of an ABSOLUTE array. The routed
-lowering keeps an absolute array's segment as a compile-time constant, so there is no runtime cell
-to clear. The oracle says less rides on this than it looks: genuine PBC 3.50 **refuses**
-`DIM v%(0 TO 3) AT &HB800` outright - *"Error 489: Array is already static"* - the declaration has to
-be `DIM DYNAMIC ... AT`, and after an `ERASE` genuine terminates the program rather than answering
-anything, which neither emitter reproduces. `tests/diff/DIFF125.BAS` pins the part that does have a
-defined answer, and passes.
+**Gate 1 is closed: the routing declines nothing.** The last row was `ERASE` of an ABSOLUTE array,
+and it was a representation problem rather than a semantic one - the routed lowering held the
+segment as a compile-time constant, so unmapping the view had nowhere to land. It now holds the
+segment in a cell, as the direct emitter always did; the cell costs nothing where no `ERASE`
+intervenes, because mem2reg promotes an alloca stored once with a literal and SCCP folds the load
+back to the immediate. `BackendRoutingGateTests`' decline list, the test consuming it, and
+`MandatoryRoutingTests`' two premise tests are deleted rather than kept empty - all three asked for
+exactly that in their own comments, because a routing that refuses nothing cannot be shown to be
+refusing. The census is the live measurement: **330/330 functions routed in both optimizer modes,
+177/177 module bodies owned**, only bodiless `EXTERNAL`s declining.
+
+The oracle corrected a language form on the way: genuine PBC 3.50 **refuses**
+`DIM v%(0 TO 3) AT &HB800` with *"Error 489: Array is already static"* - an array carrying an `AT`
+segment has to be `DYNAMIC`, and we accepted the static spelling. `DIFF125` and `DIFF126` pin the
+pair. Neither exercises an access AFTER the `ERASE`: genuine terminates the program there rather
+than answering, so there is nothing to diff, and no emitter reproduces it.
+
+### What deleting `CodeGen/` actually costs, measured
+
+Deleting the seven pure-emission files (`Expressions`, `Places`, `Intrinsics`, `Arrays`, `Io`,
+`Graphics`, `LowLevel`) and building reports **710 errors** - which sounds like deep entanglement and
+is not. Sorted by who raises them:
+
+| raised in | count | what it is |
+|---|---|---|
+| `CodeGenerator.cs` | 396 | driver and direct emission in one file; **350 of them at or after `EmitStatement`** |
+| `CodeGenerator.Optimize.cs` | 134 | the direct emitter's tier-2 passes |
+| `CodeGenerator.Procs.cs` | 80 | direct emission plus the SHARED `LayoutFrame`/`SlotOf` |
+| `Vendor` / `Extras` / `InlineAsm` / `Search` / `OnGoto` | 46 | direct emission |
+| **`Backend.cs`, `Units.cs`, `Data.cs`** | **10** | **the routed path's real dependency** |
+
+That last row is the whole boundary. Everything the routed path still needs from the direct
+emitter is **four symbols**: `TryDirectCell`, `ContainsErrorHandling`, `EmitStoreReadValue` and
+`EmitFarThunks`. Every other error is direct-emitter code referring to direct-emitter code, and
+disappears when the rest goes.
+
+So the deletion is bounded, and the shape of it is known:
+
+1. move those four (and their own dependencies) into a kept file;
+2. split `CodeGenerator.cs` - keep `EmitExecutable`, frame layout, runtime/entry and linking; drop
+   `EmitStatement` and the ~2700 lines after it, plus the ~46 earlier fold/peephole helpers;
+3. delete `Optimize`, `Vendor`, `Extras`, `Search`, `OnGoto` and the direct half of `Procs`;
+4. delete the fixtures pinned to the direct emitter - they test removed code - after moving any
+   claim that is portable onto the routed path;
+5. remove `UseExperimentalBackend`, `RequireBackend`, `PBC_X_BACKEND`, `--x-backend`,
+   `--no-x-backend` and the split-routing guards, which exist only for mixed images.
+
+Step 2 is the only one needing judgement rather than mechanism, and it is where a half-finished cut
+leaves a compiler that does not build. It wants its own session, not the tail of one.
 
 ## Reference architecture
 
