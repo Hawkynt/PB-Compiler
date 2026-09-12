@@ -3766,6 +3766,15 @@ public sealed partial class InstructionSelector {
       cell = new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword);
       return true;
     }
+    // An INTEGER constant reaching the float path is a constant the front end typed as a float and
+    // the folder happened to leave whole - 32767 + 1 promoted past INTEGER, or a literal too large
+    // for LONG. It belongs in the same qword pool as any other float literal; the only question is
+    // whether the pool can hold it, so a value that does not round-trip through a double declines
+    // rather than being quietly rounded into one.
+    if (value is IrConstantInt whole && (long)(double)whole.Value == whole.Value) {
+      cell = new MOperand.DataCell(FloatConstantName(whole.Value), 0, MRegSize.Qword);
+      return true;
+    }
     cell = null!;
     return this.Decline($"floating point: {value.GetType().Name} has no cell");
   }
