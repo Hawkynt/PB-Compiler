@@ -126,7 +126,33 @@ The one genuine behavioural regression the measurement found has been fixed, and
 | emitted-code assertions | 57 |
 | the interpreter missing an opcode | 3 |
 | pre-existing TIMER corpus case | 2 |
-| **behavioural failures caused by routing** | **0** |
+| behavioural failures caused by routing | **1, found later — see below** |
+
+**That table was wrong, and the way it was wrong is the lesson.** A fixture failing under routing was
+classified as an "emitted-code assertion" and pinned to the direct emitter, and one family of them was
+not that at all. `$CPU 8086` with `! PADDW MM0, MM1` compiles two different programs:
+
+| | image | contains `0F FD` |
+|---|---|---|
+| direct emitter | 2003 bytes | no — it EMULATES the instruction on plain 8086 |
+| routed | 1217 bytes | **yes — the machine the source named cannot execute it** |
+
+The `CodeGen/InlineAsmVirtualization*` family lowers the packed-integer and 32-bit surfaces onto
+instructions the declared target actually has. The routed path has no such lowering: `IrInlineAsm`
+carries the text and the machine emitter assembles it verbatim. Measured across tiers, the two agree
+only where the instruction is natively supported — `$CPU MMX` agrees, `8086`, `80386` and `SSE2` all
+diverge, the last because SSE2 does not bring the MMX register file with it.
+
+An image that faults on its own target is a behaviour, not a shape. **Pinning the fixture is what hid
+it**, which is precisely the failure this document warns about elsewhere: a check that still runs,
+still passes, and measures nothing. The routing now declines a body carrying inline asm above the
+declared CPU, so the direct emitter picks it up and the production build is byte-identical to it;
+`BackendInlineAsmVirtualizationTests` pins that on the PRODUCTION configuration, with no
+`UseExperimentalBackend` in it, so it cannot be hidden the same way twice.
+
+**This is why the fallback is still load-bearing, and why `CodeGen/` cannot simply be deleted.** ISA
+emulation for inline assembly is the one thing it does that `Ir/` cannot. Closing that means teaching
+the IR path to emulate — not deleting the emulator.
 
 The three that looked behavioural were not. `Rotate32_*` asserts CF/OF against the 386 definition and died with *"unimplemented opcode 66 D1"* — the direct emitter reaches for the imm8 form of the dword shift group even when the count is one, the routed emitter uses the shorter `D1` encoding, and `Cpu8086` only decoded the former. Same instruction; `Shift32` already carried the flag definition for all eight operations. That is the strict oracle needing an opcode, not the routed path needing a fix.
 
