@@ -202,33 +202,33 @@ public sealed class BackendArrayParameterRoutingTests {
   }
 
   /// <summary>
-  /// REDIM through an array parameter declines. The callee widened the caller's descriptor into its
-  /// own frame, so rewriting those cells would change only the copy: the caller would still describe
-  /// the old block, and after a REDIM that block has been freed. Element writes are unaffected, which
-  /// the tests above rely on.
+  /// REDIM through an array parameter reallocates the CALLER's array, so the caller sees the new
+  /// bounds afterwards and - without PRESERVE - a cleared array as well. That is genuine PBC 3.50's
+  /// behaviour, pinned against the real compiler by tests/diff/DIFF124.BAS.
+  ///
+  /// <para>
+  /// This test previously asserted the OPPOSITE, that the construct declines. It did decline, and the
+  /// decline was protecting the routed path from a bug in the DIRECT one: that emitter recorded the
+  /// new block in a private cell nothing reads, so the caller kept answering the old bound while
+  /// element writes landed in the new block. Both paths now reach the caller's own descriptor.
+  /// </para>
   /// </summary>
-  [Test]
-  public void Route_GivenRedimOfAnArrayParameter_ThenItDeclinesRatherThanWritingACopy() {
-    const string source = """
-      SUB S(a%()) NOINLINE
-        REDIM a%(1 TO 9)
-      END SUB
-      DIM v%()
-      REDIM v%(1 TO 2)
-      S v%()
-      PRINT UBOUND(v%)
-      """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
-    var image = routed.EmitExecutable();
+  private const string _redimThroughParameter = """
+    SUB S(a%()) NOINLINE
+      REDIM a%(1 TO 9)
+      a%(9) = 42
+    END SUB
+    REDIM v%(1 TO 2)
+    v%(1) = 7
+    S v%()
+    PRINT LBOUND(v%); UBOUND(v%)
+    PRINT v%(1); v%(9)
+    """;
 
-    Assert.Multiple(() => {
-      Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("S"));
-      Assert.That(routed.BackendDeclines.Any(d => d.Name == "S" && d.Reason.Contains("PARAMETER", StringComparison.Ordinal)),
-        Is.True, string.Join(" | ", routed.BackendDeclines.Select(d => d.Name + ": " + d.Reason)));
-      Assert.That(image, Is.Not.Empty);
-    });
-  }
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Route_GivenRedimOfAnArrayParameter_ThenTheCallersArrayIsReallocated(bool optimize)
+    => AssertRoutedMatchesDirect(_redimThroughParameter, "S", optimize);
 
   /// <summary>
   /// The bodies that used to exhaust the register allocator. None of them is exotic: bounds plus a

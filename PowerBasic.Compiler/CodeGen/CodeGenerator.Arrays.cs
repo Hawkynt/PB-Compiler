@@ -360,7 +360,10 @@ public sealed partial class CodeGenerator {
       this.Unsupported(position, $"REDIM PRESERVE on {symbol.ArrayClass} arrays");
       return;
     }
-    var descriptor = this.SlotOf(symbol);
+    // The caller's descriptor when this is an array PARAMETER - see EmitArrayAllocation. Note that
+    // the accessor CLOBBERS SI for a parameter (it reloads the descriptor pointer through it), so any
+    // descriptor read must happen before SI is loaded for the preserve copy below, not after.
+    var descriptor = this.DescriptorAccessorOf(symbol);
     var elementSize = Math.Max(arrayType.Element.Size, 1);
 
     var oldBytes = this.AllocTemp(2);
@@ -370,22 +373,22 @@ public sealed partial class CodeGenerator {
     // shape to preserve, so its byte count is zero and every shape check below is skipped.
     var unallocated = asm.DefineLabel();
     var measured = asm.DefineLabel();
-    asm.Cmp(Mem.Word(descriptor), (Imm)0);
+    asm.Cmp(descriptor(0), (Imm)0);
     asm.Je(unallocated);
-    asm.Mov(Reg.AX, Mem.Word(descriptor, 8 + 2));
+    asm.Mov(Reg.AX, descriptor(8 + 2));
     for (var d = 1; d < arrayType.Rank; ++d)
-      asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
+      asm.Imul(Reg.AX, descriptor(8 + d * 4 + 2));
     this.EmitIndexScale(elementSize);
     asm.Jmp(measured);
     asm.MarkLabel(unallocated);
     asm.Xor(Reg.AX, Reg.AX);
     asm.MarkLabel(measured);
     asm.Mov(oldBytes, Reg.AX);
-    asm.Mov(Reg.AX, Mem.Word(descriptor, 2));
+    asm.Mov(Reg.AX, descriptor(2));
     asm.Mov(oldOffset, Reg.AX);
 
-    asm.Mov(Mem.Word(descriptor, 4), elementSize);
-    asm.Mov(Mem.Word(descriptor, 6), bounds.Count);
+    asm.Mov(descriptor(4), elementSize);
+    asm.Mov(descriptor(6), bounds.Count);
 
     // PowerBASIC permits PRESERVE to change only the upper bound of the LAST dimension. Evaluate
     // every source expression exactly once and in source order. Each descriptor field is overwritten
@@ -399,25 +402,25 @@ public sealed partial class CodeGenerator {
         asm.Xor(Reg.AX, Reg.AX);
 
       var lowerOk = asm.DefineLabel();
-      asm.Cmp(Mem.Word(descriptor), (Imm)0);
+      asm.Cmp(descriptor(0), (Imm)0);
       asm.Je(lowerOk);
-      asm.Cmp(Reg.AX, Mem.Word(descriptor, 8 + d * 4));
+      asm.Cmp(Reg.AX, descriptor(8 + d * 4));
       this.EmitRaiseWhen(asm.Je, 9);
       asm.MarkLabel(lowerOk);
-      asm.Mov(Mem.Word(descriptor, 8 + d * 4), Reg.AX);
+      asm.Mov(descriptor(8 + d * 4), Reg.AX);
 
       this.EmitInt16Argument(upper);
-      asm.Sub(Reg.AX, Mem.Word(descriptor, 8 + d * 4));
+      asm.Sub(Reg.AX, descriptor(8 + d * 4));
       asm.Inc(Reg.AX);
       if (d < bounds.Count - 1) {
         var extentOk = asm.DefineLabel();
-        asm.Cmp(Mem.Word(descriptor), (Imm)0);
+        asm.Cmp(descriptor(0), (Imm)0);
         asm.Je(extentOk);
-        asm.Cmp(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
+        asm.Cmp(Reg.AX, descriptor(8 + d * 4 + 2));
         this.EmitRaiseWhen(asm.Je, 9);
         asm.MarkLabel(extentOk);
       }
-      asm.Mov(Mem.Word(descriptor, 8 + d * 4 + 2), Reg.AX);
+      asm.Mov(descriptor(8 + d * 4 + 2), Reg.AX);
     }
 
     this.EmitArrayAllocationFromDescriptor(symbol, bounds.Count);
@@ -427,16 +430,16 @@ public sealed partial class CodeGenerator {
     var sizeOk = asm.DefineLabel();
     asm.Mov(Reg.CX, oldBytes);
     asm.Jcxz(copyDone);
-    asm.Mov(Reg.AX, Mem.Word(descriptor, 8 + 2)); // new byte count
+    asm.Mov(Reg.AX, descriptor(8 + 2)); // new byte count
     for (var d = 1; d < arrayType.Rank; ++d)
-      asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
+      asm.Imul(Reg.AX, descriptor(8 + d * 4 + 2));
     this.EmitIndexScale(elementSize);
     asm.Cmp(Reg.CX, Reg.AX);
     asm.Jbe(sizeOk);
     asm.Mov(Reg.CX, Reg.AX);
     asm.MarkLabel(sizeOk);
+    asm.Mov(Reg.DI, descriptor(2));   // BEFORE SI: a parameter's accessor reloads the pointer through SI
     asm.Mov(Reg.SI, oldOffset);
-    asm.Mov(Reg.DI, Mem.Word(descriptor, 2));
     asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_arrseg")));
     asm.Push(Reg.DS);
     asm.Mov(Reg.AX, Reg.ES);
@@ -454,27 +457,33 @@ public sealed partial class CodeGenerator {
   private void EmitArrayAllocation(VariableSymbol symbol, IReadOnlyList<(Expression? Lower, Expression Upper)> bounds, SourcePosition position, bool reclaimOld = true, bool skipZeroFill = false) {
     var asm = this._asm;
     var arrayType = (ArrayType)symbol.Type;
-    var descriptor = this.SlotOf(symbol);
+    // The DESCRIPTOR, not a slot. SlotOf mints a private data cell for an array PARAMETER - a cell
+    // nothing ever reads - so REDIM of one allocated a block and recorded it where the caller could
+    // not see it: genuine PBC 3.50 answers UBOUND 9 and a cleared array after a callee REDIMs to
+    // 1 TO 9, and this answered the OLD bounds with the old contents intact. DescriptorAccessorOf
+    // reaches the caller's own descriptor through the parameter, and is the identical Mem for every
+    // other storage class, so nothing that worked before changes shape.
+    var descriptor = this.DescriptorAccessorOf(symbol);
     var elementSize = Math.Max(arrayType.Element.Size, 1);
     _ = position;
 
     if (reclaimOld)
       this.EmitReclaimArrayBlock(descriptor, arrayType);
 
-    asm.Mov(Mem.Word(descriptor, 4), elementSize);
-    asm.Mov(Mem.Word(descriptor, 6), bounds.Count); // runtime rank follows the executing DIM/REDIM
+    asm.Mov(descriptor(4), elementSize);
+    asm.Mov(descriptor(6), bounds.Count); // runtime rank follows the executing DIM/REDIM
 
     for (var d = 0; d < bounds.Count; ++d) {
       var (lower, upper) = bounds[d];
       if (lower != null) {
         this.EmitInt16Argument(lower);
-        asm.Mov(Mem.Word(descriptor, 8 + d * 4), Reg.AX);
+        asm.Mov(descriptor(8 + d * 4), Reg.AX);
       } else
-        asm.Mov(Mem.Word(descriptor, 8 + d * 4), (Imm)0);
+        asm.Mov(descriptor(8 + d * 4), (Imm)0);
       this.EmitInt16Argument(upper);
-      asm.Sub(Reg.AX, Mem.Word(descriptor, 8 + d * 4));
+      asm.Sub(Reg.AX, descriptor(8 + d * 4));
       asm.Inc(Reg.AX);
-      asm.Mov(Mem.Word(descriptor, 8 + d * 4 + 2), Reg.AX);
+      asm.Mov(descriptor(8 + d * 4 + 2), Reg.AX);
     }
 
     this.EmitArrayAllocationFromDescriptor(symbol, bounds.Count, skipZeroFill);
@@ -484,41 +493,41 @@ public sealed partial class CodeGenerator {
   private void EmitArrayAllocationFromDescriptor(VariableSymbol symbol, int rank, bool skipZeroFill = false) {
     var asm = this._asm;
     var arrayType = (ArrayType)symbol.Type;
-    var descriptor = this.SlotOf(symbol);
+    var descriptor = this.DescriptorAccessorOf(symbol);
     var elementSize = Math.Max(arrayType.Element.Size, 1);
 
     // total elements (16-bit product) * element size -> DX:AX bytes
-    asm.Mov(Reg.AX, Mem.Word(descriptor, 8 + 2));
+    asm.Mov(Reg.AX, descriptor(8 + 2));
     for (var d = 1; d < rank; ++d)
-      asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
+      asm.Imul(Reg.AX, descriptor(8 + d * 4 + 2));
     asm.Mov(Reg.CX, elementSize);
     asm.Mul(Reg.CX);
     asm.Call(skipZeroFill ? this._rt.ArrAllocNoZero : this._rt.ArrAlloc);   // O0068: elide the fill when the covering loop follows
-    asm.Mov(Mem.Word(descriptor, 2), Reg.AX);
+    asm.Mov(descriptor(2), Reg.AX);
     asm.Mov(Reg.AX, Mem.Word(this._asm.Lbl("rt_arrseg")));
-    asm.Mov(Mem.Word(descriptor), Reg.AX);
+    asm.Mov(descriptor(0), Reg.AX);
   }
 
   /// <summary>
   /// Gives the array's current block back to the bump allocator when it is the
   /// most recent allocation (offset + bytes == top). Skips unallocated arrays.
   /// </summary>
-  private void EmitReclaimArrayBlock(Label descriptor, ArrayType arrayType) {
+  private void EmitReclaimArrayBlock(Func<int, Mem> descriptor, ArrayType arrayType) {
     var asm = this._asm;
     var skip = asm.DefineLabel();
-    asm.Cmp(Mem.Word(descriptor), (Imm)0);
+    asm.Cmp(descriptor(0), (Imm)0);
     asm.Je(skip);
-    asm.Cmp(Mem.Word(descriptor, 6), arrayType.Rank);  // rank changed at runtime: size math below would lie
+    asm.Cmp(descriptor(6), arrayType.Rank);            // rank changed at runtime: size math below would lie
     asm.Jne(skip);
-    asm.Mov(Reg.AX, Mem.Word(descriptor, 8 + 2));      // element count = extent product
+    asm.Mov(Reg.AX, descriptor(8 + 2));                // element count = extent product
     for (var d = 1; d < arrayType.Rank; ++d)
-      asm.Imul(Reg.AX, Mem.Word(descriptor, 8 + d * 4 + 2));
-    asm.Mov(Reg.CX, Mem.Word(descriptor, 4));          // * element size
+      asm.Imul(Reg.AX, descriptor(8 + d * 4 + 2));
+    asm.Mov(Reg.CX, descriptor(4));                    // * element size
     asm.Mul(Reg.CX);
     asm.Test(Reg.DX, Reg.DX);
     asm.Jnz(skip);                                     // >64K would be bogus - leave it
     asm.Mov(Reg.CX, Reg.AX);
-    asm.Mov(Reg.AX, Mem.Word(descriptor, 2));
+    asm.Mov(Reg.AX, descriptor(2));
     asm.Call(this._rt.ArrFree);
     asm.MarkLabel(skip);
   }
@@ -549,7 +558,7 @@ public sealed partial class CodeGenerator {
         continue;
       }
       if (arrayType.IsDynamic) {
-        this.EmitReclaimArrayBlock(slot, arrayType);   // rolls back when topmost; interleaved frees leak
+        this.EmitReclaimArrayBlock(disp => Mem.Word(slot, disp), arrayType);   // rolls back when topmost; interleaved frees leak
         asm.Mov(Mem.Word(slot), (Imm)0);
         continue;
       }
