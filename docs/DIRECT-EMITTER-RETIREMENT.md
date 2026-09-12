@@ -90,6 +90,18 @@ The forced-backend optimizer fixture is a separate gate from semantic coverage. 
 
 Do not reproduce direct-emitter implementation structure merely to satisfy a byte-pattern fixture. Rewrite fixtures that only encode the legacy instruction sequence when the routed sequence is measurably equivalent or better.
 
+### 4a. What default-on routing costs today
+
+Measured by flipping the default and running the suite **with `DOSBOX_EXE` set**: **63 failures of 6488**, against the 109 this document used to record. The split is what matters:
+
+- **61 are emitted-code assertions** — `Emit_*`, `InlinePolicy_*`, SIMD `Compile_*`. The same class gate 4 describes: fixtures naming an instruction the routed path reaches by another shape.
+- **2 are execution failures**, one of which is the pre-existing TIMER corpus case.
+- **0 are tail recursion.** This document recorded the deep-recursion pair as the ones that settle it — *"not code quality; it is a behavioural promise"* — and they now run and pass.
+
+The one genuine behavioural regression the measurement found has been fixed, and it was **not** a retirement-only defect: a routed BYTE/SBYTE FUNCTION returned its result in AL alone, leaving AH as whatever ran last, while the direct emitter loads a byte result zero- or sign-extended into AX. A directly-emitted caller therefore read garbage in the high byte. `FileUtil_CanRead` answered -255 where it meant 1; the comparison against 1 simply failed and the program carried on. It is invisible while both sides route, which is why it survived. `BackendByteResultTests` pins it, with a callee that dirties AH on purpose and an assertion that the mixed boundary is real.
+
+**Run it with the emulator.** The first measurement skipped 279 tests without `DOSBOX_EXE`, including both tail-recursion cases and the whole corpus run — and would have reported a smaller number that had never executed the program which found the bug.
+
 ### 5. Production routing becomes mandatory
 
 Once gates 1-4 are green:

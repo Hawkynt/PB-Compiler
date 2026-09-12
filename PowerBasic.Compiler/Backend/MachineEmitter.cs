@@ -348,6 +348,7 @@ public sealed class MachineEmitter {
           asm.Not(this.Mem(ops[0]));
         break;
       case MOpcode.Cwd: asm.Cwd(); break;
+      case MOpcode.Cbw: asm.Cbw(); break;
       case MOpcode.Idiv:
         if (this.ToSource(ops[0]) is Mem divisor)
           asm.Idiv(divisor);

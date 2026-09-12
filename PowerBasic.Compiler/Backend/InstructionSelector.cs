@@ -4385,6 +4385,28 @@ public sealed partial class InstructionSelector {
       if (!this.TryOperand(value, out var src))
         return false;
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [axOp, src], MovEffect(axOp, src)));
+
+      // A BYTE result leaves in the WHOLE of AX, not in AL with AH left as it lies. The direct
+      // emitter loads one with MOVZX/MOVSX - or MOV AL + XOR AH,AH / CBW below a 386 - so a caller it
+      // compiled reads AX and gets a value. Returning AL alone made a routed callee and a direct
+      // caller disagree: FileUtil_CanRead answered -255 where it meant 1, because AH still held FF
+      // from whatever ran last. Extending AFTER the move is what keeps a source already sitting in
+      // AL from being destroyed by the zeroing.
+      if (RegSize(value.Type) == MRegSize.Byte) {
+        var whole = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+        if (value.Type.Signed)
+          this._current.Instructions.Add(new MInstr(MOpcode.Cbw, [],
+            new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+              ReadsMemory: false, WritesMemory: false)));
+        else {
+          var high = new MOperand.Register(MReg.Physical_(Reg.AH, MRegSize.Byte));
+          this._current.Instructions.Add(new MInstr(MOpcode.Xor, [high, high],
+            new MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: true,
+              ReadsMemory: false, WritesMemory: false)));
+        }
+        this._current.Instructions.Add(ReturningIn(whole));
+        return true;
+      }
       this._current.Instructions.Add(ReturningIn(axOp));
       return true;
     }
