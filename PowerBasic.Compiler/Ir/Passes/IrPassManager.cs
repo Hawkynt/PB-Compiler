@@ -135,8 +135,8 @@ public sealed class IrPassManager {
   /// speculative narrowing, overflow coalescing, sroa, aggregate-sroa, mem2reg2, strcow,
   /// ownership elision, reassociate, polynomial recovery, equality saturation, verified arithmetic
   /// lowering, demote, ivsimplify, phicong, gvn, memopt, dse, interchange, licm, reciprocal reuse,
-  /// unswitch, allocation sinking, closed-form, deadloop, ifconv, tailrec, switch formation and the
-  /// string/global module passes. Caller-only steps such as <c>Inliner</c> and
+  /// unswitch, allocation sinking, closed-form, deadloop, ifconv, tailrec, switch formation,
+  /// argument-structure reduction and the string/global module passes. Caller-only steps such as <c>Inliner</c> and
   /// <c>MemoryRoutineSpecialization</c> are off as well; the latter is not in
   /// <see cref="Standard"/> at all because it wants the final shape (see CodeGenerator.Backend).
   /// </para>
@@ -379,6 +379,10 @@ public sealed class IrPassManager {
     // chains, so every successful reduction immediately triggers another function sweep and lets
     // DCE/SCCP collect them before later module transforms.
     .AddModulePassWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
+    // O0280 changes a function signature, so it must see every direct call and must run as a module
+    // pass. Run it before SPEED inlining; a successful rewrite triggers the normal function sweep,
+    // which can immediately SROA caller aggregates that no longer escape through the call.
+    .AddModulePassWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
     // O0307 deliberately spends one compare/branch and duplicates the call site, so keep it under the
     // SPEED objective. It follows O0271, which promotes on real profile evidence and whose fallback is
     // itself an indirect call this pass must not version again; running it immediately before SPEED

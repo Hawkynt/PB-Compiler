@@ -146,12 +146,26 @@ public sealed partial class CodeGenerator {
     return true;
   }
 
+  /// <summary>
+  /// The body a generated definition was COPIED from, or null when it is not a clone.
+  ///
+  /// <para>
+  /// A cloner records the provenance on the IR function (<see cref="IrFunction.ClonedFrom"/>), which
+  /// is what keeps the rule above about cloning rather than about one producer's names. O0283 predates
+  /// the field and is recovered from its marker instead - the same answer by a different route, and
+  /// the reason this is a query rather than a property read.
+  /// </para>
+  /// </summary>
+  private static string? CloneSourceName(IrModule module, IrFunction generated)
+    => generated.ClonedFrom
+       ?? ContextSensitiveCloning.SourceOfGeneratedClone(module, generated)?.Name;
+
   /// <summary>Whether a name belongs to a generated definition the backend will actually emit.</summary>
   private bool IsBackendGeneratedDefinition(string name)
     => this._backendGenerated?.ContainsKey(name) == true;
 
   /// <summary>
-  /// Removes generated bodies whose defined callees - and, for an O0283 clone, whose original source
+  /// Removes generated bodies whose defined callees - and, for a CLONE, whose original source
   /// definition - failed to route. Requiring the source definition is intentionally stronger than mere
   /// codegen convenience: a clone and its original may share DATA/dynamic-array/static storage, and
   /// routing only one side would split ownership between the IR and direct emitters. It is a rule
@@ -167,13 +181,10 @@ public sealed partial class CodeGenerator {
       again = false;
       foreach (var generated in this._backendGenerated.Values.ToList()) {
         string? stranded;
-        if (ContextSensitiveCloning.IsGeneratedClone(generated.Ir)) {
-          var source = ContextSensitiveCloning.SourceOfGeneratedClone(module, generated.Ir);
-          stranded = source is null || !this.BackendNameIsRouted(source.Name)
-            ? source?.Name ?? "its source definition"
-            : null;
-        } else
-          stranded = null;
+        if (CloneSourceName(module, generated.Ir) is { } cloneSource)
+          stranded = this.BackendNameIsRouted(cloneSource) ? null : cloneSource;
+        else
+          stranded = ContextSensitiveCloning.IsGeneratedClone(generated.Ir) ? "its source definition" : null;
         stranded ??= CalleeNames(generated.Ir)
           .FirstOrDefault(name => !this.BackendNameIsRouted(name) && !this.CanCallDirectCallee(name));
         if (stranded is null)

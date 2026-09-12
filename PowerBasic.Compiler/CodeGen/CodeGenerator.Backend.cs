@@ -15,6 +15,18 @@ public sealed partial class CodeGenerator {
   // null until first queried. Empty unless UseExperimentalBackend.
   private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc, bool ElideFrame)>? _backendProcs;
 
+  // the routed frame of a SOURCE procedure whose IR signature an interprocedural pass rewrote. It is
+  // the same IR-derived layout a generated definition gets, kept here because the declaration the
+  // ordinary path reads is no longer what the call sites push.
+  private Dictionary<ProcedureSymbol, X86DefinitionStackLayout>? _backendRewrittenFrames;
+
+  /// <summary>
+  /// Set when a first routing pass would have emitted a rewritten source signature alongside a caller
+  /// the direct path owns, so the second must forbid the rewrites outright. It only ever moves from
+  /// false to true, which is what bounds the re-decision at one repeat.
+  /// </summary>
+  private bool _backendAbiRewriteDenied;
+
   /// <summary>
   /// What the x86-16 selector is compiling for: the instruction set the directives declared and the
   /// objective they asked for. It is assembled here rather than passed piecemeal because both answers
@@ -206,6 +218,16 @@ public sealed partial class CodeGenerator {
       return this._backendProcs;
     }
     this._backendModule = module;
+    // Whether the middle end may change a SOURCE procedure's ABI. It may only do so when every call
+    // to that procedure is built from THIS module: the direct emitter builds one from the
+    // declaration, so a caller it owns would push the parameters the source wrote while the routed
+    // callee expects the ones the pass left. A procedure the lowering refused is exactly such an
+    // invisible caller, a $COMPILE UNIT exports its procedures to callers that are not here at all,
+    // and a linked object may DECLARE one of ours. Any of those and the IR does not own the ABI.
+    module.OwnsProcedureAbi = !this._backendAbiRewriteDenied
+      && !this._isUnit && !this._allowExternalCalls
+      && model.ProcedureList.All(p => p.IsExternal || p.Body is null
+        || module.FindFunction(p.Name) is { IsDeclaration: false });
     // The routed path honours the optimizer flag like every other part of the compiler. Without this
     // a --no-optimize build of a routed function was still fully optimized, which made the two builds
     // of a size comparison ONE build and made "optimizer off means vintage behaviour" - the promise
@@ -345,6 +367,17 @@ public sealed partial class CodeGenerator {
         this._backendDeclines.Add((proc.Name, $"routing: global '{unaddressable}' has no cell the emitter can address"));
         continue;
       }
+      // A rewritten signature makes the IR the only description of this frame, so it takes the same
+      // definition layout a generated body does. Asked HERE, where failing to express one is still a
+      // decline that costs one procedure: by emission time the offsets array is simply indexed.
+      if (irFn.SignatureRewritten) {
+        if (!X86CallAbi.TryDefinitionStackLayout(irFn, out var rewrittenLayout, out var layoutDecline)) {
+          this._backendDeclines.Add((proc.Name,
+            "filter: " + (layoutDecline ?? "the rewritten IR signature has no routed stack layout")));
+          continue;
+        }
+        (this._backendRewrittenFrames ??= new(ReferenceEqualityComparer.Instance))[proc] = rewrittenLayout;
+      }
       if (InstructionSelector.TrySelect(irFn, out var declineReason, this.SelectionTarget) is not { } mfn) {
         this._backendDeclines.Add((proc.Name, "selection: " + (declineReason ?? "unknown")));
         continue;
@@ -448,17 +481,58 @@ public sealed partial class CodeGenerator {
     // one array, so a split set of users would have a REDIM on one side and a UBOUND on the other.
     var dataSplit = !this._backendDataOwnershipDenied && !this.DataReadersRouteTogether();
     var dynSplit = !this._backendDynArrayOwnershipDenied && !this.SharedDynArrayUsersRouteTogether();
-    if (!dataSplit && !dynSplit)
+    // ...and the same bargain for a rewritten source ABI, granted optimistically for the same reason:
+    // whether every caller of one routed cannot be known until every caller has been decided, and the
+    // module body is decided last of all.
+    var abiSplit = !this._backendAbiRewriteDenied && !this.RewrittenSignaturesRouteTogether();
+    if (!dataSplit && !dynSplit && !abiSplit)
       return answer;
     this._backendDataOwnershipDenied |= dataSplit;
     this._backendDynArrayOwnershipDenied |= dynSplit;
+    this._backendAbiRewriteDenied |= abiSplit;
     this._backendProcs = null;
+    this._backendRewrittenFrames = null;
     this.ResetBackendGenerated();
     this._backendModule = null;
     this._backendMain = null;
     this.ResetBackendSemanticMerges();
     this._backendDeclines.Clear();
     return this.RouteMain();
+  }
+
+  /// <summary>
+  /// Whether a rewritten SOURCE signature, if there is one, ended up emitted together with everything
+  /// that could still call it.
+  ///
+  /// <para>
+  /// Such a callee's frame is described by the IR and by nothing else. A caller the direct emitter
+  /// owns builds its call from the source declaration instead, so it pushes parameters the callee no
+  /// longer has and the callee's <c>RET n</c> releases bytes nobody put there. The two can only be
+  /// emitted together, and if they were not, the whole routing is decided again with the rewrites
+  /// denied - which is the state the pipeline has when <see cref="IrModule.OwnsProcedureAbi"/> is off.
+  /// </para>
+  /// <para>
+  /// The caller set is "every body in the program", not the calls the module still shows. The IR's own
+  /// inliner absorbs a call and the module then has no record of it, while the direct emitter - which
+  /// never inlines a routed callee, and whose budget is its own - still emits that call from the
+  /// source tree. Reading the callers off the module would therefore miss exactly the caller that
+  /// matters. Being wrong here is a silent miscompile; being conservative costs one re-decision.
+  /// </para>
+  /// <para>
+  /// A rewritten GENERATED definition asks nothing of this. Nothing outside the IR can name it, and
+  /// its frame already comes from its IR signature - see CodeGenerator.BackendGenerated.cs, which
+  /// also owns the rule that a CLONE routes only alongside the body it was copied from.
+  /// </para>
+  /// </summary>
+  private bool RewrittenSignaturesRouteTogether() {
+    if (!this.UseExperimentalBackend || this._backendModule is null || this._backendProcs is null)
+      return true;
+    if (!model.ProcedureList.Any(proc => !proc.IsExternal && proc.Body is not null
+        && this._backendModule.FindFunction(proc.Name) is { IsDeclaration: false, SignatureRewritten: true }))
+      return true;
+    return this._backendMain is not null
+      && model.ProcedureList.All(proc => proc.IsExternal || proc.Body is null
+        || this._backendProcs.ContainsKey(proc));
   }
 
   /// <summary>
@@ -1022,6 +1096,12 @@ public sealed partial class CodeGenerator {
   private ProcedureSymbol? DirectCalleeWithCompatibleAbi(string name) {
     if (this.Optimize && this.OptimizeSpeed)
       return null;
+    // A procedure whose IR signature was rewritten no longer HAS a direct-compatible ABI: the routed
+    // call site pushes what the pass left, and the direct emitter's definition still reads what the
+    // source declared. Refusing it here is what strands a routed caller onto the ordinary decline
+    // path when the callee itself did not route.
+    if (this._backendModule?.FindFunction(name) is { SignatureRewritten: true })
+      return null;
     var matches = model.ProcedureList
       .Where(proc => !proc.IsExternal && proc.Body is not null
         && proc.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
@@ -1071,6 +1151,15 @@ public sealed partial class CodeGenerator {
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
     // Source procedures still get their public/export frame from ProcedureSymbol. Generated private
     // definitions use the equivalent IR-derived layout in CodeGenerator.BackendGenerated.cs.
+    //
+    // ...and so does a source procedure whose signature an interprocedural pass REWROTE. Its
+    // declaration is no longer what the call sites push, so it takes the same IR-derived layout,
+    // from the same X86CallAbi.TryDefinitionStackLayout. LayoutFrame still runs above: it places the
+    // LOCALS and raises the register-parameter diagnostic, neither of which moves.
+    if (this._backendRewrittenFrames?.TryGetValue(proc, out var rewritten) == true) {
+      paramOffsets = rewritten.ParameterOffsets;
+      paramBytes = rewritten.ParameterBytes;
+    }
     var calleeCleanupBytes = CallerCleansStack(proc) ? 0 : paramBytes;
     // paramBytes counts only the STACK parameters, so a register convention's RET n is already right:
     // its leading arguments never reached the stack, and the pushes that spilled them are discarded by

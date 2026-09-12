@@ -44,6 +44,23 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   /// </summary>
   public bool OptimizeForSpeed { get; internal set; }
 
+  /// <summary>
+  /// Whether this module is the ONLY description of its procedures' calling conventions, so an
+  /// interprocedural pass may change a signature and rewrite every direct call to match.
+  ///
+  /// <para>
+  /// It is a CLAIM the consumer makes, and it defaults to false because most of them cannot make it.
+  /// A source procedure's ABI is written down twice - here, and in the declaration the binder kept -
+  /// and anything that can still reach the second spelling can build a call the rewritten callee does
+  /// not answer: the x86-16 hybrid back end emits some callers straight from the source tree, and a
+  /// fixture that renders one function and calls it from a driver of its own is doing the same thing.
+  /// Only a consumer that really owns the whole call graph sets this and gets the rewrites. A
+  /// GENERATED definition is not affected either way - it has no second spelling, and its frame is
+  /// read off the IR by <c>X86CallAbi.TryDefinitionStackLayout</c>.
+  /// </para>
+  /// </summary>
+  public bool OwnsProcedureAbi { get; set; }
+
   public IReadOnlyList<IrFunction> Functions => this._functions;
   public IReadOnlyList<IrGlobalVariable> Globals => this._globals;
 

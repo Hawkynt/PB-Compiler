@@ -9,7 +9,7 @@ public sealed class IrArgument : IrValue {
   }
 
   /// <summary>The zero-based position of this argument in its function's signature.</summary>
-  public int Index { get; }
+  public int Index { get; internal set; }
 
   /// <summary>The function this argument belongs to (set when the function is created).</summary>
   public IrFunction? Parent { get; internal set; }

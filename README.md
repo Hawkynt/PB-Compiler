@@ -356,10 +356,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 199 | 66 | 142 | 407 |
+| O — optimization passes | 200 | 67 | 140 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **213** | **66** | **142** | **421** |
+| **all** | **214** | **67** | **140** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -440,7 +440,7 @@ next free number rather than displacing anything.
 | ✅ | [O0066](docs/optimizations/O0066-unrolled-counter-propagation.md) | Unrolled-counter propagation | Each unrolled copy sees its counter as a literal, so subscripts and arithmetic fold. |
 | ✅ | [O0067](docs/optimizations/O0067-if-chain-jump-table.md) | `IF`-chain → jump table | A chain of mutually exclusive `IF x = k` tests dispatches like a dense `SELECT CASE`. |
 | 🟡 | [O0068](docs/optimizations/O0068-array-zero-fill-elision.md) | Array zero-fill elision | Skip an array's allocation zero-fill when an initializing loop provably dominates every read. |
-| ⬜ | [O0069](docs/optimizations/O0069-dead-parameter-elimination.md) | Dead parameters & call-shape cloning | Drop parameters no callee reads; clone a procedure for a single dominant argument shape. |
+| ✅ | [O0069](docs/optimizations/O0069-dead-parameter-elimination.md) | Dead parameters & call-shape cloning | Drop parameters no callee reads; clone a procedure for a single dominant argument shape. |
 | 🟡 | [O0070](docs/optimizations/O0070-leaf-frame-elision.md) | Leaf-frame elision | IR-routed procedures with no surviving fixed stack slots can omit the BP frame; 8086 stack-parameter cases still need BP. |
 | ⬜ | [O0071](docs/optimizations/O0071-segment-register-allocation.md) | Segment-register allocation | Pin ES to the string/array heap across a statement run instead of reloading per access. |
 | ⬜ | [O0072](docs/optimizations/O0072-register-reassignment.md) | Register reassignment | Break the AX-centric serialization so independent statement chains interleave across registers. |
@@ -672,7 +672,7 @@ next free number rather than displacing anything.
 | 🟡 | [O0277](docs/optimizations/O0277-link-time-optimization.md) | Link-time optimization | Most of this compiler's interprocedural passes are restricted to a self-contained main. |
 | ✅ | [O0278](docs/optimizations/O0278-global-variable-localization.md) | Global variable localization | A `DIM SHARED` global that only one procedure ever touches is not really global. |
 | ✅ | [O0279](docs/optimizations/O0279-whole-program-devirtualization.md) | Whole-program devirtualization | When the complete set of possible targets of an indirect call is known, the call can be resolved statically. |
-| ⬜ | [O0280](docs/optimizations/O0280-argument-structure-reduction.md) | Argument structure reduction | A procedure that takes a whole `TYPE` (or a descriptor) but reads only two of its fields does not need the aggregate. |
+| 🟡 | [O0280](docs/optimizations/O0280-argument-structure-reduction.md) | Argument structure reduction | A procedure that takes a whole `TYPE` (or a descriptor) but reads only two of its fields does not need the aggregate. |
 | 🟡 | [O0281](docs/optimizations/O0281-return-structure-reduction.md) | Return structure reduction | A `FUNCTION` returning a `TYPE` by value (or a tuple — `FUNCTION DivMod(...) AS (LONG, LONG)`) writes the whole aggregate through a struct return. |
 | 🟡 | [O0282](docs/optimizations/O0282-internal-calling-convention.md) | Internal calling-convention specialization | Fully owned one-word parameters use the WATCALL register layout; wider pairs and multi-register returns remain planned. |
 | ✅ | [O0283](docs/optimizations/O0283-context-sensitive-cloning.md) | Context-sensitive cloning | Interprocedural facts are joined over all callers, so one imprecise caller destroys the precision for everybody. |
