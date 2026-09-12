@@ -175,60 +175,32 @@ public sealed class BackendArrayParameterRoutingTests {
     => AssertRoutedMatchesDirect(_stringArrayRead, "S", optimize);
 
   /// <summary>
-  /// Assigning INTO a string array parameter declines, for the reason a <c>DIM ... AT</c> array's
-  /// string elements decline: the assignment hands the element's ADDRESS to the string runtime, whose
-  /// routines take a near pointer. Losing the segment there does not fail - it writes the program's
-  /// own data instead - so the lowering refuses rather than silently corrupting memory.
-  /// </summary>
-  [Test]
-  public void Route_GivenStringArrayParameterAssignment_ThenItDeclinesRatherThanLosingTheSegment() {
-    const string source = """
-      SUB S(a$()) NOINLINE
-        a$(3) = a$(1) + "!"
-      END SUB
-      DIM v$(1 TO 3)
-      v$(1) = "ab"
-      S v$()
-      PRINT v$(3)
-      """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
-    var image = routed.EmitExecutable();
-
-    Assert.Multiple(() => {
-      Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-      Assert.That(routed.BackendRoutedNames, Does.Not.Contain("S"));
-      Assert.That(image, Is.Not.Empty, "the program still compiles - the procedure falls back to the direct emitter");
-    });
-  }
-
-  /// <summary>
-  /// REDIM through an array parameter reallocates the CALLER's array, so the caller sees the new
-  /// bounds afterwards and - without PRESERVE - a cleared array as well. That is genuine PBC 3.50's
-  /// behaviour, pinned against the real compiler by tests/diff/DIFF124.BAS.
+  /// Assigning INTO a string array parameter. A string element is a HANDLE - one word - so the far
+  /// element address is read and written exactly as a scalar is; nothing hands that address to a
+  /// string routine, which is what could not survive losing a segment.
   ///
   /// <para>
-  /// This test previously asserted the OPPOSITE, that the construct declines. It did decline, and the
-  /// decline was protecting the routed path from a bug in the DIRECT one: that emitter recorded the
-  /// new block in a private cell nothing reads, so the caller kept answering the old bound while
-  /// element writes landed in the new block. Both paths now reach the caller's own descriptor.
+  /// Three elements, and the write to a$(1) is the one that matters: it overwrites an element the
+  /// CALLER can still see, so a far address that lost its segment would leave "ab" in place while
+  /// the program carried on printing.
   /// </para>
   /// </summary>
-  private const string _redimThroughParameter = """
-    SUB S(a%()) NOINLINE
-      REDIM a%(1 TO 9)
-      a%(9) = 42
+  private const string _stringArrayAssignment = """
+    SUB S(a$()) NOINLINE
+      a$(3) = a$(1) + a$(2)
+      a$(1) = "zz"
     END SUB
-    REDIM v%(1 TO 2)
-    v%(1) = 7
-    S v%()
-    PRINT LBOUND(v%); UBOUND(v%)
-    PRINT v%(1); v%(9)
+    DIM v$(1 TO 3)
+    v$(1) = "ab"
+    v$(2) = "cd"
+    S v$()
+    PRINT v$(1); "|"; v$(2); "|"; v$(3)
     """;
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Route_GivenRedimOfAnArrayParameter_ThenTheCallersArrayIsReallocated(bool optimize)
-    => AssertRoutedMatchesDirect(_redimThroughParameter, "S", optimize);
+  public void Route_GivenStringArrayParameterAssignment_ThenTheCallersHandlesAreReplaced(bool optimize)
+    => AssertRoutedMatchesDirect(_stringArrayAssignment, "S", optimize);
 
   /// <summary>
   /// The bodies that used to exhaust the register allocator. None of them is exotic: bounds plus a

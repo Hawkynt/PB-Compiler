@@ -398,6 +398,18 @@ public sealed class BackendRoutingGateTests {
       S v%()
       PRINT v%(4)
       """, "S"),
+    // A string element is a HANDLE - one word - so the far element address an array parameter gives
+    // is read and written exactly as a scalar is. The row assigns INTO the parameter as well as
+    // reading from it, because only the write reaches the caller's own storage.
+    new("assignment into a string array parameter", """
+      SUB S(a$())
+        a$(2) = a$(1) + "!"
+      END SUB
+      DIM v$(1 TO 2)
+      v$(1) = "ab"
+      S v$()
+      PRINT v$(2)
+      """, "S"),
     // Both register conventions overflow their register file here - FASTCALL has three registers and
     // WATCALL four - so the row covers the boundary with the stack arguments behind them rather than
     // only the registers. Execution equivalence is proven separately by
@@ -433,18 +445,20 @@ public sealed class BackendRoutingGateTests {
     // a register convention has no row here for the same reason BYVAL records have none: LayoutFrame
     // raises it as a hard error on BOTH paths, so it is a front-end rejection rather than a routing
     // class, and a gate row for it would measure the front end.
-    // An array parameter has moved to the routing list. What remains is the case whose element
-    // ADDRESS escapes: a string element is a handle, and assigning one hands its address to string
-    // runtime routines that take a NEAR pointer, so a far element address would silently write the
-    // program's own data. A DIM ... AT array's string elements decline for the identical reason.
-    new("assignment into a string array parameter", """
-      SUB S(a$())
-        a$(2) = a$(1) + "!"
-      END SUB
-      DIM v$(1 TO 2)
-      v$(1) = "ab"
-      S v$()
-      """, "S", "lowering: a StringType { Size = 2 } element of an ABSOLUTE array"),
+    // Assignment into a string array parameter has moved to the routing list too: a string element
+    // is one HANDLE word, and both consumers of its address move exactly that word rather than
+    // handing the address to a string routine.
+    //
+    // BCD is what is left, and it is a real class rather than a placeholder: the ten-byte decimal
+    // cell is a result shape the routed ABI does not carry, while the DIRECT emitter returns one
+    // with FLD TBYTE. Keeping a row here is also what keeps this fixture honest - a decline list
+    // that emptied would stop proving that the routing still refuses anything at all.
+    new("BCD result", """
+      FUNCTION F(BYVAL a%) AS BCD
+        F = a% / 2
+      END FUNCTION
+      PRINT F(3)
+      """, "F", "filter: return type outside the routed ABI (BCD)"),
   ];
 
   private static SemanticModel Bind(string source) {

@@ -71,18 +71,16 @@ public sealed class MandatoryRoutingTests {
   /// <summary>
   /// The premise, which the test above cannot establish on its own: a corpus that happens to contain
   /// nothing the routing refuses would pass it whether or not <c>RequireBackend</c> does anything at
-  /// all. These two constructs DO decline, so they must fail - and must fail with the routing's own
-  /// reason rather than some unrelated diagnostic.
+  /// all. This construct DOES decline, so it must fail - and must fail with the routing's own reason
+  /// rather than some unrelated diagnostic.
+  ///
+  /// <para>
+  /// The subject keeps needing replacement as classes close: it has been a string array parameter's
+  /// assignment, and that now routes. A BCD result is what is left, and when it closes too this test
+  /// wants deleting rather than re-pointing - a routing that refuses nothing cannot be shown to be
+  /// refusing, and <c>BackendRoutingGateTests</c> holds the current list.
+  /// </para>
   /// </summary>
-  [TestCase("""
-    SUB S(a$())
-      a$(2) = a$(1) + "!"
-    END SUB
-    DIM v$(1 TO 2)
-    v$(1) = "ab"
-    S v$()
-    PRINT v$(2)
-    """, "element")]
   [TestCase("""
     FUNCTION F(BYVAL a%) AS BCD
       F = a% / 2
@@ -104,13 +102,10 @@ public sealed class MandatoryRoutingTests {
   [Test]
   public void Compile_GivenAConstructTheRoutingRefuses_ThenTheOrdinaryBuildStillSucceeds() {
     const string source = """
-      SUB S(a$())
-        a$(2) = a$(1) + "!"
-      END SUB
-      DIM v$(1 TO 2)
-      v$(1) = "ab"
-      S v$()
-      PRINT v$(2)
+      FUNCTION F(BYVAL a%) AS BCD
+        F = a% / 2
+      END FUNCTION
+      PRINT F(3)
       """;
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     var generator = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };

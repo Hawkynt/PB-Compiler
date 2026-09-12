@@ -809,8 +809,14 @@ public sealed partial class IrLowering {
   private (IrValue Address, PbType Element) ElementDataAddress(CallOrIndexExpr expr) {
     var (address, element) = this.ElementAddress(expr, farAllowed: true);
     // a record element is copied by ADDRESS, not loaded, so it is in the same position as every
-    // other consumer below - the memcpy would take the far pointer for a near one
-    if (address is IrFarPtr && element is not ScalarType)
+    // other consumer below - the memcpy would take the far pointer for a near one.
+    //
+    // A STRING element is not in that position. Its cell holds a HANDLE, one word, and both consumers
+    // of this address move exactly that word: the read loads it and the assignment stores the new one
+    // over it. Neither hands the ADDRESS to a string routine, which is what could not survive losing
+    // a segment. Refusing it was therefore refusing a load and a store the far path already performs
+    // for every scalar, and it cost the last routing class an array parameter had.
+    if (address is IrFarPtr && element is not (ScalarType or StringType))
       throw new IrLoweringException($"a {element} element of an ABSOLUTE array");
     return (address, element);
   }
