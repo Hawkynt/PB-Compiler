@@ -21,10 +21,9 @@ All gates below must be green in both optimized and `--no-optimize` modes before
 
 Every source body accepted by the DOS compiler must either lower and select through the IR path or produce the same front-end diagnostic it produced before. `BackendDeclines` must be empty for every non-external body in the declarative routing gate and in the corpus.
 
-The remaining pinned blockers are:
+The remaining pinned blocker is:
 
-- assignment into a **string** array parameter (the element address escapes to near-pointer string routines — see the array-parameter entry below);
-- `REDIM PRESERVE` **through** an array parameter — the semantics are implemented on both paths and proven against genuine PBC 3.50, but the routed body runs out of 8086 registers unoptimized. It is therefore absent from `tests/diff/` (a corpus program that declines reads as a routing regression) and covered by `ArrayParameterRedimTests` instead. Plain `REDIM` of a parameter routes, with its oracle test in `tests/diff/DIFF124.BAS`.
+- `ERASE` of an **ABSOLUTE** array — unmapping memory the program does not own has no routed meaning yet, and the lowering refuses rather than inventing one; the direct emitter simply clears the descriptor word;
 
 A row leaves this list only when a focused routing test also executes the routed image and proves observable equivalence.
 
@@ -43,6 +42,9 @@ Closed so far:
 - 8086 register pressure in a routed body — this was a blocker in its own right, and the only one that was not a construct: a body combining two descriptor bound reads with a read-modify-write of an element declined with `allocation: no register assignment, and nothing left that can move to memory`. The cause was not the arithmetic width and not the x87. A GEP at a constant displacement was selected as an `LEA` into a register of its own, so each of a descriptor's six fields took a BASE register — and a value used as a memory base is the single thing the spiller cannot relocate, which is why the failure is a hard decline rather than a slowdown. It was isolated by comparing against the IDENTICAL body over a shared dynamic array, whose fields are absolute data cells needing no base: 6 distinct bases and 117 instructions against 3 and 68. Folding the displacement into the access brings the parameter form to exactly the shared form's 3 and 68, and every previously-declining body routes and executes identically to the direct build in both optimizer modes. `BackendGepAddressingTests` pins both the base count and the allocation, over a record's members as well as an array descriptor's fields, so the fold is not special-cased to arrays.
 - `REDIM` through an array parameter — and the DIRECT emitter turned out to be the wrong one. `SlotOf` mints a private data cell for an array parameter, so a callee's `REDIM` recorded the new block where nothing reads it: genuine PBC 3.50 answers `UBOUND` 9 and a cleared array after a callee redimensions to `1 TO 9`, while this compiler answered the OLD bound with the old contents intact, and element writes landed in the new block regardless. It printed plausible numbers rather than faulting, which is why it survived. Both emitters now reach the caller's own descriptor — the direct one through `DescriptorAccessorOf` (which clobbers `SI`, so the `PRESERVE` copy's descriptor read has to precede its `SI` load), the routed one by writing the caller's block back and re-reading it after the call. `tests/diff/DIFF124.BAS` compares against the real compiler.
 - Split array ownership across the two paths — passing an array to a procedure is invisible to a name-based analysis, because the callee refers to its own parameter. Two guards were blind in the same way: the escape set left such an array in the caller's frame while the callee rewrote the direct emitter's packed block, and `CanCallDirectCallee` had only ever refused array parameters incidentally, as part of a shape check that stopped applying once they began routing. An array handed to a procedure now escapes, and a routed caller will not hand one to a callee the back end did not take.
+- Assignment into a string array parameter — the guard that refused it exists because a RECORD element is copied by address, and a `memcpy` would take the far pointer for a near one. A string element is not in that position: its cell holds a HANDLE, one word, and both consumers of the address move exactly that word — the read loads it and the assignment stores the new one over it. Neither hands the ADDRESS to a string routine, which is what could not survive losing a segment. Proven by `BackendArrayParameterRoutingTests`, which writes through the parameter to an element the caller can still see, in both optimizer modes.
+- BCD parameters and results — a BCD cell IS ten bytes of x87 extended, which is the value channel EXT already crosses on, so admitting it removed a restriction rather than adding a representation. Both directions execute against the direct build in both optimizer modes.
+- `REDIM PRESERVE` through an array parameter — the semantics were always right on both paths; what kept it out of the corpus was 8086 register pressure in the routed body, and the constant-offset GEP fold removed that. It is back in `tests/diff/DIFF124.BAS`, so the oracle covers both halves of the reallocation.
 - Procedure-local error handling — `ON ERROR` / `RESUME` / `TRY` already lower to inline handler intrinsics. `ProcedureErrorHandlerPreservation` adds the procedure-boundary ABI rule the module body does not need: save the caller's `rt_onerr`/`rt_onerr_bp`/`rt_onerr_sp` triple in this invocation's frame and restore it before every `RET`. `BackendProcedureErrorHandlerRoutingTests` executes both normal return and an inner handled fault while proving the outer caller trap is restored, with optimization on and off.
 
 BYVAL records are deliberately absent from both lists: the direct emitter refuses them as well ("not yet generated: load of UdtType"), so they are a front-end gap rather than a routing class, and they do not block retirement.
@@ -53,6 +55,15 @@ The temporary mixed routed/direct architecture has duplicate representations for
 
 String ownership, error-handler state, DATA/RESTORE state, dynamic-array descriptors, COMMON/CHAIN state and file/runtime state all need explicit IR/runtime contracts rather than implicit direct-emitter lifetime.
 
+**Checked, and the ordering is structural rather than a matter of effort.** The tempting move is to unify each representation NOW so the guards can go before deletion. For DATA that is not available in either direction:
+
+- the routed side cannot adopt the direct emitter's absolute `rt_dataptr` and `rt_readdata`, because the portable runtime has no such routine — `runtime/pbc_rt.h` defines none, and the IR's blob-plus-index form is exactly what lets the C and LLVM back ends read DATA at all;
+- the direct side cannot adopt the index, because its emitted bytes are what the golden gate holds byte-identical to the genuine compilers.
+
+So each representation is correct for its own path, and neither can move while both paths exist. That is why the gate says the guards may be deleted only after there is no direct side left to observe the competing representation — the guards are a consequence of gate 5, not a prerequisite for it. The four are `DataReadersRouteTogether`, `SharedDynArrayUsersRouteTogether`, `RewrittenSignaturesRouteTogether` and `CanCallDirectCallee`.
+
+The corollary is that the critical path runs through **gate 4**, not gate 2: the 61 emitted-code fixtures that fail with routing default-on are assertions about the direct emitter's instruction sequences, and they can only be re-pointed at the routed path once the routed path delivers the optimizations they name. That is the 12/55 list above.
+
 ### 3. Behavioral equivalence
 
 **Routing can now be made mandatory, and that is the only way these gates ask a real question.** `RequireBackend` (`PBC_X_BACKEND_STRICT` / `--x-backend-strict`) turns a decline into a compile error instead of a fall back. With a fallback present every gate below is satisfied by construction: a decline is invisible, the program still compiles, and the differential still agrees — because for that body *both sides ran the same emitter*. A bodiless EXTERNAL declaration is exempt; it is a link import with no code to emit on either path.
@@ -60,24 +71,24 @@ String ownership, error-handler state, DATA/RESTORE state, dynamic-array descrip
 Where that leaves the two gates today:
 
 - the pb36 corpus compiles **completely** with routing mandatory, in both optimizer modes — `MandatoryRoutingTests` pins it, and pins that the mode really does reject the constructs that decline, so it cannot pass vacuously;
-- the genuine-compiler battery run with routing mandatory scores **526 pass / 11 fail**, against **548 / 0 / 0** with the fallback. Those 11 are the whole remaining distance for this gate, and they are all historic dialects, which is why the pb36 corpus does not see them:
+- the genuine-compiler battery run with routing mandatory scores **548 pass / 0 fail / 0 skip** — the same as with the fallback. Every program in the battery, in every dialect, in both the direct and the round-trip lane, compiles with the direct emitter forbidden from taking any body. Those 11 are the whole remaining distance for this gate, and they are all historic dialects, which is why the pb36 corpus does not see them:
 
-| count | reason |
-|---|---|
-| 6 | `selection: call: rt_round_half_away (runtime declaration - not in the runtime ABI table)` |
-| 2 | `selection: floating point: IrConstantInt has no cell` |
-| 2 | `lowering: the module did not lower to IR` (BASICA/GW deferred interpreter text) |
-| 1 | `selection: Microsoft Binary Format (mbf32) needs the MBF/IEEE load-store conversion` |
+**This gate is now met for the battery.** It was 526/11 when the measurement first existed. What closed, in the order it was found:
 
-`rt_round_half_away` is the largest and is not a missing table row: no such runtime routine exists. The BASCOM lineage (QB 1.0–3.0, BASICA/GW) rounds float-to-integer half AWAY from zero, and the direct emitter expands that inline — `FTST`/`FSTSW`/`SAHF`, bias by ±0.5, then `CALL rt_trunc`. The IR names it abstractly so the C and LLVM renderers can each write their own; the x86-16 selector needs either the same inline expansion or a real routine to call.
+- **BASCOM half-away-from-zero rounding** (6 programs) — not a missing ABI row; no such routine existed. `rt_rndaway` is `rt_round`'s body without the decimal-places scaling, in a runtime section of its own, because the trimmer emits per section and sharing `rounding` would have added its bytes to every program that rounds at all.
+- **A whole integer constant on the float path** (2 programs) — a constant the front end typed as a float and the folder left whole (`32767 + 1` promoted past INTEGER). It goes in the same qword pool as any float literal, guarded on round-tripping so a value the pool cannot hold still declines rather than being quietly rounded.
+- **BASICA/GW source control cannot reach** (2 programs) — `DEADTEXT`'s line 40 is arbitrary text a `GOTO` skips, and the language never parses a line execution does not reach. The direct emitter's own reachability set is handed in rather than recomputed: two analyses would be two answers to a question that must have one. A deferred line that IS reachable still declines.
+- **Microsoft Binary Format** (1 program) — BASICA/GW floats are stored in MBF, which the x87 cannot compute on, so every load converts to IEEE and every store converts back. `rt_mbfld`/`rt_mbfst` are those conversions as routines, because the conversion branches while the selector emits within one block; they take the cell's near OFFSET, so an MBF number is converted where it lies and never becomes a register-resident value. What actually blocked it was a level up: `mem2reg` had promoted the MBF cell, and a phi has no address for the conversions to work through — so an MBF cell is now refused promotion, the cell being the thing that is foreign rather than any particular use of it.
 
-
-
-The routed backend corpus differential is the correctness gate. Image byte identity with the AX-serial direct emitter is not required; observable behavior is. The differential battery must remain at zero routed/direct disagreements while each new class starts routing.
-
-Before final deletion, run the genuine-compiler differential/golden gates with routing mandatory so the comparison is no longer accidentally exercising the fallback.
+**Every figure here was taken with the strict flag verified live** — against a construct that must decline, and against the same construct compiling cleanly without it. An earlier measurement reported a clean strict sweep that was really the ordinary gate with the flags silently ignored, because the branch predated the flag.
 
 ### 4. Optimizer replacement
+
+**Measured.** `OptimizationBatteryTests.Battery_GivenScenarios_WhenTheBackEndIsForced_ThenTheUnmetListDoesNotGrow` runs the battery's expectations with routing forced: **12 of 55 are unmet** (CODEGEN 9, RANGES 3), recorded as a baseline so the list can only shrink.
+
+Reported rather than gating, because almost every assertion names a specific INSTRUCTION and a routed sequence reaching the same result by another shape is not a regression. Telling a missing optimization from a fixture that merely encodes the legacy instruction sequence is done one at a time, by argument.
+
+**An unmet byte-pattern expectation is not a behavioural one**, and the clearest case is the scariest-looking: `IndexRangeUnknownKeepsCheck` is the control proving the range lattice does not simply drop every bounds check, it asserts `present-call rt_raise`, and the routed image calls no raise routine at all. It nonetheless traps an out-of-range index with error 9 in both optimizer modes — the routed path performs the check INLINE and jumps to the handler. The assertion encodes the direct emitter's mechanism, not the language's promise, and is one of the fixtures the note below says to rewrite.
 
 The forced-backend optimizer fixture is a separate gate from semantic coverage. Its remaining failures are a work list for IR or machine passes, not reasons to preserve syntax-to-machine lowering. Move a transformation according to what it knows:
 
@@ -87,6 +98,18 @@ The forced-backend optimizer fixture is a separate gate from semantic coverage. 
 - ABI prologue/epilogue and runtime calling rules -> x86 backend.
 
 Do not reproduce direct-emitter implementation structure merely to satisfy a byte-pattern fixture. Rewrite fixtures that only encode the legacy instruction sequence when the routed sequence is measurably equivalent or better.
+
+### 4a. What default-on routing costs today
+
+Measured by flipping the default and running the suite **with `DOSBOX_EXE` set**: **63 failures of 6488**, against the 109 this document used to record. The split is what matters:
+
+- **61 are emitted-code assertions** — `Emit_*`, `InlinePolicy_*`, SIMD `Compile_*`. The same class gate 4 describes: fixtures naming an instruction the routed path reaches by another shape.
+- **2 are execution failures**, one of which is the pre-existing TIMER corpus case.
+- **0 are tail recursion.** This document recorded the deep-recursion pair as the ones that settle it — *"not code quality; it is a behavioural promise"* — and they now run and pass.
+
+The one genuine behavioural regression the measurement found has been fixed, and it was **not** a retirement-only defect: a routed BYTE/SBYTE FUNCTION returned its result in AL alone, leaving AH as whatever ran last, while the direct emitter loads a byte result zero- or sign-extended into AX. A directly-emitted caller therefore read garbage in the high byte. `FileUtil_CanRead` answered -255 where it meant 1; the comparison against 1 simply failed and the program carried on. It is invisible while both sides route, which is why it survived. `BackendByteResultTests` pins it, with a callee that dirties AH on purpose and an assertion that the mixed boundary is real.
+
+**Run it with the emulator.** The first measurement skipped 279 tests without `DOSBOX_EXE`, including both tail-recursion cases and the whole corpus run — and would have reported a smaller number that had never executed the program which found the bug.
 
 ### 5. Production routing becomes mandatory
 

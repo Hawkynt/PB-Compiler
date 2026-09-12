@@ -236,6 +236,10 @@ public enum MOpcode {
   Neg, Not, Inc, Dec,
   /// <summary>Sign-extend AX into DX:AX - the dividend a 16-bit IDIV consumes.</summary>
   Cwd,
+
+  /// <summary>Sign-extends AL into AX. The byte half of <see cref="Cwd"/>, and the one a signed BYTE
+  /// result needs: the direct emitter writes exactly this after loading an SBYTE into AL.</summary>
+  Cbw,
   Shl, Shr, Sar,
   /// <summary>386 double-precision shifts across two register halves.</summary>
   Shld, Shrd,

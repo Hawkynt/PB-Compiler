@@ -35,6 +35,14 @@ public sealed partial class IrLowering {
 
   /// <summary>Module-level symbols some PROCEDURE reads or writes, so main cannot keep them in its frame.</summary>
   private readonly HashSet<VariableSymbol>? _escapesToProcedures;
+
+  /// <summary>
+  /// BASICA/GW source lines control can never reach. Their text was never parsed - that is what
+  /// <see cref="DeferredSourceStmt"/> means - so lowering one would decline on syntax the language
+  /// says is never examined. The DIRECT emitter skips exactly this set, and it is handed in rather
+  /// than recomputed so both paths agree about which lines are dead.
+  /// </summary>
+  private readonly IReadOnlySet<DeferredSourceStmt>? _unreachableDeferred;
   private readonly Stack<LoopContext> _loops = new();
   private readonly Dictionary<string, IrBasicBlock> _labels = new(StringComparer.OrdinalIgnoreCase);
   private readonly ConstantFolder _folder;
@@ -66,7 +74,9 @@ public sealed partial class IrLowering {
   private readonly record struct LoopContext(ExitKind Kind, IrBasicBlock Exit, IrBasicBlock Continue);
 
   private IrLowering(SemanticModel model, IReadOnlyDictionary<ProcedureSymbol, IrFunction>? procMap, IrModule? module,
-      Dictionary<VariableSymbol, IrGlobalVariable>? sharedStorage = null, HashSet<VariableSymbol>? escapesToProcedures = null) {
+      Dictionary<VariableSymbol, IrGlobalVariable>? sharedStorage = null, HashSet<VariableSymbol>? escapesToProcedures = null,
+      IReadOnlySet<DeferredSourceStmt>? unreachableDeferred = null) {
+    this._unreachableDeferred = unreachableDeferred;
     this._sharedStorage = sharedStorage;
     this._escapesToProcedures = escapesToProcedures;
     this._model = model;
@@ -98,7 +108,16 @@ public sealed partial class IrLowering {
   /// instead of a generic "unsupported", which is the difference between a usable message and a
   /// shrug.
   /// </summary>
-  public static IrModule? TryLowerModule(SemanticModel model, out string? declinedBecause) {
+  public static IrModule? TryLowerModule(SemanticModel model, out string? declinedBecause)
+    => TryLowerModule(model, null, out declinedBecause);
+
+  /// <summary>
+  /// As above, with the BASICA/GW lines control cannot reach. The caller computes that set because the
+  /// DIRECT emitter needs the identical one; recomputing it here would be a second answer to a
+  /// question that must have one.
+  /// </summary>
+  public static IrModule? TryLowerModule(SemanticModel model,
+      IReadOnlySet<DeferredSourceStmt>? unreachableDeferred, out string? declinedBecause) {
     declinedBecause = null;
     var module = new IrModule(model.FileName, model.Dialect, model.CompatDialect);
     var procMap = new Dictionary<ProcedureSymbol, IrFunction>(ReferenceEqualityComparer.Instance);
@@ -139,7 +158,7 @@ public sealed partial class IrLowering {
     var main = new IrFunction("main", IrType.Void);
     module.AddFunction(main);
     try {
-      new IrLowering(model, procMap, module, shared, escapes).LowerBodyInto(main, model.MainBody, null);
+      new IrLowering(model, procMap, module, shared, escapes, unreachableDeferred).LowerBodyInto(main, model.MainBody, null);
     } catch (IrLoweringException e) {
       declinedBecause = e.Message;
       return null;
@@ -790,8 +809,14 @@ public sealed partial class IrLowering {
   private (IrValue Address, PbType Element) ElementDataAddress(CallOrIndexExpr expr) {
     var (address, element) = this.ElementAddress(expr, farAllowed: true);
     // a record element is copied by ADDRESS, not loaded, so it is in the same position as every
-    // other consumer below - the memcpy would take the far pointer for a near one
-    if (address is IrFarPtr && element is not ScalarType)
+    // other consumer below - the memcpy would take the far pointer for a near one.
+    //
+    // A STRING element is not in that position. Its cell holds a HANDLE, one word, and both consumers
+    // of this address move exactly that word: the read loads it and the assignment stores the new one
+    // over it. Neither hands the ADDRESS to a string routine, which is what could not survive losing
+    // a segment. Refusing it was therefore refusing a load and a store the far path already performs
+    // for every scalar, and it cost the last routing class an array parameter had.
+    if (address is IrFarPtr && element is not (ScalarType or StringType))
       throw new IrLoweringException($"a {element} element of an ABSOLUTE array");
     return (address, element);
   }
@@ -1356,6 +1381,11 @@ public sealed partial class IrLowering {
         break;
       // CommandStmt is a catch-all for a dozen unrelated statements (KILL, POKE, OUT, RANDOMIZE...),
       // so it names the keyword: "unsupported statement: CommandStmt" ranks nothing
+      // a line control cannot reach: never parsed, so there is nothing here to lower and nothing to
+      // decline over. Reaching one that IS reachable still declines, below.
+      case DeferredSourceStmt dead when this._unreachableDeferred?.Contains(dead) == true:
+        break;
+
       default: throw new IrLoweringException(statement is CommandStmt command
         ? $"unsupported statement: {command.Keyword}"
         : $"unsupported statement: {statement.GetType().Name}");
@@ -5373,8 +5403,16 @@ public sealed partial class IrLowering {
     // number.
     if (this._checkOverflow && st.Signed)
       this.RaiseWhen(this.OutsideIntegerRange(value, st), 6, "overflow");
-    if (st.Signed && this._model.EffectiveDialect.IsBascomRuntime())
-      return this._b.Call(toTy, this.RuntimeFn("rt_round_half_away", toTy, value.Type), value);
+    if (st.Signed && this._model.EffectiveDialect.IsBascomRuntime()) {
+      // The call ANSWERS A FLOAT and the narrowing is a separate cast, which is what lets the x86-16
+      // back end reach it: a routine that answered the integer directly would need one ABI per result
+      // width, where this one is the ordinary ST(0)-in, ST(0)-out shape rt_fix_down already uses. The
+      // narrowing is exact rather than a second rounding - the operand is integral by construction,
+      // so FPToSIRound and a truncation agree on it, and FPToSIRound is the one every back end
+      // already selects for CINT.
+      var rounded = this._b.Call(IrType.F80, this.RuntimeFn("rt_round_half_away", IrType.F80, value.Type), value);
+      return this._b.Cast(IrCastOp.FPToSIRound, rounded, toTy);
+    }
     // Both arms ROUND. The unsigned one is a separate opcode rather than the truncating FPToUI for
     // the reason the signed pair is two opcodes: PB's b?? = 3.5 is 4 exactly as its i% = 3.5 is, and
     // spelling it FPToUI made the C and LLVM back ends answer 3 while the x86-16 one answered 4.

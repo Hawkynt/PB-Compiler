@@ -449,15 +449,26 @@ public sealed class BackendCallRoutingTests {
   }
 
   [Test]
-  public void Route_GivenUnoptimizedMainCallingDirectCalleeWithUnsupportedResultShape_ThenDeclinesTheCaller() {
-    // BCD, not FIX: a FIX result now routes. What this test is about is the RULE - a routed caller may
-    // not consume a result shape it cannot transport - so it needs any shape still outside the routed
-    // return ABI, and a ten-byte BCD cell is one the direct emitter does return (FLD TBYTE).
+  public void Route_GivenUnoptimizedMainCallingDirectCalleeWithUnsupportedShape_ThenDeclinesTheCaller() {
+    // A BYVAL RECORD parameter, and the subject has moved twice: a FIX result and then a BCD one,
+    // both of which now route. What this test is about is the RULE - a routed caller may not consume
+    // a callee whose ABI it cannot express - so it needs a shape the FILTER rejects while the
+    // signature still MAPS, which is what puts the callee in the IR for main to strand on. A record
+    // parameter is exactly that: TrySignature gives it a pointer, and the filter refuses the BYVAL
+    // copy semantics.
+    //
+    // The direct emitter refuses this shape too ("not yet generated: load of UdtType"), which does
+    // not matter here and is why the subject is safe from routing away: this test never EMITS, it
+    // only asks the routing what it decided.
     var generator = new CodeGenerator(Bind("""
-      FUNCTION F(BYVAL a%) AS BCD
-        F = a% / 2
-      END FUNCTION
-      PRINT F(3)
+      TYPE T
+        a AS INTEGER
+      END TYPE
+      SUB F(BYVAL p AS T)
+        PRINT p.a
+      END SUB
+      DIM q AS T
+      F q
       END
       """)) {
       Optimize = false,
@@ -468,9 +479,9 @@ public sealed class BackendCallRoutingTests {
     var declines = generator.BackendDeclines.ToList();
 
     Assert.Multiple(() => {
-      Assert.That(routed, Does.Not.Contain("F"), "BCD results are not a routed return shape yet");
+      Assert.That(routed, Does.Not.Contain("F"), "a BYVAL record parameter is not a routed ABI shape");
       Assert.That(routed, Does.Not.Contain("main"),
-        "a routed caller must not consume a direct callee result shape it cannot transport");
+        "a routed caller must not consume a direct callee whose ABI it cannot express");
       Assert.That(declines.Any(d => d.Name == "main" && d.Reason.Contains("calls 'F', which is not routed", StringComparison.Ordinal)),
         Is.True, string.Join(" | ", declines.Select(d => d.Name + ": " + d.Reason)));
     });

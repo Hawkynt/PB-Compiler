@@ -11,11 +11,26 @@ SUB Grow(a%())
   a%(9) = 42
 END SUB
 
+' PRESERVE takes the other path and must still be the CALLER's array that survives: the elements
+' already there are kept, including the one at the OLD upper bound.
+SUB GrowPreserving(a%())
+  REDIM PRESERVE a%(1 TO 6)
+  a%(6) = 66
+END SUB
+
 OPEN "RESULT.TXT" FOR OUTPUT AS #1
 REDIM v%(1 TO 2)
 v%(1) = 7
 Grow v%()
 PRINT #1, LBOUND(v%); UBOUND(v%)
 PRINT #1, v%(1); v%(9)
+
+REDIM w%(1 TO 3)
+w%(1) = 11
+w%(3) = 33
+GrowPreserving w%()
+PRINT #1, LBOUND(w%); UBOUND(w%)
+PRINT #1, w%(1); w%(3); w%(6)
+
 CLOSE #1
 END

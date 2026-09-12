@@ -169,7 +169,7 @@ public sealed partial class CodeGenerator {
   /// The callee converts that cell through rt_fix_down when the parameter is read.
   /// </summary>
   private static bool IsBackendByValParameterAbiType(PbType type)
-    => IsBackendAbiType(type) || type is BcdType { IsFixedPoint: true };
+    => IsBackendAbiType(type) || type is BcdType;
 
   /// <summary>
   /// Value shapes a FUNCTION result can carry. FIX is admitted here at the OTHER representation from
@@ -179,7 +179,7 @@ public sealed partial class CodeGenerator {
   /// routed callee and a direct caller agree.
   /// </summary>
   private static bool IsBackendResultAbiType(PbType type)
-    => IsBackendAbiType(type) || type is BcdType { IsFixedPoint: true };
+    => IsBackendAbiType(type) || type is BcdType;
 
   private static bool IsBackendAbiType(PbType type)
     => type is ScalarType { IsFloat: false, ByteSize: 1 or 2 or 4 or 8 }
@@ -208,7 +208,7 @@ public sealed partial class CodeGenerator {
     if (!this.UseExperimentalBackend)
       return this._backendProcs;
 
-    var module = IrLowering.TryLowerModule(model, out var moduleDeclinedBecause);
+    var module = IrLowering.TryLowerModule(model, this._unreachableDeferred, out var moduleDeclinedBecause);
     if (module is null) {
       // Every procedure in the program goes with it, and each is recorded rather than left out: a
       // whole-module lowering failure costs the same coverage as a procedure-by-procedure one, and

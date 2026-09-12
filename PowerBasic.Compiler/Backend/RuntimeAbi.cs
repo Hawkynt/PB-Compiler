@@ -910,6 +910,17 @@ internal static class RuntimeAbi {
     // pbvFixDigits power (what reading a FIX cell means) and rt_fixup multiplies and rounds to the
     // nearest integer (what writing one means). The exponent is a RUNTIME cell, which is the whole
     // reason these are calls: a compile-time divide would be right only until pbvFixDigits changed.
+    // Microsoft Binary Format, the storage BASICA/GW floats live in. Both take the cell's NEAR OFFSET
+    // rather than the value: an MBF number is converted where it lies and never becomes a
+    // register-resident value, which is why nothing else in this back end needs an MBF representation.
+    ["rt_mbf32_load"] = new("rt_mbfld", [new(ArgKind.Word, Reg.AX)], _callerSaved, Answer: ResultKind.St0),
+    ["rt_mbf32_store"] = new("rt_mbfst", [new(ArgKind.St0, default), new(ArgKind.Word, Reg.AX)], _callerSaved),
+
+    // The BASCOM lineage rounds float-to-integer half AWAY from zero. It is a CALL rather than an
+    // instruction pattern for the reason rt_trunc is: the two emitters write into one image and a
+    // program must not round two ways.
+    ["rt_round_half_away"] = new("rt_rndaway", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
+
     ["rt_fix_down"] = new("rt_fixdn", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
     ["rt_fix_up"] = new("rt_fixup", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
 
