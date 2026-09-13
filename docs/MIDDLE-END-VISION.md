@@ -52,9 +52,7 @@ The repository already owns much of the hard machinery: typed SSA values, exact 
 
 The current `PowerBasic.Compiler.Ir` layer therefore spans several boxes in the table above. `IrLowering` lowers the Bound AST directly into a representation that contains source-semantic lowering decisions, MIR-like explicit control flow and SSA/Low-IR operations. That was a sensible bootstrap path; it should now be separated by contracts before more optimization knowledge is added.
 
-The immediate architectural defect is smaller and more actionable: analyses are mostly called directly by passes. A pass that needs dominance commonly calls `IrDominators.Build(fn)` itself. The pass manager knows only a delegate and an integer change count, so it cannot cache an analysis, know whether a transform preserved it, or invalidate only the facts that became stale.
-
-That is the first refactoring target.
+The first architectural defect being removed is analysis ownership. Historically a pass that needed dominance called `IrDominators.Build(fn)` itself, while `IrPassManager` knew only a delegate and an integer change count. That prevented safe analysis caching and precise invalidation. This PR establishes the shared function-analysis contract and begins migrating real consumers without changing the proven pass order.
 
 ## Analysis backbone
 
@@ -88,7 +86,9 @@ pass(function, analyses) -> { changes, preserved analyses }
 
 Unchanged passes preserve everything. A legacy pass that changes IR conservatively preserves nothing. A transform that only replaces SSA operands can, for example, preserve CFG-only analyses such as dominance. This lets migration happen pass by pass without weakening correctness.
 
-Eventually preservation should support analysis sets such as "all CFG analyses" and transitive invalidation of dependent analyses. The initial implementation intentionally starts with exact analysis keys because it is easy to reason about and hard to make unsound.
+Analysis-to-analysis queries are dependencies, not implementation details. If MemorySSA is derived from dominators and a transform invalidates dominance, preserving only MemorySSA is not sufficient: the analysis manager must invalidate the dependent result transitively. The bootstrap implementation records these dependencies dynamically while analyses are computed.
+
+Eventually preservation should also support named analysis sets such as "all CFG analyses". The initial implementation intentionally starts with exact analysis keys plus transitive dependencies because that model is easy to reason about and hard to make unsound.
 
 ## Effects and semantics
 
@@ -183,17 +183,20 @@ Pass order still matters inside a group, but dependencies should be stated throu
 - Copy LLVM/MLIR implementation code or adopt LLVM semantics accidentally.
 - Replace target-independent operations with target-shaped arithmetic merely to make one backend easier to write.
 
-## Bootstrap slice in this PR
+## Bootstrap status in this PR
 
-This PR establishes the first mechanism rather than pretending the migration is already complete:
+This PR establishes the first production mechanism rather than pretending the migration is already complete:
 
 1. `IrAnalysisManager` lazily computes and caches typed function analyses.
 2. `IrPreservedAnalyses` makes invalidation an explicit pass result instead of an undocumented side effect.
 3. `IrPassResult` separates "did this transform change IR?" from "which knowledge is still valid?".
-4. `IrFunctionPassPipeline` provides the analysis-aware execution core while legacy delegates can be adapted conservatively.
-5. Correlated value propagation is the first migrated real pass. It consumes cached dominators and explicitly preserves them because it only rewrites operands and does not alter the CFG.
+4. `IrFunctionPassPipeline` is now the function-pass execution core behind `IrPassManager`; legacy delegates are adapted conservatively and changing legacy passes invalidate all cached analyses.
+5. Analysis-to-analysis queries are tracked dynamically, so invalidating a prerequisite transitively invalidates dependent cached results even when a transform claims to preserve them.
+6. `CorrelatedValueProp`, `PointerCheckElim`, `Gvn` and `Licm` consume shared cached dominators. GVN also consumes cached MemorySSA.
+7. `IrAnalyses.MemorySsa` composes from `IrAnalyses.Dominators`, so those two analyses no longer build independent dominance trees in migrated code.
+8. Verification deliberately remains independent of the analysis cache: `VerifyEachPass` must be able to catch a transform that incorrectly claims to preserve CFG facts rather than trusting that claim.
 
-`IrPassManager.Standard` remains the production pipeline in this slice. The next mechanical step is to make it delegate function-pass execution to the new core, then migrate passes one by one. Keeping that wiring separate avoids coupling a new invalidation model to a wholesale edit of the carefully ordered production pipeline.
+The next mechanical work is to migrate the remaining dominance/range/memory consumers, add explicit loop/post-dominator/SCEV analyses, then split the monolithic pipeline into named fixed-point groups. The representation split (`Bound AST -> HIR -> MIR/SSA`) comes after this substrate is stable, so semantic lowering changes are not mixed with cache/invalidation changes.
 
 ## Reference architecture
 
