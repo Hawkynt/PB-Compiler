@@ -1,137 +1,152 @@
 namespace PowerBasic.Compiler.Ir.Analysis;
 
-/// <summary>Bits proven zero or one for an integer SSA value.</summary>
-public readonly record struct IrKnownBits(int Width, ulong KnownZero, ulong KnownOne) {
-
-  /// <summary>Mask containing every bit represented by this fact.</summary>
-  public ulong Mask => Width >= 64 ? ulong.MaxValue : Width <= 0 ? 0 : (1UL << Width) - 1;
-
-  /// <summary>Unknown facts for an integer of the supplied width.</summary>
-  public static IrKnownBits Unknown(int width) => new(width, 0, 0);
-
-  /// <summary>Exact facts for one integer bit pattern.</summary>
-  public static IrKnownBits Constant(int width, ulong value) {
-    var mask = width >= 64 ? ulong.MaxValue : width <= 0 ? 0 : (1UL << width) - 1;
-    value &= mask;
-    return new(width, (~value) & mask, value);
-  }
-
-  /// <summary>True when every bit selected by <paramref name="mask"/> is proven zero.</summary>
-  public bool AreZero(ulong mask) => this.Width > 0 && (this.KnownZero & mask & this.Mask) == (mask & this.Mask);
-
-  /// <summary>True when every bit selected by <paramref name="mask"/> is proven one.</summary>
-  public bool AreOne(ulong mask) => this.Width > 0 && (this.KnownOne & mask & this.Mask) == (mask & this.Mask);
-
-  internal IrKnownBits Normalize() {
-    var mask = this.Mask;
-    if ((this.KnownZero & this.KnownOne & mask) != 0)
-      throw new InvalidOperationException("A bit cannot be known zero and known one simultaneously.");
-    return new(this.Width, this.KnownZero & mask, this.KnownOne & mask);
-  }
-}
-
 /// <summary>
-/// Reusable target-independent known-bit queries for integer SSA values. Queries are intentionally recomputed from
-/// the current graph rather than memoized inside the analysis object, so a value-rewriting transform can keep using
-/// the manager-owned service during its own mutation loop without observing stale per-value facts.
+/// Conservative known-zero/known-one facts for fixed-width integer SSA values.
+///
+/// <para>
+/// This is a deliberately small abstract domain rather than a second constant folder. It answers the
+/// question bitwise transforms actually ask: which result bits are guaranteed zero or one for every
+/// execution? The bootstrap domain understands exact constants, bitwise AND/OR/XOR, integer
+/// truncation/extension, selects and cycle-safe phi meets. Unsupported operations remain unknown.
+/// </para>
 /// </summary>
 public sealed class IrKnownBitsAnalysis {
 
-  private const int _MAX_DEPTH = 24;
+  /// <summary>Bit facts for one integer value. Known-zero and known-one masks are always disjoint.</summary>
+  public readonly record struct KnownBits(int Width, ulong Zero, ulong One) {
+    /// <summary>True when every bit selected by <paramref name="mask"/> is known zero.</summary>
+    public bool AreZero(ulong mask)
+      => this.Width > 0 && (this.Zero & (mask & Mask(this.Width))) == (mask & Mask(this.Width));
 
-  internal IrKnownBitsAnalysis(IrFunction function) {
+    /// <summary>True when every bit selected by <paramref name="mask"/> is known one.</summary>
+    public bool AreOne(ulong mask)
+      => this.Width > 0 && (this.One & (mask & Mask(this.Width))) == (mask & Mask(this.Width));
+  }
+
+  private const int _MAX_DEPTH = 64;
+  private readonly Dictionary<IrValue, KnownBits> _cache = new(ReferenceEqualityComparer.Instance);
+  private readonly HashSet<IrValue> _computing = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>Creates an empty known-bits cache. The analysis is value-driven and does not need a CFG upfront.</summary>
+  public IrKnownBitsAnalysis() { }
+
+  /// <summary>Compatibility constructor for callers that conceptually bind analyses to one function.</summary>
+  public IrKnownBitsAnalysis(IrFunction function) {
     ArgumentNullException.ThrowIfNull(function);
   }
 
-  /// <summary>Returns bits that are provably zero or one for <paramref name="value"/>.</summary>
-  public IrKnownBits For(IrValue value) {
+  /// <summary>Returns conservative known-zero/known-one masks for <paramref name="value"/>.</summary>
+  public KnownBits For(IrValue value) {
     ArgumentNullException.ThrowIfNull(value);
     if (!value.Type.IsInteger || value.Type.Bits is <= 0 or > 64)
       return default;
-    return Compute(value, _MAX_DEPTH, new HashSet<IrValue>(ReferenceEqualityComparer.Instance)).Normalize();
+    if (this._cache.TryGetValue(value, out var cached))
+      return cached;
+    return this.Compute(value, _MAX_DEPTH);
   }
 
-  private static IrKnownBits Compute(IrValue value, int depth, HashSet<IrValue> active) {
-    var width = value.Type.Bits;
-    if (!value.Type.IsInteger || width is <= 0 or > 64 || depth <= 0 || !active.Add(value))
-      return IrKnownBits.Unknown(Math.Clamp(width, 0, 64));
+  private KnownBits Compute(IrValue value, int depth) {
+    if (this._cache.TryGetValue(value, out var cached))
+      return cached;
+    var width = value.Type.IsInteger ? value.Type.Bits : 0;
+    if (width is <= 0 or > 64 || depth <= 0 || !this._computing.Add(value))
+      return Unknown(width);
 
     try {
-      return value switch {
-        IrConstantInt constant => IrKnownBits.Constant(width, unchecked((ulong)constant.Value)),
-        IrBinary binary => Binary(binary, depth - 1, active),
-        IrCast cast => Cast(cast, depth - 1, active),
-        IrPhi phi => Meet(phi.Operands.Select(operand => Compute(operand, depth - 1, active)), width),
-        IrSelect select => Meet([
-          Compute(select.IfTrue, depth - 1, active),
-          Compute(select.IfFalse, depth - 1, active),
-        ], width),
-        _ => IrKnownBits.Unknown(width),
+      var result = value switch {
+        IrConstantInt constant => Exact(constant),
+        IrBinary binary => this.Binary(binary, depth - 1),
+        IrCast cast => this.Cast(cast, depth - 1),
+        IrSelect select => Meet(this.Compute(select.IfTrue, depth - 1), this.Compute(select.IfFalse, depth - 1)),
+        IrPhi phi => this.Phi(phi, depth - 1),
+        _ => Unknown(width),
       };
+      this._cache[value] = result;
+      return result;
     } finally {
-      active.Remove(value);
+      this._computing.Remove(value);
     }
   }
 
-  private static IrKnownBits Binary(IrBinary binary, int depth, HashSet<IrValue> active) {
-    var width = binary.Type.Bits;
-    var left = Compute(binary.Lhs, depth, active);
-    var right = Compute(binary.Rhs, depth, active);
+  private KnownBits Binary(IrBinary binary, int depth) {
+    var left = this.Compute(binary.Lhs, depth);
+    var right = this.Compute(binary.Rhs, depth);
+    var mask = Mask(binary.Type.Bits);
     return binary.Op switch {
-      IrBinaryOp.And => new(width,
-        left.KnownZero | right.KnownZero,
-        left.KnownOne & right.KnownOne),
-      IrBinaryOp.Or => new(width,
-        left.KnownZero & right.KnownZero,
-        left.KnownOne | right.KnownOne),
-      IrBinaryOp.Xor => new(width,
-        (left.KnownZero & right.KnownZero) | (left.KnownOne & right.KnownOne),
-        (left.KnownZero & right.KnownOne) | (left.KnownOne & right.KnownZero)),
-      _ => IrKnownBits.Unknown(width),
+      IrBinaryOp.And => new(binary.Type.Bits,
+        (left.Zero | right.Zero) & mask,
+        (left.One & right.One) & mask),
+      IrBinaryOp.Or => new(binary.Type.Bits,
+        (left.Zero & right.Zero) & mask,
+        (left.One | right.One) & mask),
+      IrBinaryOp.Xor => new(binary.Type.Bits,
+        ((left.Zero & right.Zero) | (left.One & right.One)) & mask,
+        ((left.Zero & right.One) | (left.One & right.Zero)) & mask),
+      _ => Unknown(binary.Type.Bits),
     };
   }
 
-  private static IrKnownBits Cast(IrCast cast, int depth, HashSet<IrValue> active) {
+  private KnownBits Cast(IrCast cast, int depth) {
     if (!cast.Value.Type.IsInteger || !cast.Type.IsInteger)
-      return IrKnownBits.Unknown(cast.Type.Bits);
-
-    var source = Compute(cast.Value, depth, active);
-    var targetWidth = cast.Type.Bits;
-    var targetMask = targetWidth >= 64 ? ulong.MaxValue : (1UL << targetWidth) - 1;
-    var sourceMask = source.Width >= 64 ? ulong.MaxValue : (1UL << source.Width) - 1;
+      return Unknown(cast.Type.Bits);
+    var source = this.Compute(cast.Value, depth);
+    var sourceMask = Mask(cast.Value.Type.Bits);
+    var targetMask = Mask(cast.Type.Bits);
     return cast.Op switch {
-      IrCastOp.Trunc => new(targetWidth, source.KnownZero & targetMask, source.KnownOne & targetMask),
-      IrCastOp.ZExt => new(targetWidth,
-        (source.KnownZero & sourceMask) | (targetMask & ~sourceMask),
-        source.KnownOne & sourceMask),
-      IrCastOp.SExt => SignExtend(source, targetWidth),
-      _ => IrKnownBits.Unknown(targetWidth),
+      IrCastOp.Trunc => new(cast.Type.Bits, source.Zero & targetMask, source.One & targetMask),
+      IrCastOp.ZExt => new(cast.Type.Bits,
+        (source.Zero | (targetMask & ~sourceMask)) & targetMask,
+        source.One & sourceMask),
+      IrCastOp.SExt when cast.Value.Type.Bits > 0 => SignExtend(source, cast.Value.Type.Bits, cast.Type.Bits),
+      IrCastOp.BitCast when cast.Value.Type.SameStorage(cast.Type)
+        => new(cast.Type.Bits, source.Zero & targetMask, source.One & targetMask),
+      _ => Unknown(cast.Type.Bits),
     };
   }
 
-  private static IrKnownBits SignExtend(IrKnownBits source, int targetWidth) {
-    if (source.Width <= 0 || targetWidth <= source.Width)
-      return new(targetWidth, source.KnownZero, source.KnownOne);
-
-    var sourceMask = source.Width >= 64 ? ulong.MaxValue : (1UL << source.Width) - 1;
-    var targetMask = targetWidth >= 64 ? ulong.MaxValue : (1UL << targetWidth) - 1;
-    var high = targetMask & ~sourceMask;
-    var sign = 1UL << (source.Width - 1);
-    return new(targetWidth,
-      (source.KnownZero & sourceMask) | (source.AreZero(sign) ? high : 0),
-      (source.KnownOne & sourceMask) | (source.AreOne(sign) ? high : 0));
-  }
-
-  private static IrKnownBits Meet(IEnumerable<IrKnownBits> values, int width) {
-    var mask = width >= 64 ? ulong.MaxValue : (1UL << width) - 1;
-    var zero = mask;
-    var one = mask;
-    var any = false;
-    foreach (var value in values) {
-      any = true;
-      zero &= value.KnownZero;
-      one &= value.KnownOne;
+  private KnownBits Phi(IrPhi phi, int depth) {
+    KnownBits? result = null;
+    foreach (var incoming in phi.Operands) {
+      if (ReferenceEquals(incoming, phi))
+        continue;
+      var bits = this.Compute(incoming, depth);
+      result = result is { } current ? Meet(current, bits) : bits;
     }
-    return any ? new(width, zero, one) : IrKnownBits.Unknown(width);
+    return result ?? Unknown(phi.Type.Bits);
   }
+
+  private static KnownBits SignExtend(KnownBits source, int sourceWidth, int targetWidth) {
+    var sourceMask = Mask(sourceWidth);
+    var targetMask = Mask(targetWidth);
+    var high = targetMask & ~sourceMask;
+    var signBit = 1UL << (sourceWidth - 1);
+    var zero = source.Zero & sourceMask;
+    var one = source.One & sourceMask;
+    if ((zero & signBit) != 0)
+      zero |= high;
+    else if ((one & signBit) != 0)
+      one |= high;
+    return new(targetWidth, zero & targetMask, one & targetMask);
+  }
+
+  private static KnownBits Exact(IrConstantInt constant) {
+    var mask = Mask(constant.Type.Bits);
+    var bits = unchecked((ulong)constant.Value) & mask;
+    return new(constant.Type.Bits, (~bits) & mask, bits);
+  }
+
+  private static KnownBits Meet(KnownBits left, KnownBits right) {
+    if (left.Width <= 0 || right.Width <= 0 || left.Width != right.Width)
+      return Unknown(Math.Max(left.Width, right.Width));
+    var mask = Mask(left.Width);
+    return new(left.Width, (left.Zero & right.Zero) & mask, (left.One & right.One) & mask);
+  }
+
+  private static KnownBits Unknown(int width) => new(width, 0, 0);
+
+  private static ulong Mask(int width) => width switch {
+    <= 0 => 0,
+    >= 64 => ulong.MaxValue,
+    _ => (1UL << width) - 1,
+  };
 }
