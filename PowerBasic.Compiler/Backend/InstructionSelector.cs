@@ -2338,7 +2338,7 @@ public sealed partial class InstructionSelector {
       // [BP-90]` - the long-result convention reading its high half from a byte-sized slot. Removing
       // only the 32-bit half made them clean again, so the defect is in forming that pair rather than
       // in anything the newly routed functions reach. 94 declines wait on it.
-      case IrCastOp.ZExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16: {
+      case IrCastOp.ZExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16 or 32: {
         if (!this.TryOperand(cast.Value, out var source))
           return false;
         // Staged through the physical AX rather than through a byte VIEW of the destination vreg.
@@ -2353,6 +2353,13 @@ public sealed partial class InstructionSelector {
           new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
             ReadsMemory: false, WritesMemory: false)));
         this._current.Instructions.Add(new MInstr(MOpcode.Mov, [al, source], MovEffect(al, source)));
+        if (IsWide(to)) {
+          var (low, high) = this.FreshPair(cast);
+          var zero = new MOperand.Immediate(0);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, ax], MovEffect(low, ax)));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, zero], MovEffect(high, zero)));
+          return true;
+        }
         var dest = this.FreshVreg(cast.Type);
         var word = new MOperand.Register(dest);
         this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, ax], MovEffect(word, ax)));
@@ -3581,7 +3588,14 @@ public sealed partial class InstructionSelector {
 
     var narrowed = value switch {
       IrConstantInt { Value: >= short.MinValue and <= ushort.MaxValue } c => (IrValue)c,
-      IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast when !IsWide(cast.Value.Type) => cast.Value,
+      // The source of a widening cast IS the narrow value - but only when that source is already a
+      // WORD. `!IsWide` reads as "narrower than 32 bits" and so also accepted a BYTE, handing a
+      // byte-sized operand to an ABI staging it into a word register: `MOV DX, <byte slot>`, which
+      // the assembler refuses. It was unreachable while `ZExt u8` declined at selection, and became
+      // reachable the moment a BYTE could widen - five DRAW_* corpus suites at once. A byte source
+      // falls through to the pair below instead, whose LOW half is the properly extended word.
+      IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast
+        when cast.Value.Type is { IsInteger: true, Bits: 16 } => cast.Value,
       _ => null,
     };
     if (narrowed is null) {

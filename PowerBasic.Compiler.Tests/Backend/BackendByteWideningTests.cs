@@ -15,11 +15,14 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// siblings 448: the largest single reason the routing could not take a program.
 /// </para>
 /// <para>
-/// <c>u8 -&gt; i32</c> is deliberately absent from the routing claim below. A version of the selector
-/// case that also built the 32-bit pair made five DRAW_* corpus suites fail with
-/// <c>Operand size mismatch: DX vs [BP-90]</c> - the long-result convention reading its high half
-/// from a byte-sized slot - and removing only that half made them clean again. So the widening to a
-/// LONG still declines to the direct emitter, correctly, and 94 declines wait on it.
+/// Widening to a LONG took a second fix, and the first diagnosis of it was wrong. Adding the 32-bit
+/// pair made five DRAW_* corpus suites fail with <c>Operand size mismatch: DX vs [BP-90]</c>, which
+/// looked like a defect in forming that pair. It was not. The staging of a 32-bit CALL ARGUMENT
+/// peels a widening cast to its source on the grounds that the source is the narrow value - and its
+/// guard read <c>!IsWide(...)</c>, "narrower than 32 bits", which also accepts a BYTE. So the ABI
+/// was handed a byte-sized operand to stage into a word register. Unreachable while <c>ZExt u8</c>
+/// declined at selection; reachable the moment a BYTE could widen. The peel now requires a WORD
+/// source, and a byte falls through to the pair whose low half is the properly extended word.
 /// </para>
 /// <para>
 /// The VALUES are what this asserts, not the encoding. A byte is unsigned in PowerBASIC, so 200
@@ -77,8 +80,7 @@ public sealed class BackendByteWideningTests {
 
     Assert.Multiple(() => {
       Assert.That(routed, Does.Contain("Widen"), "u8 -> i16 must route");
-      Assert.That(routed, Does.Not.Contain("WidenLong"),
-        "u8 -> i32 does NOT route yet - when it does, this line is the one to flip, not to delete");
+      Assert.That(routed, Does.Contain("WidenLong"), "u8 -> i32 must route");
     });
   }
 }
