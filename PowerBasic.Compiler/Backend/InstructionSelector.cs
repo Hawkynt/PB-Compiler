@@ -3373,6 +3373,13 @@ public sealed partial class InstructionSelector {
     IrAlloca => Reg.SS,
     IrGep gep => PointerSegmentOf(gep.BasePtr),
     IrCast cast when cast.Type.IsPointer => PointerSegmentOf(cast.Value),
+    // A NEAR pointer PARAMETER: the address of whatever the caller passed BYREF. Which object it
+    // points at is not knowable here and does not have to be - PB's near model puts the globals and
+    // the stack in one segment, so DS and SS name the same bytes. The direct emitter settles it the
+    // same way and more bluntly: it says DS for every place that is not FAR, a frame cell of its own
+    // included. Declining instead cost DrawCur_ReadCursorData, which reads a directory entry into a
+    // record its caller owns.
+    IrArgument when value.Type is { IsPointer: true, IsFarPointer: false } => Reg.DS,
     _ => null,
   };
 
