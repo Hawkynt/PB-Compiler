@@ -83,12 +83,17 @@ internal static class ReciprocalLoopHoisting {
       if (divisions.Any(division => division.Parent is not { } block || !loop.Body.Contains(block)))
         continue;
 
-      // Keep the historical CountedLoop profitability envelope while sourcing the proof from shared SCEV:
-      // true-body/false-exit, one canonical counter phi on the left, constant limit, one latch, positive trips.
-      if (loop.Test.Lhs is not IrPhi counter
+      // Keep the historical CountedLoop profitability envelope while sourcing the proof from shared SCEV.
+      // CountedLoop accepted only a signed/Eq/Ne header predicate, counter on the left, constant limit,
+      // update `counter + constant`, one latch, and a positive exact trip count.
+      if (loop.Test.Pred is not (IrCmpPred.Eq or IrCmpPred.Ne
+            or IrCmpPred.Slt or IrCmpPred.Sle or IrCmpPred.Sgt or IrCmpPred.Sge)
+          || loop.Test.Lhs is not IrPhi counter
           || loop.Test.Rhs is not IrConstantInt
-          || scalarEvolution.RecurrenceFor(counter) is not { Loop: var recurrenceLoop }
-          || !ReferenceEquals(recurrenceLoop, naturalLoop)
+          || scalarEvolution.RecurrenceFor(counter) is not { } recurrence
+          || !ReferenceEquals(recurrence.Loop, naturalLoop)
+          || !ReferenceEquals(recurrence.Update.Lhs, counter)
+          || recurrence.Update.Rhs is not IrConstantInt
           || scalarEvolution.ExactTripCount(naturalLoop) is not { } trips
           || trips <= 0
           || naturalLoop.Latches.Count != 1)
