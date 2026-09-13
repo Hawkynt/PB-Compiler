@@ -352,4 +352,55 @@ public sealed class BackendArrayUdtDifferentialTests {
     Assert.That(routed, Is.EqualTo(direct));
     Assert.That(direct, Is.EqualTo(" 7  999999"), "written through the caller's record, not a copy");
   }
+
+  /// <summary>
+  /// The same <c>GET</c> into a dynamic array element, in a LOOP - which is how every real reader of a
+  /// strip table is written, and which the straight-line case above does not reach.
+  ///
+  /// <para>
+  /// The element address is <c>LEA d, [data + index]</c>, and the spiller recomputed it at its use.
+  /// That use is a staging move, so the copy landed INSIDE the call's argument staging - where the
+  /// convention had just put half the record number in <c>BX</c>, and 16-bit addressing pairs an index
+  /// with <c>BX</c> or <c>BP</c> and nothing else. An address formed from two registers is therefore
+  /// not freely recomputable on this target, and leaving it where the selector put it - above the
+  /// staging - is both possible and what the allocator can satisfy.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Run_GivenGetIntoADynamicArrayElementInALoop_ThenTheAddressStaysAboveTheStaging() {
+    const string source = """
+      DECLARE FUNCTION Op%(BYVAL v%)
+      DECLARE SUB ReadAll(BYVAL fh AS INTEGER, BYVAL n AS WORD)
+      DIM Store() AS SHARED LONG
+      REDIM Store(Op%(3))
+      Store(0) = 111111&
+      Store(1) = 222222&
+      Store(2) = 333333&
+      OPEN "T.TMP" FOR BINARY AS #1
+      PUT #1, , Store(0)
+      PUT #1, , Store(1)
+      PUT #1, , Store(2)
+      CLOSE #1
+      Store(0) = 0
+      Store(1) = 0
+      Store(2) = 0
+      OPEN "T.TMP" FOR BINARY AS #1
+      CALL ReadAll(1, 3)
+      CLOSE #1
+      PRINT Store(0); Store(1); Store(2)
+
+      SUB ReadAll(BYVAL fh AS INTEGER, BYVAL n AS WORD)
+        DIM i AS WORD
+        FOR i = 0 TO n - 1
+          GET fh, , Store(i)
+        NEXT i
+      END SUB
+      """ + _OPAQUE;
+
+    var (direct, routed, names) = RunBothWays(source);
+
+    Assert.That(names, Does.Contain("ReadAll").IgnoreCase, "an agreeing comparison proves nothing if it declined");
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct, Is.EqualTo(" 111111  222222  333333"), "read back in order through the far heap");
+  }
 }

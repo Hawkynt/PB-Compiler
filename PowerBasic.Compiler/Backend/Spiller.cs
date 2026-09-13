@@ -136,6 +136,13 @@ internal static class Spiller {
   /// address form, which recomputes from the frame, or a constant, which depends on nothing at all.
   /// </summary>
   private static bool IsRecomputable(MOpcode opcode, MOperand source) => opcode switch {
+    // ...but an address formed from TWO registers is not freely redoable on this target. 16-bit
+    // addressing pairs an index only with BX or BP, so recomputing one demands BX specifically - and
+    // the place a recomputation goes is the front of a use's preparation run, which for a call is
+    // exactly where the convention has just put an argument IN BX. Leaving it where the selector put
+    // it, above the staging, costs nothing and is what the allocator can actually satisfy: it is the
+    // whole of why GET into an element of a dynamic array declined.
+    MOpcode.Lea when source is MOperand.Memory { Base: not null, Index: not null } => false,
     MOpcode.Lea => source is MOperand.StackSlot or MOperand.DataOffset or MOperand.Memory,
     MOpcode.Mov => source is MOperand.Immediate,
     _ => false,
