@@ -74,7 +74,13 @@ public sealed class IrRangeAnalysis {
   /// <summary>Builds the analysis for a function with a body; null for a declaration.</summary>
   public static IrRangeAnalysis? Build(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return IrDominators.Build(fn) is { } dom ? new IrRangeAnalysis(dom) : null;
+    return Build(fn, IrDominators.Build(fn));
+  }
+
+  /// <summary>Builds the analysis while reusing an already computed dominator result.</summary>
+  internal static IrRangeAnalysis? Build(IrFunction fn, IrDominators? dominators) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return fn.Entry is null || dominators is null ? null : new IrRangeAnalysis(dominators);
   }
 
   /// <summary>The dominator tree the refinements were derived from, so a consumer need not rebuild it.</summary>

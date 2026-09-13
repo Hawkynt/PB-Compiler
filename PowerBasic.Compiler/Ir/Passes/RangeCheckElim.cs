@@ -46,8 +46,17 @@ public static class RangeCheckElim {
 
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    if (IrRangeAnalysis.Build(fn) is not { } ranges)
-      return 0;
+    return Run(fn, new IrAnalysisManager(fn)).Changes;
+  }
+
+  /// <summary>Runs range-based comparison folding using the shared branch-refined range analysis.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
+    if (analyses.Get(IrAnalyses.Ranges) is not { } ranges)
+      return IrPassResult.Unchanged;
 
     // Decided first, replaced afterwards. The analysis reads the operand graph, and rewiring one
     // compare while still questioning the next would be asking about a graph it was not built for.
@@ -59,7 +68,11 @@ public static class RangeCheckElim {
 
     foreach (var (cmp, outcome) in decided)
       cmp.ReplaceAllUsesWith(IrBuilder.ConstBool(outcome));
-    return decided.Count;
-  }
 
+    // Replacing condition uses leaves the block graph unchanged, but it invalidates the branch facts that
+    // IrRangeAnalysis cached from those condition operands. Preserve only CFG-derived analyses here.
+    return decided.Count == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreserving(decided.Count, IrAnalyses.Dominators, IrAnalyses.Loops);
+  }
 }

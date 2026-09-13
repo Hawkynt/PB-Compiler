@@ -12,6 +12,11 @@ public static class IrAnalyses {
     new("loops", static (function, analyses) =>
       IrLoopAnalysis.Build(function, analyses.Get(Dominators)));
 
+  /// <summary>Branch-refined integer range facts derived from SSA and dominance.</summary>
+  public static IrAnalysisKey<IrRangeAnalysis?> Ranges { get; } =
+    new("ranges", static (function, analyses) =>
+      IrRangeAnalysis.Build(function, analyses.Get(Dominators)));
+
   /// <summary>SSA overlay for memory definitions, uses and merge points.</summary>
   public static IrAnalysisKey<IrMemorySsa> MemorySsa { get; } =
     new("memory-ssa", static (function, analyses) =>
