@@ -89,11 +89,7 @@ public static class Gvn {
       IrCast x => $"x{x.Op}:{x.Type}({this.Operand(x.Value)})",
       IrGep g => $"g({this.Operand(g.BasePtr)},{this.Operand(g.ByteOffset)})",
       IrLoad load => $"l{load.Type}({this.Operand(load.Pointer)})@{this.MemoryVersion(load)}",
-      // A call is numbered only when the callee is on the checked purity list - an entry that answers
-      // the same for the same arguments and leaves nothing behind, so the second one is redundant.
-      // FunctionSummaries.IsPureExternal carries the argument for each row; everything else, including
-      // every string entry that consumes or allocates a handle, stays unnumbered.
-      IrCall { Callee: IrFunction callee } call when FunctionSummaries.IsPureExternal(callee.Name)
+      IrCall { Callee: IrFunction callee } call when IrEffects.ForExternalCall(callee.Name).CanCse
         => $"r{callee.Name}({string.Join(',', call.Args.Select(this.Operand))})",
       _ => null,                                       // stores/other calls/allocas/phis/terminators are not numbered
     };
