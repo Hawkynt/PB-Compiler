@@ -89,7 +89,8 @@ internal static class ReciprocalLoopHoisting {
           || loop.Test.Rhs is not IrConstantInt
           || scalarEvolution.RecurrenceFor(counter) is not { Loop: var recurrenceLoop }
           || !ReferenceEquals(recurrenceLoop, naturalLoop)
-          || scalarEvolution.ExactTripCount(naturalLoop) is not > 0 and var trips
+          || scalarEvolution.ExactTripCount(naturalLoop) is not { } trips
+          || trips <= 0
           || naturalLoop.Latches.Count != 1)
         continue;
       var latch = naturalLoop.Latches[0];
