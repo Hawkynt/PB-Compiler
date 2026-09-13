@@ -1589,7 +1589,7 @@ public sealed partial class IrLowering {
     // the bit number is evaluated BEFORE the target place, which is the order the direct emitter
     // pushes them in and the only thing that distinguishes the two when either has a side effect
     var index = this.Coerce(this.LowerExpr(bit.Bit), this._model.TypeOf(bit.Bit), PbType.Long);
-    var (address, targetType) = this.LValue(bit.Target);
+    var (address, targetType) = this.LValue(bit.Target, "BIT");
     if (targetType is not ScalarType { IsFloat: false, ByteSize: 1 or 2 or 4 })
       throw new IrLoweringException($"BIT statement on {targetType}");
     var ty = MapType(targetType);
@@ -1680,8 +1680,15 @@ public sealed partial class IrLowering {
     return type is StringType ? (this.StringTargetAddress(target), type) : this.LValue(target);
   }
 
-  /// <summary>The storage address and element type of a scalar lvalue (a variable or a static-array element).</summary>
-  private (IrValue Address, PbType Type) LValue(Expression e) {
+  /// <summary>
+  /// The storage address and element type of a scalar lvalue (a variable or a static-array element).
+  /// </summary>
+  /// <param name="what">
+  /// The STATEMENT asking, named in the decline. Which shape is unsupported is only half of a usable
+  /// reason: "NameExpr of StringType" appears under five different callers here, and picking the
+  /// wrong one wastes the next pass. Two guesses were already spent that way.
+  /// </param>
+  private (IrValue Address, PbType Type) LValue(Expression e, string what = "an lvalue") {
     if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var sym) && sym.Type is ScalarType)
       return (this.SlotFor(sym), sym.Type);
     if (e is CallOrIndexExpr ci && this._model.VariableBindings.TryGetValue(ci, out var arr) && arr.Type is ArrayType)
@@ -1695,7 +1702,7 @@ public sealed partial class IrLowering {
     // nothing cannot be worked from, and it took a corpus census plus a guess to find out what was
     // behind the count.
     throw new IrLoweringException(
-      $"unsupported lvalue: {e.GetType().Name} of {this._model.TypeOf(e).GetType().Name}");
+      $"unsupported lvalue in {what}: {e.GetType().Name} of {this._model.TypeOf(e).GetType().Name}");
   }
 
   /// <summary>The storage address and field type of a UDT member (or a flat QB-style dotted variable).</summary>
@@ -2199,7 +2206,7 @@ public sealed partial class IrLowering {
           this.SlotFor(fstrSym), new IrConstantInt(IrType.I32, fixedStr.Length), handle);   // pad/truncate the input into the fixed buffer
         continue;
       }
-      var (addr, type) = this.LValue(target);
+      var (addr, type) = this.LValue(target, "INPUT");
       if (type is not ScalarType s)
         throw new IrLoweringException("INPUT into a non-scalar target");
       var (suffix, ty) = NumericSuffix(s);
@@ -2233,13 +2240,32 @@ public sealed partial class IrLowering {
         this.RuntimeFn(s.IsGet ? "rt_field_get" : "rt_field_put", IrType.Void, IrType.I32), target);
       return;
     }
+    // A STRING variable is not a record of its own size - it is a HANDLE, and the bytes are in the
+    // heap. The runtime already has the pair for it (rt_fgetinto / rt_fputraw, file in AX and the raw
+    // handle in DX), and the direct emitter calls exactly those; only the IR had no name for them, so
+    // GET/PUT of a string declined and took the module body with it - 11 times over the SVGA corpus,
+    // where reading a header into a string is how a file gets parsed.
+    if (this._model.TypeOf(s.Variable) is StringType or FlexType) {
+      var stringFile = this.FileNum(s.FileNumber);
+      if (s.RecordNumber is { } stringAt)
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_file_setpos", IrType.Void, IrType.I32, IrType.I32),
+          stringFile, this.Coerce(this.LowerExpr(stringAt), this._model.TypeOf(stringAt), PbType.Long));
+      // The RAW handle out of the variable's own cell, not a string EXPRESSION. LowerStringExpr
+      // yields a value - for GET that is a copy, and the runtime then fills the copy while the
+      // variable keeps what it had: the test read back the four spaces it started with instead of
+      // the four bytes in the file. The direct emitter reads the cell, and so does this.
+      this._b.Call(IrType.Void,
+        this.RuntimeFn(s.IsGet ? "rt_file_get_into" : "rt_file_put_raw", IrType.Void, IrType.I32, IrType.Ptr),
+        stringFile, this._b.Load(IrType.Ptr, this.StringTargetAddress(s.Variable)));
+      return;
+    }
     IrValue address;
     int recordSize;
     if (s.Variable is NameExpr && this._model.VariableBindings.TryGetValue(s.Variable, out var sym) && sym.Type is UdtType udt) {
       address = this.SlotFor(sym);                    // a whole-record GET/PUT of a UDT buffer
       recordSize = udt.Size;
     } else {
-      var (addr, type) = this.LValue(s.Variable);
+      var (addr, type) = this.LValue(s.Variable, "GET/PUT");
       if (type is not ScalarType scalar)
         throw new IrLoweringException("GET/PUT of a non-scalar record");
       address = addr;
@@ -2704,7 +2730,7 @@ public sealed partial class IrLowering {
       return;
     }
     var value = this._b.Call(IrType.F64, this.RuntimeFn("rt_str_val", IrType.F64, IrType.Ptr), handle);  // parse a numeric item
-    var (addr, type) = this.LValue(target);
+    var (addr, type) = this.LValue(target, "READ");
     this._b.Store(this.Coerce(value, PbType.Double, type), addr);
   }
 
@@ -3125,7 +3151,7 @@ public sealed partial class IrLowering {
       found = this._b.Call(IrType.I16, this.RuntimeFn("rt_array_scan_num", IrType.I16));
     }
 
-    var (address, targetType) = this.LValue(scan.Target);
+    var (address, targetType) = this.LValue(scan.Target, "ARRAY SCAN");
     this._b.Store(this.Coerce(found, PbType.Integer, targetType), address);
   }
 
