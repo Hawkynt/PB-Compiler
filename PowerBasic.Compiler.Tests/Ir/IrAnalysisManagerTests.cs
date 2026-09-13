@@ -46,6 +46,35 @@ public sealed class IrAnalysisManagerTests {
   }
 
   [Test]
+  public void Invalidate_GivenPreservedDependentWithInvalidatedPrerequisite_ThenDropsItTransitively() {
+    var function = new IrFunction("test", IrType.Void);
+    var rootComputations = 0;
+    var middleComputations = 0;
+    var leafComputations = 0;
+    var root = new IrAnalysisKey<int>("root", (_, _) => ++rootComputations);
+    var middle = new IrAnalysisKey<int>("middle", (_, analyses) => analyses.Get(root) + ++middleComputations);
+    var leaf = new IrAnalysisKey<int>("leaf", (_, analyses) => analyses.Get(middle) + ++leafComputations);
+    var manager = new IrAnalysisManager(function);
+
+    manager.Get(root); // make sure dependencies are recorded even when the prerequisite is already cached
+    manager.Get(leaf);
+    manager.Invalidate(IrPreservedAnalyses.Preserve(middle, leaf));
+
+    Assert.Multiple(() => {
+      Assert.That(manager.IsCached(root), Is.False);
+      Assert.That(manager.IsCached(middle), Is.False);
+      Assert.That(manager.IsCached(leaf), Is.False);
+    });
+
+    manager.Get(leaf);
+    Assert.Multiple(() => {
+      Assert.That(rootComputations, Is.EqualTo(2));
+      Assert.That(middleComputations, Is.EqualTo(2));
+      Assert.That(leafComputations, Is.EqualTo(2));
+    });
+  }
+
+  [Test]
   public void Run_GivenAChangingPassThatPreservesAnAnalysis_ThenReusesItsCachedResult() {
     var function = new IrFunction("test", IrType.Void);
     var computations = 0;
