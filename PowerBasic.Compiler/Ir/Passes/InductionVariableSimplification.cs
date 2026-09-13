@@ -90,8 +90,7 @@ public static class InductionVariableSimplification {
 
     return changed == 0
       ? IrPassResult.Unchanged
-      : IrPassResult.ChangedPreserving(
-          changed, IrAnalyses.Dominators, IrAnalyses.PostDominators, IrAnalyses.Loops);
+      : IrPassResult.ChangedPreservingSets(changed, IrAnalysisSets.Cfg);
   }
 
   private static bool TryCounter(CountedLoop loop, out IrConstantInt start, out IrConstantInt step) {

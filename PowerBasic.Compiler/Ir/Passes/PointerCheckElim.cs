@@ -51,7 +51,7 @@ public static class PointerCheckElim {
       cmp.ReplaceAllUsesWith(IrBuilder.ConstBool(outcome));
     return decided.Count == 0
       ? IrPassResult.Unchanged
-      : IrPassResult.ChangedPreserving(decided.Count, IrAnalyses.Dominators);
+      : IrPassResult.ChangedPreservingSets(decided.Count, IrAnalysisSets.Cfg);
   }
 
   private static bool? KnownNullness(IrValue value, IrBasicBlock block, IrDominators dom) {

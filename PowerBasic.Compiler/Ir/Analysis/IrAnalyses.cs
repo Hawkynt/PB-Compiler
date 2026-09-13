@@ -5,16 +5,16 @@ public static class IrAnalyses {
 
   /// <summary>CFG dominators and dominance frontiers.</summary>
   public static IrAnalysisKey<IrDominators?> Dominators { get; } =
-    new("dominators", static (function, _) => IrDominators.Build(function));
+    new("dominators", static (function, _) => IrDominators.Build(function), IrAnalysisSets.Cfg);
 
   /// <summary>CFG post-dominators and post-dominance frontiers.</summary>
   public static IrAnalysisKey<IrPostDominators?> PostDominators { get; } =
-    new("post-dominators", static (function, _) => IrPostDominators.Build(function));
+    new("post-dominators", static (function, _) => IrPostDominators.Build(function), IrAnalysisSets.Cfg);
 
   /// <summary>Natural-loop forest derived from the function CFG and dominators.</summary>
   public static IrAnalysisKey<IrLoopAnalysis> Loops { get; } =
     new("loops", static (function, analyses) =>
-      IrLoopAnalysis.Build(function, analyses.Get(Dominators)));
+      IrLoopAnalysis.Build(function, analyses.Get(Dominators)), IrAnalysisSets.Cfg);
 
   /// <summary>Additive loop recurrences and exact canonical trip counts.</summary>
   public static IrAnalysisKey<IrScalarEvolution> ScalarEvolution { get; } =

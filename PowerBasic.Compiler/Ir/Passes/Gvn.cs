@@ -36,7 +36,7 @@ public static class Gvn {
     ctx.Visit(fn.Entry, children);
     return ctx.Removed == 0
       ? IrPassResult.Unchanged
-      : IrPassResult.ChangedPreserving(ctx.Removed, IrAnalyses.Dominators);
+      : IrPassResult.ChangedPreservingSets(ctx.Removed, IrAnalysisSets.Cfg);
   }
 
   private static Dictionary<IrBasicBlock, List<IrBasicBlock>> DomChildren(IrFunction fn, IrDominators dom) {

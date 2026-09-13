@@ -53,10 +53,10 @@ public static class CorrelatedValueProp {
       }
     }
 
-    // Operand substitution cannot change reachability, predecessor sets or the dominator tree.
+    // Operand substitution cannot change CFG topology; every CFG-only analysis remains valid.
     return changed == 0
       ? IrPassResult.Unchanged
-      : IrPassResult.ChangedPreserving(changed, IrAnalyses.Dominators);
+      : IrPassResult.ChangedPreservingSets(changed, IrAnalysisSets.Cfg);
   }
 
   private static bool ReplaceOperandIn(IrInstruction inst, IrValue from, IrValue to) {

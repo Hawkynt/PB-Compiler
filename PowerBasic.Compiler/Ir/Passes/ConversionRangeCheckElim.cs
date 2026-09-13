@@ -50,7 +50,7 @@ public static class ConversionRangeCheckElim {
 
     return decided.Count == 0
       ? IrPassResult.Unchanged
-      : IrPassResult.ChangedPreserving(decided.Count, IrAnalyses.Dominators, IrAnalyses.Loops);
+      : IrPassResult.ChangedPreservingSets(decided.Count, IrAnalysisSets.Cfg);
   }
 
   private static FpDomainAnalysis.Domain? TryDomain(

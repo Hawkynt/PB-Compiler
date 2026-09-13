@@ -7,10 +7,15 @@ namespace PowerBasic.Compiler.Ir.Analysis;
 public sealed class IrPreservedAnalyses {
 
   private readonly HashSet<IrAnalysisKey> _analyses;
+  private readonly HashSet<IrAnalysisSet> _sets;
 
-  private IrPreservedAnalyses(bool preservesAll, IEnumerable<IrAnalysisKey>? analyses = null) {
+  private IrPreservedAnalyses(
+      bool preservesAll,
+      IEnumerable<IrAnalysisKey>? analyses = null,
+      IEnumerable<IrAnalysisSet>? sets = null) {
     this.PreservesAll = preservesAll;
     this._analyses = analyses is null ? [] : new HashSet<IrAnalysisKey>(analyses);
+    this._sets = sets is null ? [] : new HashSet<IrAnalysisSet>(sets);
   }
 
   /// <summary>All analyses remain valid.</summary>
@@ -30,9 +35,19 @@ public sealed class IrPreservedAnalyses {
     return new IrPreservedAnalyses(false, analyses);
   }
 
+  /// <summary>Creates a preservation set containing every analysis belonging to the supplied named sets.</summary>
+  public static IrPreservedAnalyses PreserveSets(params IrAnalysisSet[] sets) {
+    ArgumentNullException.ThrowIfNull(sets);
+    if (sets.Any(static set => set is null))
+      throw new ArgumentException("Preserved analysis sets cannot contain null.", nameof(sets));
+    return new IrPreservedAnalyses(false, sets: sets);
+  }
+
   /// <summary>True when the given analysis remains valid.</summary>
   public bool IsPreserved(IrAnalysisKey analysis) {
     ArgumentNullException.ThrowIfNull(analysis);
-    return this.PreservesAll || this._analyses.Contains(analysis);
+    return this.PreservesAll
+      || this._analyses.Contains(analysis)
+      || this._sets.Any(set => set.Contains(analysis));
   }
 }

@@ -35,4 +35,11 @@ public readonly record struct IrPassResult {
       throw new ArgumentOutOfRangeException(nameof(changes));
     return new IrPassResult(changes, IrPreservedAnalyses.Preserve(analyses));
   }
+
+  /// <summary>A changing transform preserving every analysis in the supplied named sets.</summary>
+  public static IrPassResult ChangedPreservingSets(int changes, params IrAnalysisSet[] sets) {
+    if (changes <= 0)
+      throw new ArgumentOutOfRangeException(nameof(changes));
+    return new IrPassResult(changes, IrPreservedAnalyses.PreserveSets(sets));
+  }
 }

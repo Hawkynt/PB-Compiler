@@ -69,10 +69,9 @@ public static class RangeCheckElim {
     foreach (var (cmp, outcome) in decided)
       cmp.ReplaceAllUsesWith(IrBuilder.ConstBool(outcome));
 
-    // Replacing condition uses leaves the block graph unchanged, but it invalidates the branch facts that
-    // IrRangeAnalysis cached from those condition operands. Preserve only CFG-derived analyses here.
+    // Replacing condition uses leaves CFG topology unchanged, but invalidates value-derived range facts.
     return decided.Count == 0
       ? IrPassResult.Unchanged
-      : IrPassResult.ChangedPreserving(decided.Count, IrAnalyses.Dominators, IrAnalyses.Loops);
+      : IrPassResult.ChangedPreservingSets(decided.Count, IrAnalysisSets.Cfg);
   }
 }

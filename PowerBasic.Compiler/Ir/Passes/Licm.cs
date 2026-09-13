@@ -37,7 +37,7 @@ public static class Licm {
     }
     return hoisted == 0
       ? IrPassResult.Unchanged
-      : IrPassResult.ChangedPreserving(hoisted, IrAnalyses.Dominators, IrAnalyses.Loops);
+      : IrPassResult.ChangedPreservingSets(hoisted, IrAnalysisSets.Cfg);
   }
 
   private static int Hoist(IReadOnlySet<IrBasicBlock> body, IrBasicBlock entering) {

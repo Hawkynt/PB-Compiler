@@ -46,6 +46,43 @@ public sealed class IrAnalysisManagerTests {
   }
 
   [Test]
+  public void Invalidate_GivenPreservedAnalysisSet_ThenKeepsMembersOnly() {
+    var function = new IrFunction("test", IrType.Void);
+    var cfg = new IrAnalysisSet("cfg");
+    var dominators = new IrAnalysisKey<int>("dominators", static (_, _) => 1, cfg);
+    var loops = new IrAnalysisKey<int>("loops", (_, analyses) => analyses.Get(dominators) + 1, cfg);
+    var values = new IrAnalysisKey<int>("values", static (_, _) => 3);
+    var manager = new IrAnalysisManager(function);
+    manager.Get(loops);
+    manager.Get(values);
+
+    manager.Invalidate(IrPreservedAnalyses.PreserveSets(cfg));
+
+    Assert.Multiple(() => {
+      Assert.That(manager.IsCached(dominators), Is.True);
+      Assert.That(manager.IsCached(loops), Is.True);
+      Assert.That(manager.IsCached(values), Is.False);
+    });
+  }
+
+  [Test]
+  public void Invalidate_GivenPreservedSetMemberWithInvalidatedPrerequisite_ThenDropsDependent() {
+    var function = new IrFunction("test", IrType.Void);
+    var cfg = new IrAnalysisSet("cfg");
+    var prerequisite = new IrAnalysisKey<int>("prerequisite", static (_, _) => 1);
+    var dependent = new IrAnalysisKey<int>("dependent", (_, analyses) => analyses.Get(prerequisite) + 1, cfg);
+    var manager = new IrAnalysisManager(function);
+    manager.Get(dependent);
+
+    manager.Invalidate(IrPreservedAnalyses.PreserveSets(cfg));
+
+    Assert.Multiple(() => {
+      Assert.That(manager.IsCached(prerequisite), Is.False);
+      Assert.That(manager.IsCached(dependent), Is.False);
+    });
+  }
+
+  [Test]
   public void Invalidate_GivenPreservedDependentWithInvalidatedPrerequisite_ThenDropsItTransitively() {
     var function = new IrFunction("test", IrType.Void);
     var rootComputations = 0;
