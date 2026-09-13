@@ -1719,6 +1719,12 @@ public sealed partial class IrLowering {
     } else if (m.Target is PtrDerefExpr deref && this._model.TypeOf(deref) is UdtType derefUdt) {   // @q.Field - the record the pointer names
       basePtr = this.DerefAddress(deref);
       udt = derefUdt;
+    } else if (m.Target is MemberExpr nested && this._model.TypeOf(nested) is UdtType nestedUdt) {
+      // a.b.c - a record inside a record. The inner member's ADDRESS is the outer one's base, which
+      // is the same recursion the field offsets already describe; declining it cost 14 module bodies
+      // over the SVGA corpus, where a header record holding a palette record is the ordinary shape.
+      basePtr = this.MemberFieldAddress(nested).Address;
+      udt = nestedUdt;
     } else
       throw new IrLoweringException("unsupported member access");
 
