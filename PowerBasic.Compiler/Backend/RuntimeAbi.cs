@@ -239,6 +239,9 @@ internal static class RuntimeAbi {
     // rt_locate(row, col) -> AX = row, CX = column, a zero meaning "keep the current one"
     ["rt_locate"] = new("rt_locate",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+    // SCREEN n -> AX = the PB screen number, which the routine maps onto a BIOS video mode. The
+    // mapping belongs to the runtime and not to either emitter, so both paths reach the same table.
+    ["rt_screen_mode"] = new("rt_screenmode", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     // rt_shl32/rt_shr32(value, count) -> DX:AX = the value, CX = the count, answer in DX:AX. The
     // registers ARE the loop's operands, so the routine is the loop and a return.
     ["rt_shl32"] = new("rt_shl32",
@@ -262,9 +265,23 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.AX)], _callerSaved),
     // rt_kill(handle) -> AX = filename handle, consumed
     ["rt_kill"] = new("rt_kill", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // MKDIR / RMDIR / CHDIR take a path the same way KILL takes a filename: one string handle in AX.
+    ["rt_mkdir"] = new("rt_mkdir", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_rmdir"] = new("rt_rmdir", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_chdir"] = new("rt_chdir", [new(ArgKind.Word, Reg.AX)], _callerSaved),
 
     // rt_str_concat(ptr,ptr) -> ptr is the runtime's StrCat: AX=left, DX=right -> AX, consuming both
     ["rt_str_concat"] = new("rt_strcat",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+
+    // MIN$/MAX$/REMOVE$ take their pair exactly as concat does - left in AX, right in DX - and hand
+    // one string back having consumed both. Comparing or editing strings is the runtime's business on
+    // either path, so these are calls and not patterns.
+    ["rt_str_min"] = new("rt_strmin",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_max"] = new("rt_strmax",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_remove"] = new("rt_str_remove",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
 
     // "StrCatVar: AX=target handle, DX=source handle -> AX". It grows the TARGET in place when the
@@ -944,6 +961,12 @@ internal static class RuntimeAbi {
     // instruction pattern for the reason rt_trunc is: the two emitters write into one image and a
     // program must not round two ways.
     ["rt_round_half_away"] = new("rt_rndaway", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
+
+    // ROUND(x, places): the value on the x87 stack and the decimal place count in CX, answered on the
+    // stack. It is a CALL rather than an inline pattern for the reason rt_rndaway above it is - the
+    // scaling by ten to the place count is arithmetic both emitters must do identically.
+    ["rt_round_places"] = new("rt_round",
+      [new(ArgKind.St0, default), new(ArgKind.Word, Reg.CX)], _callerSaved, Answer: ResultKind.St0),
 
     ["rt_fix_down"] = new("rt_fixdn", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
     ["rt_fix_up"] = new("rt_fixup", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),

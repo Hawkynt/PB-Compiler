@@ -1314,6 +1314,15 @@ public sealed partial class IrLowering {
       case CommandStmt { Keyword: "SHIFT LEFT" or "SHIFT RIGHT" } shift: this.LowerShift(shift); break;
       case CommandStmt { Keyword: "ROTATE LEFT" or "ROTATE RIGHT" } rotate: this.LowerRotate(rotate); break;
       case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
+      // SCREEN n. The PB-number-to-BIOS-mode table lives in the runtime rather than in either
+      // emitter, so this is the whole statement: one word, one call, and both paths map alike. The
+      // further arguments PB accepts (active/visual page, burst) are not lowered rather than being
+      // dropped - the direct emitter ignores them too, and quietly inheriting that would bake a
+      // suspected gap into a second path instead of leaving it visible.
+      case CommandStmt { Keyword: "SCREEN", Arguments: [{ } screenMode] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_screen_mode", IrType.Void, IrType.I16),
+          this.Coerce(this.LowerExpr(screenMode), this._model.TypeOf(screenMode), PbType.Integer));
+        break;
       // OUT port, value. The direct emitter writes it inline as OUT DX, AL; here it is named, because
       // the same declaration reaches --emit-c and --emit-llvm where a port write is whatever that
       // target says it is. Both operands are INTEGERs for the reason LOCATE's are: the argument slot
@@ -1338,6 +1347,12 @@ public sealed partial class IrLowering {
         break;
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
+        break;
+      // The directory statements are KILL's shape exactly: one path, one runtime call, no answer.
+      case CommandStmt { Keyword: "MKDIR" or "RMDIR" or "CHDIR", Arguments: [{ } dirPath] } dirCmd:
+        this._b.Call(IrType.Void,
+          this.RuntimeFn("rt_" + dirCmd.Keyword.ToLowerInvariant(), IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(dirPath));
         break;
       // DEF SEG = n stores the word; bare DEF SEG puts DS back, which only the runtime can say
       case DefSegStmt { Segment: { } segment }:
@@ -4325,6 +4340,10 @@ public sealed partial class IrLowering {
     if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
         this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer));
+    // ROUND takes an optional decimal PLACE COUNT, so it is settled before the one-argument gate
+    // rather than inside the switch behind it - the second spelling is the same intrinsic.
+    if (name.Equals("ROUND", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count is 1 or 2)
+      return this.LowerRound(call);
     if (call.Arguments.Count != 1)
       throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
     return name.ToUpperInvariant() switch {
@@ -4332,6 +4351,8 @@ public sealed partial class IrLowering {
       "SGN" => this.LowerSgn(call),
       "FIX" => this.LowerFix(call),
       "INT" => this.LowerInt(call),
+      "CEIL" => this.LowerCeil(call),
+      "FRAC" => this.LowerFrac(call),
       "CDBL" or "CSNG" or "CEXT" => this.LowerConvert(call),
       // CINT/CLNG and the unsigned spellings are the ordinary assignment conversion written out: the
       // result type carries the width, and Coerce rounds into it
@@ -4722,6 +4743,15 @@ public sealed partial class IrLowering {
       "HEX$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_hex", IrType.Ptr, IrType.I32), Num(0)),
       "OCT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_oct", IrType.Ptr, IrType.I32), Num(0)),
       "BIN$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_bin", IrType.Ptr, IrType.I32), Num(0)),
+      // MIN$/MAX$ answer whichever of two strings compares lower or higher, and REMOVE$ deletes every
+      // occurrence of one from the other. All three take the pair the way concatenation does and are
+      // the runtime's own routines on both paths - comparing and editing strings is not something two
+      // emitters should each have a version of.
+      "MIN$" or "MAX$" or "REMOVE$" when ci.Arguments.Count == 2 =>
+        this._b.Call(IrType.Ptr,
+          this.RuntimeFn(name.ToUpperInvariant() switch {
+            "MIN$" => "rt_str_min", "MAX$" => "rt_str_max", _ => "rt_str_remove",
+          }, IrType.Ptr, IrType.Ptr, IrType.Ptr), Str(0), Str(1)),
       _ => throw new IrLoweringException($"string intrinsic {name}"),
     };
   }
@@ -4922,6 +4952,58 @@ public sealed partial class IrLowering {
     var roundedUp = this._b.Cmp(IrCmpPred.Folt, v, trunc);              // v < trunc(v) => was negative non-integer
     var one = this._b.Cast(IrCastOp.SIToFP, this._b.ZExt(roundedUp, IrType.I32), ty);
     return this._b.Binary(IrBinaryOp.FSub, trunc, one);
+  }
+
+  /// <summary>
+  /// <c>CEIL</c>: <see cref="LowerInt"/>'s mirror. Truncate toward zero, then add one where the
+  /// truncation rounded a POSITIVE non-integer down - which is the same shape as INT's correction and
+  /// the opposite sign of it.
+  /// </summary>
+  private IrValue LowerCeil(CallOrIndexExpr call) {
+    var resultPb = this._model.TypeOf(call);
+    var ty = MapType(resultPb);
+    var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    if (ty.IsInteger)
+      return v;                                       // an integer is already whole, either way
+
+    var trunc = this._b.Cast(IrCastOp.SIToFP, this._b.Cast(IrCastOp.FPToSI, v, IrType.I64), ty);
+    var roundedDown = this._b.Cmp(IrCmpPred.Fogt, v, trunc);           // v > trunc(v) => was positive non-integer
+    var one = this._b.Cast(IrCastOp.SIToFP, this._b.ZExt(roundedDown, IrType.I32), ty);
+    return this._b.Binary(IrBinaryOp.FAdd, trunc, one);
+  }
+
+  /// <summary>
+  /// <c>FRAC</c> is what <c>FIX</c> leaves behind - <c>x - FIX(x)</c> - so it keeps the sign of x and
+  /// an integer has none of it. The direct emitter computes it on the x87 stack with a duplicate and a
+  /// subtract; this is the same subtraction, written where the optimizer can see both halves.
+  /// </summary>
+  private IrValue LowerFrac(CallOrIndexExpr call) {
+    var resultPb = this._model.TypeOf(call);
+    var ty = MapType(resultPb);
+    var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    if (ty.IsInteger)
+      return new IrConstantInt(ty, 0);
+
+    var trunc = this._b.Cast(IrCastOp.SIToFP, this._b.Cast(IrCastOp.FPToSI, v, IrType.I64), ty);
+    return this._b.Binary(IrBinaryOp.FSub, v, trunc);
+  }
+
+  /// <summary>
+  /// <c>ROUND(x [, places])</c>. Unlike its neighbours this one IS a call: the rounding is decimal
+  /// rather than binary - it scales by ten to the place count, rounds, and scales back - and the two
+  /// emitters must not each write their own version of that. An integer is already round.
+  /// </summary>
+  private IrValue LowerRound(CallOrIndexExpr call) {
+    var resultPb = this._model.TypeOf(call);
+    var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    if (MapType(resultPb).IsInteger)
+      return v;
+
+    var places = call.Arguments.Count > 1
+      ? this.Coerce(this.LowerExpr(call.Arguments[1]), this._model.TypeOf(call.Arguments[1]), PbType.Integer)
+      : new IrConstantInt(IrType.I16, 0);
+    return this._b.Call(MapType(resultPb),
+      this.RuntimeFn("rt_round_places", MapType(resultPb), MapType(resultPb), IrType.I16), v, places);
   }
 
   private IrValue LowerAbs(CallOrIndexExpr call) {
