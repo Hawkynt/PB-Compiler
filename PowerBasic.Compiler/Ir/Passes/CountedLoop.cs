@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -46,6 +48,54 @@ internal sealed record CountedLoop(
       return null;
 
     return new(header, preheader, latch, exit, region, test, (IrPhi)test.Lhs, trips);
+  }
+
+  /// <summary>
+  /// Recognizes the same historical counted-loop contract while sourcing recurrence and trip-count facts from
+  /// shared loop/scalar-evolution analyses. This overload deliberately does not broaden the accepted shape.
+  /// </summary>
+  public static CountedLoop? Match(
+      IrFunction fn, IrBasicBlock header, IrLoopAnalysis loops, IrScalarEvolution scalarEvolution) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(header);
+    ArgumentNullException.ThrowIfNull(loops);
+    ArgumentNullException.ThrowIfNull(scalarEvolution);
+
+    if (header.Terminator is not IrCondBr { Condition: IrCmp test } branch
+        || !SupportsCountedPredicate(test.Pred))
+      return null;
+
+    var predecessors = fn.Blocks.Where(b => b.Terminator is { } t && t.Successors.Contains(header)).ToList();
+    if (predecessors.Count != 2)
+      return null;
+
+    var exit = branch.IfFalse;
+    var region = CollectRegion(header, branch.IfTrue, exit, out var latch);
+    if (region is null || latch is null)
+      return null;
+    var preheader = predecessors.SingleOrDefault(b => !ReferenceEquals(b, latch));
+    if (preheader is null)
+      return null;
+
+    var naturalLoop = loops.Loops.FirstOrDefault(loop => ReferenceEquals(loop.Header, header));
+    if (naturalLoop is null
+        || naturalLoop.Latches.Count != 1
+        || !ReferenceEquals(naturalLoop.Latches[0], latch)
+        || !ReferenceEquals(naturalLoop.UniqueEnteringBlock, preheader)
+        || test.Lhs is not IrPhi counter
+        || !ReferenceEquals(counter.Parent, header)
+        || test.Rhs is not IrConstantInt
+        || counter.IncomingFrom(preheader) is not IrConstantInt
+        || scalarEvolution.RecurrenceFor(counter) is not { } recurrence
+        || !ReferenceEquals(recurrence.Loop, naturalLoop)
+        || !ReferenceEquals(recurrence.Update.Lhs, counter)
+        || recurrence.Update.Rhs is not IrConstantInt step
+        || step.Value == 0
+        || scalarEvolution.ExactTripCount(naturalLoop) is not { } trips
+        || trips == 0)
+      return null;
+
+    return new(header, preheader, latch, exit, region, test, counter, trips);
   }
 
   /// <summary>
@@ -104,6 +154,9 @@ internal sealed record CountedLoop(
     }
     return null;
   }
+
+  private static bool SupportsCountedPredicate(IrCmpPred predicate)
+    => predicate is IrCmpPred.Slt or IrCmpPred.Sle or IrCmpPred.Sgt or IrCmpPred.Sge or IrCmpPred.Eq or IrCmpPred.Ne;
 
   private static bool Holds(IrCmpPred pred, long l, long r) => pred switch {
     IrCmpPred.Slt => l < r,
