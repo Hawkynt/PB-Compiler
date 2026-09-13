@@ -32,8 +32,6 @@ public static class Driver {
     var checkStack = false;
     var optimizeSpeed = false;
     var parallelLoops = false;
-    bool? useExperimentalBackend = null;
-    var requireBackend = false;
     bool? optimize = null; // null = dialect default (on for pb36); --optimize/--no-optimize override
 
     for (var i = 0; i < args.Length; ++i)
@@ -81,16 +79,11 @@ public static class Driver {
         case "--parallel-loops":
           parallelLoops = true;
           break;
-        case "--x-backend":
-          useExperimentalBackend = true;
-          break;
+        case "--x-backend" or "--x-backend-strict":
+          break; // compatibility no-op: the IR/native backend is now mandatory
         case "--no-x-backend":
-          useExperimentalBackend = false;
-          break;
-        case "--x-backend-strict":
-          useExperimentalBackend = true;
-          requireBackend = true;
-          break;
+          stderr.WriteLine("pbc: --no-x-backend was removed; the IR/native backend is mandatory");
+          return 1;
         case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-c" or "--emit-obj" or "--emit-basic":
           dumpStage = args[i];
           break;
@@ -153,12 +146,6 @@ public static class Driver {
       }
 
       if (dumpStage == "--emit-basic") {
-        // back-emitter: turn the program back into PB 3.5-compatible PowerBASIC - declarations and
-        // signatures from the surface unit, executable bodies (with the binder's pb36->pb35 lowering)
-        // from the bound model. When the optimizer is in effect (its dialect default, unless
-        // --no-optimize), run the AST-level passes whose effect is visible at the source level: the
-        // statement pruner (dead-code / DEF SEG) mutates the tree, and pure-function folding produces
-        // a call->constant map the back-emitter substitutes, so the output shows what the optimizer yields.
         Dictionary<Syntax.Ast.CallOrIndexExpr, Semantics.ConstantValue>? folds = null;
         if (optimize ?? (dialect == Dialect.Pb36)) {
           CodeGen.OptPruner.Prune(model);
@@ -182,10 +169,6 @@ public static class Driver {
         }
         module.AsciiOnly = model.AsciiOnly;
 
-        // The hosted backends must make the same optimizer-objective decision as CodeGenerator. The
-        // CLI seeds the defaults, then the source's single $OPTIMIZE directive wins exactly as it does
-        // on the native path. SPEED is therefore a semantic policy shared by every dialect, not a
-        // separate hosted-only fast-math switch.
         var optimizeMetas = model.MetaStatements
           .Where(meta => meta.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase))
           .ToList();
@@ -193,9 +176,6 @@ public static class Driver {
           stderr.WriteLine($"error: {optimizeMetas[1].Position}: only one $OPTIMIZE per module");
           return 1;
         }
-        // Unlike --emit-basic, which reproduces the source at its dialect's faithfulness level, the
-        // hosted IR backends exist to show the optimized module. They therefore optimize for every
-        // dialect; only an explicit --no-optimize or $OPTIMIZE OFF turns that off.
         var hostedOptimize = optimize ?? true;
         var hostedSpeed = optimizeSpeed;
         if (optimizeMetas.FirstOrDefault()?.Arguments is [{ } mode, ..]) {
@@ -213,9 +193,6 @@ public static class Driver {
               enableFpLookupTables: dumpStage == "--emit-llvm")
           : IrPassManager.Legalize();
 
-        // O0311 needs the original counted-loop/memory graph, but its dependence proof wants SSA.
-        // Promote first, version while that shape is still intact, then let the ordinary pipeline
-        // optimize both the retained sequential loop and the outlined parallel iteration helper.
         if (parallelLoops)
           foreach (var f in module.Functions)
             if (!f.IsDeclaration)
@@ -225,21 +202,17 @@ public static class Driver {
         pipeline.RunOnModule(module);
 
         if (hostedOptimize) {
-          // PB computes integral +/-/* in floating point (for PRINT precision); where the result is
-          // stored back to an integer the mod-2^N equivalence lets us recover the integer form, so
-          // the emitted C/LLVM squares an int as `x * x`, not `(int)((float)x * (float)x)`. Same
-          // sequence the x86-16 back end uses - recover, then re-run to clean up the dead float ops.
           foreach (var f in module.Functions)
             if (!f.IsDeclaration)
               IntegerRecovery.Run(f);
           pipeline.RunOnModule(module);
           Inliner.Run(module);
-          pipeline.RunOnModule(module);              // re-optimize the inlined bodies
+          pipeline.RunOnModule(module);
           foreach (var f in module.Functions)
             if (!f.IsDeclaration)
-              IntegerRecovery.Run(f);                // inlining can expose more float-form integer trees
+              IntegerRecovery.Run(f);
           pipeline.RunOnModule(module);
-          GlobalDce.Run(module);                     // drop functions/globals left unreferenced by inlining + DCE
+          GlobalDce.Run(module);
         }
 
         var verifyErrors = IrVerifier.Verify(module);
@@ -249,12 +222,6 @@ public static class Driver {
             stderr.WriteLine("  " + e);
           return 1;
         }
-        // the same optimized IR, rendered for whichever back end was asked for: LLVM text for
-        // the native toolchain, or C99 for any C compiler (docs/BACKENDS.md)
-        //
-        // Neither has a fallback the way the x86-16 path has the direct emitter, so a construct the
-        // emitter cannot render is reported here, naming it - which is the entire value of declining
-        // rather than raising, and the same answer the lowering's own refusal gets six lines above.
         var emittedC = dumpStage == "--emit-c";
         var text = emittedC
           ? CEmitter.TryEmit(module, out var refused)
@@ -274,22 +241,18 @@ public static class Driver {
       }
 
       var generator = new CodeGenerator(model) {
-        CheckBounds = checkBounds,    // -EB
-        CheckNumeric = checkNumeric,  // -EN
-        CheckOverflow = checkOverflow,// -EO
-        CheckStack = checkStack,      // -ES
-        OptimizeSpeed = optimizeSpeed,// -OZF
+        CheckBounds = checkBounds,
+        CheckNumeric = checkNumeric,
+        CheckOverflow = checkOverflow,
+        CheckStack = checkStack,
+        OptimizeSpeed = optimizeSpeed,
+        UseExperimentalBackend = true,
+        RequireBackend = true,
       };
-      if (optimize is { } opt)        // --optimize / --no-optimize override the dialect default
+      if (optimize is { } opt)
         generator.Optimize = opt;
-      if (useExperimentalBackend is { } useBackend)
-        generator.UseExperimentalBackend = useBackend;
-      if (requireBackend)
-        generator.RequireBackend = true;
 
       if (dumpStage == "--emit-obj") {
-        // emit the program's procedures as a linkable Intel OMF object, so C/asm/foreign
-        // linkers can consume PB output - regardless of $COMPILE UNIT (docs/LINKER.md)
         var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
         var compiledUnit = generator.EmitUnit(unitName);
         if (generator.Errors.Count > 0) {
@@ -305,8 +268,6 @@ public static class Driver {
       }
 
       if (listing) {
-        // compile the program (unit or EXE), then render a human-readable map of the
-        // emitted image - read-only reporting, no artifact is written (docs/PIPELINE.md)
         PbuFile? listedUnit = null;
         if (IsUnitCompile(model)) {
           var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
@@ -316,7 +277,7 @@ public static class Driver {
             return 1;
           var image = generator.EmitExecutable(units, libraries);
           if (image.Length == 0 && generator.Errors.Count == 0)
-            return 1; // link errors already reported
+            return 1;
         }
         if (generator.Errors.Count > 0) {
           foreach (var error in generator.Errors)
@@ -342,7 +303,6 @@ public static class Driver {
         if (!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out var units, out var libraries))
           return 1;
         artifact = generator.EmitExecutable(units, libraries);
-        // $COMPILE CHAIN: same MZ image, .PBC extension (our own chain artifact)
         var isChain = model.MetaStatements.Any(m => m.Command == "COMPILE"
           && m.Arguments is [{ } chainTarget, ..] && chainTarget.Text.Equals("CHAIN", StringComparison.OrdinalIgnoreCase));
         output ??= Path.ChangeExtension(source, isChain ? ".PBC" : ".EXE");
@@ -363,15 +323,10 @@ public static class Driver {
     }
   }
 
-
   /// <summary>$COMPILE UNIT selects unit emission; $COMPILE EXE (the default) is a no-op.</summary>
   private static bool IsUnitCompile(SemanticModel model)
     => model.MetaStatements.Any(m => m.Command == "COMPILE" && m.Arguments is [{ } target, ..] && target.Text.Equals("UNIT", StringComparison.OrdinalIgnoreCase));
 
-  /// <summary>
-  /// Loads every $LINK "X.PBU"/"Y.PBL" target, trying the -L link directories
-  /// first, then the source directory (so rebuilt units shadow foreign ones).
-  /// </summary>
   private static bool TryLoadLinkTargets(SemanticModel model, IReadOnlyList<string> searchDirs, TextWriter stderr, out List<PbuFile> units, out List<PblFile> libraries) {
     units = [];
     libraries = [];
@@ -389,13 +344,10 @@ public static class Driver {
       }
       try {
         if (path.EndsWith(".OBJ", StringComparison.OrdinalIgnoreCase)) {
-          // external Intel OMF object: lower to a synthetic unit (docs/LINKER.md)
           units.Add(Emit.Omf.OmfToPbu.Convert(Emit.Omf.OmfReader.ReadObject(File.ReadAllBytes(path))));
           continue;
         }
         if (path.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase)) {
-          // external OMF library: each module becomes a unit in a library so the
-          // linker pulls only the ones that satisfy unresolved symbols
           var lib = new PblFile();
           foreach (var module in Emit.Omf.OmfReader.ReadLibrary(File.ReadAllBytes(path)))
             lib.Units.Add(Emit.Omf.OmfToPbu.Convert(module));
@@ -418,7 +370,6 @@ public static class Driver {
     return true;
   }
 
-  /// <summary>pblib-style library maintenance: build a .PBL from .PBUs, or list contents.</summary>
   private static int RunLib(string[] args, TextWriter stdout, TextWriter stderr) {
     switch (args) {
       case ["build", var output, .. var unitFiles] when unitFiles.Length > 0: {
@@ -431,7 +382,6 @@ public static class Driver {
           using var stream = File.OpenRead(file);
           units.Add(PbuFile.Read(stream));
         }
-        // a .LIB output is a foreign-consumable Intel OMF archive; anything else is our own .PBL
         if (output.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase)) {
           File.WriteAllBytes(output, Emit.Omf.OmfLibraryWriter.WriteLibrary(units));
         } else {
@@ -497,9 +447,6 @@ public static class Driver {
     w.WriteLine("  --emit-basic   un-parse the bound (optimized) tree back to readable PowerBASIC");
     w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");
     w.WriteLine("  --emit-c       optimize through the IR middle end and emit portable C99");
-    w.WriteLine("  --x-backend    compile through the IR and native x86-16 back end (the default)");
-    w.WriteLine("  --no-x-backend compile through the legacy direct emitter instead (PBC_X_BACKEND=0)");
-    w.WriteLine("  --x-backend-strict  route everything: a body the back end declines is an error, not a fallback");
     w.WriteLine("  --list         write a human-readable .LST map of the compiled image");
     w.WriteLine("  -h, --help     show this help");
   }
