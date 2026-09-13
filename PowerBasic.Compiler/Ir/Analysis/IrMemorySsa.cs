@@ -101,12 +101,12 @@ public sealed class IrMemorySsa {
 
   private readonly record struct MemoryLocation(IrValue Pointer, IrType Type);
 
-  private IrMemorySsa(IrFunction function) {
+  private IrMemorySsa(IrFunction function, IrDominators? dominators) {
     this.LiveOnEntry = new IrMemoryLiveOnEntry();
     if (function.Entry is null)
       return;
 
-    var dominators = IrDominators.Build(function)!;
+    ArgumentNullException.ThrowIfNull(dominators);
     var definitionBlocks = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
     foreach (var block in dominators.ReversePostorder)
       if (block.Instructions.Any(IsMemoryDef))
@@ -126,7 +126,13 @@ public sealed class IrMemorySsa {
   /// <summary>Builds the Memory SSA overlay for <paramref name="function"/>.</summary>
   public static IrMemorySsa Build(IrFunction function) {
     ArgumentNullException.ThrowIfNull(function);
-    return new(function);
+    return new(function, IrDominators.Build(function));
+  }
+
+  /// <summary>Builds the Memory SSA overlay while reusing an already computed dominator result.</summary>
+  internal static IrMemorySsa Build(IrFunction function, IrDominators? dominators) {
+    ArgumentNullException.ThrowIfNull(function);
+    return new(function, dominators);
   }
 
   /// <summary>The memory access attached to an instruction, or null for a non-memory/unreachable instruction.</summary>

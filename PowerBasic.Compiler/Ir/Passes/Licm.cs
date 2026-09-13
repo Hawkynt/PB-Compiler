@@ -1,70 +1,46 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// Loop-invariant code motion. For each natural loop (found from CFG back-edges via
-/// the dominator tree) it identifies pure, speculatable instructions whose operands
-/// are all defined outside the loop (transitively) and sinks them into the loop's
-/// preheader, so they run once instead of every iteration. Only non-trapping
-/// instructions are hoisted (integer/float division and loads are left in place), so
-/// speculative execution in the preheader can never introduce a fault the original
-/// program would not have hit.
+/// Loop-invariant code motion. For each natural loop it identifies pure, speculatable instructions whose operands
+/// are all defined outside the loop (transitively) and moves them to the loop's unique entering block, so they run
+/// once instead of every iteration. Only non-trapping instructions are hoisted (integer/float division and loads
+/// are left in place), so speculative execution before a non-canonical loop entry cannot introduce a fault the
+/// original program would not have hit.
 /// </summary>
 public static class Licm {
 
-  /// <summary>Hoists loop-invariant computations to loop preheaders; returns how many were hoisted.</summary>
+  /// <summary>Hoists loop-invariant computations to unique loop-entry predecessors; returns how many were hoisted.</summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return Run(fn, new IrAnalysisManager(fn)).Changes;
+  }
+
+  /// <summary>Runs LICM using the shared loop-forest analysis.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
     if (fn.Entry is null)
-      return 0;
-    var dom = IrDominators.Build(fn)!;
-    var loops = DetectLoops(fn, dom);
+      return IrPassResult.Unchanged;
+
+    var loops = analyses.Get(IrAnalyses.Loops);
     var hoisted = 0;
-    // innermost first, so a value can climb out of nested loops over repeated runs
-    foreach (var loop in loops.OrderBy(l => l.Body.Count)) {
-      var preheader = UniquePreheader(loop.Header, loop.Body);
-      if (preheader is null)
+    // Innermost first, so a value can climb out of nested loops over repeated runs.
+    foreach (var loop in loops.Loops.OrderBy(loop => loop.Blocks.Count)) {
+      var entering = loop.UniqueEnteringBlock;
+      if (entering?.Terminator is null)
         continue;
-      hoisted += Hoist(loop.Body, preheader);
+      hoisted += Hoist(loop.Blocks, entering);
     }
-    return hoisted;
+    return hoisted == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(hoisted, IrAnalysisSets.Cfg);
   }
 
-  private readonly record struct Loop(IrBasicBlock Header, HashSet<IrBasicBlock> Body);
-
-  private static List<Loop> DetectLoops(IrFunction fn, IrDominators dom) {
-    var byHeader = new Dictionary<IrBasicBlock, HashSet<IrBasicBlock>>(ReferenceEqualityComparer.Instance);
-    foreach (var block in fn.Blocks) {
-      if (!dom.IsReachable(block))
-        continue;
-      foreach (var succ in block.Successors)
-        if (dom.Dominates(succ, block)) {            // back-edge block -> succ (header)
-          if (!byHeader.TryGetValue(succ, out var body))
-            byHeader[succ] = body = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance) { succ };
-          var stack = new Stack<IrBasicBlock>();
-          stack.Push(block);
-          while (stack.Count > 0) {
-            var n = stack.Pop();
-            if (body.Add(n))
-              foreach (var pred in n.Predecessors)
-                stack.Push(pred);                    // stops at the header (already in body)
-          }
-        }
-    }
-    return byHeader.Select(kv => new Loop(kv.Key, kv.Value)).ToList();
-  }
-
-  private static IrBasicBlock? UniquePreheader(IrBasicBlock header, HashSet<IrBasicBlock> body) {
-    IrBasicBlock? preheader = null;
-    foreach (var pred in header.Predecessors) {
-      if (body.Contains(pred))
-        continue;                                    // the back-edge source
-      if (preheader is not null)
-        return null;                                 // more than one entry: no single preheader
-      preheader = pred;
-    }
-    return preheader?.Terminator is not null ? preheader : null;
-  }
-
-  private static int Hoist(HashSet<IrBasicBlock> body, IrBasicBlock preheader) {
+  private static int Hoist(IReadOnlySet<IrBasicBlock> body, IrBasicBlock entering) {
     var invariant = ComputeInvariant(body);
     var count = 0;
     bool progress;
@@ -76,7 +52,7 @@ public static class Licm {
         if (!AllOperandsOutside(inst, body))
           continue;                                  // wait until its invariant inputs are hoisted
         inst.Parent!.Remove(inst);
-        preheader.InsertBefore(inst, preheader.Terminator!);
+        entering.InsertBefore(inst, entering.Terminator!);
         ++count;
         progress = true;
       }
@@ -84,7 +60,7 @@ public static class Licm {
     return count;
   }
 
-  private static List<IrInstruction> ComputeInvariant(HashSet<IrBasicBlock> body) {
+  private static List<IrInstruction> ComputeInvariant(IReadOnlySet<IrBasicBlock> body) {
     var invariant = new HashSet<IrInstruction>(ReferenceEqualityComparer.Instance);
     var ordered = new List<IrInstruction>();
     bool changed;
@@ -101,28 +77,26 @@ public static class Licm {
     return ordered;
   }
 
-  private static bool OperandsInvariant(IrInstruction inst, HashSet<IrBasicBlock> body, HashSet<IrInstruction> invariant) {
+  private static bool OperandsInvariant(IrInstruction inst, IReadOnlySet<IrBasicBlock> body,
+      HashSet<IrInstruction> invariant) {
     foreach (var op in inst.Operands)
       if (op is IrInstruction def && def.Parent is { } b && body.Contains(b) && !invariant.Contains(def))
         return false;
     return true;
   }
 
-  private static bool AllOperandsOutside(IrInstruction inst, HashSet<IrBasicBlock> body) {
+  private static bool AllOperandsOutside(IrInstruction inst, IReadOnlySet<IrBasicBlock> body) {
     foreach (var op in inst.Operands)
       if (op is IrInstruction def && def.Parent is { } b && body.Contains(b))
         return false;
     return true;
   }
 
-  /// <summary>Pure and trap-free: safe to execute unconditionally in the preheader.</summary>
+  /// <summary>Pure and trap-free: safe to execute unconditionally in the entering block.</summary>
   private static bool IsSpeculatable(IrInstruction inst) => inst switch {
     IrBinary b => b.Op is not (IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem or IrBinaryOp.FDiv),
     IrCmp or IrCast or IrGep => true,
-    // A call is a wall except for the short checked list of runtime entries that are a function of
-    // their arguments and cannot fault - see FunctionSummaries.IsSpeculatableExternal for the
-    // argument per row, and for what is deliberately kept off it.
-    IrCall { Callee: IrFunction callee } => FunctionSummaries.IsSpeculatableExternal(callee.Name),
+    IrCall { Callee: IrFunction callee } => IrEffects.ForExternalCall(callee.Name).CanSpeculate,
     _ => false,                                      // loads, stores, allocas, phis, terminators
   };
 }

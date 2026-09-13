@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -23,8 +25,17 @@ public static class PointerCheckElim {
   /// <summary>Replaces decided pointer-null comparisons; returns how many comparisons were decided.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    if (IrDominators.Build(fn) is not { } dom)
-      return 0;
+    return Run(fn, new IrAnalysisManager(fn)).Changes;
+  }
+
+  /// <summary>Runs null-check elimination using the shared dominator analysis.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
+    if (analyses.Get(IrAnalyses.Dominators) is not { } dom)
+      return IrPassResult.Unchanged;
 
     var decided = new List<(IrCmp Cmp, bool Outcome)>();
     foreach (var block in dom.ReversePostorder)
@@ -38,7 +49,9 @@ public static class PointerCheckElim {
 
     foreach (var (cmp, outcome) in decided)
       cmp.ReplaceAllUsesWith(IrBuilder.ConstBool(outcome));
-    return decided.Count;
+    return decided.Count == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(decided.Count, IrAnalysisSets.Cfg);
   }
 
   private static bool? KnownNullness(IrValue value, IrBasicBlock block, IrDominators dom) {

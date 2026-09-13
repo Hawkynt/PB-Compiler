@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
@@ -23,6 +24,49 @@ public sealed class IrPassManagerTests {
     manager.RunOnModule(module);
 
     Assert.That(calls, Is.EqualTo(enabled ? 1 : 0));
+  }
+
+  [Test]
+  public void AddAnalyzed_GivenPreservedAnalysis_ThenProductionRunnerReusesIt() {
+    var fn = new IrFunction("test", IrType.Void);
+    var computations = 0;
+    var analysis = new IrAnalysisKey<int>("probe", (_, _) => ++computations);
+    var manager = new IrPassManager()
+      .AddAnalyzed("read-before", (_, analyses) => {
+        analyses.Get(analysis);
+        return IrPassResult.Unchanged;
+      })
+      .AddAnalyzed("preserve", (_, _) => IrPassResult.ChangedPreserving(1, analysis))
+      .AddAnalyzed("read-after", (_, analyses) => {
+        analyses.Get(analysis);
+        return IrPassResult.Unchanged;
+      });
+
+    var changes = manager.Run(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(changes, Is.EqualTo(1));
+      Assert.That(computations, Is.EqualTo(1));
+    });
+  }
+
+  [TestCase(0)]
+  [TestCase(-1)]
+  public void RunToFixpoint_GivenNonPositiveIterationBudget_ThenDoesNotRun(int maxIterations) {
+    var fn = new IrFunction("test", IrType.Void);
+    var calls = 0;
+    var manager = new IrPassManager()
+      .Add("probe", _ => {
+        ++calls;
+        return 1;
+      });
+
+    var changes = manager.RunToFixpoint(fn, maxIterations);
+
+    Assert.Multiple(() => {
+      Assert.That(changes, Is.Zero);
+      Assert.That(calls, Is.Zero);
+    });
   }
 
   private static IrFunction Lower(string source) {
