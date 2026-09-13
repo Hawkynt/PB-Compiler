@@ -368,7 +368,7 @@ public sealed partial class CodeGenerator {
         continue;
       }
       if (!this.DataGlobalsResolve(irFn, out var unaddressable)) {
-        this._backendDeclines.Add((proc.Name, $"routing: global '{unaddressable}' has no cell the emitter can address"));
+        this._backendDeclines.Add((proc.Name, this.UnaddressableGlobal(unaddressable)));
         continue;
       }
       // A rewritten signature makes the IR the only description of this frame, so it takes the same
@@ -599,7 +599,7 @@ public sealed partial class CodeGenerator {
     if (this.ExternalCalleeDecline(main) is { } externalDecline)
       return this.DeclineMain(externalDecline);
     if (!this.DataGlobalsResolve(main, out var unaddressable))
-      return this.DeclineMain($"routing: global '{unaddressable}' has no cell the emitter can address");
+      return this.DeclineMain(this.UnaddressableGlobal(unaddressable));
     if (InstructionSelector.TrySelect(main, out var declineReason, this.SelectionTarget) is not { } machine)
       return this.DeclineMain("selection: " + (declineReason ?? "unknown"));
     if (UndefinedRuntimeCallee(machine) is { } undefined)
@@ -773,10 +773,12 @@ public sealed partial class CodeGenerator {
         continue;
       var routed = 0;
       var direct = 0;
+      string? firstDirect = null;
       if (ReferencesVariable(model.MainBody, symbol.Name)) {
-        if (this._backendMain is null)
+        if (this._backendMain is null) {
           ++direct;
-        else
+          firstDirect = "the module body";
+        } else
           ++routed;
       }
       // A procedure that RECEIVES the array is a user of it too, and naming is blind to that: the
@@ -790,14 +792,43 @@ public sealed partial class CodeGenerator {
           continue;
         if (this._backendProcs.ContainsKey(proc))
           ++routed;
-        else
+        else {
           ++direct;
+          firstDirect ??= proc.Name;
+        }
       }
-      if (routed > 0 && direct > 0)
+      if (routed > 0 && direct > 0) {
+        // Remember WHY, because the decline this produces on the next pass names only the cell -
+        // "global '.dyn.g.X.lo0' has no cell the emitter can address" - and that reads as a missing
+        // feature rather than as a consequence. It is a consequence, and of one nameable procedure:
+        // the routing has to be re-run before the array is refused, so by the time anything declines
+        // for it the reason the FIRST pass split is gone. It took a hand-instrumented build to learn
+        // that eight GIF procedures were waiting on one that could not lower a header field.
+        this._backendDynArraySplit = $"{symbol.Name} is used from both paths - {firstDirect} did not route";
         return false;
+      }
     }
     return true;
   }
+
+  /// <summary>
+  /// Which shared dynamic array was found split across the two paths, and the first user that was not
+  /// routed - null until <see cref="SharedDynArrayUsersRouteTogether"/> has refused one.
+  /// </summary>
+  private string? _backendDynArraySplit;
+
+  /// <summary>
+  /// Why a global has no cell, said in terms somebody can act on. A <c>.dyn.g.*</c> name is a SHARED
+  /// dynamic array's descriptor, and it is unaddressable for exactly one reason: the array's users are
+  /// split across the two paths, so the descriptor was handed back to the direct emitter whole rather
+  /// than letting a routed REDIM and a directly emitted UBOUND consult two descriptions of one array.
+  /// Naming only the cell reads as a missing feature; it is a CONSEQUENCE, and of one procedure.
+  /// </summary>
+  private string UnaddressableGlobal(string? name)
+    => name is not null && name.StartsWith(".dyn.g.", System.StringComparison.Ordinal)
+        && this._backendDynArraySplit is { } split
+      ? $"routing: the shared dynamic array behind '{name}' is the direct emitter's - {split}"
+      : $"routing: global '{name}' has no cell the emitter can address";
 
 
   /// <summary>
