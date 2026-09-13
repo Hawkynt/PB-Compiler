@@ -3,8 +3,8 @@ using PowerBasic.Compiler.Ir.Analysis;
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// Analysis-aware execution core for function transforms. The production <see cref="IrPassManager"/> can migrate to
-/// this runner without forcing every existing pass to adopt the new contract at once.
+/// Analysis-aware execution core for function transforms. Legacy passes are adapted conservatively while migrated
+/// passes can consume cached analyses and report exactly which results remain valid.
 /// </summary>
 public sealed class IrFunctionPassPipeline {
 
@@ -71,6 +71,8 @@ public sealed class IrFunctionPassPipeline {
 
       if (!this.VerifyEachPass)
         continue;
+      // Deliberately rebuild verifier analyses independently. Verification must be able to catch a pass
+      // that incorrectly claims to preserve an analysis instead of trusting that preservation claim.
       var errors = IrVerifier.Verify(function);
       if (errors.Count > 0)
         throw new IrVerificationException(name, errors);
