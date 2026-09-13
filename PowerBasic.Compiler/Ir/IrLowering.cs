@@ -586,6 +586,22 @@ public sealed partial class IrLowering {
       this.AsmVariable(name) is null && this._labels.ContainsKey(name) ? probe.Lbl(name) : null);
     var parsed = new Asm.TextAssembler(probe).TryParse(stmt.Text, seen, out _);
 
+    // A mnemonic the assembler's table has never heard of is not automatically one this compiler
+    // cannot emit. POPCNT, the BMI sets and the extended SIMD maps are emitted by the ISA POLICY -
+    // natively where the target has them and emulated where it does not - and the table predates all
+    // of them. Asking the policy is what stops "unknown mnemonic" meaning "goes to the direct
+    // emitter", which is where every BMI and POPCNT program was going.
+    //
+    // The NAMES still have to come from the parser, and they do: Analyze parses the operands through
+    // the resolver before it decides it has no entry for the mnemonic, so a variable in one is
+    // collected exactly as it would be in a MOV. Scanning the text for identifiers instead is the
+    // guess this node exists to avoid - it cannot tell a register from a variable.
+    if (!parsed && PolicyEmitsEveryLine(stmt.Text)) {
+      foreach (var line in stmt.Text.Split('\n'))
+        Asm.TextAssembler.Analyze(line, seen);
+      parsed = true;
+    }
+
     var routable = parsed;
     foreach (var name in seen.Collected)
       // a VARIABLE first, exactly as the direct emitter's resolver orders it: a label sharing a
@@ -600,6 +616,23 @@ public sealed partial class IrLowering {
     node.Routable = routable;
     this._b.InlineAsm(node);
     this._fn.HasInlineAsm = true;
+  }
+
+  /// <summary>
+  /// Whether every line of a block the plain assembler refused is one the ISA policy owns. All of
+  /// them, because a block is emitted or declined whole - one line the policy has no opinion about
+  /// still has to reach an assembler that has never heard of it.
+  /// </summary>
+  private static bool PolicyEmitsEveryLine(string text) {
+    var any = false;
+    foreach (var line in text.Split('\n')) {
+      if (line.Trim().Length == 0)
+        continue;
+      if (!CodeGen.CodeGenerator.PolicyOwnsInlineAsmLine(line))
+        return false;
+      any = true;
+    }
+    return any;
   }
 
   /// <summary>

@@ -1768,7 +1768,13 @@ public sealed partial class InstructionSelector {
       return this.Decline("inline asm: a name in it is not a variable this pass could bind");
 
     var kinds = new AsmNameKinds(asm);
-    if (!new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out var error))
+    // The re-parse is here to catch the EMITTER's resolver disagreeing with the lowering's stand-in
+    // symbols, and it can only do that for text the plain assembler emits. A line the ISA policy owns
+    // never reaches that assembler - the policy encodes it natively or emulates it - so asking this
+    // question of one answers "unknown mnemonic" about an instruction the compiler emits perfectly
+    // well.
+    if (!PolicyOwnedInlineAsm(asm.Text)
+        && !new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out var error))
       return this.Decline($"inline asm: {error}");
 
     var effect = TextAssembler.Analyze(asm.Text, kinds);
@@ -1790,6 +1796,23 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
+  /// Whether every line of this block is one the ISA policy emits - see
+  /// <c>CodeGenerator.PolicyOwnsInlineAsmLine</c>, which the lowering consults for the same reason
+  /// and must agree with, or a block routes here and is refused there.
+  /// </summary>
+  private static bool PolicyOwnedInlineAsm(string text) {
+    var any = false;
+    foreach (var line in text.Split('\n')) {
+      if (line.Trim().Length == 0)
+        continue;
+      if (!CodeGen.CodeGenerator.PolicyOwnsInlineAsmLine(line))
+        return false;
+      any = true;
+    }
+    return any;
+  }
+
+  /// <summary>
   /// The frame cell an inline-asm name denotes, addressed DIRECTLY rather than through a register.
   ///
   /// <see cref="PointerMemory"/> would answer <c>[v0]</c> for a local, because an alloca whose address
@@ -1803,13 +1826,36 @@ public sealed partial class InstructionSelector {
   /// </summary>
   private MOperand? AsmCell(IrValue pointer) => pointer switch {
     IrAlloca alloca when this._slots.TryGetValue(alloca, out var slot)
-      => new MOperand.StackSlot(slot, MRegSize.Word),
+      => new MOperand.StackSlot(slot, AsmCellSize(alloca.Allocated)),
     IrGlobalVariable g when IsAddressableGlobal(g)
-      => new MOperand.DataCell(g.Name, 0, MRegSize.Word),
+      => new MOperand.DataCell(g.Name, 0, AsmCellSize(g.ValueType)),
     // a BASIC label the text jumps to. Not a cell at all - the block's own machine label, which is
     // the same thing CODEPTR32 asks for and the same operand it is answered with
     IrBlockAddress block => new MOperand.BlockOffset(block.Block.Label),
     _ => this.DeclineCell(pointer),
+  };
+
+  /// <summary>
+  /// The WIDTH an inline-asm name denotes, which is the storage's own and not this back end's default.
+  ///
+  /// <para>
+  /// Answering <c>Word</c> for everything is right for the 8086 mnemonics the corpus uses and wrong
+  /// the moment an instruction checks its operand widths against each other:
+  /// <c>! POPCNT EAX, source&amp;</c> is rejected as "source width must match the 32-bit destination"
+  /// when <c>source&amp;</c> is reported as a word. The direct emitter's resolver has always answered
+  /// with the variable's real size; this is that, from the IR's type rather than the symbol table.
+  /// </para>
+  /// <para>
+  /// Anything wider than a dword - a record, a fixed string, an EXT - has no register width to report
+  /// and keeps the word default, which is what those names always were: an ADDRESS the text indexes
+  /// off, never a value an instruction loads whole.
+  /// </para>
+  /// </summary>
+  private static MRegSize AsmCellSize(IrType type) => type switch {
+    { IsInteger: true, Bits: 8 } => MRegSize.Byte,
+    { IsInteger: true, Bits: 32 } => MRegSize.Dword,
+    { IsIeeeFloat: true, Bits: 32 } => MRegSize.Dword,
+    _ => MRegSize.Word,
   };
 
   private MOperand? DeclineCell(IrValue pointer) {
