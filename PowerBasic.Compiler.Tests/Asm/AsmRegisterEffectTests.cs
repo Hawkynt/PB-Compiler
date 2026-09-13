@@ -84,6 +84,28 @@ public sealed class AsmRegisterEffectTests {
     });
   }
 
+  /// <summary>
+  /// <c>XOR r, r</c> is the zeroing idiom and the register it names is not an input - the answer is
+  /// nought whatever it held. Read literally it is a use that consumes an earlier statement's value,
+  /// which is a promise nobody made.
+  /// </summary>
+  [Test]
+  public void Analyze_GivenTheZeroingIdiom_WhenRead_ThenTheRegisterIsNotAnInput() {
+    Assert.Multiple(() => {
+      var xor = Effect("XOR DI, DI");
+      Assert.That(xor.Reads, Is.Empty, "the answer does not depend on what DI held");
+      Assert.That(xor.Defines, Is.EquivalentTo(new[] { Reg.DI }));
+      Assert.That(xor.Kills, Is.EquivalentTo(new[] { Reg.DI }));
+      Assert.That(xor.WritesFlags, Is.True);
+
+      var sub = Effect("SUB AX, AX");
+      Assert.That(sub.Reads, Is.Empty, "SUB r, r is the same idiom");
+
+      var real = Effect("XOR AX, DX");
+      Assert.That(real.Reads, Is.EquivalentTo(new[] { Reg.AX, Reg.DX }), "two different registers is a real XOR");
+    });
+  }
+
   /// <summary>A write THROUGH a register still reads the register - the destination is memory.</summary>
   [Test]
   public void Analyze_GivenAStoreToAVariable_WhenRead_ThenTheSourceRegisterIsARead() {

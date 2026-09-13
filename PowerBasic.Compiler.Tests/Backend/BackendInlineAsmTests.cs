@@ -444,6 +444,46 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
+  /// A second asm run opened with <c>! XOR DI, DI</c>, a <c>CALL</c> behind it, and the first run
+  /// ending in <c>! POP DI</c>. Every <c>Vesa*_HLine</c> in the SVGA corpus is this shape, and the
+  /// literal reading declined all sixteen: the <c>XOR</c> "reads" <c>DI</c>, so the value the earlier
+  /// <c>POP</c> restored looked wanted, and the call in between destroys it.
+  ///
+  /// <para>
+  /// The zeroing idiom names a register that is not an input. What makes this a test rather than a
+  /// shape is the <c>CALL</c>: without one the window is empty and any model of the <c>XOR</c> passes.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenTheZeroingIdiomAfterACall_ThenNoPromiseReachesBackAcrossIt() {
+    const string source = """
+      DECLARE FUNCTION Op%(BYVAL v%)
+      DIM v AS INTEGER, w AS INTEGER
+      v = 6
+      ! PUSH DI
+      ! MOV DI, v
+      ! MOV w, DI
+      ! POP DI
+      v = Op%(w) + 1
+      ! PUSH DI
+      ! XOR DI, DI
+      ! ADD DI, v
+      ! MOV w, DI
+      ! POP DI
+      PRINT v; w
+
+      FUNCTION Op%(BYVAL v%) NOINLINE
+        Op% = v% * 2
+      END FUNCTION
+      """;
+
+    var routed = Run(source, routed: true, out var ownsMain);
+    Assert.That(ownsMain, Is.True, "the zeroing idiom consumes nothing, so nothing crosses the call");
+    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
+    Assert.That(routed, Is.EqualTo("13  13"), "6 doubled plus one, then zero plus that");
+  }
+
+  /// <summary>
   /// A <c>BYREF</c> parameter written AFTER an inline-asm block. The pointer arrives live at entry and
   /// is a memory base, which cannot spill, so it has to be reloaded from its own incoming cell at the
   /// use - and the spiller does exactly that. What stopped it was the reload it inserted claiming the
