@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
@@ -23,6 +24,30 @@ public sealed class IrPassManagerTests {
     manager.RunOnModule(module);
 
     Assert.That(calls, Is.EqualTo(enabled ? 1 : 0));
+  }
+
+  [Test]
+  public void AddAnalyzed_GivenPreservedAnalysis_ThenProductionRunnerReusesIt() {
+    var fn = new IrFunction("test", IrType.Void);
+    var computations = 0;
+    var analysis = new IrAnalysisKey<int>("probe", (_, _) => ++computations);
+    var manager = new IrPassManager()
+      .AddAnalyzed("read-before", (_, analyses) => {
+        analyses.Get(analysis);
+        return IrPassResult.Unchanged;
+      })
+      .AddAnalyzed("preserve", (_, _) => IrPassResult.ChangedPreserving(1, analysis))
+      .AddAnalyzed("read-after", (_, analyses) => {
+        analyses.Get(analysis);
+        return IrPassResult.Unchanged;
+      });
+
+    var changes = manager.Run(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(changes, Is.EqualTo(1));
+      Assert.That(computations, Is.EqualTo(1));
+    });
   }
 
   private static IrFunction Lower(string source) {

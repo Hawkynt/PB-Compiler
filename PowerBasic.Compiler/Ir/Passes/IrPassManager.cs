@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>Raised when <see cref="IrPassManager.VerifyEachPass"/> is on and a pass leaves the IR malformed.</summary>
@@ -16,18 +18,27 @@ public sealed class IrVerificationException(string pass, IReadOnlyList<string> e
 /// </summary>
 public sealed class IrPassManager {
 
-  private readonly List<(string Name, Func<IrFunction, int> Run)> _passes = [];
+  private readonly IrFunctionPassPipeline _functionPasses = new();
   private readonly List<(string Name, Func<IrModule, int> Run)> _earlyModulePasses = [];
   private readonly List<(string Name, Func<IrModule, int> Run)> _modulePasses = [];
 
   /// <summary>When true, verifies the function after each pass and throws on any error.</summary>
-  public bool VerifyEachPass { get; set; }
+  public bool VerifyEachPass {
+    get => this._functionPasses.VerifyEachPass;
+    set => this._functionPasses.VerifyEachPass = value;
+  }
 
   /// <summary>The optimization objective this pipeline applies; propagated to the module for late passes.</summary>
   public bool OptimizeForSpeed { get; init; }
 
   public IrPassManager Add(string name, Func<IrFunction, int> pass) {
-    this._passes.Add((name, pass));
+    this._functionPasses.AddLegacy(name, pass);
+    return this;
+  }
+
+  /// <summary>Adds a pass that consumes cached function analyses and reports precise preservation.</summary>
+  public IrPassManager AddAnalyzed(string name, Func<IrFunction, IrAnalysisManager, IrPassResult> pass) {
+    this._functionPasses.Add(name, pass);
     return this;
   }
 
@@ -59,34 +70,11 @@ public sealed class IrPassManager {
     => condition ? this.AddModulePass(name, pass) : this;
 
   /// <summary>Runs every pass once over the function; returns the total number of changes.</summary>
-  public int Run(IrFunction fn) {
-    // a function with an armed error handler has control-flow edges the CFG does not show, so every
-    // pass here would be reasoning from an incomplete graph - see IrFunction.HasErrorHandler
-    if (fn.HasErrorHandler || fn.HasInlineAsm)
-      return 0;
-    var total = 0;
-    foreach (var (name, run) in this._passes) {
-      total += run(fn);
-      if (this.VerifyEachPass) {
-        var errors = IrVerifier.Verify(fn);
-        if (errors.Count > 0)
-          throw new IrVerificationException(name, errors);
-      }
-    }
-    return total;
-  }
+  public int Run(IrFunction fn) => this._functionPasses.Run(fn);
 
   /// <summary>Repeats the pass set until it stops changing anything (or the iteration cap is hit).</summary>
-  public int RunToFixpoint(IrFunction fn, int maxIterations = 16) {
-    var total = 0;
-    for (var i = 0; i < maxIterations; ++i) {
-      var changes = this.Run(fn);
-      total += changes;
-      if (changes == 0)
-        break;
-    }
-    return total;
-  }
+  public int RunToFixpoint(IrFunction fn, int maxIterations = 16)
+    => this._functionPasses.RunToFixpoint(fn, maxIterations);
 
   /// <summary>
   /// Runs the pipeline over a module: early module passes first while lowering provenance is intact,
@@ -241,14 +229,14 @@ public sealed class IrPassManager {
     // ordinary objective is deliberately conservative about compile-time/code-shape expansion.
     .AddWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
     .Add("sccp", Sccp.Run)
-    .Add("correlate", CorrelatedValueProp.Run)
+    .AddAnalyzed("correlate", CorrelatedValueProp.Run)
     // O0305 is the materialized counterpart to correlation: after edge-local facts have propagated as
     // far as dominance permits, duplicate a small reconverged block when doing so removes a repeated
     // guard. The following proof/value passes consume the constants exposed inside each version.
     .Add("bbversion", BasicBlockVersioning.Run)
     // O0351 shares the dominator-scoped edge facts with correlation, but only explicit pointer-null
     // tests count: dereferencing address zero is not a fault on PB's DOS memory model.
-    .Add("ptrcheck", PointerCheckElim.Run)
+    .AddAnalyzed("ptrcheck", PointerCheckElim.Run)
     // AFTER sccp and correlate, and the order is the whole composition: the range analysis reasons about
     // what an expression CAN be, so it wants the values that are already known to be one thing folded
     // in first - a bounds check against a subscript sccp has resolved is not a range question at all.
@@ -311,7 +299,7 @@ public sealed class IrPassManager {
     .Add("demote", FloatDemotion.Run)
     .Add("ivsimplify", InductionVariableSimplification.Run)
     .Add("phicong", PhiCongruence.Run)
-    .Add("gvn", Gvn.Run)
+    .AddAnalyzed("gvn", Gvn.Run)
     // tiny intrinsic expansion is deliberately after GVN: one canonical memcpy/memset call is easier
     .Add("memopt", RedundantMemory.Run)
     .Add("dse", DeadStoreElim.Run)
@@ -320,7 +308,7 @@ public sealed class IrPassManager {
     // rectangular affine expression into a loop-local pointer root this first interchange slice quite
     // correctly refuses. Interchange therefore goes immediately before LICM.
     .Add("interchange", LoopInterchange.Run)
-    .Add("licm", Licm.Run)
+    .AddAnalyzed("licm", Licm.Run)
     // O0338 runs after LICM so invariant divisor calculations have already moved. Strict exact constants
     // need no target opinion; relaxed reciprocals consume the optional cost model and can then move the
     // shared runtime reciprocal behind a zero-trip guard for canonical loops.

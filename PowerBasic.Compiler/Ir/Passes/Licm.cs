@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -13,9 +15,20 @@ public static class Licm {
 
   /// <summary>Hoists loop-invariant computations to loop preheaders; returns how many were hoisted.</summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return Run(fn, new IrAnalysisManager(fn)).Changes;
+  }
+
+  /// <summary>Runs LICM using the shared dominator analysis.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
     if (fn.Entry is null)
-      return 0;
-    var dom = IrDominators.Build(fn)!;
+      return IrPassResult.Unchanged;
+
+    var dom = analyses.Get(IrAnalyses.Dominators)!;
     var loops = DetectLoops(fn, dom);
     var hoisted = 0;
     // innermost first, so a value can climb out of nested loops over repeated runs
@@ -25,7 +38,9 @@ public static class Licm {
         continue;
       hoisted += Hoist(loop.Body, preheader);
     }
-    return hoisted;
+    return hoisted == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreserving(hoisted, IrAnalyses.Dominators);
   }
 
   private readonly record struct Loop(IrBasicBlock Header, HashSet<IrBasicBlock> Body);

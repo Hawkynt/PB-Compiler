@@ -17,13 +17,26 @@ public static class Gvn {
 
   /// <summary>Eliminates redundant computations and unchanged loads; returns how many instructions were removed.</summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return Run(fn, new IrAnalysisManager(fn)).Changes;
+  }
+
+  /// <summary>Runs GVN using shared dominator and Memory SSA analyses.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
     if (fn.Entry is null)
-      return 0;
-    var dom = IrDominators.Build(fn)!;
+      return IrPassResult.Unchanged;
+
+    var dom = analyses.Get(IrAnalyses.Dominators)!;
     var children = DomChildren(fn, dom);
-    var ctx = new Context(IrMemorySsa.Build(fn));
+    var ctx = new Context(analyses.Get(IrAnalyses.MemorySsa));
     ctx.Visit(fn.Entry, children);
-    return ctx.Removed;
+    return ctx.Removed == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreserving(ctx.Removed, IrAnalyses.Dominators);
   }
 
   private static Dictionary<IrBasicBlock, List<IrBasicBlock>> DomChildren(IrFunction fn, IrDominators dom) {
