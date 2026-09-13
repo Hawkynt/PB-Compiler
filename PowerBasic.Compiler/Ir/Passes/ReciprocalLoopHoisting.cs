@@ -68,33 +68,38 @@ internal static class ReciprocalLoopHoisting {
   /// </para>
   /// </summary>
   internal static int? ProjectedDivisionCount(
-      IrFunction fn, IReadOnlyList<IrBinary> divisions, IrDominators dominators, IrLoopAnalysis loops) {
+      IrFunction fn, IReadOnlyList<IrBinary> divisions, IrDominators dominators,
+      IrLoopAnalysis loops, IrScalarEvolution scalarEvolution) {
     if (divisions.Count < 2)
       return null;
 
     var anchor = divisions[0];
     foreach (var naturalLoop in loops.Loops) {
       if (!TryGuardedLoop(naturalLoop, out var loop)
+          || !loop.BodyOnTrue
           || !IsGuardable(loop, dominators)
           || !IsHoistOrigin(anchor, loop, dominators))
         continue;
       if (divisions.Any(division => division.Parent is not { } block || !loop.Body.Contains(block)))
         continue;
 
-      // CountedLoop is the repository's shared exact-trip proof. It deliberately recognizes the canonical
-      // true-body/false-exit counted form; unknown-trip loops still hoist when already profitable statically,
-      // but they cannot use guessed iteration counts to overturn a target cost decision.
-      if (CountedLoop.Match(fn, loop.Header) is not { } counted
-          || !ReferenceEquals(counted.Preheader, loop.Preheader)
-          || !ReferenceEquals(counted.Exit, loop.Exit))
+      // Keep the historical CountedLoop profitability envelope while sourcing the proof from shared SCEV:
+      // true-body/false-exit, one canonical counter phi on the left, constant limit, one latch, positive trips.
+      if (loop.Test.Lhs is not IrPhi counter
+          || loop.Test.Rhs is not IrConstantInt
+          || scalarEvolution.RecurrenceFor(counter) is not { Loop: var recurrenceLoop }
+          || !ReferenceEquals(recurrenceLoop, naturalLoop)
+          || scalarEvolution.ExactTripCount(naturalLoop) is not > 0 and var trips
+          || naturalLoop.Latches.Count != 1)
         continue;
+      var latch = naturalLoop.Latches[0];
 
       // Every priced division must execute on every iteration. Dominating the unique latch is the CFG proof
       // of that fact; a division in one arm of an IF does not dominate the join/latch and is therefore excluded.
-      if (divisions.Any(division => division.Parent is not { } block || !dominators.Dominates(block, counted.Latch)))
+      if (divisions.Any(division => division.Parent is not { } block || !dominators.Dominates(block, latch)))
         continue;
 
-      var dynamicCount = counted.Trips * divisions.Count;
+      var dynamicCount = trips * divisions.Count;
       return dynamicCount >= int.MaxValue ? int.MaxValue : (int)dynamicCount;
     }
 
