@@ -32,7 +32,8 @@ public static class ReciprocalSequenceReuse {
 
     var dominators = analyses.Get(IrAnalyses.Dominators)!;
     var loops = analyses.Get(IrAnalyses.Loops);
-    changed += RewriteRelaxedGroups(fn, dominators, loops, costModel);
+    var scalarEvolution = analyses.Get(IrAnalyses.ScalarEvolution);
+    changed += RewriteRelaxedGroups(fn, dominators, loops, scalarEvolution, costModel);
     changed += ReciprocalLoopHoisting.Run(fn, analyses).Changes;
 
     return changed == 0
@@ -74,7 +75,8 @@ public static class ReciprocalSequenceReuse {
   }
 
   private static int RewriteRelaxedGroups(
-      IrFunction fn, IrDominators dominators, IrLoopAnalysis loops, IIrArithmeticCostModel? costModel) {
+      IrFunction fn, IrDominators dominators, IrLoopAnalysis loops,
+      IrScalarEvolution scalarEvolution, IIrArithmeticCostModel? costModel) {
     var groups = new List<List<IrBinary>>();
     foreach (var division in fn.AllInstructions.OfType<IrBinary>().Where(IsRelaxedDivision).ToList()) {
       var group = groups.FirstOrDefault(candidate => SameDivisor(candidate[0].Rhs, division.Rhs));
@@ -86,13 +88,13 @@ public static class ReciprocalSequenceReuse {
 
     var replaced = 0;
     foreach (var group in groups.Where(group => group.Count > 1))
-      replaced += RewriteRelaxedGroup(fn, group, dominators, loops, costModel);
+      replaced += RewriteRelaxedGroup(fn, group, dominators, loops, scalarEvolution, costModel);
     return replaced;
   }
 
   private static int RewriteRelaxedGroup(
       IrFunction fn, List<IrBinary> group, IrDominators dominators,
-      IrLoopAnalysis loops, IIrArithmeticCostModel? costModel) {
+      IrLoopAnalysis loops, IrScalarEvolution scalarEvolution, IIrArithmeticCostModel? costModel) {
     var remaining = group
       .Where(division => division.Parent is { } block && dominators.IsReachable(block))
       .ToList();
@@ -110,7 +112,7 @@ public static class ReciprocalSequenceReuse {
           && InstructionDominates(candidate, division, dominators)
           && IsCallFreeBetween(candidate, division)));
         if (sequence.Count <= (bestSequence?.Count ?? 1)
-            || !IsProfitable(fn, sequence, dominators, loops, costModel))
+            || !IsProfitable(fn, sequence, dominators, loops, scalarEvolution, costModel))
           continue;
         bestAnchor = candidate;
         bestSequence = sequence;
@@ -128,7 +130,8 @@ public static class ReciprocalSequenceReuse {
 
   private static bool IsProfitable(
       IrFunction fn, IReadOnlyList<IrBinary> sequence,
-      IrDominators dominators, IrLoopAnalysis loops, IIrArithmeticCostModel? costModel) {
+      IrDominators dominators, IrLoopAnalysis loops,
+      IrScalarEvolution scalarEvolution, IIrArithmeticCostModel? costModel) {
     if (costModel is null)
       return true;
 
@@ -141,7 +144,8 @@ public static class ReciprocalSequenceReuse {
     // A target may reject the static shape yet accept the same rewrite once a proven counted loop lets
     // guarded hoisting pay the reciprocal only once. ProjectedDivisionCount returns a value only when
     // every priced division executes every iteration and the generated reciprocal is itself hoistable.
-    return ReciprocalLoopHoisting.ProjectedDivisionCount(fn, sequence, dominators, loops) is { } dynamicCount
+    return ReciprocalLoopHoisting.ProjectedDivisionCount(
+        fn, sequence, dominators, loops, scalarEvolution) is { } dynamicCount
       && costModel.PreferReciprocalReuse(anchor.Type, dynamicCount);
   }
 
@@ -196,7 +200,7 @@ public static class ReciprocalSequenceReuse {
       return dominators.Dominates(firstBlock, secondBlock);
 
     var firstIndex = IndexOf(firstBlock.Instructions, first);
-    var secondIndex = IndexOf(firstBlock.Instructions, second);
+    var secondIndex = IndexOf(secondBlock.Instructions, second);
     return firstIndex >= 0 && firstIndex <= secondIndex;
   }
 
