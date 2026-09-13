@@ -195,6 +195,9 @@ public sealed partial class CodeGenerator {
   /// cell; the function is excluded from inlining and the register-parameter convention so its emitted
   /// stack ABI matches the call sites. Gated on the opt-in flag.
   /// </summary>
+  /// <summary>Why the module as a whole refused to lower, when it did - see <see cref="RouteMain"/>.</summary>
+  private string? _moduleLoweringDecline;
+
   private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc, bool ElideFrame)> BackendProcs() {
     if (this._backendProcs is not null)
       return this._backendProcs;
@@ -209,6 +212,7 @@ public sealed partial class CodeGenerator {
       return this._backendProcs;
 
     var module = IrLowering.TryLowerModule(model, this._unreachableDeferred, out var moduleDeclinedBecause);
+    this._moduleLoweringDecline = moduleDeclinedBecause;
     if (module is null) {
       // Every procedure in the program goes with it, and each is recorded rather than left out: a
       // whole-module lowering failure costs the same coverage as a procedure-by-procedure one, and
@@ -580,7 +584,13 @@ public sealed partial class CodeGenerator {
     if (this._isUnit)
       return this.DeclineMain("filter: a $COMPILE UNIT has no module body to own");
     if (this._backendModule is null)
-      return this.DeclineMain("lowering: the module did not lower to IR");
+      // Say WHY. This read "the module did not lower to IR" for as long as it existed, and the
+      // reason was sitting in a local one call away: TryLowerModule records the construct it refused
+      // on. Over the whole corpus that literal accounted for 3596 of the declines a trial deletion of
+      // the direct emitter turned up - a single unhelpful string standing in for every real cause,
+      // which is why the list looked like one enormous problem instead of a handful of named ones.
+      return this.DeclineMain("lowering: "
+        + (this._moduleLoweringDecline ?? "the module did not lower to IR"));
     if (this._backendModule.FindFunction("main") is not { IsDeclaration: false } main)
       return this.DeclineMain("lowering: the IR module has no main");
     if (CalleeNames(main).FirstOrDefault(name =>

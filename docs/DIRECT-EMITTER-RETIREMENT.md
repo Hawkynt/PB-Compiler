@@ -343,11 +343,37 @@ is what put a deletion in front of 1193 failures. A survey that covers a subset 
 is the same defect as a fixture that scans a whole image for a marker every epilogue carries: the
 number is real, and it answers a different question than the one being asked.
 
-So the honest state of gate 1: over the differential corpus the routing declines nothing, and over
-the whole corpus it declines six named things. Procedure pointers, `OUT`, byte zero-extension casts
-and inline-asm name binding are each a bounded piece of work. The 3596 module-level declines are one
-question rather than 3596 - a module that does not lower takes every procedure in it with it - and
-finding out which construct is behind them is the next measurement, not the next guess.
+The 3596 turned out to be a REPORTING defect rather than 3596 problems. `RouteMain` answered every
+module-level decline with the literal string *"lowering: the module did not lower to IR"* while the
+actual reason sat in a local one call away - `TryLowerModule` records the construct it refused on.
+That is fixed, and with it the list stops being one enormous unknown.
+
+Measured again afterwards, in two scopes:
+
+- **`tests/**` : 346 of 348 programs route completely**, the two exceptions being a callee with no
+  link symbol. The routing is in better shape here than the raw decline count suggested.
+- **The SVGA corpus** - the real-world body `CorpusCompileTests` builds - is where the work is, and
+  it is a ranked list rather than a wall:
+
+| count | gap |
+|---|---|
+| **448** | `selection: cast: ZExt u8 -> i16` (339), `-> i32` (94), `-> u16` (15) |
+| 46 | `lowering: unsupported statement: OUT` |
+| 37 | `selection: 32-bit binary: Shl` with a non-constant count |
+| 20 | `allocation: a value used as a memory base or index is live across a full-register op` |
+| 34 | `lowering: intrinsic STRPTR` (19), `CODEPTR` (12), `CODEPTR32` (3) |
+| ~16 | `routing: global '.dyn.g.<name>' has no cell the emitter can address` |
+| ~16 | `selection: call: rt_str_* takes a 32-bit value in a word register` |
+| 14 | `lowering: unsupported member access` |
+| 12 | `allocation: inline asm: AX/DI set by one ! statement and read by a later one` |
+| 11 | `lowering: unsupported statement: CallPtrStmt` |
+| 11 | `lowering: unsupported lvalue` |
+
+**Byte zero-extension is nearly half of everything.** `SelectCast` handles `ZExt` from bool to word,
+from word to dword and from either to qword, and has no case for a BYTE source - so `u8 -> i16`
+declines 339 times over one corpus. On an 8086 it is `XOR dest,dest` plus a move into the low half,
+or `MOVZX` from a 386; the same extension already exists in `SelectRet`, written for the BYTE result
+ABI. One selector case is the largest single step left toward deletion.
 
 **What the attempt did establish**, and what makes the eventual deletion mechanical rather than
 exploratory:
