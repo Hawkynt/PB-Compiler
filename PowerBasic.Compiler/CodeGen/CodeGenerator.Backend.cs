@@ -1133,6 +1133,44 @@ public sealed partial class CodeGenerator {
     return null;
   }
 
+  /// <summary>
+  /// Every procedure a body the x86-16 back end compiles still CALLS, by name - main included.
+  ///
+  /// <para>
+  /// Dead-procedure elimination walks the bound AST; the routed path emits from the IR, which the
+  /// middle end has since inlined, cloned and specialized. The two can disagree about a real call,
+  /// and when they do the AST is the one that is wrong: it decides a body is unreachable, nobody
+  /// emits it, and the link stops on a label nothing bound. <c>VGA.BAS</c> in the SVGA corpus is
+  /// the shape - routed main inlines <c>ClrScr</c> and then <c>Vga_ClearScreen</c>, and what is left
+  /// standing in main is a real <c>CALL</c> to a pure-assembly SUB that no AST edge from main
+  /// reaches any more.
+  /// </para>
+  /// </summary>
+  /// <param name="isEmitted">
+  /// Whether a procedure will actually be emitted - the caller's own emission condition, passed in
+  /// rather than re-derived. Routing is decided for dead procedures too, so asking every routed body
+  /// would resurrect whole trees reachability was right to drop, and asking only the LIVE ones misses
+  /// a body kept for a different reason: a procedure a linked object could call by name is emitted
+  /// whether or not this program reaches it.
+  /// </param>
+  private IEnumerable<string> BackendCalleeNames(Func<Semantics.ProcedureSymbol, bool> isEmitted) {
+    foreach (var proc in this.BackendProcs().Keys)
+      if (isEmitted(proc) && this._backendModule?.FindFunction(proc.Name) is { IsDeclaration: false } fn)
+        foreach (var name in CalleeNames(fn))
+          yield return name;
+    if (this.BackendMain() is not null && this._backendModule?.FindFunction("main") is { IsDeclaration: false } main)
+      foreach (var name in CalleeNames(main))
+        yield return name;
+    // A GENERATED definition is emitted outside ProcedureList and calls like any other body. Missing
+    // them is what left VGA.BAS stranded even after the source procedures were accounted for: the one
+    // thing emitted there is an O0069 shape clone of ClrScr, with Vga_ClearScreen inlined into it and
+    // the pure-assembly SUB that inlining left behind still called.
+    foreach (var name in this.BackendGeneratedNames.Concat(this.BackendSemanticMergeNames))
+      if (this._backendModule?.FindFunction(name) is { IsDeclaration: false } generated)
+        foreach (var callee in CalleeNames(generated))
+          yield return callee;
+  }
+
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>
   private static IEnumerable<string> CalleeNames(IrFunction fn)
     => fn.Blocks.SelectMany(b => b.Instructions)

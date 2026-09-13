@@ -444,6 +444,44 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
+  /// A <c>BYREF</c> parameter written AFTER an inline-asm block. The pointer arrives live at entry and
+  /// is a memory base, which cannot spill, so it has to be reloaded from its own incoming cell at the
+  /// use - and the spiller does exactly that. What stopped it was the reload it inserted claiming the
+  /// whole register file: the scan for a pending call's argument staging collects clobber lists
+  /// backwards, and an asm block declares every register, so walking past one reported all six as
+  /// already filled. This is <c>Vga_GetPixel</c> in the SVGA corpus, reduced.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAByRefResultWrittenAfterAnAsmBlock_ThenTheProcedureRoutes() {
+    const string source = """
+      DECLARE SUB GetPix(x_a AS WORD, y_a AS WORD, resultVal AS BYTE)
+      DIM r AS BYTE
+      CALL GetPix(10, 20, r)
+      PRINT r
+
+      SUB GetPix(x_a AS WORD, y_a AS WORD, resultVal AS BYTE)
+        DIM x AS WORD, y AS WORD, PixelValue AS BYTE
+        x = x_a : y = y_a
+        ! MOV BX, y
+        ! MOV CX, x
+        ! ADD BX, CX
+        ! MOV PixelValue, BL
+        resultVal = PixelValue
+      END SUB
+      """;
+
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+    cg.EmitExecutable();
+
+    Assert.That(cg.BackendRoutedNames, Does.Contain("GetPix").IgnoreCase,
+      "the reload of the BYREF pointer must not claim the registers the asm block declares");
+    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    Assert.That(Run(source, routed: true), Is.EqualTo("30"), "10 + 20, read back through the pointer");
+  }
+
+  /// <summary>
   /// <c>! MOV AL, 4</c> makes a promise about <c>AL</c> and about nothing else. Tracking both halves
   /// as <c>AX</c> - one resource, which is true of ALLOCATION and false of the text - turned the
   /// following <c>! MOV DX, AL</c> into a word-wide claim that reached back past the BASIC statement

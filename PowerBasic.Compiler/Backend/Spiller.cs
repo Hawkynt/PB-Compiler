@@ -445,18 +445,45 @@ internal static class Spiller {
   /// bytes into a segment made out of a frame offset, and the read-back printed the zeroes the frame
   /// prologue had left. Every instruction was defensible on its own.
   /// </para>
+  /// <para>
+  /// <b>A clobber list is not by itself evidence of staging</b>, and reading it as one is what declined
+  /// <c>Vga_GetPixel</c> in the SVGA corpus. An inline-asm block declares the whole register file, so a
+  /// backward walk that only stopped at a <c>CALL</c> went straight through one and reported all six
+  /// registers as filled - which every instruction the spiller then inserted below the block claimed,
+  /// leaving nothing for the <c>BYREF</c> pointer the body writes its result through. The staging run
+  /// is bounded at both ends instead: there has to be a pending <c>CALL</c> ahead for anything to be
+  /// staged FOR, and the walk back stops at the first instruction that is not a staging move.
+  /// </para>
   /// </summary>
   private static IReadOnlyList<Asm.Reg> StagingFilledAt(MBlock block, int index) {
+    if (!IsStagingForACall(block, index))
+      return [];
+
     var filled = new List<Asm.Reg>();
     for (var j = index - 1; j >= 0; --j) {
       var instruction = block.Instructions[j];
-      if (instruction.Opcode == MOpcode.Call)
-        break;                                   // past the previous call: nothing is staged yet
+      if (instruction.Opcode is MOpcode.Call or MOpcode.InlineAsm)
+        break;                                   // past the previous call, or out of the staging run
       foreach (var register in instruction.Clobbers)
         if (!filled.Contains(register))
           filled.Add(register);
     }
     return filled;
+  }
+
+  /// <summary>
+  /// Whether a <c>CALL</c> is still ahead in this block with nothing but staging between - the
+  /// condition for there being a pending call whose arguments anything here could be filling.
+  /// </summary>
+  private static bool IsStagingForACall(MBlock block, int index) {
+    for (var j = index; j < block.Instructions.Count; ++j)
+      switch (block.Instructions[j].Opcode) {
+        case MOpcode.Call:
+          return true;
+        case MOpcode.InlineAsm:
+          return false;                          // hand-written assembly is nobody's argument staging
+      }
+    return false;
   }
 
   /// <summary>The instruction's own clobbers plus whatever staging is pending where it is being placed.</summary>

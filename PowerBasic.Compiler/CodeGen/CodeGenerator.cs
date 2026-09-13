@@ -1086,6 +1086,25 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       foreach (var proc in inlinedAway)
         liveProcs.Remove(proc);
     }
+    // The reachability above is an AST walk, and the routed path emits from the IR - inlined, cloned
+    // and specialized since. A procedure the routed code still CALLS keeps its body whatever that walk
+    // concluded: the alternative is a link that stops on a label nothing bound, with no diagnostic to
+    // work from. See BackendCalleeNames for the corpus shape that does it.
+    //
+    // It CLOSES over the live set rather than seeding from every routed body, because routing is
+    // decided for dead procedures too: taking their callees as live would resurrect whole trees the
+    // walk was right to drop. The condition asked is the emission condition on the next line, so the
+    // two cannot drift apart.
+    if (liveProcs != null)
+      for (var changed = true; changed;) {
+        changed = false;
+        var routedCallees = this
+          .BackendCalleeNames(p => liveProcs.Contains(p) || !this.IsFullyOwned(p))
+          .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var proc in model.ProcedureList)
+          if (routedCallees.Contains(proc.Name) && liveProcs.Add(proc))
+            changed = true;
+      }
     foreach (var proc in model.ProcedureList)
       if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc))) {
         if (this.IsBackendRouted(proc))
