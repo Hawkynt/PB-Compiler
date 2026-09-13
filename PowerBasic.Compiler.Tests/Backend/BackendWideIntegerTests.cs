@@ -176,8 +176,22 @@ public sealed class BackendWideIntegerTests {
     Assert.That(Opcodes(m), Does.Contain(MOpcode.Rcl), "the high word receives carry from the low word");
   }
 
+  /// <summary>
+  /// A count outside 1..31 keeps SOURCE-level semantics rather than the CPU's masked one: shifting a
+  /// 32-bit value by 32 answers zero, where a 386's SHL would mask the count to five bits and answer
+  /// the value unchanged.
+  ///
+  /// <para>
+  /// A count of 32 used to reach that by DECLINING, and this case was written as <c>selects: false</c>.
+  /// It reaches it by answering correctly now - the runtime's per-bit loop, which is also what the
+  /// direct emitter does for such a count - so the claim is unchanged and the way of meeting it is
+  /// better. What must still never appear is the masked dword shift, which is what the second
+  /// assertion has always been about and is why it is worded around the ENCODING rather than around
+  /// whether selection happened.
+  /// </para>
+  /// </summary>
   [TestCase(0, true)]
-  [TestCase(32, false)]
+  [TestCase(32, true)]
   public void Select_Given386CountOutsideNativeRange_ThenDoesNotUseAMaskedDwordShift(int count, bool selects) {
     var fn = WideFunction((b, slot) => {
       var value = b.Load(IrType.I32, slot);

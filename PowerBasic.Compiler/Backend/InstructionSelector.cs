@@ -1429,11 +1429,16 @@ public sealed partial class InstructionSelector {
     // DWORD (CODEPTR32) or taken apart again.
     if (WideShiftCount(bin.Rhs) is 16 && opcode is MOpcode.Shl or MOpcode.Shr)
       return this.SelectWideWordSwap(bin, opcode == MOpcode.Shl);
-    // A count the selector cannot read is the runtime's loop rather than a decline. Writing the
-    // steps out needs the count at compile time; a variable one needs a LOOP, which is blocks rather
-    // than a straight line, so it is a call - the same shape the direct emitter's own per-bit walk
-    // over the word chain takes. It was 37 declines over the SVGA corpus, each taking a module body.
-    if (WideShiftCount(bin.Rhs) is null && opcode is MOpcode.Shl or MOpcode.Shr)
+    // Anything the unrolled steps below will not take goes to the runtime's loop: a count the
+    // selector cannot read at all, and equally a constant one too LARGE to write out. Both were
+    // declines, and the second is the one that stayed after the first was fixed - a shift by 10 or
+    // by 24 is a perfectly ordinary thing to write and was worth 37 module bodies over the SVGA
+    // corpus on its own.
+    //
+    // The loop is also what the direct emitter does for these, so the two paths agree on a count of
+    // 32 or more: every bit shifts out and the answer is zero, rather than the 386's masked count.
+    if (opcode is MOpcode.Shl or MOpcode.Shr
+        && WideShiftCount(bin.Rhs) is not (>= 0 and <= 8) and not 16)
       return this.SelectWideShiftByVariable(bin, opcode == MOpcode.Shl);
     if (WideShiftCount(bin.Rhs) is not { } count || count is < 0 or > 8)
       return this.Decline($"32-bit binary: {bin.Op} (only a small constant count, not {bin.Rhs})");
