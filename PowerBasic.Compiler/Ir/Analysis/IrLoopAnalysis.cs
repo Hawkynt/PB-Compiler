@@ -130,9 +130,10 @@ public sealed class IrLoopAnalysis {
         }
       }
 
-    var order = dominators.ReversePostorder
-      .Select((block, index) => (block, index))
-      .ToDictionary(pair => pair.block, pair => pair.index, ReferenceEqualityComparer.Instance);
+    var order = new Dictionary<IrBasicBlock, int>(ReferenceEqualityComparer.Instance);
+    for (var index = 0; index < dominators.ReversePostorder.Count; ++index)
+      order[dominators.ReversePostorder[index]] = index;
+
     var loops = byHeader
       .Select(pair => new Loop(pair.Key, pair.Value))
       .OrderBy(loop => order[loop.Header])
