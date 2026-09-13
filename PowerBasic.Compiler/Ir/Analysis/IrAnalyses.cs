@@ -7,6 +7,11 @@ public static class IrAnalyses {
   public static IrAnalysisKey<IrDominators?> Dominators { get; } =
     new("dominators", static (function, _) => IrDominators.Build(function));
 
+  /// <summary>Natural-loop forest derived from the function CFG and dominators.</summary>
+  public static IrAnalysisKey<IrLoopAnalysis> Loops { get; } =
+    new("loops", static (function, analyses) =>
+      IrLoopAnalysis.Build(function, analyses.Get(Dominators)));
+
   /// <summary>SSA overlay for memory definitions, uses and merge points.</summary>
   public static IrAnalysisKey<IrMemorySsa> MemorySsa { get; } =
     new("memory-ssa", static (function, analyses) =>
