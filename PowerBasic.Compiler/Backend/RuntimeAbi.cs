@@ -393,6 +393,9 @@ internal static class RuntimeAbi {
     // ResultKind.WidenedWord for why, and why the CWD is not optional
     ["rt_str_len"] = new("rt_len", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    // "StrPtr: AX=raw string handle -> AX=data offset in the string heap". The offset alone: the
+    // SEGMENT is rt_strseg, which STRSEG answers separately and STRPTR32 pairs with this.
+    ["rt_str_ptr"] = new("rt_strptr", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     // O0297's descriptor query is the same word result without consuming the stable handle.
     ["rt_str_len_borrow"] = new("rt_len_borrow", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),

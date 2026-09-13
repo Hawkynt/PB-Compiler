@@ -4132,6 +4132,15 @@ public sealed partial class IrLowering {
     if (name.Equals("CODESEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
+    // STRPTR: the offset of a string's CHARACTERS in the heap, which is what rt_strptr answers from
+    // the handle. Its segment is rt_strseg, which STRSEG gives separately - the pair is how a program
+    // reaches the bytes without the runtime copying them. Declining it cost 19 module bodies.
+    if (name.Equals("STRPTR", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1
+        && this._model.TypeOf(call.Arguments[0]) is StringType or FlexType)
+      return this.Coerce(
+        this._b.Call(IrType.I16, this.RuntimeFn("rt_str_ptr", IrType.I16, IrType.Ptr),
+          this.LowerStringExpr(call.Arguments[0])),
+        PbType.Word, this._model.TypeOf(call));
     if (name.Equals("STRSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Load(IrType.I16, this.RuntimeCell("rt_strseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
