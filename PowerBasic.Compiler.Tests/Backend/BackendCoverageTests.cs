@@ -326,6 +326,12 @@ public sealed class BackendCoverageTests {
     Assume.That(census.ProgramsTotal, Is.GreaterThan(0), "no tests/*.BAS corpus present");
 
     var report = new StringBuilder()
+      // Say the scope in the report itself. Every number below is true of tests/diff and of nothing
+      // wider, and "330/330 functions routed" read as a statement about the LANGUAGE is what sent a
+      // deletion of the direct emitter into 1193 failures: over everything the suite compiles, the
+      // routing still declines procedure pointers, OUT, byte zero-extension casts and inline-asm
+      // name binding. A census that surveys a subset and prints a total invites exactly that.
+      .AppendLine("scope              : tests/diff only - NOT every program the suite compiles")
       .AppendLine($"programs           : {census.ProgramsLowered.Count}/{census.ProgramsTotal} lowered to IR")
       // the denominator above is every .BAS on disk, which is not the same as every program the back
       // end could ever be asked for: one the FRONT end rejects never reaches a lowering to decline.

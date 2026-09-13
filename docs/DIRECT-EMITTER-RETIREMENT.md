@@ -313,39 +313,82 @@ segment has to be `DYNAMIC`, and we accepted the static spelling. `DIFF125` and 
 pair. Neither exercises an access AFTER the `ERASE`: genuine terminates the program there rather
 than answering, so there is nothing to diff, and no emitter reproduces it.
 
-### What deleting `CodeGen/` actually costs, measured
+### What deleting `CodeGen/` actually costs, measured by deleting it
 
-Deleting the seven pure-emission files (`Expressions`, `Places`, `Intrinsics`, `Arrays`, `Io`,
-`Graphics`, `LowLevel`) and building reports **710 errors** - which sounds like deep entanglement and
-is not. Sorted by who raises them:
+The deletion was carried out, the whole solution built clean, and `pbc` produced a working hello
+world. Then the suite ran: **1193 failures of 6496.** The removal is reverted, and what it measured
+is the point.
 
-| raised in | count | what it is |
-|---|---|---|
-| `CodeGenerator.cs` | 396 | driver and direct emission in one file; **350 of them at or after `EmitStatement`** |
-| `CodeGenerator.Optimize.cs` | 134 | the direct emitter's tier-2 passes |
-| `CodeGenerator.Procs.cs` | 80 | direct emission plus the SHARED `LayoutFrame`/`SlotOf` |
-| `Vendor` / `Extras` / `InlineAsm` / `Search` / `OnGoto` | 46 | direct emission |
-| **`Backend.cs`, `Units.cs`, `Data.cs`** | **10** | **the routed path's real dependency** |
+Two symptoms, one cause. `Label p_Demo was referenced but never bound` - a procedure that does not
+route is now never emitted, so its call site dangles - and, downstream of that, programs executing
+into their own data (`unimplemented opcode 3F`). With the fallback gone, a decline is not a quiet
+handover; it is a program with a hole in it.
 
-That last row is the whole boundary. Everything the routed path still needs from the direct
-emitter is **four symbols**: `TryDirectCell`, `ContainsErrorHandling`, `EmitStoreReadValue` and
-`EmitFarThunks`. Every other error is direct-emitter code referring to direct-emitter code, and
-disappears when the rest goes.
+The decline reasons are the work list, and this is the first time they have been enumerated over
+**everything the tests compile** rather than over `tests/diff`:
 
-So the deletion is bounded, and the shape of it is known:
+| reason | count |
+|---|---|
+| `lowering: the module did not lower to IR` | 3596 |
+| `selection: inline asm: a name in it is not a variable this pass could bind` | 200 |
+| `lowering: unsupported type for IR lowering: ProcPtrType` | 20 |
+| `selection: cast: ZExt u8 -> i32` / `-> i16` | 10 |
+| `lowering: unsupported statement: OUT` | 4 |
+| `selection: operand: IrCast has no register` | 3 |
 
-1. move those four (and their own dependencies) into a kept file;
-2. split `CodeGenerator.cs` - keep `EmitExecutable`, frame layout, runtime/entry and linking; drop
-   `EmitStatement` and the ~2700 lines after it, plus the ~46 earlier fold/peephole helpers;
-3. delete `Optimize`, `Vendor`, `Extras`, `Search`, `OnGoto` and the direct half of `Procs`;
-4. delete the fixtures pinned to the direct emitter - they test removed code - after moving any
-   claim that is portable onto the routed path;
-5. remove `UseExperimentalBackend`, `RequireBackend`, `PBC_X_BACKEND`, `--x-backend`,
-   `--no-x-backend` and the split-routing guards, which exist only for mixed images.
+**The census was not wrong; it was narrower than it read.** `BackendCoverageTests` reports
+"330/330 functions routed, 177/177 module bodies owned" and every one of those numbers is true - of
+`tests/diff`. Read as a statement about the language it is not, and acting on it as though it were
+is what put a deletion in front of 1193 failures. A survey that covers a subset and reports a total
+is the same defect as a fixture that scans a whole image for a marker every epilogue carries: the
+number is real, and it answers a different question than the one being asked.
 
-Step 2 is the only one needing judgement rather than mechanism, and it is where a half-finished cut
-leaves a compiler that does not build. It wants its own session, not the tail of one.
+The 3596 turned out to be a REPORTING defect rather than 3596 problems. `RouteMain` answered every
+module-level decline with the literal string *"lowering: the module did not lower to IR"* while the
+actual reason sat in a local one call away - `TryLowerModule` records the construct it refused on.
+That is fixed, and with it the list stops being one enormous unknown.
 
+Measured again afterwards, in two scopes:
+
+- **`tests/**` : 346 of 348 programs route completely**, the two exceptions being a callee with no
+  link symbol. The routing is in better shape here than the raw decline count suggested.
+- **The SVGA corpus** - the real-world body `CorpusCompileTests` builds - is where the work is, and
+  it is a ranked list rather than a wall:
+
+| count | gap |
+|---|---|
+| **448** | `selection: cast: ZExt u8 -> i16` (339), `-> i32` (94), `-> u16` (15) |
+| 46 | `lowering: unsupported statement: OUT` |
+| 37 | `selection: 32-bit binary: Shl` with a non-constant count |
+| 20 | `allocation: a value used as a memory base or index is live across a full-register op` |
+| 34 | `lowering: intrinsic STRPTR` (19), `CODEPTR` (12), `CODEPTR32` (3) |
+| ~16 | `routing: global '.dyn.g.<name>' has no cell the emitter can address` |
+| ~16 | `selection: call: rt_str_* takes a 32-bit value in a word register` |
+| 14 | `lowering: unsupported member access` |
+| 12 | `allocation: inline asm: AX/DI set by one ! statement and read by a later one` |
+| 11 | `lowering: unsupported statement: CallPtrStmt` |
+| 11 | `lowering: unsupported lvalue` |
+
+**Byte zero-extension is nearly half of everything.** `SelectCast` handles `ZExt` from bool to word,
+from word to dword and from either to qword, and has no case for a BYTE source - so `u8 -> i16`
+declines 339 times over one corpus. On an 8086 it is `XOR dest,dest` plus a move into the low half,
+or `MOVZX` from a 386; the same extension already exists in `SelectRet`, written for the BYTE result
+ABI. One selector case is the largest single step left toward deletion.
+
+**What the attempt did establish**, and what makes the eventual deletion mechanical rather than
+exploratory:
+
+- The routed path needs **four symbols** from the direct emitter - `TryDirectCell`,
+  `ContainsErrorHandling`, `EmitStoreReadValue`, `EmitFarThunks` - plus `EmitDataArea`, which is the
+  image's own layout (runtime constants, the DATA pool, literal and constant pools, variable slots)
+  and belongs to neither emitter.
+- Twelve pure-emission files delete outright. `CodeGenerator.cs` goes from 4458 lines to ~1200; what
+  remains is the driver - `EmitExecutable`, `EmitUnit`, `DescribeImage`, frame layout, linking.
+- `EmitFarThunks` goes with it: only direct emission ever populated `_farThunks`.
+- The O6 "inlined at every call site, so purge it" pass goes too - its predicate already read
+  `!IsBackendRouted(p)`, so with everything routing it selected nothing.
+- ISA emulation for inline assembly does NOT go, and must not: it is reached through a callback now
+  and is shared infrastructure rather than direct-emitter code.
 ## Reference architecture
 
 This split follows the same layering used by LLVM's code-generation pipeline: target-independent IR optimization is followed by target machine lowering, scheduling, target-specific machine optimizations and register allocation. x87 stack handling and ABI mechanics therefore belong in the x86 backend rather than in a target-neutral source emitter.
