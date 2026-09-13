@@ -21,11 +21,50 @@ All gates below must be green in both optimized and `--no-optimize` modes before
 
 Every source body accepted by the DOS compiler must either lower and select through the IR path or produce the same front-end diagnostic it produced before. `BackendDeclines` must be empty for every non-external body in the declarative routing gate and in the corpus.
 
-The remaining pinned blocker is:
-
-- `ERASE` of an **ABSOLUTE** array — unmapping memory the program does not own has no routed meaning yet, and the lowering refuses rather than inventing one; the direct emitter simply clears the descriptor word;
-
 A row leaves this list only when a focused routing test also executes the routed image and proves observable equivalence.
+
+### How to measure it, and what it says today
+
+There is no test that answers the gate — `MandatoryRoutingTests` asks it of `tests/diff` only, and the corpus tally is a shell loop nobody runs by accident. Both are needed, and they say different things:
+
+```bash
+# the corpus: real programs, with no fallback available
+for f in ../PB-SvgaLibrary/tests/*.BAS; do
+  PBC_X_BACKEND_STRICT=1 dotnet run --project pbc -c Release -- \
+    --dialect pb36 -I ../PB-SvgaLibrary "$f" -o /tmp/probe.EXE
+done
+
+# the language: the compiler's own suite, likewise
+PBC_X_BACKEND_STRICT=1 dotnet test PowerBasic.Compiler.Tests -c Release --filter "Category!=Performance"
+```
+
+**The corpus is down to four declines** (`Timer_InterruptHandler`, `Timer_InterruptHandler8086`, `Scroll_HardwareVertical`, `CheckWidth`), from 127. **The suite is at 337 failing tests over 67 distinct constructs**, and that gap is the honest size of gate 1: the corpus exercises the graphics subset of the language, and the suite exercises all of it.
+
+Read the two together before estimating. A corpus row is usually one procedure counted once per suite that includes it, and the `.dyn.g.*` "no addressable cell" rows are **cascade** — `SharedDynArrayUsersRouteTogether` hands a shared dynamic array's descriptor back to the direct emitter the moment one user of it is not routed, so a single procedure that cannot lower denies the routed side every array its file touches. One GIF header field was holding nine procedures.
+
+The suite's list, largest first — it is a long tail of unimplemented language surface rather than one blocker:
+
+| tests | first decline |
+|---:|---|
+| 89 | `selection: inline asm: a name in it is not a variable this pass could bind` (the `InlineAsmVirtualization` families: BMI, POPCNT, SSE) |
+| 56 | `lowering: unsupported statement: SCREEN` |
+| 12 | `lowering: unsupported type for IR lowering: ProcPtrType` |
+| 12 | `lowering: string intrinsic REMOVE$` |
+| 10 | `lowering: unsupported expression: IfExpr` |
+| 10 | `lowering: intrinsic ROUND` |
+| 9 | `lowering: intrinsic CEIL` |
+| 8 | `lowering: string intrinsic MIN$` |
+| 8 | `lowering: unsupported statement: TryStmt` |
+| 7 | `lowering: string intrinsic ENVIRON$` |
+| 7 | `lowering: intrinsic SCREEN with 2 arguments` |
+| 6 | `lowering: unsupported statement: ENVIRON`, `intrinsic FILEATTR with 2 arguments`, `metastatement $ISA` |
+| 5 | `lowering: unsupported statement: PCOPY`, `intrinsic ROUND with 2 arguments` |
+| 4 | `MKDIR`, `InterpolatedStringExpr`, `unsupported binary op ShiftLeft`, `selection: operand: IrCast has no register` |
+| 3 | `BSAVE`, `FRAC`, `PLAY`, `DIM Stack array class`, `selection: cast: SExt i8 -> i16` |
+| 2 | `CallPtrStmt`, `MAX$`, `WideIntType`, delegate parameter/return types, far pointer BYREF to a near parameter, an `!` block writing `BP`/`SP` |
+| 1 each | `BLOAD`, `RMDIR`, `LPOS`, and eleven more |
+
+Nothing on that list is known to be impossible; every one of them is a construct the lowering has no case for yet. The two `allocation:` rows and the `selection: operand:` rows are the exceptions worth reading first, because those are back-end limits rather than missing surface.
 
 Closed so far:
 
