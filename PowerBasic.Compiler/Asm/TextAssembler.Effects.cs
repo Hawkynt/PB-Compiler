@@ -317,14 +317,17 @@ public sealed partial class TextAssembler {
           this._reads.Add(word);
       }
 
-      /// <summary>Records a write: a definition always, and a kill only when the whole register goes.</summary>
+      /// <summary>
+      /// Records a write: a definition and a kill of exactly what the operand NAMES. <c>MOV AL, 4</c>
+      /// kills <c>AL</c> - the whole of the half it writes - and leaves <c>AH</c> and the word alone,
+      /// which <see cref="AsmRegisterEffect.Covers"/> is what expresses.
+      /// </summary>
       public void Define(Reg register) {
-        if (Tracked(register) is not { } word)
+        if (Tracked(register) is not { } tracked)
           return;
 
-        this._defines.Add(word);
-        if (!register.IsByte())
-          this._kills.Add(word);
+        this._defines.Add(tracked);
+        this._kills.Add(tracked);
       }
 
       /// <summary>
@@ -377,15 +380,15 @@ public sealed partial class TextAssembler {
       }
 
       /// <summary>
-      /// The word register a name contends for, or null for a class this back end never allocates.
-      /// <c>AH</c>, <c>AL</c> and <c>EAX</c> are all <c>AX</c> - one resource under three spellings -
-      /// while a segment, x87, MMX or SSE register is none of the allocator's business.
+      /// The name this back end tracks, or null for a class it never allocates. A 32-bit spelling
+      /// folds to its word - <c>EAX</c> is <c>AX</c>, one resource under two names - but <c>AL</c> and
+      /// <c>AH</c> stay apart, because a statement that writes one says nothing about the other and
+      /// merging them invented promises neither half made. A segment, x87, MMX or SSE register is none
+      /// of the allocator's business.
       /// </summary>
       private static Reg? Tracked(Reg register) {
-        if (register.IsWord())
+        if (register.IsWord() || register.IsByte())
           return register;
-        if (register.IsByte())
-          return (Reg)(0x10 | (register.Index() & 0x03));
         if (register.IsDword())
           return (Reg)(0x10 | register.Index());
         return null;

@@ -26,11 +26,17 @@ namespace PowerBasic.Compiler.Asm;
 /// </list>
 ///
 /// <para>
-/// Everything is canonicalized to the word registers the allocator hands out: <c>AH</c> and
-/// <c>EAX</c> are both <c>AX</c>, because that is the resource being contended for. Segment, x87,
-/// MMX and SSE registers are not tracked at all - none of them is allocated here, and the direct
-/// emitter reloads <c>ES</c> in front of a far access exactly as this back end does, so neither path
-/// promises a segment register survives a BASIC statement.
+/// A 32-bit name is canonicalized to its word - <c>EAX</c> is <c>AX</c>, because that is the resource
+/// being contended for - but the two BYTE halves are kept apart, and that distinction is the whole
+/// difference between a promise and an artefact. <c>! MOV AL, 4</c> followed by <c>! OUT DX, AL</c>
+/// makes no claim on <c>AH</c> and none on anything before it; canonicalized to <c>AX</c> it read as a
+/// word-wide promise that a BASIC statement earlier in the body then "broke", which declined the
+/// function. <see cref="Covers"/> and <see cref="Overlaps"/> are how the flow relates the three names.
+/// </para>
+/// <para>
+/// Segment, x87, MMX and SSE registers are not tracked at all - none of them is allocated here, and
+/// the direct emitter reloads <c>ES</c> in front of a far access exactly as this back end does, so
+/// neither path promises a segment register survives a BASIC statement.
 /// </para>
 /// </summary>
 /// <param name="Reads">word registers the statement may read</param>
@@ -75,6 +81,28 @@ public sealed record AsmRegisterEffect(
   /// </para>
   /// </summary>
   public int? StackDelta { get; init; }
+
+  /// <summary>
+  /// The word register a tracked name contends for: <c>AL</c>, <c>AH</c> and <c>AX</c> all answer
+  /// <c>AX</c>, and anything that is not a byte half answers itself - the flags pseudo-register
+  /// included, which is why this is safe to map the whole held set through.
+  /// </summary>
+  public static Reg WordOf(Reg register) => register.IsByte() ? (Reg)(0x10 | (register.Index() & 0x03)) : register;
+
+  /// <summary>
+  /// Whether writing <paramref name="write"/> overwrites the WHOLE of <paramref name="value"/>, which
+  /// is what ends an earlier statement's claim on it. <c>AX</c> covers <c>AL</c>; <c>AL</c> does not
+  /// cover <c>AX</c>, and it does not touch <c>AH</c> at all.
+  /// </summary>
+  public static bool Covers(Reg write, Reg value)
+    => write == value || (!write.IsByte() && WordOf(value) == write);
+
+  /// <summary>
+  /// Whether the two name a byte in common - the question a DESTROYER asks of a value somebody is
+  /// still holding. <c>AL</c> and <c>AH</c> share a word and overlap in nothing.
+  /// </summary>
+  public static bool Overlaps(Reg a, Reg b)
+    => WordOf(a) == WordOf(b) && (a == b || !a.IsByte() || !b.IsByte());
 
   /// <summary>The allocatable integer file - <c>BP</c>/<c>SP</c> are the frame and belong to nobody's text.</summary>
   public static IReadOnlySet<Reg> GeneralRegisters { get; } =
