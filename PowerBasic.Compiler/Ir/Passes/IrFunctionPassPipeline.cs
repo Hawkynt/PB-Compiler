@@ -42,9 +42,7 @@ public sealed class IrFunctionPassPipeline {
   /// <summary>Runs the pipeline to a bounded fixed point while retaining analyses that passes explicitly preserve.</summary>
   public int RunToFixpoint(IrFunction function, int maxIterations = 16) {
     ArgumentNullException.ThrowIfNull(function);
-    if (maxIterations <= 0)
-      throw new ArgumentOutOfRangeException(nameof(maxIterations));
-    if (function.HasErrorHandler || function.HasInlineAsm)
+    if (maxIterations <= 0 || function.HasErrorHandler || function.HasInlineAsm)
       return 0;
 
     var analyses = new IrAnalysisManager(function);

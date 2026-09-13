@@ -50,6 +50,25 @@ public sealed class IrPassManagerTests {
     });
   }
 
+  [TestCase(0)]
+  [TestCase(-1)]
+  public void RunToFixpoint_GivenNonPositiveIterationBudget_ThenDoesNotRun(int maxIterations) {
+    var fn = new IrFunction("test", IrType.Void);
+    var calls = 0;
+    var manager = new IrPassManager()
+      .Add("probe", _ => {
+        ++calls;
+        return 1;
+      });
+
+    var changes = manager.RunToFixpoint(fn, maxIterations);
+
+    Assert.Multiple(() => {
+      Assert.That(changes, Is.Zero);
+      Assert.That(calls, Is.Zero);
+    });
+  }
+
   private static IrFunction Lower(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     return IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
