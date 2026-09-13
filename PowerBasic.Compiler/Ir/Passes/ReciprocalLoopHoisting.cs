@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -10,7 +12,7 @@ internal static class ReciprocalLoopHoisting {
 
   private sealed record Loop(
     IrBasicBlock Header,
-    HashSet<IrBasicBlock> Body,
+    IReadOnlySet<IrBasicBlock> Body,
     IrBasicBlock Preheader,
     IrBasicBlock Exit,
     IrCmp Test,
@@ -18,14 +20,39 @@ internal static class ReciprocalLoopHoisting {
 
   /// <summary>Hoists guarded reciprocal values and returns how many reciprocal divisions moved.</summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return Run(fn, new IrAnalysisManager(fn)).Changes;
+  }
+
+  /// <summary>
+  /// Hoists guarded reciprocals using shared CFG analyses. Each successful rewrite changes the CFG, so cached
+  /// analyses are invalidated before searching for another candidate in the rewritten function.
+  /// </summary>
+  internal static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
+
     var moved = 0;
-    while (IrDominators.Build(fn) is { } dominators) {
-      var plan = FindPlan(fn, dominators);
+    while (fn.Entry is not null && analyses.Get(IrAnalyses.Dominators) is { } dominators) {
+      var loops = analyses.Get(IrAnalyses.Loops);
+      var plan = FindPlan(fn, dominators, loops);
       if (plan is null)
         break;
-      moved += Apply(fn, plan.Value.Loop, plan.Value.Reciprocals);
+
+      var applied = Apply(fn, plan.Value.Loop, plan.Value.Reciprocals, dominators);
+      if (applied == 0)
+        break;
+      moved += applied;
+
+      // Apply creates a block and rewires edges. Nothing derived from the old CFG remains trustworthy.
+      analyses.Invalidate(IrPreservedAnalyses.None);
     }
-    return moved;
+
+    return moved == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreserving(moved, IrAnalyses.Dominators, IrAnalyses.Loops);
   }
 
   /// <summary>
@@ -41,13 +68,15 @@ internal static class ReciprocalLoopHoisting {
   /// </para>
   /// </summary>
   internal static int? ProjectedDivisionCount(
-      IrFunction fn, IReadOnlyList<IrBinary> divisions, IrDominators dominators) {
+      IrFunction fn, IReadOnlyList<IrBinary> divisions, IrDominators dominators, IrLoopAnalysis loops) {
     if (divisions.Count < 2)
       return null;
 
     var anchor = divisions[0];
-    foreach (var loop in DetectLoops(fn, dominators)) {
-      if (!IsGuardable(loop, dominators) || !IsHoistOrigin(anchor, loop, dominators))
+    foreach (var naturalLoop in loops.Loops) {
+      if (!TryGuardedLoop(naturalLoop, out var loop)
+          || !IsGuardable(loop, dominators)
+          || !IsHoistOrigin(anchor, loop, dominators))
         continue;
       if (divisions.Any(division => division.Parent is not { } block || !loop.Body.Contains(block)))
         continue;
@@ -72,9 +101,10 @@ internal static class ReciprocalLoopHoisting {
     return null;
   }
 
-  private static (Loop Loop, List<IrBinary> Reciprocals)? FindPlan(IrFunction fn, IrDominators dominators) {
-    foreach (var loop in DetectLoops(fn, dominators)) {
-      if (!IsGuardable(loop, dominators))
+  private static (Loop Loop, List<IrBinary> Reciprocals)? FindPlan(
+      IrFunction fn, IrDominators dominators, IrLoopAnalysis loops) {
+    foreach (var naturalLoop in loops.Loops) {
+      if (!TryGuardedLoop(naturalLoop, out var loop) || !IsGuardable(loop, dominators))
         continue;
 
       var reciprocals = loop.Body
@@ -86,6 +116,27 @@ internal static class ReciprocalLoopHoisting {
         return (loop, reciprocals);
     }
     return null;
+  }
+
+  private static bool TryGuardedLoop(IrLoopAnalysis.Loop naturalLoop, out Loop loop) {
+    loop = null!;
+    var header = naturalLoop.Header;
+    var body = naturalLoop.Blocks;
+    if (header.Terminator is not IrCondBr branch || branch.Condition is not IrCmp test)
+      return false;
+
+    var trueInside = body.Contains(branch.IfTrue);
+    var falseInside = body.Contains(branch.IfFalse);
+    if (trueInside == falseInside || naturalLoop.UniqueEnteringBlock is not { } preheader)
+      return false;
+
+    var exit = trueInside ? branch.IfFalse : branch.IfTrue;
+    if (body.Any(block => block.Successors.Any(successor =>
+          !body.Contains(successor) && !(ReferenceEquals(block, header) && ReferenceEquals(successor, exit)))))
+      return false;
+
+    loop = new(header, body, preheader, exit, test, trueInside);
+    return true;
   }
 
   private static bool IsGuardable(Loop loop, IrDominators dominators) {
@@ -157,8 +208,8 @@ internal static class ReciprocalLoopHoisting {
         && user.Parent is { } userBlock && loop.Body.Contains(userBlock));
   }
 
-  private static int Apply(IrFunction fn, Loop loop, IReadOnlyList<IrBinary> reciprocals) {
-    var dominators = IrDominators.Build(fn)!;
+  private static int Apply(
+      IrFunction fn, Loop loop, IReadOnlyList<IrBinary> reciprocals, IrDominators dominators) {
     if (!TryMapEntryValue(loop.Test.Lhs, loop, dominators, out var guardLhs)
         || !TryMapEntryValue(loop.Test.Rhs, loop, dominators, out var guardRhs)
         || loop.Preheader.Terminator is not { } oldTerminator)
@@ -202,46 +253,6 @@ internal static class ReciprocalLoopHoisting {
     return instruction.Parent is { } block
       && !loop.Body.Contains(block)
       && dominators.Dominates(block, loop.Preheader);
-  }
-
-  private static List<Loop> DetectLoops(IrFunction fn, IrDominators dominators) {
-    var bodies = new Dictionary<IrBasicBlock, HashSet<IrBasicBlock>>(ReferenceEqualityComparer.Instance);
-    foreach (var latch in fn.Blocks.Where(dominators.IsReachable))
-      foreach (var successor in latch.Successors)
-        if (dominators.Dominates(successor, latch)) {
-          if (!bodies.TryGetValue(successor, out var body))
-            bodies[successor] = body = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance) { successor };
-          var pending = new Stack<IrBasicBlock>();
-          pending.Push(latch);
-          while (pending.Count > 0) {
-            var block = pending.Pop();
-            if (!body.Add(block))
-              continue;
-            foreach (var predecessor in block.Predecessors)
-              pending.Push(predecessor);
-          }
-        }
-
-    var result = new List<Loop>();
-    foreach (var (header, body) in bodies) {
-      if (header.Terminator is not IrCondBr branch || branch.Condition is not IrCmp test)
-        continue;
-      var trueInside = body.Contains(branch.IfTrue);
-      var falseInside = body.Contains(branch.IfFalse);
-      if (trueInside == falseInside)
-        continue;
-
-      var preheaders = header.Predecessors.Where(predecessor => !body.Contains(predecessor)).ToList();
-      if (preheaders.Count != 1)
-        continue;
-      var exit = trueInside ? branch.IfFalse : branch.IfTrue;
-      if (body.Any(block => block.Successors.Any(successor =>
-            !body.Contains(successor) && !(ReferenceEquals(block, header) && ReferenceEquals(successor, exit)))))
-        continue;
-
-      result.Add(new Loop(header, body, preheaders[0], exit, test, trueInside));
-    }
-    return result;
   }
 
   private static string UniqueLabel(IrFunction fn, string stem) {
