@@ -312,4 +312,44 @@ public sealed class BackendArrayUdtDifferentialTests {
     Assert.That(routed, Is.EqualTo(direct));
     Assert.That(direct, Is.EqualTo(" 222222  111111"), "the two records come back swapped, which is what was asked");
   }
+
+  /// <summary>
+  /// <c>GET</c> into a field of a record the CALLER owns, reached through a <c>BYREF</c> parameter.
+  /// Which object the pointer names is not knowable in the callee, and the selector declined for want
+  /// of a segment to pair with it - but PB's near model puts the globals and the stack in one segment,
+  /// so there was never a choice to make. The direct emitter settles it the same way and more
+  /// bluntly: <c>DS</c> for every place that is not FAR.
+  /// </summary>
+  [Test]
+  public void Run_GivenGetIntoAByRefRecordParameter_ThenBothPathsWriteTheCallersRecord() {
+    const string source = """
+      TYPE Ent
+        A AS INTEGER
+        B AS LONG
+      END TYPE
+      DECLARE SUB ReadEntry(BYVAL fh AS INTEGER, e AS Ent)
+      DIM e AS Ent, f AS Ent
+      e.A = 7
+      e.B = 999999&
+      OPEN "E.TMP" FOR BINARY AS #1
+      PUT #1, , e.A
+      PUT #1, , e.B
+      CLOSE #1
+      OPEN "E.TMP" FOR BINARY AS #1
+      CALL ReadEntry(1, f)
+      CLOSE #1
+      PRINT f.A; f.B
+
+      SUB ReadEntry(BYVAL fh AS INTEGER, e AS Ent)
+        GET fh, , e.A
+        GET fh, , e.B
+      END SUB
+      """;
+
+    var (direct, routed, names) = RunBothWays(source);
+
+    Assert.That(names, Does.Contain("ReadEntry").IgnoreCase, "an agreeing comparison proves nothing if it declined");
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct, Is.EqualTo(" 7  999999"), "written through the caller's record, not a copy");
+  }
 }
