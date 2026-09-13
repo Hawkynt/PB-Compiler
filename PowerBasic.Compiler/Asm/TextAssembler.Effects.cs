@@ -175,6 +175,16 @@ public sealed partial class TextAssembler {
           return true;
 
         // ---- arithmetic and logic --------------------------------------------------------------
+        // XOR r, r and SUB r, r are the ZEROING IDIOM, and the register they name is not an input:
+        // the answer is nought whatever it held. Reading them literally is the same mistake the
+        // PUSH/POP pair is - a use that consumes nobody's value - and it declined every Vesa*_HLine
+        // in the SVGA corpus, where ! XOR DI, DI opens the second asm run of a body whose first run
+        // ended in a POP and whose middle is a CALL.
+        case "XOR" or "SUB" when operands is [RegisterOperand first, RegisterOperand second]
+            && first.Register == second.Register:
+          e.Write(operands[0]);
+          e.WritesFlags = true;
+          return true;
         case "ADD" or "SUB" or "AND" or "OR" or "XOR":
           if (operands.Count != 2)
             return false;
