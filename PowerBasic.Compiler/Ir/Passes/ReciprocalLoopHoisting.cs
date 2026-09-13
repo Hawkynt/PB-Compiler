@@ -76,36 +76,25 @@ internal static class ReciprocalLoopHoisting {
     var anchor = divisions[0];
     foreach (var naturalLoop in loops.Loops) {
       if (!TryGuardedLoop(naturalLoop, out var loop)
-          || !loop.BodyOnTrue
           || !IsGuardable(loop, dominators)
           || !IsHoistOrigin(anchor, loop, dominators))
         continue;
       if (divisions.Any(division => division.Parent is not { } block || !loop.Body.Contains(block)))
         continue;
 
-      // Keep the historical CountedLoop profitability envelope while sourcing the proof from shared SCEV.
-      // CountedLoop accepted only a signed/Eq/Ne header predicate, counter on the left, constant limit,
-      // update `counter + constant`, one latch, and a positive exact trip count.
-      if (loop.Test.Pred is not (IrCmpPred.Eq or IrCmpPred.Ne
-            or IrCmpPred.Slt or IrCmpPred.Sle or IrCmpPred.Sgt or IrCmpPred.Sge)
-          || loop.Test.Lhs is not IrPhi counter
-          || loop.Test.Rhs is not IrConstantInt
-          || scalarEvolution.RecurrenceFor(counter) is not { } recurrence
-          || !ReferenceEquals(recurrence.Loop, naturalLoop)
-          || !ReferenceEquals(recurrence.Update.Lhs, counter)
-          || recurrence.Update.Rhs is not IrConstantInt
-          || scalarEvolution.ExactTripCount(naturalLoop) is not { } trips
-          || trips <= 0
-          || naturalLoop.Latches.Count != 1)
+      // CountedLoop remains the compatibility contract. Its analysis-aware overload preserves the historical
+      // accepted shape while replacing private trip-count simulation with the shared SCEV result.
+      if (CountedLoop.Match(fn, loop.Header, loops, scalarEvolution) is not { } counted
+          || !ReferenceEquals(counted.Preheader, loop.Preheader)
+          || !ReferenceEquals(counted.Exit, loop.Exit))
         continue;
-      var latch = naturalLoop.Latches[0];
 
       // Every priced division must execute on every iteration. Dominating the unique latch is the CFG proof
       // of that fact; a division in one arm of an IF does not dominate the join/latch and is therefore excluded.
-      if (divisions.Any(division => division.Parent is not { } block || !dominators.Dominates(block, latch)))
+      if (divisions.Any(division => division.Parent is not { } block || !dominators.Dominates(block, counted.Latch)))
         continue;
 
-      var dynamicCount = trips * divisions.Count;
+      var dynamicCount = counted.Trips * divisions.Count;
       return dynamicCount >= int.MaxValue ? int.MaxValue : (int)dynamicCount;
     }
 
