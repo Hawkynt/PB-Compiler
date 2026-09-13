@@ -239,6 +239,8 @@ internal static class RuntimeAbi {
     // rt_locate(row, col) -> AX = row, CX = column, a zero meaning "keep the current one"
     ["rt_locate"] = new("rt_locate",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+    // rt_inp(port) -> AX = port, and the byte comes back zero-extended in AX.
+    ["rt_inp"] = new("rt_inp", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     // rt_outp(port, value) -> DX = port, AX = value. The registers are chosen to BE the operands of
     // OUT DX, AL, so the routine is that instruction and a return.
     ["rt_outp"] = new("rt_outp",

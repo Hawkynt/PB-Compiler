@@ -4156,6 +4156,14 @@ public sealed partial class IrLowering {
     if (name.Equals("STRSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Load(IrType.I16, this.RuntimeCell("rt_strseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
+    // INP(port) - the read half of OUT, and the same bargain: a named call, because a port read is
+    // whatever a hosted target says it is. The byte comes back zero-extended, which is what makes
+    // INP answer an INTEGER rather than a value that depends on what ran before it.
+    if (name.Equals("INP", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
+      return this.Coerce(
+        this._b.Call(IrType.I16, this.RuntimeFn("rt_inp", IrType.I16, IrType.I16),
+          this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer)),
+        PbType.Integer, this._model.TypeOf(call));
     if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
         this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer));

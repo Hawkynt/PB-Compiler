@@ -276,6 +276,7 @@ void rt_unreachable(void);
    target there is no port to write to and nothing sensible to do, so the reference implementation
    discards it rather than pretending. A target that HAS ports replaces this. */
 void rt_outp(int16_t port, int16_t value);
+int16_t rt_inp(int16_t port);
 
 /* The generated translation unit defines this; main() in the runtime calls it. */
 void pb_main(void);
