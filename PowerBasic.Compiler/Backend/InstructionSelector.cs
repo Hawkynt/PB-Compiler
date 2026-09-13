@@ -1429,6 +1429,12 @@ public sealed partial class InstructionSelector {
     // DWORD (CODEPTR32) or taken apart again.
     if (WideShiftCount(bin.Rhs) is 16 && opcode is MOpcode.Shl or MOpcode.Shr)
       return this.SelectWideWordSwap(bin, opcode == MOpcode.Shl);
+    // A count the selector cannot read is the runtime's loop rather than a decline. Writing the
+    // steps out needs the count at compile time; a variable one needs a LOOP, which is blocks rather
+    // than a straight line, so it is a call - the same shape the direct emitter's own per-bit walk
+    // over the word chain takes. It was 37 declines over the SVGA corpus, each taking a module body.
+    if (WideShiftCount(bin.Rhs) is null && opcode is MOpcode.Shl or MOpcode.Shr)
+      return this.SelectWideShiftByVariable(bin, opcode == MOpcode.Shl);
     if (WideShiftCount(bin.Rhs) is not { } count || count is < 0 or > 8)
       return this.Decline($"32-bit binary: {bin.Op} (only a small constant count, not {bin.Rhs})");
     if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
@@ -1486,6 +1492,60 @@ public sealed partial class InstructionSelector {
   /// vacated one becomes zero. Left is <c>hi = lo, lo = 0</c> and logical right its mirror; the
   /// ARITHMETIC right shift is not here, because its vacated half is the sign rather than zero.
   /// </summary>
+  /// <summary>
+  /// A 32-bit shift whose COUNT is not a compile-time number, handed to the runtime's loop.
+  ///
+  /// <para>
+  /// A constant count is written out as that many one-bit steps, which is what a pair shift is on an
+  /// 8086. A variable one needs a LOOP, and a loop is basic blocks rather than a straight line - so
+  /// it is a call, the same shape the direct emitter's own per-bit walk over the word chain takes.
+  /// Declining instead cost 37 module bodies over the SVGA corpus.
+  /// </para>
+  /// <para>
+  /// The staging is written out rather than routed through <see cref="SelectRuntimeCall"/> because
+  /// that one takes an <c>IrCall</c>, and this is an <c>IrBinary</c> - there is no call node in the
+  /// IR to hand it. The register choice comes from the same ABI table, so the two cannot drift.
+  /// </para>
+  /// </summary>
+  private bool SelectWideShiftByVariable(IrBinary bin, bool left) {
+    var name = left ? "rt_shl32" : "rt_shr32";
+    if (RuntimeAbi.For(name) is not { } routine)
+      return this.Decline($"32-bit binary: {bin.Op} needs {name}, which is not in the runtime ABI table");
+    if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
+      return false;
+    // the count is widened to the value's type by the lowering, so its low half IS the count
+    MOperand countOperand;
+    if (IsWide(bin.Rhs.Type)) {
+      if (!this.TryOperandPair(bin.Rhs, out var countLow, out _))
+        return false;
+      countOperand = countLow;
+    } else if (!this.TryOperand(bin.Rhs, out countOperand))
+      return false;
+
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+    var cx = new MOperand.Register(MReg.Physical_(Reg.CX, MRegSize.Word));
+    // Every staging move claims the whole destination set, for the reason SelectRuntimeCall states:
+    // a move that says only "I destroy CX" leaves a value free to be parked in AX, which the next
+    // move then overwrites.
+    Reg[] staged = [Reg.AX, Reg.DX, Reg.CX];
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lhsLo], MovEffect(ax, lhsLo),
+      condition: null, clobbers: staged));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dx, lhsHi], MovEffect(dx, lhsHi),
+      condition: null, clobbers: staged));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cx, countOperand], MovEffect(cx, countOperand),
+      condition: null, clobbers: staged));
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(routine.Label)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: routine.Clobbers));
+
+    var (destLo, destHi) = this.FreshPair(bin);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destLo, ax], MovEffect(destLo, ax)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, dx], MovEffect(destHi, dx)));
+    return true;
+  }
+
   private bool SelectWideWordSwap(IrBinary bin, bool left) {
     if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
       return false;
