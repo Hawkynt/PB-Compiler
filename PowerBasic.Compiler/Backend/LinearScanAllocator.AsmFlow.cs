@@ -80,6 +80,7 @@ public sealed partial class LinearScanAllocator {
       foreach (var instr in block.Instructions)
         facts[next++] = InstructionFacts.Of(instr);
 
+    CancelSaveRestore(blocks, blockOf, start, stop, facts);
     Backwards(blocks, blockOf, start, stop, facts, out var afterPrecise, out var afterInferred);
     Forwards(blocks, blockOf, start, stop, facts, out var before);
 
@@ -98,6 +99,130 @@ public sealed partial class LinearScanAllocator {
         map[i] = [.. held];
     }
     return map;
+  }
+
+  /// <summary>
+  /// Cancels the promise a matched <c>! PUSH r</c> / <c>! POP r</c> pair only APPEARS to make.
+  ///
+  /// <para>
+  /// Read instruction by instruction, the push USES <c>r</c> and the pop DEFINES it, so the analysis
+  /// concluded that some earlier <c>!</c> statement had put a value there for the push to consume and
+  /// that the pop had left one for a later statement. Neither is true of the idiom. The pair hands the
+  /// register back exactly as it found it, which is the whole reason a body writes one: it is how an
+  /// <c>!</c> block borrows a register the COMPILER is using without disturbing it.
+  /// </para>
+  /// <para>
+  /// Taking the instructions literally is what declined <c>Vga_PatternFill</c> in the SVGA corpus, and
+  /// the shape is worth keeping in mind because nothing about it looks like an asm promise. Its
+  /// <c>! PUSH DI … ! POP DI</c> sits inside a loop whose BASIC half calls <c>ASC(MID$(…))</c>; the
+  /// pop's "definition" reached round the back edge to the next iteration's push, the runtime call in
+  /// between destroys <c>DI</c>, and a promise nobody made was reported broken.
+  /// </para>
+  /// <para>
+  /// Cancelling BOTH halves - not just the push - is what makes the model right rather than merely
+  /// quieter. A pair is TRANSPARENT: a register set before the push and read after the pop really does
+  /// survive, because the pop puts it back, and with both halves gone the analysis carries that promise
+  /// straight through the pair instead of stopping at either end of it.
+  /// </para>
+  /// <para>
+  /// Pairing is by stack DEPTH, which is why <see cref="AsmRegisterEffect.StackDelta"/> exists: a push
+  /// and a pop naming the same register are not a pair unless nothing between them left the stack
+  /// somewhere else. A statement the assembler could not read moves the stack by an unknown amount and
+  /// abandons every pending save, and a machine instruction between the two ends the run outright -
+  /// not because it unbalances the stack, but because the depth argument is a claim about ONE run of
+  /// hand-written assembly and stops being one as soon as the compiler's own code is in the middle.
+  /// </para>
+  /// <para>
+  /// The run may still span several BLOCKS, and refusing to pair across them left most of the class
+  /// open: a <c>! PUSH DI</c> whose <c>! POP DI</c> is eight statements later, with
+  /// <c>V800HLAligned:</c> and a <c>! JZ</c> between them, is one run written with its own control
+  /// flow - it is what every <c>Vesa*_HLine</c> in the corpus looks like. What the depth argument
+  /// actually needs is that the region be CLOSED, and <see cref="IsClosedRegion"/> asks exactly that:
+  /// nothing jumps INTO the span except at its head, and nothing jumps OUT of it except past its end.
+  /// A region like that has no path that reaches the pop other than through the push, so what the
+  /// linear scan counted is what every execution counts.
+  /// </para>
+  /// </summary>
+  private static void CancelSaveRestore(List<MBlock> blocks, Dictionary<string, int> blockOf,
+      int[] start, int[] stop, InstructionFacts[] facts) {
+    var saved = new Stack<(int Index, Reg? Register)>();
+    for (var i = 0; i < facts.Length; ++i) {
+      var fact = facts[i];
+      if (!fact.IsAsm) {
+        saved.Clear();                              // the compiler's own code ends the run
+        continue;
+      }
+
+      switch (fact.StackDelta) {
+        case null:
+          saved.Clear();
+          break;
+        case > 0:
+          saved.Push((i, fact.Saves));
+          break;
+        case < 0 when saved.Count > 0: {
+          var (push, register) = saved.Pop();
+          if (register is not { } r || fact.Restores != r)
+            break;                                  // a pop of something else: the depth matched, the register did not
+          if (!IsClosedRegion(blocks, blockOf, start, stop, facts, push, i))
+            break;
+
+          facts[push].Uses.Remove(r);
+          facts[push].InferredUses.Remove(r);
+          facts[i].Defines.Remove(r);
+          facts[i].Kills.Remove(r);
+          break;
+        }
+      }
+    }
+  }
+
+  /// <summary>
+  /// Whether every path through <c>[from, to]</c> enters at <paramref name="from"/> and leaves past
+  /// <paramref name="to"/> - the property that makes a linear count of pushes and pops true of every
+  /// execution and not merely of the text.
+  ///
+  /// <para>
+  /// Two ways it can fail, and both are real shapes rather than defensive padding. A label inside the
+  /// span that something OUTSIDE jumps to is a second entry, and an execution arriving there never
+  /// pushed. A jump out of the span to somewhere before it or after it is an exit that skips the pop.
+  /// Either one means some path sees a different depth than the scan did, and the pair it thought it
+  /// had matched is a pop of somebody else's word.
+  /// </para>
+  /// </summary>
+  private static bool IsClosedRegion(List<MBlock> blocks, Dictionary<string, int> blockOf,
+      int[] start, int[] stop, InstructionFacts[] facts, int from, int to) {
+    for (var b = 0; b < blocks.Count; ++b) {
+      var overlaps = stop[b] > from && start[b] <= to;
+      var contained = start[b] > from && stop[b] <= to + 1;
+
+      foreach (var successor in blocks[b].Successors) {
+        if (!blockOf.TryGetValue(successor, out var s))
+          return false;                             // a successor this analysis cannot place
+        if (start[s] > from && start[s] <= to && !overlaps)
+          return false;                             // an entry into the middle of the span
+        if (contained && !(start[s] > from && start[s] <= to + 1))
+          return false;                             // an exit that skips the pop
+      }
+
+      for (var i = Math.Max(start[b], from); i < Math.Min(stop[b], to + 1); ++i)
+        foreach (var target in facts[i].JumpsTo) {
+          if (!blockOf.TryGetValue(target, out var t))
+            return false;
+          if (!(start[t] > from && start[t] <= to + 1))
+            return false;                           // an asm jump out of the span
+        }
+    }
+
+    // an asm jump from OUTSIDE the span into the middle of it is the same second entry as above
+    for (var i = 0; i < facts.Length; ++i) {
+      if (i >= from && i <= to)
+        continue;
+      foreach (var target in facts[i].JumpsTo)
+        if (blockOf.TryGetValue(target, out var t) && start[t] > from && start[t] <= to)
+          return false;
+    }
+    return true;
   }
 
   private static string Conflict(Reg register) => register == _flagsPseudoRegister
@@ -240,6 +365,13 @@ public sealed partial class LinearScanAllocator {
   private readonly record struct InstructionFacts(bool IsAsm, HashSet<Reg> Uses, HashSet<Reg> InferredUses,
       HashSet<Reg> Defines, HashSet<Reg> Kills, HashSet<Reg> Destroys, IReadOnlyList<string> JumpsTo) {
 
+    /// <summary>The save/restore half, read straight off the effect - see <see cref="CancelSaveRestore"/>.</summary>
+    public Reg? Saves { get; init; }
+
+    public Reg? Restores { get; init; }
+
+    public int? StackDelta { get; init; }
+
     public static InstructionFacts Of(MInstr instr) {
       if (instr.Opcode == MOpcode.InlineAsm && instr.Operands.Count > 0
           && instr.Operands[0] is MOperand.InlineAsmText descriptor) {
@@ -257,9 +389,12 @@ public sealed partial class LinearScanAllocator {
         foreach (var operand in instr.Operands)
           if (operand is MOperand.BlockOffset target)
             (targets ??= []).Add(target.Block);
-        return effect.IsOpaque
-          ? new(true, [], reads, defines, kills, [], targets ?? [])
-          : new(true, reads, [], defines, kills, [], targets ?? []);
+        var facts = effect.IsOpaque
+          ? new InstructionFacts(true, [], reads, defines, kills, [], targets ?? [])
+          : new InstructionFacts(true, reads, [], defines, kills, [], targets ?? []);
+        return facts with {
+          Saves = effect.Saves, Restores = effect.Restores, StackDelta = effect.StackDelta,
+        };
       }
 
       var destroys = new HashSet<Reg>(PhysicalWrites(instr));

@@ -1330,8 +1330,7 @@ public sealed partial class IrLowering {
       case CommandStmt { Keyword: "GET$", Arguments: [{ } getFile, { } getCount, { } getTarget] }:
         this._b.Store(
           this._b.Call(IrType.Ptr, this.RuntimeFn("rt_fget_str", IrType.Ptr, IrType.I32, IrType.I32),
-            this.FileNum(getFile),
-            this.Coerce(this.LowerExpr(getCount), this._model.TypeOf(getCount), PbType.Long)),
+            this.FileNum(getFile), this.WordArg(getCount)),   // rt_fgetstr takes the count in CX
           this.StringTargetAddress(getTarget));
         break;
       case WriteStmt write:
@@ -4447,7 +4446,7 @@ public sealed partial class IrLowering {
       position = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_instr", IrType.I32, IrType.Ptr, IrType.Ptr),
         this.LowerStringExpr(call.Arguments[0]), this.LowerStringExpr(call.Arguments[1]));
     } else {
-      var start = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Long);
+      var start = this.WordArg(call.Arguments[0]);   // rt_instr takes the start in CX
       position = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_instr_start", IrType.I32, IrType.I32, IrType.Ptr, IrType.Ptr),
         start, this.LowerStringExpr(call.Arguments[1]), this.LowerStringExpr(call.Arguments[2]));
     }
@@ -4490,8 +4489,9 @@ public sealed partial class IrLowering {
   /// string, and PB builds it exactly this way.
   /// </summary>
   private IrValue LowerChr(CallOrIndexExpr ci) {
+    // the code goes to rt_chr in DL, so it is a WORD argument and not a 32-bit value
     IrValue Character(int i) => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_chr", IrType.Ptr, IrType.I32),
-      this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Long));
+      this.WordArg(ci.Arguments[i]));
 
     var text = Character(0);
     for (var i = 1; i < ci.Arguments.Count; ++i)
@@ -4499,6 +4499,26 @@ public sealed partial class IrLowering {
         text, Character(i));
     return text;
   }
+
+  /// <summary>
+  /// An argument the DOS ABI takes in a WORD register - a count, a start position, a character code -
+  /// narrowed to one and widened straight back to the <c>i32</c> the IR declares.
+  ///
+  /// <para>
+  /// The narrowing is not a shortcut: it is where a LONG that does not fit raises, which is exactly
+  /// what the direct emitter's <c>EmitInt16Argument</c> does at the same place. The widening is what
+  /// the selector's argument staging peels off again to reach the word the ABI wants. Coercing to
+  /// LONG and stopping there leaves the selector a 32-bit value it can take only where it can PROVE
+  /// the range, and it declines wherever it cannot.
+  /// </para>
+  /// <para>
+  /// A VALUE is a different thing and must not come through here - see <c>Num</c> in
+  /// <see cref="LowerStringIntrinsic"/>, where using one for the other printed <c>63C0</c> for
+  /// <c>HEX$(&amp;HFFFF63C0)</c>.
+  /// </para>
+  /// </summary>
+  private IrValue WordArg(Expression e) =>
+    this._b.SExt(this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer), IrType.I32);
 
   /// <summary>Lowers a string-returning intrinsic (LEFT$/RIGHT$/MID$/CHR$) to a runtime call.</summary>
   private IrValue LowerStringIntrinsic(CallOrIndexExpr ci, string name) {
@@ -4517,9 +4537,7 @@ public sealed partial class IrLowering {
     // The two are NOT the same helper, and using one for the other is a silent miscompile rather than
     // a decline: HEX$ and OCT$ of a negative LONG lost their high word and printed 63C0 for
     // FFFF63C0. The corpus differential caught it; nothing else did.
-    IrValue Count(int i) => this._b.SExt(
-      this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Integer),
-      IrType.I32);
+    IrValue Count(int i) => this.WordArg(ci.Arguments[i]);
     IrValue Val(int i, ScalarType t) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), t);
 
     // EXTRACT$(main$, match$) / EXTRACT$(main$, ANY set$): everything before the first match, or the

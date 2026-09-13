@@ -53,6 +53,29 @@ public sealed record AsmRegisterEffect(
   bool WritesFlags,
   bool IsOpaque) {
 
+  /// <summary>
+  /// The register a <c>PUSH r</c> SAVES, null for every other statement - including a <c>PUSH</c> of a
+  /// segment register, an immediate or a memory cell, none of which is a register this file tracks.
+  /// </summary>
+  public Reg? Saves { get; init; }
+
+  /// <summary>The register a <c>POP r</c> RESTORES, on the same terms as <see cref="Saves"/>.</summary>
+  public Reg? Restores { get; init; }
+
+  /// <summary>
+  /// What the statement moves the stack by, in words: +1 for a push, -1 for a pop, 0 for everything
+  /// else, and <b>null</b> when the text was not understood and may move it by anything.
+  ///
+  /// <para>
+  /// It exists to PAIR a save with its restore. Reading <c>PUSH DI</c> as a use of <c>DI</c> and
+  /// <c>POP DI</c> as a definition of it is true of the instructions and false of the IDIOM: together
+  /// they promise nothing and consume nothing, they hand the register back exactly as they found it.
+  /// Depth is how the two are matched, because only depth distinguishes the pair from a <c>PUSH</c>
+  /// and a <c>POP</c> that merely name the same register.
+  /// </para>
+  /// </summary>
+  public int? StackDelta { get; init; }
+
   /// <summary>The allocatable integer file - <c>BP</c>/<c>SP</c> are the frame and belong to nobody's text.</summary>
   public static IReadOnlySet<Reg> GeneralRegisters { get; } =
     new HashSet<Reg> { Reg.AX, Reg.CX, Reg.DX, Reg.BX, Reg.SI, Reg.DI };
@@ -63,5 +86,7 @@ public sealed record AsmRegisterEffect(
   /// producer before it is protected up to it, and a consumer after it is protected from it.
   /// </summary>
   public static AsmRegisterEffect Opaque { get; } =
-    new(GeneralRegisters, GeneralRegisters, GeneralRegisters, ReadsFlags: true, WritesFlags: true, IsOpaque: true);
+    new(GeneralRegisters, GeneralRegisters, GeneralRegisters, ReadsFlags: true, WritesFlags: true, IsOpaque: true) {
+      StackDelta = null,                            // an INT or a CALL may leave the stack anywhere
+    };
 }
