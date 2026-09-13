@@ -272,4 +272,44 @@ public sealed class BackendArrayUdtDifferentialTests {
     Assert.That(routed, Is.EqualTo(direct));
     Assert.That(direct, Is.EqualTo(" 1  4 \n 2000  3000 \n 11  22"));
   }
+
+  /// <summary>
+  /// <c>GET</c> straight into an element of a SHARED DYNAMIC array. The element lives in the far array
+  /// heap, so its address is an offset plus a segment the runtime keeps in a CELL - and the runtime
+  /// slot that takes a pointer is a register pair, which is exactly what that pair is for. The
+  /// selector refused it anyway, on the grounds that the segment was not a register.
+  ///
+  /// <para>
+  /// One refusal, nine procedures: a shared dynamic array whose users are SPLIT across the two paths
+  /// has its descriptor handed back to the direct emitter whole, so the one SUB that could not take
+  /// the address denied the routed side every array the TIFF code touches.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Run_GivenGetIntoADynamicArrayElement_ThenBothPathsAddressTheFarHeap() {
+    const string source = """
+      DECLARE FUNCTION Op%(BYVAL v%)
+      DIM Store() AS SHARED LONG
+      REDIM Store(Op%(3))
+      Store(0) = 111111&
+      Store(1) = 222222&
+      OPEN "T.TMP" FOR BINARY AS #1
+      PUT #1, , Store(0)
+      PUT #1, , Store(1)
+      CLOSE #1
+      Store(0) = 0
+      Store(1) = 0
+      OPEN "T.TMP" FOR BINARY AS #1
+      GET #1, , Store(1)
+      GET #1, , Store(0)
+      CLOSE #1
+      PRINT Store(0); Store(1)
+      """ + _OPAQUE;
+
+    var (direct, routed, names) = RunBothWays(source);
+
+    Assert.That(names, Does.Contain("main").IgnoreCase, "an agreeing comparison proves nothing if it declined");
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct, Is.EqualTo(" 222222  111111"), "the two records come back swapped, which is what was asked");
+  }
 }

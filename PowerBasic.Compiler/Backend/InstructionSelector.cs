@@ -3179,11 +3179,10 @@ public sealed partial class InstructionSelector {
           break;
         }
         case RuntimeAbi.ArgKind.Pointer: {
-          if (!this.TryRuntimePointer(arg, callee.Name, out var source, out var segment))
+          if (!this.TryRuntimePointer(arg, callee.Name, out var source, out var segmentSource))
             return false;
           var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
           var segmentDest = new MOperand.Register(MReg.Physical_(slot.High, MRegSize.Word));
-          var segmentSource = new MOperand.Register(MReg.Physical_(segment, MRegSize.Word));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source),
             condition: null, clobbers: stagedRegisters[i]));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [segmentDest, segmentSource],
@@ -3315,15 +3314,51 @@ public sealed partial class InstructionSelector {
     return this.PlaceRuntimeResult(call, routine);
   }
 
-  /// <summary>Materializes a near pointer and identifies the segment containing its base object.</summary>
-  private bool TryRuntimePointer(IrValue value, string callee, out MOperand offset, out Reg segment) {
+  /// <summary>
+  /// Materializes a pointer for a runtime slot that takes one as a register PAIR: the offset, and
+  /// whatever the segment has to be moved FROM.
+  ///
+  /// <para>
+  /// For an ordinary pointer the segment is a fixed register the type implies - <c>DS</c> for a
+  /// global, <c>SS</c> for a frame cell - and nothing is loaded. A pointer into the FAR ARRAY HEAP
+  /// names its own segment instead, and there is correspondingly nothing to derive: both halves are
+  /// staged like any other operand, which is <c>MOV SI, [rt_arrseg]</c> where the near case emits
+  /// <c>MOV SI, DS</c>. The direct emitter arrives at the same instruction from the other end - it
+  /// loads <c>ES</c> from that cell in front of the <c>LEA</c> and hands the runtime <c>SI = ES</c> -
+  /// so this is its behaviour, not a second convention.
+  /// </para>
+  /// <para>
+  /// Declining it cost far more than the one statement. <c>GET fh, , Store(i)</c> into a SHARED
+  /// dynamic array is how <c>DRAW_TIF.SUB</c> reads a strip table, and a shared dynamic array whose
+  /// users are SPLIT across the two paths has its descriptor handed back to the direct emitter whole -
+  /// so the one procedure that could not take the address denied the routed side every array the TIFF
+  /// code touches, eight further procedures and the module body with it.
+  /// </para>
+  /// </summary>
+  private bool TryRuntimePointer(IrValue value, string callee, out MOperand offset, out MOperand segment) {
     offset = null!;
-    segment = default;
-    if (value.Type.IsFarPointer)
-      return this.Decline($"call: {callee} takes an address in the far array heap, whose segment is a runtime cell and not a register");
+    segment = null!;
+    if (value is IrFarPtr far)
+      return this.TryOperand(far.Offset, out offset) && this.TryOperand(far.Segment, out segment);
+    if (value.Type.IsFarPointer) {
+      // Any other far-typed value is an OFFSET into the one far address space this program has, and
+      // the segment is the cell SegmentCellOf names - the same one FarMemory loads ES from in front
+      // of an ordinary element access. A GEP off a far base arrives here rather than as a composed
+      // pair, and it is the common shape: an element of a dynamic array, not the array.
+      if (SegmentCellOf(value.Type) is not { } cell)
+        return this.Decline($"call: {callee} takes a far address in no named segment");
+      segment = new MOperand.DataCell(cell, 0, MRegSize.Word);
+      // The offset has to be a VALUE the staging can move, on the same terms as the near case below:
+      // an address expression staged with a MOV would be read THROUGH rather than taken, which is a
+      // wrong answer rather than a missing one.
+      if (!this.TryOperand(value, out offset))
+        return false;
+      return offset is MOperand.Register or MOperand.Immediate
+        || this.Decline($"call: {callee} far pointer is not an address register");
+    }
     if (PointerSegmentOf(value) is not { } sourceSegment)
       return this.Decline($"call: {callee} cannot derive the segment of pointer {value}");
-    segment = sourceSegment;
+    segment = new MOperand.Register(MReg.Physical_(sourceSegment, MRegSize.Word));
     if (value is IrGlobalVariable global) {
       offset = new MOperand.DataOffset(global.Name, 0);
       return true;

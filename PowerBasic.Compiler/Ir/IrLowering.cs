@@ -2325,6 +2325,21 @@ public sealed partial class IrLowering {
     if (s.Variable is NameExpr && this._model.VariableBindings.TryGetValue(s.Variable, out var sym) && sym.Type is UdtType udt) {
       address = this.SlotFor(sym);                    // a whole-record GET/PUT of a UDT buffer
       recordSize = udt.Size;
+    } else if (s.Variable is MemberExpr member && !this._model.VariableBindings.ContainsKey(member)
+        && this._model.TypeOf(member) is FixedStringType or AsciizType or UdtType) {
+      // A record's FIXED-WIDTH field is a record of its own size. A STRING * 3 keeps its characters
+      // IN the record rather than on the heap, so this is the address-and-size form above and NOT the
+      // handle form: it is the same LEA-and-move the direct emitter performs for every non-string
+      // variable, over a member rather than a name.
+      //
+      // Reading a file header one field at a time is how DRAW_GIF.SUB parses one, and refusing it
+      // declined DrawGif_ParseFile. That is worth more than one row: a shared dynamic array whose
+      // users are SPLIT across the two paths has its descriptor handed back to the direct emitter
+      // whole, so one declining user denied the routed side every array the GIF code touches - eight
+      // further procedures, the module body among them.
+      var (memberAddress, _) = this.MemberFieldAddress(member);
+      address = memberAddress;
+      recordSize = this._model.TypeOf(member).Size;
     } else {
       var (addr, type) = this.LValue(s.Variable, "GET/PUT");
       if (type is not ScalarType scalar)
