@@ -31,6 +31,10 @@ public static class IrAnalyses {
     new("fp-domains", static (function, analyses) =>
       FpDomainAnalysis.Build(function, analyses.Get(Ranges)));
 
+  /// <summary>Known-zero/known-one facts for integer SSA values.</summary>
+  public static IrAnalysisKey<IrKnownBitsAnalysis> KnownBits { get; } =
+    new("known-bits", static (function, _) => new IrKnownBitsAnalysis(function));
+
   /// <summary>SSA overlay for memory definitions, uses and merge points.</summary>
   public static IrAnalysisKey<IrMemorySsa> MemorySsa { get; } =
     new("memory-ssa", static (function, analyses) =>
