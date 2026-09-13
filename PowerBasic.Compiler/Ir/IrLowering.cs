@@ -4129,6 +4129,27 @@ public sealed partial class IrLowering {
       return this.Coerce(this._b.Or(segment, this._b.ZExt(offset, IrType.U32)),
         PbType.Dword, this._model.TypeOf(call));
     }
+    // ...and of a PROCEDURE, which is its entry offset. The selector has always been able to name
+    // one - PtrToInt of an IrFunction becomes MOperand.LabelRef, which the emitter resolves through
+    // the same callee lookup a CALL uses - so the only thing missing was saying so here. It was 15
+    // declines over the SVGA corpus, each taking a module body.
+    //
+    // The far ENTRY THUNK the direct emitter synthesizes is not this and is not needed for it: the
+    // thunk exists so a FAR call can reach a near procedure, while CODEPTR asks for the offset, which
+    // is the procedure's own label either way. CODEPTR32 pairs that offset with CS, exactly as the
+    // label form below does.
+    if (name.ToUpperInvariant() is "CODEPTR" or "CODEPTR32" && call.Arguments is [NameExpr procRef]
+        && this._model.CallBindings.TryGetValue(procRef, out var codeProc)
+        && this._procMap is not null && this._procMap.TryGetValue(codeProc, out var codeFn)) {
+      var entry = this._b.Cast(IrCastOp.PtrToInt, codeFn, IrType.U16);
+      if (name.Equals("CODEPTR", StringComparison.OrdinalIgnoreCase))
+        return this.Coerce(entry, PbType.Word, this._model.TypeOf(call));
+      var codeSegment = this._b.Shl(
+        this._b.ZExt(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)), IrType.U32),
+        new IrConstantInt(IrType.U32, 16));
+      return this.Coerce(this._b.Or(codeSegment, this._b.ZExt(entry, IrType.U32)),
+        PbType.Dword, this._model.TypeOf(call));
+    }
     if (name.Equals("CODESEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
@@ -4143,6 +4164,14 @@ public sealed partial class IrLowering {
         PbType.Word, this._model.TypeOf(call));
     if (name.Equals("STRSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Load(IrType.I16, this.RuntimeCell("rt_strseg", IrType.I16)),
+        PbType.Integer, this._model.TypeOf(call));
+    // INP(port) - the read half of OUT, and the same bargain: a named call, because a port read is
+    // whatever a hosted target says it is. The byte comes back zero-extended, which is what makes
+    // INP answer an INTEGER rather than a value that depends on what ran before it.
+    if (name.Equals("INP", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
+      return this.Coerce(
+        this._b.Call(IrType.I16, this.RuntimeFn("rt_inp", IrType.I16, IrType.I16),
+          this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer)),
         PbType.Integer, this._model.TypeOf(call));
     if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
