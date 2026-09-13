@@ -159,24 +159,37 @@ public sealed class BackendCodePointerTests {
   }
 
   /// <summary>
-  /// <c>CODEPTR32</c> of a PROCEDURE declines. The direct emitter answers it with a far entry THUNK it
-  /// synthesizes beside the procedure - a near procedure reached through a far call - and the IR has
-  /// nothing of the kind to point at. A near entry offset would be a different address wearing the
-  /// same name, which is worse than not answering.
+  /// <c>CODEPTR32</c> of a PROCEDURE routes, and used to decline.
+  ///
+  /// <para>
+  /// The decline was reasoned from the far entry THUNK the direct emitter synthesizes beside a
+  /// procedure, on the grounds that a near entry offset would be "a different address wearing the
+  /// same name". That reasoning was wrong about which address is being asked for. The thunk exists
+  /// so a FAR call can reach a NEAR procedure; <c>CODEPTR</c> asks for the entry offset, and the
+  /// procedure's own label is that offset on both paths. <c>CODEPTR32</c> pairs it with CS, exactly
+  /// as the LABEL form above does.
+  /// </para>
+  /// <para>
+  /// The selector could already name one all along - <c>PtrToInt</c> of an <c>IrFunction</c> becomes
+  /// <c>MOperand.LabelRef</c>, resolved through the same callee lookup a CALL uses - so the decline
+  /// was costing 15 module bodies over the SVGA corpus for a capability that was already there.
+  /// </para>
   /// </summary>
   [Test]
-  public void Lowering_GivenACodePointerToAProcedure_ThenItDeclines() {
-    Assert.That(DeclineReason("""
+  public void Lowering_GivenACodePointerToAProcedure_ThenItRoutes() {
+    const string source = """
       DECLARE SUB Work ()
       DIM g AS DWORD
       g = CODEPTR32(Work)
-      PRINT g
+      IF g <> 0 THEN PRINT "have it" ELSE PRINT "BAD"
       END
 
       SUB Work ()
         PRINT "work"
       END SUB
-      """), Is.EqualTo("intrinsic CODEPTR32"));
+      """;
+
+    Assert.That(DeclineReason(source), Is.Null, "CODEPTR32 of a procedure lowers now");
   }
 
   /// <summary>

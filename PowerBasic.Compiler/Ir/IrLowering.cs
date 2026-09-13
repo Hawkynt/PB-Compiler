@@ -1589,7 +1589,7 @@ public sealed partial class IrLowering {
     // the bit number is evaluated BEFORE the target place, which is the order the direct emitter
     // pushes them in and the only thing that distinguishes the two when either has a side effect
     var index = this.Coerce(this.LowerExpr(bit.Bit), this._model.TypeOf(bit.Bit), PbType.Long);
-    var (address, targetType) = this.LValue(bit.Target);
+    var (address, targetType) = this.LValue(bit.Target, "BIT");
     if (targetType is not ScalarType { IsFloat: false, ByteSize: 1 or 2 or 4 })
       throw new IrLoweringException($"BIT statement on {targetType}");
     var ty = MapType(targetType);
@@ -1680,8 +1680,15 @@ public sealed partial class IrLowering {
     return type is StringType ? (this.StringTargetAddress(target), type) : this.LValue(target);
   }
 
-  /// <summary>The storage address and element type of a scalar lvalue (a variable or a static-array element).</summary>
-  private (IrValue Address, PbType Type) LValue(Expression e) {
+  /// <summary>
+  /// The storage address and element type of a scalar lvalue (a variable or a static-array element).
+  /// </summary>
+  /// <param name="what">
+  /// The STATEMENT asking, named in the decline. Which shape is unsupported is only half of a usable
+  /// reason: "NameExpr of StringType" appears under five different callers here, and picking the
+  /// wrong one wastes the next pass. Two guesses were already spent that way.
+  /// </param>
+  private (IrValue Address, PbType Type) LValue(Expression e, string what = "an lvalue") {
     if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var sym) && sym.Type is ScalarType)
       return (this.SlotFor(sym), sym.Type);
     if (e is CallOrIndexExpr ci && this._model.VariableBindings.TryGetValue(ci, out var arr) && arr.Type is ArrayType)
@@ -1690,7 +1697,12 @@ public sealed partial class IrLowering {
       return this.MemberLValue(m);
     if (e is PtrDerefExpr deref && this._model.TypeOf(deref) is ScalarType target)
       return (this.DerefAddress(deref), target);
-    throw new IrLoweringException("unsupported lvalue");
+    // Name the SHAPE. "unsupported lvalue" alone says a decline happened and nothing about what to
+    // write next, which is the same defect the module-level decline had: a reason that identifies
+    // nothing cannot be worked from, and it took a corpus census plus a guess to find out what was
+    // behind the count.
+    throw new IrLoweringException(
+      $"unsupported lvalue in {what}: {e.GetType().Name} of {this._model.TypeOf(e).GetType().Name}");
   }
 
   /// <summary>The storage address and field type of a UDT member (or a flat QB-style dotted variable).</summary>
@@ -1719,8 +1731,17 @@ public sealed partial class IrLowering {
     } else if (m.Target is PtrDerefExpr deref && this._model.TypeOf(deref) is UdtType derefUdt) {   // @q.Field - the record the pointer names
       basePtr = this.DerefAddress(deref);
       udt = derefUdt;
+    } else if (m.Target is MemberExpr nested && this._model.TypeOf(nested) is UdtType nestedUdt) {
+      // a.b.c - a record inside a record. The inner member's ADDRESS is the outer one's base, which
+      // is the same recursion the field offsets already describe; declining it cost 14 module bodies
+      // over the SVGA corpus, where a header record holding a palette record is the ordinary shape.
+      basePtr = this.MemberFieldAddress(nested).Address;
+      udt = nestedUdt;
     } else
-      throw new IrLoweringException("unsupported member access");
+      // Name the TARGET's shape, for the reason the lvalue decline beside it does: a count of
+      // "unsupported member access" says a decline happened and nothing about what to write.
+      throw new IrLoweringException(
+        $"unsupported member access: target is {m.Target.GetType().Name} of {this._model.TypeOf(m.Target).GetType().Name}");
 
     var field = udt.FindField(m.Member) ?? throw new IrLoweringException($"unknown field {m.Member}");
     if (field.ElementCount != 1)
@@ -2185,7 +2206,7 @@ public sealed partial class IrLowering {
           this.SlotFor(fstrSym), new IrConstantInt(IrType.I32, fixedStr.Length), handle);   // pad/truncate the input into the fixed buffer
         continue;
       }
-      var (addr, type) = this.LValue(target);
+      var (addr, type) = this.LValue(target, "INPUT");
       if (type is not ScalarType s)
         throw new IrLoweringException("INPUT into a non-scalar target");
       var (suffix, ty) = NumericSuffix(s);
@@ -2219,13 +2240,32 @@ public sealed partial class IrLowering {
         this.RuntimeFn(s.IsGet ? "rt_field_get" : "rt_field_put", IrType.Void, IrType.I32), target);
       return;
     }
+    // A STRING variable is not a record of its own size - it is a HANDLE, and the bytes are in the
+    // heap. The runtime already has the pair for it (rt_fgetinto / rt_fputraw, file in AX and the raw
+    // handle in DX), and the direct emitter calls exactly those; only the IR had no name for them, so
+    // GET/PUT of a string declined and took the module body with it - 11 times over the SVGA corpus,
+    // where reading a header into a string is how a file gets parsed.
+    if (this._model.TypeOf(s.Variable) is StringType or FlexType) {
+      var stringFile = this.FileNum(s.FileNumber);
+      if (s.RecordNumber is { } stringAt)
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_file_setpos", IrType.Void, IrType.I32, IrType.I32),
+          stringFile, this.Coerce(this.LowerExpr(stringAt), this._model.TypeOf(stringAt), PbType.Long));
+      // The RAW handle out of the variable's own cell, not a string EXPRESSION. LowerStringExpr
+      // yields a value - for GET that is a copy, and the runtime then fills the copy while the
+      // variable keeps what it had: the test read back the four spaces it started with instead of
+      // the four bytes in the file. The direct emitter reads the cell, and so does this.
+      this._b.Call(IrType.Void,
+        this.RuntimeFn(s.IsGet ? "rt_file_get_into" : "rt_file_put_raw", IrType.Void, IrType.I32, IrType.Ptr),
+        stringFile, this._b.Load(IrType.Ptr, this.StringTargetAddress(s.Variable)));
+      return;
+    }
     IrValue address;
     int recordSize;
     if (s.Variable is NameExpr && this._model.VariableBindings.TryGetValue(s.Variable, out var sym) && sym.Type is UdtType udt) {
       address = this.SlotFor(sym);                    // a whole-record GET/PUT of a UDT buffer
       recordSize = udt.Size;
     } else {
-      var (addr, type) = this.LValue(s.Variable);
+      var (addr, type) = this.LValue(s.Variable, "GET/PUT");
       if (type is not ScalarType scalar)
         throw new IrLoweringException("GET/PUT of a non-scalar record");
       address = addr;
@@ -2690,7 +2730,7 @@ public sealed partial class IrLowering {
       return;
     }
     var value = this._b.Call(IrType.F64, this.RuntimeFn("rt_str_val", IrType.F64, IrType.Ptr), handle);  // parse a numeric item
-    var (addr, type) = this.LValue(target);
+    var (addr, type) = this.LValue(target, "READ");
     this._b.Store(this.Coerce(value, PbType.Double, type), addr);
   }
 
@@ -3111,7 +3151,7 @@ public sealed partial class IrLowering {
       found = this._b.Call(IrType.I16, this.RuntimeFn("rt_array_scan_num", IrType.I16));
     }
 
-    var (address, targetType) = this.LValue(scan.Target);
+    var (address, targetType) = this.LValue(scan.Target, "ARRAY SCAN");
     this._b.Store(this.Coerce(found, PbType.Integer, targetType), address);
   }
 
@@ -4129,6 +4169,27 @@ public sealed partial class IrLowering {
       return this.Coerce(this._b.Or(segment, this._b.ZExt(offset, IrType.U32)),
         PbType.Dword, this._model.TypeOf(call));
     }
+    // ...and of a PROCEDURE, which is its entry offset. The selector has always been able to name
+    // one - PtrToInt of an IrFunction becomes MOperand.LabelRef, which the emitter resolves through
+    // the same callee lookup a CALL uses - so the only thing missing was saying so here. It was 15
+    // declines over the SVGA corpus, each taking a module body.
+    //
+    // The far ENTRY THUNK the direct emitter synthesizes is not this and is not needed for it: the
+    // thunk exists so a FAR call can reach a near procedure, while CODEPTR asks for the offset, which
+    // is the procedure's own label either way. CODEPTR32 pairs that offset with CS, exactly as the
+    // label form below does.
+    if (name.ToUpperInvariant() is "CODEPTR" or "CODEPTR32" && call.Arguments is [NameExpr procRef]
+        && this._model.CallBindings.TryGetValue(procRef, out var codeProc)
+        && this._procMap is not null && this._procMap.TryGetValue(codeProc, out var codeFn)) {
+      var entry = this._b.Cast(IrCastOp.PtrToInt, codeFn, IrType.U16);
+      if (name.Equals("CODEPTR", StringComparison.OrdinalIgnoreCase))
+        return this.Coerce(entry, PbType.Word, this._model.TypeOf(call));
+      var codeSegment = this._b.Shl(
+        this._b.ZExt(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)), IrType.U32),
+        new IrConstantInt(IrType.U32, 16));
+      return this.Coerce(this._b.Or(codeSegment, this._b.ZExt(entry, IrType.U32)),
+        PbType.Dword, this._model.TypeOf(call));
+    }
     if (name.Equals("CODESEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
@@ -4143,6 +4204,14 @@ public sealed partial class IrLowering {
         PbType.Word, this._model.TypeOf(call));
     if (name.Equals("STRSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Load(IrType.I16, this.RuntimeCell("rt_strseg", IrType.I16)),
+        PbType.Integer, this._model.TypeOf(call));
+    // INP(port) - the read half of OUT, and the same bargain: a named call, because a port read is
+    // whatever a hosted target says it is. The byte comes back zero-extended, which is what makes
+    // INP answer an INTEGER rather than a value that depends on what ran before it.
+    if (name.Equals("INP", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
+      return this.Coerce(
+        this._b.Call(IrType.I16, this.RuntimeFn("rt_inp", IrType.I16, IrType.I16),
+          this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer)),
         PbType.Integer, this._model.TypeOf(call));
     if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
@@ -4434,7 +4503,23 @@ public sealed partial class IrLowering {
   /// <summary>Lowers a string-returning intrinsic (LEFT$/RIGHT$/MID$/CHR$) to a runtime call.</summary>
   private IrValue LowerStringIntrinsic(CallOrIndexExpr ci, string name) {
     IrValue Str(int i) => this.LowerStringExpr(ci.Arguments[i]);
+    // A VALUE keeps all 32 bits: HEX$(&HFFFF63C0) prints eight digits, and narrowing it printed four.
     IrValue Num(int i) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Long);
+
+    // A COUNT is a WORD in the DOS ABI, and the direct emitter simply coerces the argument to INTEGER
+    // before the call. The IR declares these routines i32 because the same declaration feeds the C
+    // back end, so a count is narrowed to a word and widened straight back: the coercion is where a
+    // LONG that does not fit raises, exactly as on the other path, and the widening is what the
+    // selector's argument staging peels off again to reach the word the ABI wants. Coercing to Long
+    // alone left the selector a 32-bit value it could take only where it could PROVE the range - 37
+    // declines over the SVGA corpus where it could not.
+    //
+    // The two are NOT the same helper, and using one for the other is a silent miscompile rather than
+    // a decline: HEX$ and OCT$ of a negative LONG lost their high word and printed 63C0 for
+    // FFFF63C0. The corpus differential caught it; nothing else did.
+    IrValue Count(int i) => this._b.SExt(
+      this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Integer),
+      IrType.I32);
     IrValue Val(int i, ScalarType t) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), t);
 
     // EXTRACT$(main$, match$) / EXTRACT$(main$, ANY set$): everything before the first match, or the
@@ -4463,10 +4548,10 @@ public sealed partial class IrLowering {
       "MKS$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mks", IrType.Ptr, IrType.F32), Val(0, PbType.Single)),
       "MKD$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkd", IrType.Ptr, IrType.F64), Val(0, PbType.Double)),
       "MKE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkd", IrType.Ptr, IrType.F64), Val(0, PbType.Double)),
-      "LEFT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_left", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
-      "RIGHT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_right", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
-      "MID$" when ci.Arguments.Count >= 3 => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), Str(0), Num(1), Num(2)),
-      "MID$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid2", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
+      "LEFT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_left", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Count(1)),
+      "RIGHT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_right", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Count(1)),
+      "MID$" when ci.Arguments.Count >= 3 => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), Str(0), Count(1), Count(2)),
+      "MID$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid2", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Count(1)),
       // CHR$ is VARIADIC: CHR$(65, 66, 67) is "ABC", not "A". It lowers as the left fold of
       // concatenation the direct emitter writes - one rt_chr per code, joined by rt_strcat - rather
       // than as a call that quietly reads the first argument and drops the rest.
@@ -4474,14 +4559,14 @@ public sealed partial class IrLowering {
       // USING$ is PRINT USING captured into a string rather than written to a device - see
       // LowerUsingString for why that is the whole of it
       "USING$" => this.LowerUsingString(ci),
-      "SPACE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_space", IrType.Ptr, IrType.I32), Num(0)),
+      "SPACE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_space", IrType.Ptr, IrType.I32), Count(0)),
       // STRING$(n, s$) repeats the FIRST CHARACTER of s$, so it is STRING$(n, ASC(s$)) - composed
       // from two calls the IR already has rather than a third runtime entry that would have to be
       // taught to every back end. It is also what the direct emitter does: ASC then StrFill.
       "STRING$" when this._model.TypeOf(ci.Arguments[1]) is StringType =>
-        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Num(0),
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Count(0),
           this._b.Call(IrType.I32, this.RuntimeFn("rt_str_asc", IrType.I32, IrType.Ptr), Str(1))),
-      "STRING$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Num(0), Num(1)),
+      "STRING$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Count(0), Count(1)),
       "STR$" => this.LowerStrOf(ci.Arguments[0]),
       "UCASE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ucase", IrType.Ptr, IrType.Ptr), Str(0)),
       "LCASE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_lcase", IrType.Ptr, IrType.Ptr), Str(0)),

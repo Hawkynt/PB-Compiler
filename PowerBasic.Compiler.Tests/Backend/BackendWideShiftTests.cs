@@ -33,12 +33,32 @@ public sealed class BackendWideShiftTests {
       ShlBy& = r
     END FUNCTION
 
+    FUNCTION ShlConst&(BYVAL v AS LONG) NOINLINE
+      DIM r AS LONG
+      r = v
+      SHIFT LEFT r, 24
+      ShlConst& = r
+    END FUNCTION
+
+    FUNCTION ShrConst&(BYVAL v AS LONG) NOINLINE
+      DIM r AS LONG
+      r = v
+      SHIFT RIGHT r, 20
+      ShrConst& = r
+    END FUNCTION
+
     FUNCTION ShrBy&(BYVAL v AS LONG, BYVAL n AS INTEGER) NOINLINE
       DIM r AS LONG
       r = v
       SHIFT RIGHT r, n
       ShrBy& = r
     END FUNCTION
+
+    ' A CONSTANT count too large to write out as unrolled steps takes the same loop. These were the
+    ' declines that SURVIVED the variable-count fix: a shift by 10 or by 24 is an ordinary thing to
+    ' write, and the selector only unrolled 0..8 and the word swap at 16.
+    PRINT ShlConst&(1)
+    PRINT ShrConst&(&H1000000)
 
     DIM k AS INTEGER
     k = 0  : PRINT ShlBy&(1, k)
@@ -64,7 +84,7 @@ public sealed class BackendWideShiftTests {
   public void Run_GivenAVariableShiftCount_ThenTheValueIsRight(bool optimize) {
     var (output, _) = Run(optimize);
 
-    Assert.That(output, Is.EqualTo("1 | 2 | 65536 | 1073741824 | 0 | 1 | 0"),
+    Assert.That(output, Is.EqualTo("16777216 | 16 | 1 | 2 | 65536 | 1073741824 | 0 | 1 | 0"),
       "a count of 0 must not shift, 32 must shift everything out, and 16 must cross the word boundary");
   }
 
@@ -79,6 +99,8 @@ public sealed class BackendWideShiftTests {
     Assert.Multiple(() => {
       Assert.That(routed, Does.Contain("ShlBy"), "a variable-count SHIFT LEFT must route");
       Assert.That(routed, Does.Contain("ShrBy"), "a variable-count SHIFT RIGHT must route");
+      Assert.That(routed, Does.Contain("ShlConst"), "a constant count too large to unroll must route");
+      Assert.That(routed, Does.Contain("ShrConst"), "...in both directions");
     });
   }
 }

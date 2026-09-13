@@ -247,6 +247,15 @@ internal static class RuntimeAbi {
     ["rt_shr32"] = new("rt_shr32",
       [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.Pair),
+    // rt_file_get_into/rt_file_put_raw(file, handle) -> AX = file number, DX = the RAW string handle.
+    // A string is a handle rather than a record of its own size, so these move the heap bytes rather
+    // than the cell; the direct emitter calls the same pair.
+    ["rt_file_get_into"] = new("rt_fgetinto",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    ["rt_file_put_raw"] = new("rt_fputraw",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // rt_inp(port) -> AX = port, and the byte comes back zero-extended in AX.
+    ["rt_inp"] = new("rt_inp", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     // rt_outp(port, value) -> DX = port, AX = value. The registers are chosen to BE the operands of
     // OUT DX, AL, so the routine is that instruction and a return.
     ["rt_outp"] = new("rt_outp",
