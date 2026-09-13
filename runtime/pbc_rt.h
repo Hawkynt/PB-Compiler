@@ -272,6 +272,11 @@ int32_t rt_mem_compare(void *a, void *b, int32_t n);
 void rt_error(int32_t code);
 void rt_unreachable(void);
 
+/* OUT port, value - a write to a hardware I/O port. On DOS this is one OUT instruction; on a hosted
+   target there is no port to write to and nothing sensible to do, so the reference implementation
+   discards it rather than pretending. A target that HAS ports replaces this. */
+void rt_outp(int16_t port, int16_t value);
+
 /* The generated translation unit defines this; main() in the runtime calls it. */
 void pb_main(void);
 
