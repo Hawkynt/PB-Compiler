@@ -219,4 +219,57 @@ public sealed class BackendArrayUdtDifferentialTests {
     Assert.That(routed, Is.EqualTo(direct));
     Assert.That(direct, Is.EqualTo(" 1  3  6 \n 1  3  8"));
   }
+
+  /// <summary>
+  /// A member of an INDEXED UDT array field - <c>b.Slots(i).Id</c>. It parses as an index of a member
+  /// rather than of a name, so it needs its own address form, and the lowering had none: it declined
+  /// 14 module bodies over the SVGA corpus, where a context record holding a table of records is the
+  /// ordinary shape.
+  ///
+  /// <para>
+  /// A TYPE's array field carries no lower bound and is not range-checked, so the subscript scales
+  /// straight off the field's own address. <c>Head</c> and <c>Tail</c> are read back for that reason:
+  /// a stride or a base off by one element lands INSIDE the record, on a neighbour, and a test that
+  /// read only the array back would agree with itself while disagreeing with PowerBASIC.
+  /// </para>
+  /// <para>
+  /// This is the one program here with no <c>Op%</c> barrier in front of its subjects, and the reason
+  /// is a DIFFERENT gap: a record base is a memory base, and one live across the call to <c>Op%</c>
+  /// cannot spill - so the barrier declines the function it was added to keep honest. The genuine
+  /// oracle covers the unfolded arithmetic instead: <c>tests/diff/DIFF128.BAS</c> is this program with
+  /// running subscripts, and the ROUTED build of it is byte-identical to PBC 3.50's answer.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Run_GivenAMemberOfAnIndexedUdtArrayField_ThenBothPathsAddressTheSameElement() {
+    const string source = """
+      TYPE Slot
+        Id AS INTEGER
+        Amt AS LONG
+      END TYPE
+      TYPE Box
+        Head AS INTEGER
+        Slots(4) AS Slot
+        Tail AS INTEGER
+      END TYPE
+      DIM b AS Box
+      b.Head = 11
+      b.Tail = 22
+      FOR i% = 0 TO 3
+        b.Slots(i%).Id = i% + 1
+        b.Slots(i%).Amt = (i% + 1) * 1000&
+      NEXT
+      k% = 0 : PRINT b.Slots(k%).Id;
+      k% = 3 : PRINT b.Slots(k%).Id
+      k% = 1 : PRINT b.Slots(k%).Amt;
+      k% = 2 : PRINT b.Slots(k%).Amt
+      PRINT b.Head; b.Tail
+      """;
+
+    var (direct, routed, names) = RunBothWays(source);
+
+    Assert.That(names, Does.Contain("main").IgnoreCase, "an agreeing comparison proves nothing if it declined");
+    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(direct, Is.EqualTo(" 1  4 \n 2000  3000 \n 11  22"));
+  }
 }
