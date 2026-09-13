@@ -2323,6 +2323,43 @@ public sealed partial class InstructionSelector {
         this._vregs[cast] = narrow;
         return true;
       }
+      // A BYTE widened to a word or a dword. There were cases here for a bool source, for a word
+      // reaching a dword and for either reaching a qword, and NONE for a byte - so `u8 -> i16`
+      // declined 339 times over the SVGA corpus alone, and with its i32 and u16 siblings accounted
+      // for 448 of the routing gaps there: the largest single reason the direct emitter could not be
+      // retired.
+      //
+      // The sequence is the one the runtime's ScratchU8ToWord answer already uses, and it needs no
+      // 386: zero the whole word, then move the byte into its low half. MOVZX is not in this back
+      // end's opcode set, which is why the extension is written out rather than named.
+      case IrCastOp.ZExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16 or 32: {
+        if (!this.TryOperand(cast.Value, out var source))
+          return false;
+        // Staged through the physical AX rather than through a byte VIEW of the destination vreg.
+        // The view is what ScratchU8ToWord does and it is not spill-safe: FindVirtualSize takes the
+        // WIDEST mention of a virtual register and Rewrite then applies that one size to every
+        // mention, so the byte reference silently becomes a word one and the emitter meets
+        // `MOV DL, <word slot>`. Five corpus suites failed exactly that way before this was staged.
+        var zero = new MOperand.Immediate(0);
+        var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+        var ah = new MOperand.Register(MReg.Physical_(Reg.AH, MRegSize.Byte));
+        var al = new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte));
+        this._current.Instructions.Add(new MInstr(MOpcode.Xor, [ah, ah],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
+            ReadsMemory: false, WritesMemory: false)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [al, source], MovEffect(al, source)));
+        if (IsWide(to)) {
+          var (low, high) = this.FreshPair(cast);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, ax], MovEffect(low, ax)));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, zero], MovEffect(high, zero)));
+          return true;
+        }
+        var dest = this.FreshVreg(cast.Type);
+        var word = new MOperand.Register(dest);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, ax], MovEffect(word, ax)));
+        this._vregs[cast] = dest;
+        return true;
+      }
       case IrCastOp.SExt or IrCastOp.ZExt when IsWide(to) && from.IsInteger && from.Bits == 16: {
         if (!this.TryOperand(cast.Value, out var source))
           return false;
