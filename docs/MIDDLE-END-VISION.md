@@ -52,7 +52,7 @@ The repository already owns much of the hard machinery: typed SSA values, exact 
 
 The current `PowerBasic.Compiler.Ir` layer therefore spans several boxes in the table above. `IrLowering` lowers the Bound AST directly into a representation that contains source-semantic lowering decisions, MIR-like explicit control flow and SSA/Low-IR operations. That was a sensible bootstrap path; it should now be separated by contracts before more optimization knowledge is added.
 
-The first architectural defect being removed is analysis ownership. Historically a pass that needed dominance called `IrDominators.Build(fn)` itself, while `IrPassManager` knew only a delegate and an integer change count. That prevented safe analysis caching and precise invalidation. This PR establishes the shared function-analysis contract and begins migrating real consumers without changing the proven pass order.
+The first architectural defect being removed is analysis ownership. Historically a pass that needed dominance called `IrDominators.Build(fn)` itself, while `IrPassManager` knew only a delegate and an integer change count. That prevented safe analysis caching and precise invalidation. The production function-pass path now has a shared analysis contract; migration can proceed without changing the proven pass order.
 
 ## Analysis backbone
 
@@ -84,36 +84,39 @@ A transformation reports both what changed and what remains valid:
 pass(function, analyses) -> { changes, preserved analyses }
 ```
 
-Unchanged passes preserve everything. A legacy pass that changes IR conservatively preserves nothing. A transform that only replaces SSA operands can, for example, preserve CFG-only analyses such as dominance. This lets migration happen pass by pass without weakening correctness.
+Unchanged passes preserve everything. A legacy pass that changes IR conservatively preserves nothing. A transform that only changes values or moves instructions without changing block topology can preserve the named CFG analysis set rather than enumerating dominators, post-dominators and loop facts one by one.
 
-Analysis-to-analysis queries are dependencies, not implementation details. If MemorySSA is derived from dominators and a transform invalidates dominance, preserving only MemorySSA is not sufficient: the analysis manager must invalidate the dependent result transitively. The bootstrap implementation records these dependencies dynamically while analyses are computed.
+Analysis-to-analysis queries are dependencies, not implementation details. If MemorySSA is derived from dominators and a transform invalidates dominance, preserving only MemorySSA is not sufficient: the analysis manager invalidates the dependent result transitively. Dependencies are recorded dynamically while analyses are computed.
 
-Eventually preservation should also support named analysis sets such as "all CFG analyses". The initial implementation intentionally starts with exact analysis keys plus transitive dependencies because that model is easy to reason about and hard to make unsound.
+Named preservation sets are now part of the contract. `IrAnalysisSets.Cfg` is the first: dominators, post-dominators and the natural-loop forest declare membership once, and CFG-preserving transforms preserve the set. Dependency invalidation still wins over set membership, so preserving a set cannot keep a result whose non-preserved prerequisite became stale.
 
 ## Effects and semantics
 
-Optimization correctness needs an explicit semantics database rather than name-based folklore. Operations and calls must eventually expose facts such as:
+Optimization correctness needs an explicit semantics database rather than name-based folklore. Operations and calls should expose facts such as:
 
 ```text
-Pure
 ReadsMemory / WritesMemory
-ReadsGlobal / WritesGlobal
-MayAllocate
+MayAllocate / MayRelease
 MayThrow / MayTrap
 MayBlock / MaySynchronize
 PerformsIO
 Volatile / Atomic
+Deterministic
 ```
 
-PB's existing runtime semantics make this especially important: a routine that looks like a read may still consume or release a string handle. Effects must describe what the operation actually means, not what its spelling suggests.
+The first explicit vocabulary now exists as `IrEffectKind`, `IrEffectSummary` and `IrEffects`. The initial external-call table intentionally preserves existing behavior: the checked LLVM floating math intrinsics are deterministic, effect-free and speculatable; every unmodeled runtime/library call remains maximally conservative. GVN, LICM and the compatibility queries in `FunctionSummaries` consume that one semantic source instead of separate whitelists.
 
-The IR also needs deliberate contracts for overflow, floating-point corner cases, invalid shifts/division, pointer/object identity, volatile/atomic behavior, exceptions and observable runtime state. Do not inherit LLVM's poison/undef model accidentally merely because the textual IR resembles LLVM.
+PB's runtime semantics make conservatism essential: a routine that looks like a read may still consume or release a string handle. `rt_str_len`, `rt_str_dup`, printing, memcpy and unknown externals therefore remain outside the effect-free contract until their exact semantics are modeled deliberately.
+
+The IR still needs fuller contracts for overflow, floating-point corner cases, invalid shifts/division, pointer/object identity, volatile/atomic behavior, exceptions and observable runtime state. Do not inherit LLVM's poison/undef model accidentally merely because the textual IR resembles LLVM.
 
 ## Unified facts
 
 Range analysis is only one abstract domain. The long-term query should look conceptually like `Facts(value, programPoint)`, with branch-local refinement and reusable lattices for constants, integer ranges, known bits, alignment, nullness, dynamic type sets, pointer bases and object identity.
 
-This does not mean one giant mutable `ValueFacts` object. Independent domains should remain independently computable and invalidatable, with a common query/fixed-point framework so passes cooperate instead of duplicating propagation engines.
+This does not mean one giant mutable `ValueFacts` object. Independent domains remain independently computable and invalidatable, with common query/fixed-point infrastructure so passes cooperate instead of duplicating propagation engines.
+
+The current shared domains already include branch-refined integer ranges, FP domains adapted from those ranges, and a bounded `IrKnownBitsAnalysis` for known-zero/known-one facts. Known bits covers constants, bitwise logic, integer truncation/extension, selects and conservative phi meets. `DemandedBits` is its first consumer and can now recognize a neutral demanded-bit mask proved by a non-literal SSA expression.
 
 ## Guards and speculation
 
@@ -152,19 +155,18 @@ Pass order still matters inside a group, but dependencies should be stated throu
 
 ### Must
 
-- Introduce lazy function-analysis caching and explicit preservation/invalidation without changing optimization behavior.
-- Migrate existing passes incrementally from private analysis reconstruction to the shared analysis manager.
+- Continue migrating existing passes from private analysis reconstruction to the shared analysis manager.
 - Split `IrLowering` conceptually into Bound AST -> HIR and HIR -> MIR/SSA stages before adding more source-semantic lowering to the existing monolith.
-- Define effect identities for IR operations and runtime/library calls; make memory and call optimizations consume them.
+- Expand effect identities from the first external-call contracts to IR operations and precisely modeled runtime/library calls.
 - Define verifier contracts at every new representation boundary.
 - Keep every legacy pass conservatively correct during migration; unknown preservation means invalidate.
 
 ### Should
 
-- Add post-dominators, an explicit loop forest and shared scalar-evolution infrastructure.
-- Turn range/known-bit/alignment/null/type information into reusable abstract domains with branch-local refinement.
+- Extend scalar evolution beyond bootstrap additive recurrences and exact canonical trip counts where consumers justify the extra lattice complexity.
+- Grow known-bit/alignment/null/type information as reusable abstract domains with branch-local refinement where useful.
 - Make MemorySSA, alias/mod-ref and escape analysis share explicit memory/effect semantics.
-- Add module/call-graph analysis managers and whole-program reachability as first-class cached analyses.
+- Add module/call-graph analysis managers and whole-program reachability as first-class cached analyses; module transforms must participate in invalidation before cached summaries are introduced.
 - Separate target-independent legality from target profitability through cost-model interfaces.
 - Move the huge standard pipeline into named, testable phase/fixed-point groups while retaining the proven relative ordering where required.
 
@@ -175,36 +177,42 @@ Pass order still matters inside a group, but dependencies should be stated throu
 - Add a small-region superoptimizer after the semantics and cost-model contracts are strong enough to prove candidates.
 - Add translation validation for risky transforms and profile/autotuning infrastructure for profitability choices.
 
-### Won't in the bootstrap refactor
+### Won't in this refactor
 
 - Rewrite every pass or every IR layer at once.
-- Change pass order while introducing the pass/analysis contract.
+- Change pass order merely while introducing analysis infrastructure.
 - Add external optimizer dependencies.
 - Copy LLVM/MLIR implementation code or adopt LLVM semantics accidentally.
 - Replace target-independent operations with target-shaped arithmetic merely to make one backend easier to write.
 
-## Bootstrap status in this PR
+## Current status in this PR
 
-This PR establishes the first production mechanism rather than pretending the migration is already complete:
+The PR now has a production analysis substrate rather than only a sketch:
 
-1. `IrAnalysisManager` lazily computes and caches typed function analyses.
-2. `IrPreservedAnalyses` makes invalidation an explicit pass result instead of an undocumented side effect.
-3. `IrPassResult` separates "did this transform change IR?" from "which knowledge is still valid?".
-4. `IrFunctionPassPipeline` is now the function-pass execution core behind `IrPassManager`; legacy delegates are adapted conservatively and changing legacy passes invalidate all cached analyses.
-5. Analysis-to-analysis queries are tracked dynamically, so invalidating a prerequisite transitively invalidates dependent cached results even when a transform claims to preserve them.
-6. `CorrelatedValueProp`, `PointerCheckElim`, `Gvn` and `Licm` consume shared cached dominators. GVN also consumes cached MemorySSA.
-7. `IrAnalyses.MemorySsa` composes from `IrAnalyses.Dominators`, so those two analyses no longer build independent dominance trees in migrated code.
-8. Verification deliberately remains independent of the analysis cache: `VerifyEachPass` must be able to catch a transform that incorrectly claims to preserve CFG facts rather than trusting that claim.
+1. `IrAnalysisManager` lazily computes typed function analyses and dynamically records analysis-to-analysis dependencies.
+2. `IrPreservedAnalyses` / `IrPassResult` carry exact preservation and named preservation sets; stale prerequisites invalidate dependents transitively.
+3. `IrFunctionPassPipeline` is the function-pass execution core behind `IrPassManager`; legacy delegates remain conservative.
+4. Shared CFG analyses include dominators/frontiers, post-dominators/frontiers and an explicit natural-loop forest.
+5. Shared value/memory analyses include MemorySSA, branch-refined integer ranges, FP domains, bootstrap scalar evolution and known bits.
+6. Scalar evolution exposes additive `{start,+,step}` recurrences and bounded exact trip-count proofs using fixed-width integer semantics; `CountedLoop` and migrated loop consumers reuse those facts.
+7. Migrated transforms include correlation, pointer-check elimination, GVN, LICM, integer/FP range folding, reciprocal loop reasoning and IV simplification. CFG-preserving transforms preserve `IrAnalysisSets.Cfg` rather than manually maintaining a key list.
+8. `DemandedBits` consumes the known-bits domain; GVN/LICM consume the central external-call effect contract.
+9. Verification deliberately remains independent of the analysis cache: `VerifyEachPass` must catch an incorrect preservation claim instead of trusting it.
+10. No new external dependency has been introduced and the standard pass order has not been reordered.
 
-The next mechanical work is to migrate the remaining dominance/range/memory consumers, add explicit loop/post-dominator/SCEV analyses, then split the monolithic pipeline into named fixed-point groups. The representation split (`Bound AST -> HIR -> MIR/SSA`) comes after this substrate is stable, so semantic lowering changes are not mixed with cache/invalidation changes.
+The next architectural boundary is module/call-graph analysis ownership. `FunctionSummaries` and several module transforms currently recompute inside mutation loops; caching them safely requires module passes to report invalidation first. After that, the large standard pipeline can move into named fixed-point groups. The representation split (`Bound AST -> HIR -> MIR/SSA`) follows once the analysis/pass substrate is stable enough that semantic lowering work is not mixed with cache mechanics.
 
 ## Reference architecture
 
 The design uses public architectural contracts from established compiler infrastructure as reference material, not implementation source:
 
-- LLVM New Pass Manager: <https://llvm.org/docs/NewPassManager.html> — lazy analysis managers, cached results, preserved-analysis invalidation and scoped IR-unit managers.
+- LLVM New Pass Manager: <https://llvm.org/docs/NewPassManager.html> — lazy analysis managers, cached results, preserved-analysis sets/invalidation and scoped IR-unit managers.
 - MLIR Pass Infrastructure: <https://mlir.llvm.org/docs/PassManagement/> — cached analyses, explicit preservation and structured pass pipelines.
+- LLVM Loop Terminology: <https://llvm.org/docs/LoopTerminology.html> — natural loops, headers, latches, preheaders and canonical loop terminology.
+- LLVM ScalarEvolution: <https://llvm.org/doxygen/classllvm_1_1ScalarEvolution.html> — recurrence/trip-count analysis interface.
 - LLVM MemorySSA: <https://llvm.org/docs/MemorySSA.html> — SSA-style memory versions and def/use reasoning.
-- LLVM Language Reference / UB manual: <https://llvm.org/docs/LangRef.html> and <https://llvm.org/docs/UndefinedBehavior.html> — useful evidence for why poison/undef/trap behavior must be deliberate rather than implicit.
+- LLVM ValueTracking / KnownBits: <https://llvm.org/doxygen/ValueTracking_8h_source.html> — known-zero/known-one query model.
+- LLVM Language Reference: <https://llvm.org/docs/LangRef.html> — memory effects, `speculatable`, `willreturn`, `nosync` and explicit operation contracts.
+- LLVM UB manual: <https://llvm.org/docs/UndefinedBehavior.html> — why poison/undef/trap behavior must be deliberate rather than implicit.
 
-LLVM is Apache-2.0 WITH LLVM-exception. No LLVM/MLIR implementation code is copied or translated here; the PB-Compiler implementation is original and uses only the architectural behavior described by the documentation.
+LLVM is Apache-2.0 WITH LLVM-exception. No LLVM/MLIR implementation code was copied or translated here; the PB-Compiler implementation is original and uses only public architectural behavior as reference.
