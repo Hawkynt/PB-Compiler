@@ -17,6 +17,11 @@ public static class IrAnalyses {
     new("ranges", static (function, analyses) =>
       IrRangeAnalysis.Build(function, analyses.Get(Dominators)));
 
+  /// <summary>Floating domains adapted from the shared integer range facts.</summary>
+  public static IrAnalysisKey<FpDomainAnalysis?> FpDomains { get; } =
+    new("fp-domains", static (function, analyses) =>
+      FpDomainAnalysis.Build(function, analyses.Get(Ranges)));
+
   /// <summary>SSA overlay for memory definitions, uses and merge points.</summary>
   public static IrAnalysisKey<IrMemorySsa> MemorySsa { get; } =
     new("memory-ssa", static (function, analyses) =>

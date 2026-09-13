@@ -20,8 +20,17 @@ public static class ConversionRangeCheckElim {
   /// <summary>Folds provably decided ordered float comparisons; returns how many were replaced.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    if (FpDomainAnalysis.Build(fn) is not { } domains)
-      return 0;
+    return Run(fn, new IrAnalysisManager(fn)).Changes;
+  }
+
+  /// <summary>Runs conversion-range folding using the shared floating-point domain analysis.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
+    if (analyses.Get(IrAnalyses.FpDomains) is not { } domains)
+      return IrPassResult.Unchanged;
 
     var decided = new List<(IrCmp Cmp, bool Outcome)>();
     foreach (var block in fn.Blocks)
@@ -38,7 +47,10 @@ public static class ConversionRangeCheckElim {
 
     foreach (var (cmp, outcome) in decided)
       cmp.ReplaceAllUsesWith(IrBuilder.ConstBool(outcome));
-    return decided.Count;
+
+    return decided.Count == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreserving(decided.Count, IrAnalyses.Dominators, IrAnalyses.Loops);
   }
 
   private static FpDomainAnalysis.Domain? TryDomain(
