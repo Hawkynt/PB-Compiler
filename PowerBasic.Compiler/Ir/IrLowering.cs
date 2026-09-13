@@ -1690,7 +1690,12 @@ public sealed partial class IrLowering {
       return this.MemberLValue(m);
     if (e is PtrDerefExpr deref && this._model.TypeOf(deref) is ScalarType target)
       return (this.DerefAddress(deref), target);
-    throw new IrLoweringException("unsupported lvalue");
+    // Name the SHAPE. "unsupported lvalue" alone says a decline happened and nothing about what to
+    // write next, which is the same defect the module-level decline had: a reason that identifies
+    // nothing cannot be worked from, and it took a corpus census plus a guess to find out what was
+    // behind the count.
+    throw new IrLoweringException(
+      $"unsupported lvalue: {e.GetType().Name} of {this._model.TypeOf(e).GetType().Name}");
   }
 
   /// <summary>The storage address and field type of a UDT member (or a flat QB-style dotted variable).</summary>
@@ -1726,7 +1731,10 @@ public sealed partial class IrLowering {
       basePtr = this.MemberFieldAddress(nested).Address;
       udt = nestedUdt;
     } else
-      throw new IrLoweringException("unsupported member access");
+      // Name the TARGET's shape, for the reason the lvalue decline beside it does: a count of
+      // "unsupported member access" says a decline happened and nothing about what to write.
+      throw new IrLoweringException(
+        $"unsupported member access: target is {m.Target.GetType().Name} of {this._model.TypeOf(m.Target).GetType().Name}");
 
     var field = udt.FindField(m.Member) ?? throw new IrLoweringException($"unknown field {m.Member}");
     if (field.ElementCount != 1)
