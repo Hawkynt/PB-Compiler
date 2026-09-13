@@ -548,7 +548,10 @@ public sealed class PowerBasic35Emitter {
       case InputStmt s: this.WriteInput(s); break;
       case OpenStmt s: this.WriteOpen(s); break;
       case CloseStmt s: this.Line(s.FileNumbers.Count == 0 ? "CLOSE" : $"CLOSE {string.Join(", ", s.FileNumbers.Select(this.FileRef))}"); break;
-      case GetPutFileStmt s: this.Line($"{(s.IsGet ? "GET" : "PUT")} {this.FileRef(s.FileNumber)}{(s.RecordNumber is { } gr ? ", " + this.Expr(gr) : "")}{(s.Variable is { } gv ? ", " + this.Expr(gv) : "")}"); break;
+      // the record number is a POSITIONAL slot, so an absent one is still written when a variable
+      // follows it: `PUT #1, , s` writes s where the handle stands, while `PUT #1, s` makes s the
+      // record NUMBER and asks for a string-to-LONG conversion that does not exist.
+      case GetPutFileStmt s: this.Line($"{(s.IsGet ? "GET" : "PUT")} {this.FileRef(s.FileNumber)}{(s.RecordNumber is { } gr ? ", " + this.Expr(gr) : s.Variable is not null ? ", " : "")}{(s.Variable is { } gv ? ", " + this.Expr(gv) : "")}"); break;
       case SeekStmt s: this.Line($"SEEK {this.FileRef(s.FileNumber)}, {this.Expr(s.Target)}"); break;
       case FieldStmt s: this.Line($"FIELD {this.FileRef(s.FileNumber)}, {string.Join(", ", s.Fields.Select(f => $"{this.Expr(f.Width)} AS {this.Expr(f.Target)}"))}"); break;
       case SwapStmt s: this.Line($"SWAP {this.Expr(s.Left)}, {this.Expr(s.Right)}"); break;

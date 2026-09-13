@@ -5,7 +5,7 @@ namespace PowerBasic.Compiler.CodeGen;
 
 public sealed partial class CodeGenerator {
   /// <summary>Specialized vector lowerings whose edge semantics are easier to express explicitly.</summary>
-  private bool TryEmitVirtualVectorFixup(InlineInstruction instruction, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryEmitVirtualVectorFixup(InlineInstruction instruction, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     if (instruction.Mnemonic != "PACKSSDW")
       return false;

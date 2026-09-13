@@ -239,6 +239,27 @@ internal static class RuntimeAbi {
     // rt_locate(row, col) -> AX = row, CX = column, a zero meaning "keep the current one"
     ["rt_locate"] = new("rt_locate",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+    // rt_shl32/rt_shr32(value, count) -> DX:AX = the value, CX = the count, answer in DX:AX. The
+    // registers ARE the loop's operands, so the routine is the loop and a return.
+    ["rt_shl32"] = new("rt_shl32",
+      [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair),
+    ["rt_shr32"] = new("rt_shr32",
+      [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Word, Reg.CX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair),
+    // rt_file_get_into/rt_file_put_raw(file, handle) -> AX = file number, DX = the RAW string handle.
+    // A string is a handle rather than a record of its own size, so these move the heap bytes rather
+    // than the cell; the direct emitter calls the same pair.
+    ["rt_file_get_into"] = new("rt_fgetinto",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    ["rt_file_put_raw"] = new("rt_fputraw",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // rt_inp(port) -> AX = port, and the byte comes back zero-extended in AX.
+    ["rt_inp"] = new("rt_inp", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // rt_outp(port, value) -> DX = port, AX = value. The registers are chosen to BE the operands of
+    // OUT DX, AL, so the routine is that instruction and a return.
+    ["rt_outp"] = new("rt_outp",
+      [new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.AX)], _callerSaved),
     // rt_kill(handle) -> AX = filename handle, consumed
     ["rt_kill"] = new("rt_kill", [new(ArgKind.Word, Reg.AX)], _callerSaved),
 
@@ -389,6 +410,9 @@ internal static class RuntimeAbi {
     // ResultKind.WidenedWord for why, and why the CWD is not optional
     ["rt_str_len"] = new("rt_len", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    // "StrPtr: AX=raw string handle -> AX=data offset in the string heap". The offset alone: the
+    // SEGMENT is rt_strseg, which STRSEG answers separately and STRPTR32 pairs with this.
+    ["rt_str_ptr"] = new("rt_strptr", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     // O0297's descriptor query is the same word result without consuming the stable handle.
     ["rt_str_len_borrow"] = new("rt_len_borrow", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),

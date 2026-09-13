@@ -406,4 +406,74 @@ public sealed class BackendInlineAsmTests {
     Assert.That(call.Names, Is.Empty, "code has no cell to pair the name with");
     Assert.That(InstructionSelector.TrySelect(main, out var reason), Is.Not.Null, $"selection declined: {reason}");
   }
+
+  /// <summary>
+  /// <c>! PUSH DI</c> and <c>! POP DI</c> around a block that wants <c>DI</c> is how a body borrows a
+  /// register the compiler is using, and the pair promises nothing to anybody: read literally, though,
+  /// the push USES <c>DI</c> and the pop DEFINES it, so the pop's "value" reaches round the loop to
+  /// the next iteration's push and the runtime call in between is a destroyer.
+  ///
+  /// <para>
+  /// The <c>MID$</c> is what makes this a test rather than a shape - a BASIC statement between the pop
+  /// and the next push that really does destroy <c>DI</c>. Without it the window is empty and any
+  /// model of the pair passes. This is <c>Vga_PatternFill</c> in the SVGA corpus, reduced.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenASavedRegisterAroundALoopBody_ThenTheFunctionStillRoutes() {
+    const string source = """
+      DIM i AS INTEGER, v AS INTEGER, total AS INTEGER, s AS STRING
+      s = "A"
+      total = 0
+      FOR i = 1 TO 3
+        v = ASC(MID$(s, 1, 1)) + i
+        ! PUSH DI
+        ! MOV DI, v
+        ! MOV AX, DI
+        ! MOV v, AX
+        ! POP DI
+        total = total + v
+      NEXT
+      PRINT total
+      """;
+
+    var routed = Run(source, routed: true, out var ownsMain);
+    Assert.That(ownsMain, Is.True, "the saved register must not decline the function");
+    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
+    Assert.That(routed, Is.EqualTo("201"), "66 + 67 + 68");
+  }
+
+  /// <summary>
+  /// The same pair with the body's own control flow between its halves, which splits the run across
+  /// blocks - every <c>Vesa*_HLine</c> in the corpus is written this way. Matching a save to its
+  /// restore by stack depth is only sound where the span is CLOSED, and a label the body jumps to is
+  /// exactly the thing that could open it.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenASavedRegisterSpanningALabel_ThenTheFunctionStillRoutes() {
+    const string source = """
+      DIM i AS INTEGER, v AS INTEGER, total AS INTEGER, s AS STRING
+      s = "A"
+      total = 0
+      FOR i = 1 TO 3
+        v = ASC(MID$(s, 1, 1)) + i
+        ! PUSH DI
+        ! MOV DI, v
+        ! TEST DI, 1
+        ! JZ RoundedUp
+        ! INC DI
+        RoundedUp:
+        ! MOV AX, DI
+        ! MOV v, AX
+        ! POP DI
+        total = total + v
+      NEXT
+      PRINT total
+      """;
+
+    var routed = Run(source, routed: true, out var ownsMain);
+    Assert.That(ownsMain, Is.True, "the run spans a label, and is still one run");
+    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
+    Assert.That(routed, Is.EqualTo("202"), "66, then 67 rounded up to 68, then 68");
+  }
 }

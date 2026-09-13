@@ -83,9 +83,11 @@ public sealed partial class TextAssembler {
           return operands.Count == 0;
         case "PUSHF":
           e.ReadsFlags = true;
+          e.StackDelta = 1;
           return operands.Count == 0;
         case "POPF":
           e.WritesFlags = true;
+          e.StackDelta = -1;
           return operands.Count == 0;
         case "LAHF":
           e.ReadsFlags = true;
@@ -160,12 +162,16 @@ public sealed partial class TextAssembler {
             return false;
 
           e.Read(operands[0]);
+          e.Save(operands[0]);
+          e.StackDelta = 1;
           return true;
         case "POP":
           if (operands.Count != 1)
             return false;
 
           e.Write(operands[0]);
+          e.Restore(operands[0]);
+          e.StackDelta = -1;
           return true;
 
         // ---- arithmetic and logic --------------------------------------------------------------
@@ -292,6 +298,20 @@ public sealed partial class TextAssembler {
       public bool ReadsFlags { get; set; }
       public bool WritesFlags { get; set; }
 
+      /// <summary>See <see cref="AsmRegisterEffect.StackDelta"/>; understood statements leave it at 0.</summary>
+      public int StackDelta { get; set; }
+
+      private Reg? _saves;
+      private Reg? _restores;
+
+      /// <summary>Records a <c>PUSH</c>/<c>POP</c> of a tracked register, for the pairing that cancels the two.</summary>
+      public void Save(Operand operand) => this._saves = Named(operand);
+
+      public void Restore(Operand operand) => this._restores = Named(operand);
+
+      private static Reg? Named(Operand operand)
+        => operand is RegisterOperand register ? Tracked(register.Register) : null;
+
       public void Read(Reg register) {
         if (Tracked(register) is { } word)
           this._reads.Add(word);
@@ -345,7 +365,9 @@ public sealed partial class TextAssembler {
       }
 
       public AsmRegisterEffect Build()
-        => new(this._reads, this._defines, this._kills, this.ReadsFlags, this.WritesFlags, IsOpaque: false);
+        => new(this._reads, this._defines, this._kills, this.ReadsFlags, this.WritesFlags, IsOpaque: false) {
+          Saves = this._saves, Restores = this._restores, StackDelta = this.StackDelta,
+        };
 
       private void Address(MemoryOperand memory) {
         if (memory.Memory.Base is { } @base)

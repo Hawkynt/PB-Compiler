@@ -12,7 +12,7 @@ public sealed partial class CodeGenerator {
   private const int GpArithCount = 120;
   private const int GpArithSign = 122;
 
-  private bool TryEmitVirtualGp32ArithmeticInstruction(InlineInstruction instruction, InlineAsmResolver resolver,
+  private bool TryEmitVirtualGp32ArithmeticInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver,
       RuntimeTarget target, out string? error) {
     error = null;
     if (instruction.Mnemonic is not ("MUL" or "IMUL" or "DIV" or "IDIV" or "ROL" or "ROR" or "RCL" or "RCR"))

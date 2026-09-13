@@ -9,7 +9,7 @@ public sealed partial class CodeGenerator {
   /// fault. Operand parsing happens before the decision so SPEED can never turn malformed assembly
   /// into an accepted program merely because its tokens resemble an identity.
   /// </summary>
-  private bool IsZeroOverheadInlineAsmIdentity(InlineInstruction instruction, InlineAsmResolver resolver) {
+  private bool IsZeroOverheadInlineAsmIdentity(InlineInstruction instruction, IAsmSymbolResolver resolver) {
     if (instruction.RepPrefix is not null)
       return false;
 

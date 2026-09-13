@@ -326,6 +326,12 @@ public sealed class BackendCoverageTests {
     Assume.That(census.ProgramsTotal, Is.GreaterThan(0), "no tests/*.BAS corpus present");
 
     var report = new StringBuilder()
+      // Say the scope in the report itself. Every number below is true of tests/diff and of nothing
+      // wider, and "330/330 functions routed" read as a statement about the LANGUAGE is what sent a
+      // deletion of the direct emitter into 1193 failures: over everything the suite compiles, the
+      // routing still declines procedure pointers, OUT, byte zero-extension casts and inline-asm
+      // name binding. A census that surveys a subset and prints a total invites exactly that.
+      .AppendLine("scope              : tests/diff only - NOT every program the suite compiles")
       .AppendLine($"programs           : {census.ProgramsLowered.Count}/{census.ProgramsTotal} lowered to IR")
       // the denominator above is every .BAS on disk, which is not the same as every program the back
       // end could ever be asked for: one the FRONT end rejects never reaches a lowering to decline.
@@ -630,6 +636,8 @@ public sealed class BackendCoverageTests {
     "DIFF123.BAS",   // OPTION BASE governs omitted lower bounds of dynamic DIM/REDIM, lexically
     "DIFF124.BAS",   // REDIM of an array PARAMETER reallocates the CALLER's array
     "DIFF125.BAS",   // DIM DYNAMIC ... AT - genuine refuses the static spelling with Error 489
+    "DIFF126.BAS",   // ERASE of an ABSOLUTE array - unmaps the view by clearing the segment
+    "DIFF127.BAS",   // GET / PUT of a STRING - the heap bytes, not the handle cell
     // EXIT FAR: the unwind point and the jump through it, as intrinsics the back end expands inline;
     // both the module body and its near numeric BYREF procedure route.
     "DIFF14.BAS",
@@ -813,6 +821,8 @@ public sealed class BackendCoverageTests {
     "DIFF123.BAS",   // OPTION BASE governs omitted lower bounds of dynamic DIM/REDIM, lexically
     "DIFF124.BAS",   // REDIM of an array PARAMETER reallocates the CALLER's array
     "DIFF125.BAS",   // DIM DYNAMIC ... AT - genuine refuses the static spelling with Error 489
+    "DIFF126.BAS",   // ERASE of an ABSOLUTE array - unmaps the view by clearing the segment
+    "DIFF127.BAS",   // GET / PUT of a STRING - the heap bytes, not the handle cell
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: segment stepping and the EMS page window

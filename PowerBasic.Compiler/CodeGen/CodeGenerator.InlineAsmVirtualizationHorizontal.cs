@@ -3,7 +3,7 @@ using PowerBasic.Compiler.Asm;
 namespace PowerBasic.Compiler.CodeGen;
 
 public sealed partial class CodeGenerator {
-  private bool TryEmitVirtualHorizontalInstruction(InlineInstruction instruction, InlineAsmResolver resolver, out string? error) {
+  private bool TryEmitVirtualHorizontalInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, out string? error) {
     error = null;
     if (instruction.Mnemonic is not ("PHADDW" or "PHADDD" or "PHSUBW" or "PHSUBD"))
       return false;

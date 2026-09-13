@@ -134,7 +134,8 @@ public sealed partial class CodeGenerator {
         this._asm, helper.Machine, helper.Allocation, helper.ParameterOffsets, helper.ParameterBytes,
         this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops,
-        allowFrameElision: helper.ElideFrame);
+        allowFrameElision: helper.ElideFrame,
+        emitInlineAsm: this.EmitRoutedInlineAsm);
     }
   }
 

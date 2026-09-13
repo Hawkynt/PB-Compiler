@@ -12,7 +12,7 @@ public sealed partial class CodeGenerator {
   };
 
   /// <summary>Native scalar bit-manipulation emission for instructions newer than the historical assembler table.</summary>
-  private bool TryEmitNativeBitManipulationInstruction(InlineInstruction instruction, InlineAsmResolver resolver, out string? error) {
+  private bool TryEmitNativeBitManipulationInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, out string? error) {
     error = null;
     if (instruction.Mnemonic != "POPCNT")
       return false;
@@ -57,7 +57,7 @@ public sealed partial class CodeGenerator {
   /// registers, and only then writes the destination. That ordering also preserves source/destination
   /// overlap and permits SP as a 16-bit destination.
   /// </summary>
-  private bool TryEmitVirtualBitManipulationInstruction(InlineInstruction instruction, InlineAsmResolver resolver,
+  private bool TryEmitVirtualBitManipulationInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver,
       RuntimeTarget target, out string? error) {
     error = null;
     if (instruction.Mnemonic != "POPCNT")

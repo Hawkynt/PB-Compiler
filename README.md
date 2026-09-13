@@ -21,6 +21,10 @@
 > executables — written in modern C#, runnable on any 64-bit host, and driven against the
 > original compilers until its programs behave identically, documented bugs and all.
 
+<p align="center">
+  <img src="docs/images/pbc-help.svg" alt="pbc --help: the PB-Compiler command line, listing the dialect, optimizer, back end and emit options" width="798">
+</p>
+
 PB-Compiler (`pbc`) reads unmodified BASIC source from the DOS era and emits real
 binaries you can run on actual DOS or in DOSBox:
 
@@ -129,7 +133,7 @@ pbc --dialect pb36 HELLO.BAS  # pb36 syntax features (optimizer on by default)
 pbc --dialect qb45 OLD.BAS    # compile a QuickBASIC 4.5 source
 pbc --optimize OLD.BAS        # run the optimizer for any dialect
 pbc --no-optimize APP.BAS     # disable the optimizer (faithful codegen)
-pbc --x-backend FAST.BAS      # opt into the IR -> native x86-16 backend
+pbc --no-x-backend OLD.BAS    # compile through the legacy direct emitter instead
 pbc -G386 TEST.BAS            # allow 80386 instructions ($CPU 80386)
 pbc UNIT.BAS                  # $COMPILE UNIT inside -> UNIT.PBU
 pbc MAIN.BAS                  # $LINK "UNIT.PBU" / "MY.PBL" inside -> linked EXE
@@ -141,8 +145,8 @@ pbc lib list MY.PBL           # show exports/imports of a library or unit
 
 Useful options: `-O <file>` (output name), `-I <dir>` (`$INCLUDE` search path),
 `-L <dir>` (`$LINK` search path), the runtime-check switches `-EB`/`-EN`/`-EO`/`-ES`
-(bounds/numeric/overflow/stack), and `-OZF` (`$OPTIMIZE SPEED`). Run `pbc --help`
-for the full list.
+(bounds/numeric/overflow/stack), and `-OZF` (`$OPTIMIZE SPEED`). The full list is
+`pbc --help`, shown [at the top of this page](#pb-compiler).
 
 ## 🚀 Quick start
 

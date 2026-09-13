@@ -141,8 +141,12 @@ public sealed class BackendAbsoluteArrayTests {
   /// </summary>
   // HUGE and VIRTUAL used to be here. They lower now - they were never about the AT segment, only
   // about a segment computed per access, which IrFarPtr always allowed (BackendPagedArrayTests).
+  //
+  // ERASE used to be here too, and it was the last construct the routing declined anywhere. It was a
+  // representation limit rather than a semantic one: the segment was a compile-time constant, so
+  // unmapping the view had nowhere to land. The segment lives in a cell now, so ERASE clears it -
+  // see the test below, which holds it to doing so rather than to declining.
   [TestCase("s% = &HB800\nDIM DYNAMIC a%(0 TO 7) AT s%\na%(0) = 1", "a runtime AT segment")]
-  [TestCase("DIM DYNAMIC a%(0 TO 7) AT &HB800\nERASE a%", "ERASE unmaps an AT array")]
   [TestCase("DIM DYNAMIC a%(0 TO 7) AT &HB800\nREDIM a%(0 TO 15)", "REDIM would allocate over the view")]
   public void Lower_GivenAnArrayClassOutsideTheSubset_ThenDeclinesRatherThanGuessingASegment(
       string source, string why) {
@@ -150,6 +154,30 @@ public sealed class BackendAbsoluteArrayTests {
 
     Assert.That(module, Is.Null, $"{why}: expected a decline, got a lowered module");
     Assert.That(reason, Is.Not.Null.And.Not.Empty);
+  }
+
+  /// <summary>
+  /// <c>ERASE</c> unmaps the view by clearing the segment, which is what the direct emitter always
+  /// did (<c>MOV WORD PTR [slot],0</c>). The claim is that it LOWERS and routes - it was the last
+  /// row in the routing's decline list, and the list is gone with it.
+  ///
+  /// <para>
+  /// What happens to a later access is deliberately not asserted. Genuine PBC 3.50 terminates the
+  /// program there rather than answering, which neither emitter reproduces;
+  /// <c>tests/diff/DIFF126.BAS</c> compares the part that has a defined answer and stops.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Lower_GivenEraseOfAnAbsoluteArray_ThenItLowersAndRoutes() {
+    const string source = "DIM DYNAMIC a%(0 TO 7) AT &HB800\na%(0) = 1\nERASE a%\nPRINT \"ok\"";
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+
+    var image = routed.EmitExecutable();
+
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
+      "ERASE of an ABSOLUTE array was the last decline; the module body must route now");
+    Assert.That(Cpu8086.Run(image).Output.Replace("\r\n", "|"), Is.EqualTo("ok|"));
   }
 
   private static byte[] Bytes(Cpu8086 cpu, ushort segment, int offset, int count)

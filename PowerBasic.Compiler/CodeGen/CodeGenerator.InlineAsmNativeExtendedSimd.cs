@@ -9,7 +9,7 @@ public sealed partial class CodeGenerator {
   /// TextAssembler dispatch table. Operand parsing is still shared with TextAssembler, so symbols,
   /// segment overrides and PB memory syntax have one implementation.
   /// </summary>
-  private bool TryEmitNativeExtendedSimdInstruction(InlineInstruction instruction, InlineAsmResolver resolver, out string? error) {
+  private bool TryEmitNativeExtendedSimdInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, out string? error) {
     error = null;
     var mnemonic = instruction.Mnemonic;
     if (!IsSsse3(mnemonic) && !IsSse41(mnemonic) && !IsSse42(mnemonic))

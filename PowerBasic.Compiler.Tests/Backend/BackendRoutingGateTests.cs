@@ -15,8 +15,16 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// only rank what the corpus contains, and the corpus has no procedure with a QUAD parameter, a BYTE
 /// one, a UDT one or a WATCALL convention. Those classes are just as real: each is a compile failure
 /// waiting for the day <c>CodeGen/</c> is deleted. This fixture is where they are written down, one
-/// program each, with the routing's own recorded reason - so the list below is the roadmap, and
-/// closing an item means moving its row from <see cref="_declines"/> to <see cref="_routes"/>.
+/// program each.
+/// </para>
+///
+/// <para>
+/// <b>There is no decline list any more, and that is the point of it.</b> This fixture carried one -
+/// constructs the routing refused, each with the reason it recorded - and closing an item meant
+/// moving its row across into <see cref="_routes"/>. The last row was <c>ERASE</c> of an ABSOLUTE
+/// array; it has moved, so the list and the test that consumed it are gone rather than kept empty.
+/// A routing that refuses nothing cannot be shown to be refusing, and an empty case source proves
+/// nothing while looking like coverage.
 /// </para>
 ///
 /// <para>
@@ -51,6 +59,17 @@ public sealed class BackendRoutingGateTests {
 
   /// <summary>Constructs the back end takes today. A row that stops routing is a coverage regression.</summary>
   private static readonly Construct[] _routes = [
+    // The last row to move across. ERASE of an ABSOLUTE array unmaps the VIEW - the memory is not
+    // the program's to free or zero - and the routed lowering used to refuse rather than invent a
+    // meaning for it. It now holds the segment in a cell, as the direct emitter always did, so ERASE
+    // clears it and a later access names segment 0 on both paths. Note the DYNAMIC: genuine PBC 3.50
+    // refuses `DIM v%(0 TO 3) AT` with "Error 489: Array is already static".
+    new("ERASE of an ABSOLUTE array", """
+      DIM DYNAMIC v%(0 TO 3) AT &HB800
+      v%(0) = 7
+      ERASE v%
+      PRINT "ok"
+      """, "main"),
     new("INTEGER parameter and result", """
       FUNCTION F(BYVAL a%) AS INTEGER
         F = a% + 1
@@ -439,43 +458,6 @@ public sealed class BackendRoutingGateTests {
       """, "S"),
   ];
 
-  /// <summary>
-  /// Constructs the routing refuses, with the reason it recorded. Ordered the way the work is: the
-  /// remaining ABI classes first (a parameter or result shape the routed calling sequence cannot
-  /// express), then register calling conventions, then the two that are not about the ABI at all.
-  ///
-  /// <para>Every row must decline with the recorded reason and remain behaviorally equivalent to the
-  /// direct build. A BASIC/PASCAL procedure may be emitted directly while its caller routes through
-  /// their shared stack ABI; unsupported conventions still strand the caller.</para>
-  /// </summary>
-  private static readonly Construct[] _declines = [
-    // Records have no row here any more. BYREF records route (see the routing list above), and BYVAL
-    // of a record is refused by the DIRECT emitter too ("not yet generated: load of UdtType"), so it
-    // is not a routing class at all - a gate case failing on both paths would measure the front end.
-    // FASTCALL/WATCALL definitions have moved to the routing list. A multiword BYVAL argument under
-    // a register convention has no row here for the same reason BYVAL records have none: LayoutFrame
-    // raises it as a hard error on BOTH paths, so it is a front-end rejection rather than a routing
-    // class, and a gate row for it would measure the front end.
-    // Assignment into a string array parameter has moved to the routing list too: a string element
-    // is one HANDLE word, and both consumers of its address move exactly that word rather than
-    // handing the address to a string routine.
-    //
-    // BCD has moved to the routing list as well: a BCD cell IS ten bytes of x87 extended, which is
-    // the channel EXT already crosses on, so admitting it was removing a restriction rather than
-    // adding a representation.
-    //
-    // What is left is the ABSOLUTE array. ERASE of one UNMAPS it - the memory is not the program's
-    // to free or zero - and the routed lowering refuses that rather than inventing a meaning, while
-    // the direct emitter simply clears the descriptor word. It is a genuine routing class, not a
-    // placeholder: the direct build compiles and runs, which is exactly what a row here must show.
-    new("ERASE of an ABSOLUTE array", """
-      DIM v%(0 TO 3) AT &HB800
-      v%(0) = 7
-      ERASE v%
-      PRINT "ok"
-      """, "main", "lowering: the module did not lower to IR"),
-  ];
-
   private static SemanticModel Bind(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -509,27 +491,6 @@ public sealed class BackendRoutingGateTests {
       Assert.That(identical, Is.False,
         $"'{construct.Subject}' is named as routed but the image is byte-identical to the unrouted "
         + "build - the routing table says one thing and the emitted program another");
-    });
-  }
-
-  [TestCaseSource(nameof(_declines))]
-  public void Compile_GivenAConstructTheRoutingRefuses_WhenRoutingIsEnabled_ThenItSaysWhyAndRemainsEquivalent(
-    Construct construct) {
-    var (routed, reason, identical, directImage, routedImage) = Compile(construct);
-    var direct = Cpu8086.Run(directImage);
-    var mixed = Cpu8086.Run(routedImage);
-
-    Assert.Multiple(() => {
-      Assert.That(routed.Contains(construct.Subject, StringComparer.OrdinalIgnoreCase), Is.False,
-        $"'{construct.Subject}' routes now - move this row into the routing list above, where it will "
-        + "be held to routing rather than merely to declining");
-      Assert.That(reason, Is.EqualTo(construct.Reason),
-        $"'{construct.Subject}' still does not route, but for a different reason than recorded");
-      if (routed.Count == 0)
-        Assert.That(identical, Is.True,
-          "when the back end takes no function, the executable must remain the direct build");
-      Assert.That((mixed.Output, mixed.ExitCode), Is.EqualTo((direct.Output, direct.ExitCode)),
-        $"'{construct.Subject}' declined, but the mixed routed/direct image changed behavior");
     });
   }
 }

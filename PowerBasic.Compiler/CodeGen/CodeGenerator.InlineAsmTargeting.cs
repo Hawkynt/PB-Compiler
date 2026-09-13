@@ -9,7 +9,7 @@ public sealed partial class CodeGenerator {
   /// Handles an inline instruction whose native encoding is unavailable on the selected target.
   /// Returns true when the line was either lowered or diagnosed; false means native emission is legal.
   /// </summary>
-  private bool TryEmitTargetedInlineAsm(string line, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryEmitTargetedInlineAsm(string line, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     var parsed = InlineInstruction.Parse(line);
     if (parsed.Mnemonic.Length == 0)
@@ -102,7 +102,7 @@ public sealed partial class CodeGenerator {
     return RuntimeCpuFeatures.None;
   }
 
-  private bool TryLowerCmov(InlineInstruction instruction, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryLowerCmov(InlineInstruction instruction, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     if (!TryCmovCondition(instruction.Mnemonic, out var condition))
       return false;
@@ -165,7 +165,7 @@ public sealed partial class CodeGenerator {
     return true;
   }
 
-  private bool TryLowerExtend16(InlineInstruction instruction, InlineAsmResolver resolver, out string? error) {
+  private bool TryLowerExtend16(InlineInstruction instruction, IAsmSymbolResolver resolver, out string? error) {
     error = null;
     if (!TrySplitBinaryOperands(instruction.Operands, out var destinationText, out var sourceText)
         || !Enum.TryParse<Reg>(destinationText.Trim(), true, out var destination)
@@ -267,7 +267,7 @@ public sealed partial class CodeGenerator {
     }
   }
 
-  private bool ProbeInline(string text, InlineAsmResolver resolver, out string? error) {
+  private bool ProbeInline(string text, IAsmSymbolResolver resolver, out string? error) {
     var probe = new Assembler();
     return new TextAssembler(probe).TryParse(text, resolver, out error);
   }

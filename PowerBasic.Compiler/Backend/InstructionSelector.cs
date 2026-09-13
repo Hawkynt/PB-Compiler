@@ -1429,6 +1429,17 @@ public sealed partial class InstructionSelector {
     // DWORD (CODEPTR32) or taken apart again.
     if (WideShiftCount(bin.Rhs) is 16 && opcode is MOpcode.Shl or MOpcode.Shr)
       return this.SelectWideWordSwap(bin, opcode == MOpcode.Shl);
+    // Anything the unrolled steps below will not take goes to the runtime's loop: a count the
+    // selector cannot read at all, and equally a constant one too LARGE to write out. Both were
+    // declines, and the second is the one that stayed after the first was fixed - a shift by 10 or
+    // by 24 is a perfectly ordinary thing to write and was worth 37 module bodies over the SVGA
+    // corpus on its own.
+    //
+    // The loop is also what the direct emitter does for these, so the two paths agree on a count of
+    // 32 or more: every bit shifts out and the answer is zero, rather than the 386's masked count.
+    if (opcode is MOpcode.Shl or MOpcode.Shr
+        && WideShiftCount(bin.Rhs) is not (>= 0 and <= 8) and not 16)
+      return this.SelectWideShiftByVariable(bin, opcode == MOpcode.Shl);
     if (WideShiftCount(bin.Rhs) is not { } count || count is < 0 or > 8)
       return this.Decline($"32-bit binary: {bin.Op} (only a small constant count, not {bin.Rhs})");
     if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
@@ -1486,6 +1497,60 @@ public sealed partial class InstructionSelector {
   /// vacated one becomes zero. Left is <c>hi = lo, lo = 0</c> and logical right its mirror; the
   /// ARITHMETIC right shift is not here, because its vacated half is the sign rather than zero.
   /// </summary>
+  /// <summary>
+  /// A 32-bit shift whose COUNT is not a compile-time number, handed to the runtime's loop.
+  ///
+  /// <para>
+  /// A constant count is written out as that many one-bit steps, which is what a pair shift is on an
+  /// 8086. A variable one needs a LOOP, and a loop is basic blocks rather than a straight line - so
+  /// it is a call, the same shape the direct emitter's own per-bit walk over the word chain takes.
+  /// Declining instead cost 37 module bodies over the SVGA corpus.
+  /// </para>
+  /// <para>
+  /// The staging is written out rather than routed through <see cref="SelectRuntimeCall"/> because
+  /// that one takes an <c>IrCall</c>, and this is an <c>IrBinary</c> - there is no call node in the
+  /// IR to hand it. The register choice comes from the same ABI table, so the two cannot drift.
+  /// </para>
+  /// </summary>
+  private bool SelectWideShiftByVariable(IrBinary bin, bool left) {
+    var name = left ? "rt_shl32" : "rt_shr32";
+    if (RuntimeAbi.For(name) is not { } routine)
+      return this.Decline($"32-bit binary: {bin.Op} needs {name}, which is not in the runtime ABI table");
+    if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
+      return false;
+    // the count is widened to the value's type by the lowering, so its low half IS the count
+    MOperand countOperand;
+    if (IsWide(bin.Rhs.Type)) {
+      if (!this.TryOperandPair(bin.Rhs, out var countLow, out _))
+        return false;
+      countOperand = countLow;
+    } else if (!this.TryOperand(bin.Rhs, out countOperand))
+      return false;
+
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+    var cx = new MOperand.Register(MReg.Physical_(Reg.CX, MRegSize.Word));
+    // Every staging move claims the whole destination set, for the reason SelectRuntimeCall states:
+    // a move that says only "I destroy CX" leaves a value free to be parked in AX, which the next
+    // move then overwrites.
+    Reg[] staged = [Reg.AX, Reg.DX, Reg.CX];
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lhsLo], MovEffect(ax, lhsLo),
+      condition: null, clobbers: staged));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dx, lhsHi], MovEffect(dx, lhsHi),
+      condition: null, clobbers: staged));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cx, countOperand], MovEffect(cx, countOperand),
+      condition: null, clobbers: staged));
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(routine.Label)],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: true, WritesMemory: true),
+      condition: null, clobbers: routine.Clobbers));
+
+    var (destLo, destHi) = this.FreshPair(bin);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destLo, ax], MovEffect(destLo, ax)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, dx], MovEffect(destHi, dx)));
+    return true;
+  }
+
   private bool SelectWideWordSwap(IrBinary bin, bool left) {
     if (!this.TryOperandPair(bin.Lhs, out var lhsLo, out var lhsHi))
       return false;
@@ -2297,6 +2362,23 @@ public sealed partial class InstructionSelector {
         this._vregs[cast] = truth;
         return true;
       }
+      // ...and the BYTE of it. A truth value is a full word of -1 or 0, so its low byte is 0xFF or
+      // 0x00 - which IS the byte truth value, with no work to do beyond naming the low half. The
+      // rename is the same one a Trunc to a byte uses; the spiller gives each mention its own size
+      // back, so the word and the byte view of one register do not collide.
+      case IrCastOp.SExt when from.IsBool && to.IsInteger && to.Bits == 8: {
+        if (!this.TryOperand(cast.Value, out var truthByte))
+          return false;
+        if (truthByte is MOperand.Register truthWord) {
+          this._vregs[cast] = truthWord.Reg with { Size = MRegSize.Byte };
+          return true;
+        }
+        var byteReg = this.FreshVreg(cast.Type);
+        var byteDest = new MOperand.Register(byteReg);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [byteDest, truthByte], MovEffect(byteDest, truthByte)));
+        this._vregs[cast] = byteReg;
+        return true;
+      }
       // BASIC truth is a FULL WORD of -1 or 0, so widening a bool to a number is not a copy: the
       // value wanted is 1 or 0. Masking the low bit is what turns one into the other, and it is the
       // reason this cannot share the integer widening below - that one would produce -1.
@@ -2321,6 +2403,49 @@ public sealed partial class InstructionSelector {
           new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
             ReadsMemory: false, WritesMemory: false)));
         this._vregs[cast] = narrow;
+        return true;
+      }
+      // A BYTE widened to a WORD. There were cases here for a bool source, for a word reaching a
+      // dword and for either reaching a qword, and none for a byte - so `u8 -> i16` declined 339
+      // times over the SVGA corpus alone, and with `-> u16` 354 of the routing gaps there: the
+      // largest single reason the direct emitter could not be retired.
+      //
+      // Staged through the physical AX rather than through a byte VIEW of the destination vreg.
+      // The view is what ScratchU8ToWord does; it depends on every consumer handing a mention back
+      // its own size, and staging avoids the question. MOVZX is not in this back end's opcode set,
+      // which is why the extension is written out rather than named.
+      //
+      // `u8 -> i32` is NOT here, and the reason is measured: a version of this case that also built
+      // the dword pair made five DRAW_* corpus suites fail with `Operand size mismatch: DX vs
+      // [BP-90]` - the long-result convention reading its high half from a byte-sized slot. Removing
+      // only the 32-bit half made them clean again, so the defect is in forming that pair rather than
+      // in anything the newly routed functions reach. 94 declines wait on it.
+      case IrCastOp.ZExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16 or 32: {
+        if (!this.TryOperand(cast.Value, out var source))
+          return false;
+        // Staged through the physical AX rather than through a byte VIEW of the destination vreg.
+        // The view is what ScratchU8ToWord does and it is not spill-safe: FindVirtualSize takes the
+        // WIDEST mention of a virtual register and Rewrite then applies that one size to every
+        // mention, so the byte reference silently becomes a word one and the emitter meets
+        // `MOV DL, <word slot>`. Five corpus suites failed exactly that way before this was staged.
+        var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+        var ah = new MOperand.Register(MReg.Physical_(Reg.AH, MRegSize.Byte));
+        var al = new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte));
+        this._current.Instructions.Add(new MInstr(MOpcode.Xor, [ah, ah],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
+            ReadsMemory: false, WritesMemory: false)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [al, source], MovEffect(al, source)));
+        if (IsWide(to)) {
+          var (low, high) = this.FreshPair(cast);
+          var zero = new MOperand.Immediate(0);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, ax], MovEffect(low, ax)));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, zero], MovEffect(high, zero)));
+          return true;
+        }
+        var dest = this.FreshVreg(cast.Type);
+        var word = new MOperand.Register(dest);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, ax], MovEffect(word, ax)));
+        this._vregs[cast] = dest;
         return true;
       }
       case IrCastOp.SExt or IrCastOp.ZExt when IsWide(to) && from.IsInteger && from.Bits == 16: {
@@ -3545,7 +3670,14 @@ public sealed partial class InstructionSelector {
 
     var narrowed = value switch {
       IrConstantInt { Value: >= short.MinValue and <= ushort.MaxValue } c => (IrValue)c,
-      IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast when !IsWide(cast.Value.Type) => cast.Value,
+      // The source of a widening cast IS the narrow value - but only when that source is already a
+      // WORD. `!IsWide` reads as "narrower than 32 bits" and so also accepted a BYTE, handing a
+      // byte-sized operand to an ABI staging it into a word register: `MOV DX, <byte slot>`, which
+      // the assembler refuses. It was unreachable while `ZExt u8` declined at selection, and became
+      // reachable the moment a BYTE could widen - five DRAW_* corpus suites at once. A byte source
+      // falls through to the pair below instead, whose LOW half is the properly extended word.
+      IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt } cast
+        when cast.Value.Type is { IsInteger: true, Bits: 16 } => cast.Value,
       _ => null,
     };
     if (narrowed is null) {

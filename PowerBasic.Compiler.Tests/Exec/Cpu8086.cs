@@ -83,6 +83,24 @@ public sealed class Cpu8086 {
   public string Output => this._output.ToString();
 
   /// <summary>
+  /// Every byte an <c>OUT</c> sent, by port, in order. There is no hardware behind these ports, so
+  /// recording the traffic is what makes a program that drives one observable: a test asks which
+  /// byte reached which port rather than asking what the emitter looked like while producing it.
+  /// </summary>
+  public IReadOnlyList<(ushort Port, byte Value)> PortWrites => this._portWrites;
+
+  private readonly List<(ushort Port, byte Value)> _portWrites = [];
+  private readonly Dictionary<ushort, byte> _ports = [];
+
+  private void PortWrite(ushort port, byte value) {
+    this._portWrites.Add((port, value));
+    this._ports[port] = value;
+  }
+
+  /// <summary>A port reads back what was last written to it, and 0 when nothing was.</summary>
+  private byte PortRead(ushort port) => this._ports.GetValueOrDefault(port);
+
+  /// <summary>
   /// Everything the program wrote to DOS handle 4, PRN - what LPRINT prints.
   ///
   /// <para>
@@ -741,6 +759,23 @@ public sealed class Cpu8086 {
       case 0xEA: { var offset = this.FetchWord(); this._cs = this.FetchWord(); this._ip = offset; return; }
       case 0xEB: { var delta = (sbyte)this.Fetch(); this._ip = (ushort)(this._ip + delta); return; }
       case 0x9A: { var offset = this.FetchWord(); var segment = this.FetchWord(); this.Push(this._cs); this.Push(this._ip); this._cs = segment; this._ip = offset; return; }
+
+      // IN / OUT. The ports are not modelled - there is no hardware here - but the WRITES are
+      // recorded, which is what makes a program that drives a port testable at all: an assertion can
+      // ask which byte went to which port instead of asking what the emitter looked like. A read
+      // answers with whatever was last written, or 0, so a write/read round trip behaves.
+      case 0xE4: { var port = this.Fetch(); this.SetReg8(_AX, this.PortRead(port)); return; }
+      case 0xE5: { var port = this.Fetch(); this._r[_AX] = (ushort)(this.PortRead(port) | this.PortRead((ushort)(port + 1)) << 8); return; }
+      case 0xE6: { var port = this.Fetch(); this.PortWrite(port, this.Reg8(_AX)); return; }
+      case 0xE7: { var port = this.Fetch(); this.PortWrite(port, (byte)this._r[_AX]); this.PortWrite((ushort)(port + 1), (byte)(this._r[_AX] >> 8)); return; }
+      case 0xEC: this.SetReg8(_AX, this.PortRead(this._r[_DX])); return;
+      case 0xED: this._r[_AX] = (ushort)(this.PortRead(this._r[_DX]) | this.PortRead((ushort)(this._r[_DX] + 1)) << 8); return;
+      case 0xEE: this.PortWrite(this._r[_DX], this.Reg8(_AX)); return;
+      case 0xEF: {
+        this.PortWrite(this._r[_DX], (byte)this._r[_AX]);
+        this.PortWrite((ushort)(this._r[_DX] + 1), (byte)(this._r[_AX] >> 8));
+        return;
+      }
 
       case 0xF4: this._halted = true; return;
       case 0xF5: this._cf = !this._cf; return;

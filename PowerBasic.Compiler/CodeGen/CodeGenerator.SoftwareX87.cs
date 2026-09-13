@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Runtime;
 
 namespace PowerBasic.Compiler.CodeGen;
@@ -8,7 +9,7 @@ public sealed partial class CodeGenerator {
   /// the assembler-wide sink, so after software mode is selected compiler-generated floating point,
   /// runtime floating point and user inline x87 all share one stack/control/status image.
   /// </summary>
-  private bool TryEmitSoftwareX87Instruction(InlineInstruction instruction, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryEmitSoftwareX87Instruction(InlineInstruction instruction, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     var engine = this.EnsureSoftwareX87Engine();
     if (!engine.TryEmitInline(instruction.Mnemonic, instruction.Operands, resolver, out error))

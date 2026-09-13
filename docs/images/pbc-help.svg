@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="798" height="693" viewBox="0 0 798 693" role="img"
+     xml:space="preserve" aria-label="pbc --help, the PB-Compiler command line">
+  <title>pbc --help</title>
+  <style>
+    .bg   { fill: #0f111a; }
+    .bar  { fill: #1b1e2b; }
+    .t    { font-family: "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Menlo", "Consolas", monospace;
+            font-size: 13px; fill: #c7ccd9; }
+    .name { font-family: "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Menlo", "Consolas", monospace;
+            font-size: 13px; fill: #8a90a6; }
+    .hdr  { fill: #e8ecf5; font-weight: 600; }
+    .sect { fill: #f0c674; }
+    .flag { fill: #7fd1e8; }
+    .ps1  { fill: #9ece6a; }
+  </style>
+  <rect class="bg" x="0" y="0" width="798" height="693" rx="9"/>
+  <path class="bar" d="M0 9a9 9 0 0 1 9-9h780a9 9 0 0 1 9 9v25H0z"/>
+  <circle cx="20" cy="17" r="5.5" fill="#ed6a5f"/>
+  <circle cx="39" cy="17" r="5.5" fill="#f4bf50"/>
+  <circle cx="58" cy="17" r="5.5" fill="#61c554"/>
+  <text class="name" x="399" y="21" text-anchor="middle">pbc --help</text>
+  <text class="t" x="22" y="69"><tspan class="ps1">$</tspan> pbc --help</text>
+  <text class="t hdr" x="22" y="88">PB-Compiler - PowerBASIC 3.5 compatible compiler for 16-bit real-mode DOS</text>
+  <text class="t" x="22" y="126">Usage: pbc [options] &lt;source.BAS&gt;</text>
+  <text class="t" x="22" y="145">       pbc lib build &lt;out.PBL|out.LIB&gt; &lt;unit.PBU&gt;...</text>
+  <text class="t" x="22" y="164">       pbc lib list &lt;file.PBL|file.PBU&gt;</text>
+  <text class="t" x="22" y="202">A source with $COMPILE UNIT produces a .PBU unit instead of an EXE;</text>
+  <text class="t" x="22" y="221">$LINK "X.PBU" / $LINK "Y.PBL" directives (relative to the source</text>
+  <text class="t" x="22" y="240">directory) are linked into the executable.</text>
+  <text class="t sect" x="22" y="278">Options:</text>
+  <text class="t" x="22" y="297"><tspan class="flag">  -O</tspan> &lt;file&gt;      output file name (default: &lt;source&gt;.EXE / .PBU)</text>
+  <text class="t" x="22" y="316"><tspan class="flag">  -I</tspan> &lt;dir&gt;       additional $INCLUDE search directory</text>
+  <text class="t" x="22" y="335"><tspan class="flag">  --dialect</tspan> &lt;d&gt;  language level: tb1x|pb2x..pb35 (default)|pb36 (optimizer)|qb1x..qb45|pds7x</text>
+  <text class="t" x="22" y="354"><tspan class="flag">  -G386</tspan>          allow 80386 instructions (PBC.EXE compatibility)</text>
+  <text class="t" x="22" y="373"><tspan class="flag">  -OZF</tspan>           prefer SPEED; enables size-for-speed and relaxed-FP transforms when optimizing</text>
+  <text class="t" x="22" y="392"><tspan class="flag">  --optimize</tspan>     enable the optimizer for any dialect</text>
+  <text class="t" x="22" y="411"><tspan class="flag">  --no-optimize</tspan>  disable optimization even for pb36 / $OPTIMIZE SPEED</text>
+  <text class="t" x="22" y="430"><tspan class="flag">  --parallel-loops</tspan> opt in to O0311 for hosted C/LLVM; link runtime/pbc_parallel.c with OpenMP</text>
+  <text class="t" x="22" y="449"><tspan class="flag">  --dump-tokens</tspan>  stop after lexing/preprocessing and list tokens</text>
+  <text class="t" x="22" y="468"><tspan class="flag">  --dump-ast</tspan>     stop after parsing</text>
+  <text class="t" x="22" y="487"><tspan class="flag">  --dump-bind</tspan>    stop after semantic analysis</text>
+  <text class="t" x="22" y="506"><tspan class="flag">  --emit-obj</tspan>     compile to a linkable OMF .OBJ object instead of an EXE</text>
+  <text class="t" x="22" y="525"><tspan class="flag">  --emit-basic</tspan>   un-parse the bound (optimized) tree back to readable PowerBASIC</text>
+  <text class="t" x="22" y="544"><tspan class="flag">  --emit-llvm</tspan>    optimize through the IR middle end and emit textual LLVM</text>
+  <text class="t" x="22" y="563"><tspan class="flag">  --emit-c</tspan>       optimize through the IR middle end and emit portable C99</text>
+  <text class="t" x="22" y="582"><tspan class="flag">  --x-backend</tspan>    compile through the IR and native x86-16 back end (the default)</text>
+  <text class="t" x="22" y="601"><tspan class="flag">  --no-x-backend</tspan> compile through the legacy direct emitter instead (PBC_X_BACKEND=0)</text>
+  <text class="t" x="22" y="620"><tspan class="flag">  --x-backend-strict</tspan>  route everything: a body the back end declines is an error, not a fallback</text>
+  <text class="t" x="22" y="639"><tspan class="flag">  --list</tspan>         write a human-readable .LST map of the compiled image</text>
+  <text class="t" x="22" y="658"><tspan class="flag">  -h, --help</tspan>     show this help</text>
+</svg>

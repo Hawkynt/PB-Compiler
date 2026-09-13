@@ -21,7 +21,7 @@ public sealed partial class CodeGenerator {
   /// slots, and pre-386 EAX..EDI use the real 16-bit low half plus a virtual high-word bank.
   /// Integer flags and all scalar temporaries used by the lowering are restored around SIMD ops.
   /// </summary>
-  private bool TryEmitVirtualInstruction(InlineInstruction instruction, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryEmitVirtualInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     if (IsX87InlineMnemonic(instruction.Mnemonic) || !IsVectorMnemonic(instruction.Mnemonic))
       return false;

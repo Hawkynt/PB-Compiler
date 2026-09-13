@@ -18,7 +18,7 @@ public sealed partial class CodeGenerator {
       : IsBmi2(instruction.Mnemonic) ? RuntimeCpuFeatures.Bmi2
       : RuntimeCpuFeatures.None;
 
-  private bool TryEmitNativeBmiInstruction(InlineInstruction instruction, InlineAsmResolver resolver, out string? error) {
+  private bool TryEmitNativeBmiInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, out string? error) {
     error = null;
     if (!IsBmi1(instruction.Mnemonic) && !IsBmi2(instruction.Mnemonic))
       return false;
@@ -209,7 +209,7 @@ public sealed partial class CodeGenerator {
     return false;
   }
 
-  private bool TryEmitVirtualBmiInstruction(InlineInstruction instruction, InlineAsmResolver resolver, RuntimeTarget target, out string? error) {
+  private bool TryEmitVirtualBmiInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     if (!IsBmi1(instruction.Mnemonic) && !IsBmi2(instruction.Mnemonic))
       return false;

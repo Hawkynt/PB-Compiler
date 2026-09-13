@@ -15,7 +15,7 @@ public sealed partial class CodeGenerator {
   private static bool IsPopcnt(string mnemonic) => mnemonic == "POPCNT";
 
   /// <summary>Emits native scalar CPU-extension instructions absent from the legacy text assembler.</summary>
-  private bool TryEmitNativeCpuExtensionInstruction(InlineInstruction instruction, InlineAsmResolver resolver, out string? error) {
+  private bool TryEmitNativeCpuExtensionInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver, out string? error) {
     error = null;
     if (!IsPopcnt(instruction.Mnemonic))
       return false;
@@ -49,7 +49,7 @@ public sealed partial class CodeGenerator {
   /// any scratch-stack activity, making destructive aliases exact. 32-bit operands reuse the existing
   /// GP32 virtual high-word bank; no second architectural register model is introduced.
   /// </summary>
-  private bool TryEmitVirtualPopcntInstruction(InlineInstruction instruction, InlineAsmResolver resolver,
+  private bool TryEmitVirtualPopcntInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver,
       RuntimeTarget target, out string? error) {
     error = null;
     if (!IsPopcnt(instruction.Mnemonic))

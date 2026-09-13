@@ -3,7 +3,7 @@ using PowerBasic.Compiler.Asm;
 namespace PowerBasic.Compiler.CodeGen;
 
 public sealed partial class CodeGenerator {
-  private bool TryEmitVirtualSsse3ArithmeticInstruction(InlineInstruction instruction, InlineAsmResolver resolver,
+  private bool TryEmitVirtualSsse3ArithmeticInstruction(InlineInstruction instruction, IAsmSymbolResolver resolver,
       out string? error) {
     error = null;
     if (instruction.Mnemonic is not ("PHADDSW" or "PHSUBSW" or "PMADDUBSW" or "PMULHRSW"))

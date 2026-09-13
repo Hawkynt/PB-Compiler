@@ -228,7 +228,8 @@ public sealed partial class CodeGenerator {
       var cleanupBytes = abi.StackCleanup == X86StackCleanup.Caller ? 0 : generated.StackLayout.ParameterBytes;
       MachineEmitter.EmitFunction(this._asm, generated.Machine, generated.Allocation,
         generated.StackLayout.ParameterOffsets, cleanupBytes, this.CalleeLabel, this.DataCellOf,
-        alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: generated.ElideFrame);
+        alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: generated.ElideFrame,
+        emitInlineAsm: this.EmitRoutedInlineAsm);
     }
   }
 
