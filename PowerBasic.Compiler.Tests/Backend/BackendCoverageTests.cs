@@ -638,6 +638,7 @@ public sealed class BackendCoverageTests {
     "DIFF125.BAS",   // DIM DYNAMIC ... AT - genuine refuses the static spelling with Error 489
     "DIFF126.BAS",   // ERASE of an ABSOLUTE array - unmaps the view by clearing the segment
     "DIFF127.BAS",   // GET / PUT of a STRING - the heap bytes, not the handle cell
+    "DIFF128.BAS",   // a member of an INDEXED UDT array field - ctx.Slots(i).Id
     // EXIT FAR: the unwind point and the jump through it, as intrinsics the back end expands inline;
     // both the module body and its near numeric BYREF procedure route.
     "DIFF14.BAS",
@@ -823,6 +824,7 @@ public sealed class BackendCoverageTests {
     "DIFF125.BAS",   // DIM DYNAMIC ... AT - genuine refuses the static spelling with Error 489
     "DIFF126.BAS",   // ERASE of an ABSOLUTE array - unmaps the view by clearing the segment
     "DIFF127.BAS",   // GET / PUT of a STRING - the heap bytes, not the handle cell
+    "DIFF128.BAS",   // a member of an INDEXED UDT array field - ctx.Slots(i).Id
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: segment stepping and the EMS page window

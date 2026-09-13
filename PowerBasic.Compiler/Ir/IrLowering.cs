@@ -1718,7 +1718,30 @@ public sealed partial class IrLowering {
   }
 
   /// <summary>The byte address and field descriptor of a real UDT member (variable or array element); not a flat dotted variable.</summary>
-  private (IrValue Address, UdtField Field) MemberFieldAddress(MemberExpr m) {
+  /// <param name="arrayFieldAllowed">
+  /// Lets the member BE an array field - <c>ctx.Timers</c> rather than <c>ctx.Timers(i)</c>. Only
+  /// <see cref="FieldElementAddress"/> passes true, because the address of the whole field is the base
+  /// an index is measured from; every other caller wants one scalar and an array field is not one.
+  /// </param>
+  private (IrValue Address, UdtField Field) MemberFieldAddress(MemberExpr m, bool arrayFieldAllowed = false) {
+    var (recordBase, field) = this.MemberFieldBase(m, arrayFieldAllowed);
+    var address = field.Offset == 0 ? recordBase : this._b.Gep(recordBase, new IrConstantInt(IrType.I32, field.Offset));
+    return (address, field);
+  }
+
+  /// <summary>
+  /// The same member, resolved to its RECORD's address and the field descriptor, with the field's own
+  /// offset not yet applied.
+  ///
+  /// <para>
+  /// <see cref="FieldElementAddress"/> needs the two apart so it can fold the offset into the one GEP
+  /// that carries the subscript. A <c>Gep(Gep(slot, 2), i * 6)</c> is two address values where one
+  /// would do, and the outer one is a memory base the spiller cannot move: a READ of
+  /// <c>ctx.Timers(i).Field</c> inside a loop declined the whole function under <c>--no-optimize</c>
+  /// for exactly that, while the same loop over an ARRAY of the same records - one GEP - allocated.
+  /// </para>
+  /// </summary>
+  private (IrValue RecordBase, UdtField Field) MemberFieldBase(MemberExpr m, bool arrayFieldAllowed) {
     IrValue basePtr;
     UdtType udt;
     if (m.Target is NameExpr && this._model.VariableBindings.TryGetValue(m.Target, out var baseSym) && baseSym.Type is UdtType nameUdt) {
@@ -1736,6 +1759,12 @@ public sealed partial class IrLowering {
       // over the SVGA corpus, where a header record holding a palette record is the ordinary shape.
       basePtr = this.MemberFieldAddress(nested).Address;
       udt = nestedUdt;
+    } else if (m.Target is IndexExpr indexed && this._model.TypeOf(indexed) is UdtType indexedUdt) {
+      // ctx.Timers(i).Field - a UDT ARRAY FIELD, indexed, then a member taken. It parses as an
+      // IndexExpr rather than a CallOrIndexExpr because the thing being indexed is a member and not a
+      // name, which is the whole of why this branch is separate from the one above it.
+      basePtr = this.FieldElementAddress(indexed, indexedUdt);
+      udt = indexedUdt;
     } else
       // Name the TARGET's shape, for the reason the lvalue decline beside it does: a count of
       // "unsupported member access" says a decline happened and nothing about what to write.
@@ -1743,10 +1772,43 @@ public sealed partial class IrLowering {
         $"unsupported member access: target is {m.Target.GetType().Name} of {this._model.TypeOf(m.Target).GetType().Name}");
 
     var field = udt.FindField(m.Member) ?? throw new IrLoweringException($"unknown field {m.Member}");
-    if (field.ElementCount != 1)
+    if (field.ElementCount != 1 && !arrayFieldAllowed)
       throw new IrLoweringException("UDT array field");
-    var address = field.Offset == 0 ? basePtr : this._b.Gep(basePtr, new IrConstantInt(IrType.I32, field.Offset));
-    return (address, field);
+    return (basePtr, field);
+  }
+
+  /// <summary>
+  /// The address of one element of a UDT ARRAY FIELD - the <c>ctx.Timers(i)</c> of
+  /// <c>ctx.Timers(i).Active</c>.
+  ///
+  /// <para>
+  /// The index is used RAW. A TYPE's array field is zero-based and carries no lower bound -
+  /// <see cref="UdtField"/> has only an element count - so <c>Timers(8)</c> is subscripted 0 to 7, and
+  /// the direct emitter's <c>EmitFieldArrayPlace</c> scales the subscript straight off the base. It
+  /// does not range-check one either, which is the reason none is emitted here: a check the other path
+  /// does not perform is a difference in the bytes for every program that has one, and the golden gate
+  /// holds those bytes.
+  /// </para>
+  /// </summary>
+  private IrValue FieldElementAddress(IndexExpr ix, UdtType element) {
+    if (ix.Arguments.Count != 1)
+      throw new IrLoweringException("multi-dimensional UDT field array");
+    if (ix.Target is not MemberExpr arrayField)
+      throw new IrLoweringException($"the indexed {ix.Target.GetType().Name} is not a UDT array field");
+
+    // and the arithmetic is SIXTEEN bits wide, not the subscript's usual thirty-two. A field array
+    // lives inside its own record, so the offset it produces is a near one by construction and the
+    // high word could not be anything but zero - which is exactly what the direct emitter relies on
+    // when it computes the same address with EmitInt16Argument and EmitIndexScale. Carrying the wide
+    // form here cost more than the bytes: an i32 multiply plus its high half is a register pair the
+    // 8086 allocator has to keep live across the loop, and a READ of one inside a loop then declined
+    // the whole function under --no-optimize.
+    var (recordBase, field) = this.MemberFieldBase(arrayField, arrayFieldAllowed: true);
+    var index = this.Coerce(this.LowerExpr(ix.Arguments[0]), this._model.TypeOf(ix.Arguments[0]), PbType.Integer);
+    IrValue offset = this._b.Mul(index, new IrConstantInt(IrType.I16, element.Size));
+    if (field.Offset != 0)
+      offset = this._b.Add(offset, new IrConstantInt(IrType.I16, field.Offset));
+    return this._b.Gep(recordBase, offset);
   }
 
   #region data pointers (PB 3.2)
