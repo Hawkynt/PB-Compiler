@@ -7,6 +7,10 @@ public static class IrAnalyses {
   public static IrAnalysisKey<IrDominators?> Dominators { get; } =
     new("dominators", static (function, _) => IrDominators.Build(function));
 
+  /// <summary>CFG post-dominators and post-dominance frontiers.</summary>
+  public static IrAnalysisKey<IrPostDominators?> PostDominators { get; } =
+    new("post-dominators", static (function, _) => IrPostDominators.Build(function));
+
   /// <summary>Natural-loop forest derived from the function CFG and dominators.</summary>
   public static IrAnalysisKey<IrLoopAnalysis> Loops { get; } =
     new("loops", static (function, analyses) =>
