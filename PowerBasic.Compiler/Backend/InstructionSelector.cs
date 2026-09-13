@@ -2357,6 +2357,23 @@ public sealed partial class InstructionSelector {
         this._vregs[cast] = truth;
         return true;
       }
+      // ...and the BYTE of it. A truth value is a full word of -1 or 0, so its low byte is 0xFF or
+      // 0x00 - which IS the byte truth value, with no work to do beyond naming the low half. The
+      // rename is the same one a Trunc to a byte uses; the spiller gives each mention its own size
+      // back, so the word and the byte view of one register do not collide.
+      case IrCastOp.SExt when from.IsBool && to.IsInteger && to.Bits == 8: {
+        if (!this.TryOperand(cast.Value, out var truthByte))
+          return false;
+        if (truthByte is MOperand.Register truthWord) {
+          this._vregs[cast] = truthWord.Reg with { Size = MRegSize.Byte };
+          return true;
+        }
+        var byteReg = this.FreshVreg(cast.Type);
+        var byteDest = new MOperand.Register(byteReg);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [byteDest, truthByte], MovEffect(byteDest, truthByte)));
+        this._vregs[cast] = byteReg;
+        return true;
+      }
       // BASIC truth is a FULL WORD of -1 or 0, so widening a bool to a number is not a copy: the
       // value wanted is 1 or 0. Masking the low bit is what turns one into the other, and it is the
       // reason this cannot share the integer widening below - that one would produce -1.
