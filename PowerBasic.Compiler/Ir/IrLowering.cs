@@ -4463,7 +4463,23 @@ public sealed partial class IrLowering {
   /// <summary>Lowers a string-returning intrinsic (LEFT$/RIGHT$/MID$/CHR$) to a runtime call.</summary>
   private IrValue LowerStringIntrinsic(CallOrIndexExpr ci, string name) {
     IrValue Str(int i) => this.LowerStringExpr(ci.Arguments[i]);
+    // A VALUE keeps all 32 bits: HEX$(&HFFFF63C0) prints eight digits, and narrowing it printed four.
     IrValue Num(int i) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Long);
+
+    // A COUNT is a WORD in the DOS ABI, and the direct emitter simply coerces the argument to INTEGER
+    // before the call. The IR declares these routines i32 because the same declaration feeds the C
+    // back end, so a count is narrowed to a word and widened straight back: the coercion is where a
+    // LONG that does not fit raises, exactly as on the other path, and the widening is what the
+    // selector's argument staging peels off again to reach the word the ABI wants. Coercing to Long
+    // alone left the selector a 32-bit value it could take only where it could PROVE the range - 37
+    // declines over the SVGA corpus where it could not.
+    //
+    // The two are NOT the same helper, and using one for the other is a silent miscompile rather than
+    // a decline: HEX$ and OCT$ of a negative LONG lost their high word and printed 63C0 for
+    // FFFF63C0. The corpus differential caught it; nothing else did.
+    IrValue Count(int i) => this._b.SExt(
+      this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), PbType.Integer),
+      IrType.I32);
     IrValue Val(int i, ScalarType t) => this.Coerce(this.LowerExpr(ci.Arguments[i]), this._model.TypeOf(ci.Arguments[i]), t);
 
     // EXTRACT$(main$, match$) / EXTRACT$(main$, ANY set$): everything before the first match, or the
@@ -4492,10 +4508,10 @@ public sealed partial class IrLowering {
       "MKS$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mks", IrType.Ptr, IrType.F32), Val(0, PbType.Single)),
       "MKD$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkd", IrType.Ptr, IrType.F64), Val(0, PbType.Double)),
       "MKE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkd", IrType.Ptr, IrType.F64), Val(0, PbType.Double)),
-      "LEFT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_left", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
-      "RIGHT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_right", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
-      "MID$" when ci.Arguments.Count >= 3 => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), Str(0), Num(1), Num(2)),
-      "MID$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid2", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Num(1)),
+      "LEFT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_left", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Count(1)),
+      "RIGHT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_right", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Count(1)),
+      "MID$" when ci.Arguments.Count >= 3 => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid", IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I32), Str(0), Count(1), Count(2)),
+      "MID$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mid2", IrType.Ptr, IrType.Ptr, IrType.I32), Str(0), Count(1)),
       // CHR$ is VARIADIC: CHR$(65, 66, 67) is "ABC", not "A". It lowers as the left fold of
       // concatenation the direct emitter writes - one rt_chr per code, joined by rt_strcat - rather
       // than as a call that quietly reads the first argument and drops the rest.
@@ -4503,14 +4519,14 @@ public sealed partial class IrLowering {
       // USING$ is PRINT USING captured into a string rather than written to a device - see
       // LowerUsingString for why that is the whole of it
       "USING$" => this.LowerUsingString(ci),
-      "SPACE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_space", IrType.Ptr, IrType.I32), Num(0)),
+      "SPACE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_space", IrType.Ptr, IrType.I32), Count(0)),
       // STRING$(n, s$) repeats the FIRST CHARACTER of s$, so it is STRING$(n, ASC(s$)) - composed
       // from two calls the IR already has rather than a third runtime entry that would have to be
       // taught to every back end. It is also what the direct emitter does: ASC then StrFill.
       "STRING$" when this._model.TypeOf(ci.Arguments[1]) is StringType =>
-        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Num(0),
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Count(0),
           this._b.Call(IrType.I32, this.RuntimeFn("rt_str_asc", IrType.I32, IrType.Ptr), Str(1))),
-      "STRING$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Num(0), Num(1)),
+      "STRING$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_string", IrType.Ptr, IrType.I32, IrType.I32), Count(0), Count(1)),
       "STR$" => this.LowerStrOf(ci.Arguments[0]),
       "UCASE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_ucase", IrType.Ptr, IrType.Ptr), Str(0)),
       "LCASE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_lcase", IrType.Ptr, IrType.Ptr), Str(0)),
