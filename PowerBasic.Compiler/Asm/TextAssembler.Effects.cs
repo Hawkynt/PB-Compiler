@@ -125,13 +125,17 @@ public sealed partial class TextAssembler {
           e.Define(Reg.DI);
           e.WritesFlags = true;
           return operands.Count == 0;
+        // the BYTE forms move AL and say nothing about AH - which LODSB below already knew, and these
+        // two did not because until the halves were tracked apart it made no difference. It makes one
+        // now: ! MOV AL, fillColor followed by ! STOSB inside a loop claimed the whole word, so the
+        // BASIC half of the loop was destroying a register nothing wanted.
         case "STOSB" or "STOSW" or "STOSD":
-          e.Read(Reg.AX);
+          e.Read(mnemonic == "STOSB" ? Reg.AL : Reg.AX);
           e.Read(Reg.DI);
           e.Define(Reg.DI);
           return operands.Count == 0;
         case "SCASB" or "SCASW" or "SCASD":
-          e.Read(Reg.AX);
+          e.Read(mnemonic == "SCASB" ? Reg.AL : Reg.AX);
           e.Read(Reg.DI);
           e.Define(Reg.DI);
           e.WritesFlags = true;
