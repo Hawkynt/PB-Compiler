@@ -289,6 +289,13 @@ public sealed class PowerBasic35EmitterTests {
   }
 
   [Test]
+  public void Render_GetPutWithoutRecordNumber_KeepsThePositionalComma() {
+    var basic = RenderAndRebind("DIM S AS STRING\nS = \"HDRX\"\nOPEN \"G.TMP\" FOR BINARY AS #1\nPUT #1, , S\nGET #1, , S\nCLOSE #1\n");
+    Assert.That(basic, Does.Contain("PUT #1, , S"), "dropping the empty slot would make S the record number");
+    Assert.That(basic, Does.Contain("GET #1, , S"));
+  }
+
+  [Test]
   public void Render_OnErrorDisable_EmitsGotoZero() {
     var basic = RenderAndRebind("ON ERROR GOTO Trap\nA% = 1\nON ERROR GOTO 0\nTrap:\nRESUME NEXT\n");
     Assert.That(basic, Does.Contain("ON ERROR GOTO 0"), "the disable form keeps its 0 target");
