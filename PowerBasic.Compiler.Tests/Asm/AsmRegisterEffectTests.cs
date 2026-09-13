@@ -76,8 +76,11 @@ public sealed class AsmRegisterEffectTests {
 
     Assert.Multiple(() => {
       Assert.That(effect.Reads, Is.EquivalentTo(new[] { Reg.BX }), "ES is not a register this allocates");
-      Assert.That(effect.Defines, Is.EquivalentTo(new[] { Reg.AX }), "AL contends for AX");
-      Assert.That(effect.Kills, Is.Empty, "...but only half of it, so AH's producer keeps its claim");
+      Assert.That(effect.Defines, Is.EquivalentTo(new[] { Reg.AL }), "the half it names, not the word it sits in");
+      Assert.That(effect.Kills, Is.EquivalentTo(new[] { Reg.AL }), "and the whole of that half");
+      Assert.That(AsmRegisterEffect.WordOf(Reg.AL), Is.EqualTo(Reg.AX), "AL still CONTENDS for AX");
+      Assert.That(AsmRegisterEffect.Covers(Reg.AL, Reg.AX), Is.False, "so AH's producer keeps its claim");
+      Assert.That(AsmRegisterEffect.Overlaps(Reg.AL, Reg.AH), Is.False, "and the two halves are disjoint");
     });
   }
 

@@ -87,19 +87,61 @@ public sealed partial class LinearScanAllocator {
     var map = new Dictionary<int, IReadOnlyList<Reg>>();
     for (var i = 0; i < total; ++i) {
       if (!facts[i].IsAsm)
-        foreach (var register in facts[i].Destroys)
-          if (afterPrecise[i].Contains(register) && before[i].Contains(register))
-            conflict ??= Conflict(register);
+        foreach (var live in afterPrecise[i])
+          if (Destroyed(facts[i].Destroys, live) && Reaches(before[i], live))
+            conflict ??= Conflict(live);
 
       var held = new HashSet<Reg>(afterPrecise[i]);
       held.UnionWith(afterInferred[i]);
-      held.IntersectWith(before[i]);
+      held.RemoveWhere(value => !Reaches(before[i], value));
       held.Remove(_flagsPseudoRegister);
       if (held.Count > 0)
-        map[i] = [.. held];
+        // the reservation is refused to an INTERVAL, and intervals are the word registers the
+        // allocator hands out - a half held is the whole word withheld
+        map[i] = [.. held.Select(AsmRegisterEffect.WordOf).Distinct()];
     }
     return map;
   }
+
+  /// <summary>Whether anything in <paramref name="writes"/> touches a byte of <paramref name="value"/>.</summary>
+  private static bool Destroyed(HashSet<Reg> writes, Reg value) {
+    foreach (var write in writes)
+      if (AsmRegisterEffect.Overlaps(write, value))
+        return true;
+    return false;
+  }
+
+  /// <summary>Whether some asm definition reaching here put anything into <paramref name="value"/>.</summary>
+  private static bool Reaches(HashSet<Reg> definitions, Reg value) => Destroyed(definitions, value);
+
+  /// <summary>
+  /// Takes out of <paramref name="live"/> what <paramref name="writes"/> supplies, which is a
+  /// NARROWING rather than a removal.
+  ///
+  /// <para>
+  /// A claim on <c>AX</c> met by a write of <c>AL</c> is not ended and is not untouched either: what
+  /// remains wanted is <c>AH</c>, and saying so is what lets the two halves satisfy a word between
+  /// them. Written as <c>ExceptWith</c> the write did nothing, and <c>! MOV AL, 4</c> + <c>! MOV AH,
+  /// 0</c> + <c>! MOV v, AX</c> still reported a promise stretching back past the last BASIC statement
+  /// - the same false conflict the canonicalization used to produce, one step further along.
+  /// </para>
+  /// </summary>
+  private static void RemoveCovered(HashSet<Reg> live, HashSet<Reg> writes) {
+    if (writes.Count == 0)
+      return;
+
+    foreach (var write in writes) {
+      live.RemoveWhere(value => AsmRegisterEffect.Covers(write, value));
+      if (!write.IsByte())
+        continue;
+      // the other half of the word is still wanted, and is now the whole of what is
+      if (live.Remove(AsmRegisterEffect.WordOf(write)))
+        live.Add(OtherHalf(write));
+    }
+  }
+
+  /// <summary>The byte half sharing a word with this one - <c>AL</c> answers <c>AH</c>.</summary>
+  private static Reg OtherHalf(Reg half) => (Reg)((int)half ^ 0x04);
 
   /// <summary>
   /// Cancels the promise a matched <c>! PUSH r</c> / <c>! POP r</c> pair only APPEARS to make.
@@ -278,15 +320,15 @@ public sealed partial class LinearScanAllocator {
           afterPrecise[i] = [.. precise];
           afterInferred[i] = [.. inferred];
           if (fact.IsAsm) {
-            precise.ExceptWith(fact.Kills);
+            RemoveCovered(precise, fact.Kills);
             precise.UnionWith(fact.Uses);
-            inferred.ExceptWith(fact.Kills);
+            RemoveCovered(inferred, fact.Kills);
             inferred.UnionWith(fact.InferredUses);
             continue;
           }
           // a destroyer ends an INFERRED promise (see the class comment) and never a precise one: the
           // precise case has to reach the conflict check, which is the whole point of keeping it alive
-          inferred.ExceptWith(fact.Destroys);
+          RemoveCovered(inferred, fact.Destroys);
         }
 
         if (precise.SetEquals(inPrecise[b]) && inferred.SetEquals(inInferred[b]))
@@ -336,7 +378,7 @@ public sealed partial class LinearScanAllocator {
           if (fact.IsAsm)
             reaching.UnionWith(fact.Defines);
           else
-            reaching.ExceptWith(fact.Destroys);
+            RemoveCovered(reaching, fact.Destroys);
           foreach (var target in fact.JumpsTo)
             if (blockOf.TryGetValue(target, out var t) && Grow(jumpedIn[t], reaching))
               changed = true;

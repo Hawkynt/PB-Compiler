@@ -444,6 +444,35 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
+  /// <c>! MOV AL, 4</c> makes a promise about <c>AL</c> and about nothing else. Tracking both halves
+  /// as <c>AX</c> - one resource, which is true of ALLOCATION and false of the text - turned the
+  /// following <c>! MOV DX, AL</c> into a word-wide claim that reached back past the BASIC statement
+  /// in the middle, and declined the function for destroying a register nothing wanted. This is
+  /// <c>ModeX_GetPixel</c> in the SVGA corpus, reduced.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAByteHalfSetAndRead_ThenTheOtherHalfIsNotClaimedWithIt() {
+    const string source = """
+      DIM v AS INTEGER, w AS INTEGER, s AS STRING
+      s = "A"
+      v = 40
+      ! MOV AX, v
+      ! SHR AX, 1
+      ! MOV w, AX
+      v = ASC(MID$(s, 1, 1)) + w
+      ! MOV AL, 4
+      ! MOV AH, 0
+      ! MOV w, AX
+      PRINT v; w
+      """;
+
+    var routed = Run(source, routed: true, out var ownsMain);
+    Assert.That(ownsMain, Is.True, "the two halves define the word between them");
+    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
+    Assert.That(routed, Is.EqualTo("85  4"), "65 + 20, then the word the two halves built");
+  }
+
+  /// <summary>
   /// The same pair with the body's own control flow between its halves, which splits the run across
   /// blocks - every <c>Vesa*_HLine</c> in the corpus is written this way. Matching a save to its
   /// restore by stack depth is only sound where the span is CLOSED, and a label the body jumps to is
