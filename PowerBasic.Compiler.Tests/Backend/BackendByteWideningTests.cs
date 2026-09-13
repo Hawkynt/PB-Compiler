@@ -15,6 +15,13 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// siblings 448: the largest single reason the routing could not take a program.
 /// </para>
 /// <para>
+/// <c>u8 -&gt; i32</c> is deliberately absent from the routing claim below. A version of the selector
+/// case that also built the 32-bit pair made five DRAW_* corpus suites fail with
+/// <c>Operand size mismatch: DX vs [BP-90]</c> - the long-result convention reading its high half
+/// from a byte-sized slot - and removing only that half made them clean again. So the widening to a
+/// LONG still declines to the direct emitter, correctly, and 94 declines wait on it.
+/// </para>
+/// <para>
 /// The VALUES are what this asserts, not the encoding. A byte is unsigned in PowerBASIC, so 200
 /// widens to 200 and not to -56 - which is exactly what a sign-extension or a half-written move into
 /// a register whose high byte still holds something would produce. 200 is chosen because it has the
@@ -70,7 +77,8 @@ public sealed class BackendByteWideningTests {
 
     Assert.Multiple(() => {
       Assert.That(routed, Does.Contain("Widen"), "u8 -> i16 must route");
-      Assert.That(routed, Does.Contain("WidenLong"), "u8 -> i32 must route");
+      Assert.That(routed, Does.Not.Contain("WidenLong"),
+        "u8 -> i32 does NOT route yet - when it does, this line is the one to flip, not to delete");
     });
   }
 }
