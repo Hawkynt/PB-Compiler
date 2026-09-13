@@ -1281,6 +1281,16 @@ public sealed partial class IrLowering {
       case CommandStmt { Keyword: "SHIFT LEFT" or "SHIFT RIGHT" } shift: this.LowerShift(shift); break;
       case CommandStmt { Keyword: "ROTATE LEFT" or "ROTATE RIGHT" } rotate: this.LowerRotate(rotate); break;
       case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
+      // OUT port, value. The direct emitter writes it inline as OUT DX, AL; here it is named, because
+      // the same declaration reaches --emit-c and --emit-llvm where a port write is whatever that
+      // target says it is. Both operands are INTEGERs for the reason LOCATE's are: the argument slot
+      // is a word, and a LONG the selector cannot prove word-sized declines the whole module body.
+      // It was 46 routing declines, all of them graphics code setting a VGA register.
+      case CommandStmt { Keyword: "OUT", Arguments: [{ } outPort, { } outValue] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_outp", IrType.Void, IrType.I16, IrType.I16),
+          this.Coerce(this.LowerExpr(outPort), this._model.TypeOf(outPort), PbType.Integer),
+          this.Coerce(this.LowerExpr(outValue), this._model.TypeOf(outValue), PbType.Integer));
+        break;
       // CLS with no argument: the same argumentless runtime routine the direct emitter calls, so the
       // two paths clear and home the cursor identically. The one-argument spelling (CLS 0/1/2, which
       // PB reads as which region to clear) is deliberately left to decline rather than lowered to the

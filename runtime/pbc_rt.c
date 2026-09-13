@@ -882,6 +882,13 @@ void rt_unreachable(void) {
   exit(2);
 }
 
+/* No ports on a hosted target. Discarding the write is the honest answer: the alternative is to
+   invent a device, and a program that drives one is not portable in the first place. */
+void rt_outp(int16_t port, int16_t value) {
+  (void)port;
+  (void)value;
+}
+
 int main(void) {
   pb_main();
   fflush(stdout);
