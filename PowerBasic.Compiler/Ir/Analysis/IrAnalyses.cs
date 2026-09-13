@@ -16,6 +16,11 @@ public static class IrAnalyses {
     new("loops", static (function, analyses) =>
       IrLoopAnalysis.Build(function, analyses.Get(Dominators)));
 
+  /// <summary>Additive loop recurrences and exact canonical trip counts.</summary>
+  public static IrAnalysisKey<IrScalarEvolution> ScalarEvolution { get; } =
+    new("scalar-evolution", static (function, analyses) =>
+      IrScalarEvolution.Build(function, analyses.Get(Loops)));
+
   /// <summary>Branch-refined integer range facts derived from SSA and dominance.</summary>
   public static IrAnalysisKey<IrRangeAnalysis?> Ranges { get; } =
     new("ranges", static (function, analyses) =>
