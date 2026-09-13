@@ -889,6 +889,12 @@ void rt_outp(int16_t port, int16_t value) {
   (void)value;
 }
 
+/* ...and nothing to read back. Zero is the honest answer for a port that is not there. */
+int16_t rt_inp(int16_t port) {
+  (void)port;
+  return 0;
+}
+
 int main(void) {
   pb_main();
   fflush(stdout);

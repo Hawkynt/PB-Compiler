@@ -5,7 +5,7 @@ namespace PowerBasic.Compiler.Runtime;
 public sealed partial class DosRuntime {
 
   /// <summary>
-  /// <c>rt_outp</c>: write a byte to an I/O port. <c>OUT port, value</c>, which the direct emitter
+  /// <c>rt_outp</c> / <c>rt_inp</c>: write a byte to an I/O port, and read one back. <c>OUT port, value</c>, which the direct emitter
   /// writes inline as <c>OUT DX, AL</c>.
   ///
   /// <para>
@@ -23,6 +23,16 @@ public sealed partial class DosRuntime {
   private void EmitPortOut(Assembler asm) {
     asm.MarkLabel("rt_outp");
     asm.Out(Reg.DX, Reg.AL);                       // DX = port, AL = value: the ABI hands them over
+    asm.Ret();
+
+    // INP(port) - the read half, and the same bargain. AH is cleared because the port gives a BYTE
+    // and PowerBASIC's INP answers an INTEGER: leaving the high half as it lies would make the value
+    // depend on whatever ran before it, which is the shape of the BYTE-result bug this compiler has
+    // already been bitten by once.
+    asm.MarkLabel("rt_inp");
+    asm.Mov(Reg.DX, Reg.AX);                       // AX = port
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.In(Reg.AL, Reg.DX);
     asm.Ret();
   }
 }
