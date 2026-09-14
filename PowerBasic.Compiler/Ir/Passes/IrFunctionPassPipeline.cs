@@ -3,8 +3,8 @@ using PowerBasic.Compiler.Ir.Analysis;
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// Analysis-aware execution core for function transforms. Legacy passes are adapted conservatively while migrated
-/// passes can consume cached analyses and report exactly which results remain valid.
+/// Analysis-aware execution core for function transforms. Every registered transform receives the shared
+/// function analysis manager and reports exactly which cached results remain valid after a mutation.
 /// </summary>
 public sealed class IrFunctionPassPipeline {
 
@@ -20,17 +20,6 @@ public sealed class IrFunctionPassPipeline {
     ArgumentNullException.ThrowIfNull(pass);
     this._passes.Add((name, pass));
     return this;
-  }
-
-  /// <summary>
-  /// Adds an existing integer-result pass. A changing legacy pass conservatively invalidates all cached analyses.
-  /// </summary>
-  public IrFunctionPassPipeline AddLegacy(string name, Func<IrFunction, int> pass) {
-    ArgumentNullException.ThrowIfNull(pass);
-    return this.Add(name, (function, _) => {
-      var changes = pass(function);
-      return changes == 0 ? IrPassResult.Unchanged : IrPassResult.Changed(changes);
-    });
   }
 
   /// <summary>Runs the pipeline once with a fresh analysis cache.</summary>
