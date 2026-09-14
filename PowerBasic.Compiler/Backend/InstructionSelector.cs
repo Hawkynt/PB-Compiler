@@ -2494,6 +2494,38 @@ public sealed partial class InstructionSelector {
         this._vregs[cast] = dest;
         return true;
       }
+      // The SIGNED twin of the widening above, and CBW is the whole of it: the 8086 sign-extends AL
+      // into AX in one instruction, so the staging is a byte move and that. It goes through the
+      // physical AX for the same reason the zero-extension does - a byte VIEW of the destination
+      // vreg is not spill-safe - and CBW has nowhere else to work anyway.
+      case IrCastOp.SExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16 or 32: {
+        if (!this.TryOperand(cast.Value, out var source))
+          return false;
+
+        var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+        var al = new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [al, source], MovEffect(al, source)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Cbw, [],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: false, WritesMemory: false), condition: null, clobbers: [Reg.AX]));
+        if (IsWide(to)) {
+          // ...and CWD carries the sign on into the high word, which is what makes this a 32-bit
+          // signed widening rather than a 16-bit one with rubbish above it.
+          var (low, high) = this.FreshPair(cast);
+          var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+          this._current.Instructions.Add(new MInstr(MOpcode.Cwd, [],
+            new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+              ReadsMemory: false, WritesMemory: false), condition: null, clobbers: [Reg.DX]));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, ax], MovEffect(low, ax)));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, dx], MovEffect(high, dx)));
+          return true;
+        }
+        var widened = this.FreshVreg(cast.Type);
+        var wide = new MOperand.Register(widened);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [wide, ax], MovEffect(wide, ax)));
+        this._vregs[cast] = widened;
+        return true;
+      }
       case IrCastOp.SExt or IrCastOp.ZExt when IsWide(to) && from.IsInteger && from.Bits == 16: {
         if (!this.TryOperand(cast.Value, out var source))
           return false;
