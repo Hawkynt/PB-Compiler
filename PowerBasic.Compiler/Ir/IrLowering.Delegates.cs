@@ -59,6 +59,15 @@ public sealed partial class IrLowering {
     if (expr is NameExpr && this._model.VariableBindings.TryGetValue(expr, out var symbol)
         && symbol.Type is ProcPtrType)
       return this.SlotFor(symbol);
+    // A FUNCTION whose result is a delegate hands back the ADDRESS of the closure it built - that is
+    // what IrFunction.ReturnsClosure means - so the call's own value is already the storage. This is
+    // what COMPOSE and BIND are: each returns the thunk it synthesized, as a closure.
+    if (expr is CallOrIndexExpr or NameExpr
+        && this._model.CallBindings.TryGetValue(expr, out var producer)
+        && producer is { IsFunction: true, ReturnType: ProcPtrType })
+      return expr is CallOrIndexExpr call
+        ? this.LowerCallExpr(call)
+        : this.LowerNameRead((NameExpr)expr);
     return null;
   }
 
@@ -67,6 +76,14 @@ public sealed partial class IrLowering {
   /// <paramref name="closure"/>.
   /// </summary>
   private void StoreClosure(Expression value, IrValue closure) {
+    // A bind-time rewrite is stored through its DESUGARED form, which is where the meaning is. BIND
+    // and COMPOSE are the shapes that need it: each synthesizes a thunk FUNCTION and is bound as
+    // CODEPTR32 of it, so by the time the value reaches here it is a bare code pointer and the
+    // delegate type it wears says only what may be called through it.
+    if (this._model.Desugared.TryGetValue(value, out var rewritten)) {
+      this.StoreClosure(rewritten, closure);
+      return;
+    }
     // another delegate: copy it whole, environment and all, so a reassignment carries the captured
     // frame with it rather than pointing a new closure at nothing
     if (this.ExistingClosureStorage(value) is { } source) {

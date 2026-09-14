@@ -185,7 +185,12 @@ public sealed partial class CodeGenerator {
   /// routed callee and a direct caller agree.
   /// </summary>
   private static bool IsBackendResultAbiType(PbType type)
-    => IsBackendAbiType(type) || type is BcdType;
+    => IsBackendAbiType(type) || type is BcdType
+    // A DELEGATE result is the same eight bytes a delegate ARGUMENT is, crossing the other way: the
+    // far code pointer in AX:DX and the far environment pointer in BX:CX, which is where the direct
+    // emitter's epilogue puts them. The IR carries the closure's ADDRESS and the epilogue places it -
+    // see IrFunction.ReturnsClosure.
+    || type is ProcPtrType;
 
   private static bool IsBackendAbiType(PbType type)
     => type is ScalarType { IsFloat: false, ByteSize: 1 or 2 or 4 or 8 }

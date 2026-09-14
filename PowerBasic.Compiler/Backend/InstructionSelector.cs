@@ -63,6 +63,12 @@ public sealed partial class InstructionSelector {
   private readonly Dictionary<IrValue, int> _qslots = new(ReferenceEqualityComparer.Instance);
   private MFunction _function = null!;
 
+  /// <summary>Whether this function's result is a pb36 closure - see <see cref="IrFunction.ReturnsClosure"/>.</summary>
+  private bool _returnsClosure;
+
+  /// <summary>The frame closure a delegate-returning CALL parked its four result registers in.</summary>
+  private readonly Dictionary<IrValue, int> _closureResults = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>
   /// The block instructions are appended to. Most selections stay inside one machine block, but
   /// materializing a comparison's value needs a branch - and therefore a split - so the cursor may
@@ -137,6 +143,7 @@ public sealed partial class InstructionSelector {
 
   private MFunction? Run(IrFunction fn) {
     this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
+    this._returnsClosure = fn.ReturnsClosure;
 
     if (this.UsesNativeDwordRegisters && IrDominators.Build(fn) is { } dominators)
       this._nativeDwordPhis.UnionWith(NativeDwordPhis(fn, dominators));
@@ -1847,6 +1854,9 @@ public sealed partial class InstructionSelector {
   /// </para>
   /// </summary>
   private MOperand? ClosureCell(IrValue closure) => closure switch {
+    // the closure a delegate-returning call parked its four registers in
+    _ when this._closureResults.TryGetValue(closure, out var returned)
+      => new MOperand.StackSlot(returned, MRegSize.Dword),
     // ...at the LAST of the alloca's slots, which is the block's lowest address and therefore its
     // base - slots are laid out downward from BP while the words are indexed upward, the same
     // inversion SelectAlloca points its own LEA through. Naming the first slot instead reads the
@@ -2203,6 +2213,8 @@ public sealed partial class InstructionSelector {
   private bool SelectCmpValue(IrCmp cmp) {
     if (cmp.Lhs.Type.IsFloat)
       return this.SelectFloatCmpValue(cmp);
+    if (IsQuad(cmp.Lhs.Type))
+      return this.SelectQuadCmpValue(cmp);
     if (IsWide(cmp.Lhs.Type))
       return this.SelectWideCmpValue(cmp);
     var pred = this.PredicateOf(cmp);
@@ -2231,6 +2243,62 @@ public sealed partial class InstructionSelector {
         ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
     return this.MaterializeCondition(cmp, cc);
   }
+
+  /// <summary>
+  /// Two QUADs compared, on the x87 - which is where a QUAD already lives on this target. A qword cell
+  /// is what <c>FILD</c> takes, so the comparison is the float one with integer loads in front of it.
+  ///
+  /// <para>
+  /// Exact, and not approximately so: the x87's extended format carries a 64-bit significand, which is
+  /// every value an <c>i64</c> has. <c>FILD</c> of a qword is therefore lossless for the whole range,
+  /// and the ordering it reports is the integers' own. The conditions it reports are the UNSIGNED
+  /// ones - <c>FSTSW</c>/<c>SAHF</c> put the x87's C0/C3 into CF and ZF - so a signed predicate maps
+  /// to below/above here rather than to less/greater, which is not a loss of sign: the comparison was
+  /// already performed, and these flags only say which way it came out.
+  /// </para>
+  /// <para>
+  /// What asks for this is <c>LoopVersioning</c>: it hoists a bounds or overflow check out of a loop by
+  /// computing it at 64-bit width in the preheader, so a 16-bit counter arrives here sign-extended and
+  /// compared against the width's own limits. The widening selected; the comparison of it did not, and
+  /// the whole procedure declined for it.
+  /// </para>
+  /// </summary>
+  private bool SelectQuadCmpValue(IrCmp cmp) {
+    if (QuadCondition(this.PredicateOf(cmp)) is not { } cc)
+      return this.Decline($"compare as a value: 64-bit {this.PredicateOf(cmp)}");
+    if (!this.TryQwordSlot(cmp.Lhs, out var lhsSlot) || !this.TryQwordSlot(cmp.Rhs, out var rhsSlot))
+      return false;
+
+    // FILD left; FILD right leaves the right operand on top. FCOMPP compares ST(0) against ST(1), so
+    // FXCH restores source order - the same dance the float compare does, and for the same reason.
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(lhsSlot, MRegSize.Qword), reads: true);
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(rhsSlot, MRegSize.Qword), reads: true);
+    this._current.Instructions.Add(new MInstr(MOpcode.Fxch, [], MInstrEffect.None));
+    this._current.Instructions.Add(new MInstr(MOpcode.Fcompp, [], MInstrEffect.None));
+    this._current.Instructions.Add(new MInstr(MOpcode.FstswAx, [ax],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false), clobbers: [Reg.AX]));
+    this._current.Instructions.Add(new MInstr(MOpcode.Sahf, [ax],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
+    return this.MaterializeCondition(cmp, cc);
+  }
+
+  /// <summary>
+  /// The condition an x87 comparison reports for an integer predicate. Signed and unsigned spellings
+  /// answer alike because the ORDER was decided by the compare itself; what is left is only which of
+  /// CF and ZF <c>SAHF</c> set.
+  /// </summary>
+  private static Condition? QuadCondition(IrCmpPred pred) => pred switch {
+    IrCmpPred.Eq => Condition.Equal,
+    IrCmpPred.Ne => Condition.NotEqual,
+    IrCmpPred.Slt or IrCmpPred.Ult => Condition.Below,
+    IrCmpPred.Sle or IrCmpPred.Ule => Condition.BelowOrEqual,
+    IrCmpPred.Sgt or IrCmpPred.Ugt => Condition.Above,
+    IrCmpPred.Sge or IrCmpPred.Uge => Condition.AboveOrEqual,
+    _ => null,
+  };
 
   private bool SelectFloatCmpValue(IrCmp cmp) {
     if (MapFloatPredicate(cmp.Pred) is not { } cc)
@@ -2985,6 +3053,31 @@ public sealed partial class InstructionSelector {
 
     if (call.Type.IsVoid)
       return true;
+
+    // A DELEGATE result arrives in four registers - AX:DX and BX:CX - and has nowhere to live as an
+    // SSA value, so it goes straight into a closure of this frame's own and the call's value is that
+    // closure's address. Immediately, and before anything else may touch the four: they are the whole
+    // caller-saved file, and the very next instruction is free to use any of them.
+    if (callee is { ReturnsClosure: true }) {
+      var closure = this._function.StackSlots.Count;
+      for (var word = 0; word < 4; ++word)
+        this._function.StackSlots.Add(2);
+      MOperand.Register[] channel = [
+        new(MReg.Physical_(Reg.AX, MRegSize.Word)), new(MReg.Physical_(Reg.DX, MRegSize.Word)),
+        new(MReg.Physical_(Reg.BX, MRegSize.Word)), new(MReg.Physical_(Reg.CX, MRegSize.Word)),
+      ];
+      // Slots run DOWN from BP while the words are indexed up, so the block's base is its last slot -
+      // the same inversion SelectAlloca points its own LEA through.
+      var baseSlot = closure + 3;
+      for (var word = 0; word < channel.Length; ++word) {
+        var destination = new MOperand.StackSlot(baseSlot, MRegSize.Word, word * 2);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, channel[word]],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: false, WritesMemory: true)));
+      }
+      this._closureResults[call] = baseSlot;
+      return true;
+    }
 
     if (IsQuad(call.Type)) {
       // QUAD shares the x87 return channel with real values, but the SSA result is an integer: park
@@ -4657,6 +4750,25 @@ public sealed partial class InstructionSelector {
   private static readonly Reg[] _callClobbers = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
 
   private bool SelectRet(IrRet ret, MBlock block) {
+    // A DELEGATE result: the value is the ADDRESS of the closure the body assembled, and the ABI wants
+    // its four words - the far code pointer in AX:DX, the far environment pointer in BX:CX, which is
+    // where the direct emitter's epilogue puts them. Naming the cell rather than walking a pointer
+    // keeps the address out of the allocator, for the reason a far call does the same.
+    if (ret.HasValue && this._returnsClosure) {
+      if (this.ClosureCell(ret.Value!) is not MOperand.StackSlot closure)
+        return this.Decline("return: a delegate result is not a frame closure this epilogue can place");
+      MOperand.Register[] channel = [
+        new(MReg.Physical_(Reg.AX, MRegSize.Word)), new(MReg.Physical_(Reg.DX, MRegSize.Word)),
+        new(MReg.Physical_(Reg.BX, MRegSize.Word)), new(MReg.Physical_(Reg.CX, MRegSize.Word)),
+      ];
+      for (var word = 0; word < channel.Length; ++word) {
+        var source = closure with { Size = MRegSize.Word, Disp = closure.Disp + word * 2 };
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [channel[word], source],
+          MovEffect(channel[word], source)));
+      }
+      this._current.Instructions.Add(ReturningIn(channel));
+      return true;
+    }
     if (ret.HasValue && ret.Value is { } wide && IsWide(wide.Type)) {
       // the PB convention returns a LONG in DX:AX (docs: "Results: AX / DX:AX / ST0 / string handle in AX")
       if (!this.TryOperandPair(wide, out var lo, out var hi))
