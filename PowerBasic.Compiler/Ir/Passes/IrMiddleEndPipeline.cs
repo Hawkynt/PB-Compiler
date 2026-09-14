@@ -9,7 +9,7 @@ public static class IrMiddleEndPipeline {
 
   /// <summary>Builds the representation-only pipeline required even when source optimization is disabled.</summary>
   public static IrPassManager Legalize() => new IrPassManager()
-    .AddAnalyzed("mem2reg-faithful", (fn, _) => Conservative(() => Mem2Reg.RunForFaithfulSelection(fn)))
+    .AddAnalyzed("mem2reg-faithful", Mem2Reg.RunForFaithfulSelection)
     .AddAnalyzed("instcombine-faithful", (fn, _) => Conservative(() => InstCombine.RunForFaithfulSelection(fn)))
     .AddAnalyzed("dce", Dce.Run)
     .AddAnalyzed("simplifycfg", (fn, _) => Conservative(() => SimplifyCfg.Run(fn)));
@@ -22,7 +22,7 @@ public static class IrMiddleEndPipeline {
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     .AddEarlyModulePassWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
     .AddAnalyzed("storagenarrow", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
-    .AddAnalyzed("mem2reg", (fn, _) => Conservative(() => Mem2Reg.Run(fn)))
+    .AddAnalyzed("mem2reg", Mem2Reg.Run)
     .AddAnalyzed("storagenarrow-ssa", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
     .AddAnalyzed("structpack", (fn, _) => Conservative(() => StructurePackingByRange.Run(fn)))
     .AddAnalyzed("fieldreorder", (fn, _) => Conservative(() => FieldReordering.Run(fn)))
@@ -58,13 +58,13 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("sroa", (fn, _) => Conservative(() => ScalarReplaceArrays.Run(fn)))
     .AddAnalyzed("aggregate-sroa", (fn, _) => Conservative(() => ScalarReplaceAggregates.Run(fn)))
     .AddAnalyzed("storagenarrow2", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
-    .AddAnalyzed("mem2reg2", (fn, _) => Conservative(() => Mem2Reg.Run(fn)))
+    .AddAnalyzed("mem2reg2", Mem2Reg.Run)
     .AddAnalyzed("storagenarrow-ssa2", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
     .AddAnalyzed("strcow", (fn, _) => Conservative(() => StringCopyOnWriteElision.Run(fn)))
     .AddAnalyzed("ownership-elision", (fn, _) => Conservative(() => HandleOwnershipElision.Run(fn)))
     .AddAnalyzed("fpsimplify", (fn, analyses) => FpSimplify.Run(fn,
       optimizeForSpeed ? IrFastMathFlags.Fast : IrFastMathFlags.None, analyses))
-    .AddAnalyzed("reassociate", (fn, _) => Conservative(() => Reassociate.Run(fn)))
+    .AddAnalyzed("reassociate", Reassociate.Run)
     .AddAnalyzedWhen(optimizeForSpeed, "fpfast",
       (fn, _) => Conservative(() => FpFastMath.Run(fn, IrFastMathFlags.Fast)))
     .AddAnalyzed("eqsat", (fn, _) => Conservative(() => EqualitySaturation.Run(fn)))
