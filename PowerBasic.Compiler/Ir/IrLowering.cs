@@ -2654,6 +2654,13 @@ public sealed partial class IrLowering {
   private IrValue LowerStringExpr(Expression expr) {
     if (this._module is null)
       throw new IrLoweringException("strings require whole-module lowering");
+    // A bind-time rewrite is lowered through its DESUGARED form, which is where the meaning is. An
+    // interpolated string is the shape that needs it: $"a{n}b" is bound as the concatenation of the
+    // pieces, with a numeric hole already wrapped in STR$ and a formatted one in USING$, so there is
+    // nothing left here to interpret. The direct emitter's expression entry does the same first
+    // thing, and OptReachability walks it too.
+    if (this._model.Desugared.TryGetValue(expr, out var rewritten))
+      return this.LowerStringExpr(rewritten);
     switch (expr) {
       case StringLiteralExpr lit: {
         var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
@@ -4605,6 +4612,42 @@ public sealed partial class IrLowering {
     if (name.Equals("PLAY", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1) {
       _ = this.LowerExpr(call.Arguments[0]);
       return this.Coerce(new IrConstantInt(IrType.I16, 0), PbType.Integer, this._model.TypeOf(call));
+    }
+    // FILEATTR(n, 1) is the mode the file was opened in and FILEATTR(n, 2) its DOS handle. The
+    // attribute has to be WRITTEN DOWN, as it does on the direct path: the two answers come from
+    // different places and there is nowhere to put a runtime choice between them.
+    if (name.Equals("FILEATTR", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2) {
+      if (call.Arguments[1] is not IntegerLiteralExpr { Value: 1 or 2 } attribute)
+        throw new IrLoweringException("FILEATTR attribute (1 = mode, 2 = DOS handle)");
+      var handle = this.FileNum(call.Arguments[0]);
+      var number = this.Coerce(handle, PbType.Long, PbType.Integer);
+      if (attribute.Value == 2)
+        return this.Coerce(
+          this._b.Call(IrType.I16, this.RuntimeFn("rt_file_handle", IrType.I16, IrType.I16), number),
+          PbType.Integer, this._model.TypeOf(call));
+
+      // The mode table holds this runtime's OWN numbering - 0 INPUT, 1 OUTPUT, 2 APPEND, 3 RANDOM,
+      // 4 BINARY - and the answer is the one BASIC gives: 1, 2, 8, 4, 32. The two orders differ,
+      // which is the entire reason this is a translation and not a load; anything the table does not
+      // name answers 32, exactly as the direct emitter's fallthrough does.
+      var internalMode = this._b.Load(IrType.I16,
+        this._b.Gep(this.RuntimeCell("rt_fmode", IrType.I16),
+          this._b.Binary(IrBinaryOp.Mul, number, new IrConstantInt(IrType.I16, 2))));
+      var answer = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I16) { Name = "fileattr" });
+      var done = this.NewBlock("fileattr.done");
+      this._b.Store(new IrConstantInt(IrType.I16, 32), answer);      // BINARY, and the fallthrough
+      foreach (var (runtimeMode, basicMode) in new[] { (0, 1), (1, 2), (2, 8), (3, 4) }) {
+        var hit = this.NewBlock("fileattr.is");
+        var next = this.NewBlock("fileattr.next");
+        this._b.CondBr(this._b.Cmp(IrCmpPred.Eq, internalMode, new IrConstantInt(IrType.I16, runtimeMode)), hit, next);
+        this._b.Position(hit);
+        this._b.Store(new IrConstantInt(IrType.I16, basicMode), answer);
+        this._b.Br(done);
+        this._b.Position(next);
+      }
+      this._b.Br(done);
+      this._b.Position(done);
+      return this.Coerce(this._b.Load(IrType.I16, answer), PbType.Integer, this._model.TypeOf(call));
     }
     // SCREEN(row, col [, attribute]) reads the TEXT page back - the character at that cell, or its
     // colour attribute when the third argument is a non-zero constant. It is a far load rather than a

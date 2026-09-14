@@ -741,6 +741,10 @@ internal static class RuntimeAbi {
     ["rt_environ"] = new("rt_environ", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     // GET / PUT of a screen rectangle: corners in the graphics cells, the buffer's offset and segment
     // in two more, and PUT's combining verb in a third.
+    // FILEATTR(n, 2): the DOS handle behind a PB file number. AX in, BX out - which is the same
+    // routine every file transfer resolves its handle with, so the two paths cannot disagree about
+    // which handle a number means.
+    ["rt_file_handle"] = new("rt_fhandle", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.BX),
     ["rt_gget"] = new("rt_gget", [], _callerSaved),
     ["rt_gput"] = new("rt_gput", [], _callerSaved),
     ["rt_line"] = new("rt_line", [], _callerSaved),
