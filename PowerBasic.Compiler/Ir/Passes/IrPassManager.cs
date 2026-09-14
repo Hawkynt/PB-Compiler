@@ -28,20 +28,16 @@ public sealed class IrPassManager {
   /// <summary>The optimization objective this pipeline applies; propagated to the module for late passes.</summary>
   public bool OptimizeForSpeed { get; init; }
 
-  public IrPassManager Add(string name, Func<IrFunction, int> pass) {
-    this._functionPasses.AddLegacy(name, pass);
-    return this;
-  }
-
-  /// <summary>Adds a pass that consumes cached function analyses and reports precise preservation.</summary>
+  /// <summary>Adds a function pass that consumes the shared analysis manager and reports preservation.</summary>
   public IrPassManager AddAnalyzed(string name, Func<IrFunction, IrAnalysisManager, IrPassResult> pass) {
     this._functionPasses.Add(name, pass);
     return this;
   }
 
-  /// <summary>Adds a pass only when <paramref name="condition"/> holds.</summary>
-  public IrPassManager AddWhen(bool condition, string name, Func<IrFunction, int> pass)
-    => condition ? this.Add(name, pass) : this;
+  /// <summary>Adds an analysis-aware function pass only when <paramref name="condition"/> holds.</summary>
+  public IrPassManager AddAnalyzedWhen(bool condition, string name,
+      Func<IrFunction, IrAnalysisManager, IrPassResult> pass)
+    => condition ? this.AddAnalyzed(name, pass) : this;
 
   /// <summary>Adds a module pass that must run before function fixed points erase its proof shape.</summary>
   public IrPassManager AddEarlyModulePass(string name, Func<IrModule, int> pass) {
@@ -89,23 +85,4 @@ public sealed class IrPassManager {
           this.RunToFixpoint(fn);
     }
   }
-
-  /// <summary>
-  /// Compatibility facade. New production code should name <see cref="IrMiddleEndPipeline.Legalize"/>
-  /// so middle-end policy has a single owner.
-  /// </summary>
-  [Obsolete("Use IrMiddleEndPipeline.Legalize(); IrPassManager is the execution engine, not pipeline policy.")]
-  public static IrPassManager Legalize() => IrMiddleEndPipeline.Legalize();
-
-  /// <summary>
-  /// Compatibility facade for callers and tests written before middle-end policy moved to
-  /// <see cref="IrMiddleEndPipeline"/>.
-  /// </summary>
-  [Obsolete("Use IrMiddleEndPipeline.Standard(...); IrPassManager is the execution engine, not pipeline policy.")]
-  public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
-      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false,
-      IIrArithmeticCostModel? arithmeticCostModel = null,
-      int minimumIntegerStorageBits = 16)
-    => IrMiddleEndPipeline.Standard(optimizeForSpeed, includeModulePasses, dataLayoutTarget,
-      enableFpLookupTables, optimizeForSize, arithmeticCostModel, minimumIntegerStorageBits);
 }
