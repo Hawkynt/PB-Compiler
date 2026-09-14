@@ -739,6 +739,10 @@ internal static class RuntimeAbi {
     // ENVIRON "NAME=VALUE" sets one, ENVIRON$("NAME") reads one back
     ["rt_set_environ"] = new("rt_setenv", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     ["rt_environ"] = new("rt_environ", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // GET / PUT of a screen rectangle: corners in the graphics cells, the buffer's offset and segment
+    // in two more, and PUT's combining verb in a third.
+    ["rt_gget"] = new("rt_gget", [], _callerSaved),
+    ["rt_gput"] = new("rt_gput", [], _callerSaved),
     ["rt_line"] = new("rt_line", [], _callerSaved),
     ["rt_line_box"] = new("rt_linebox", [], _callerSaved),
     ["rt_line_fill"] = new("rt_linefill", [], _callerSaved),
