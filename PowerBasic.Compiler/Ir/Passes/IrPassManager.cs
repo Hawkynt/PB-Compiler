@@ -57,6 +57,19 @@ public sealed class IrPassManager {
   public IrPassManager AddModulePassWhen(bool condition, string name, Func<IrModule, int> pass)
     => condition ? this.AddModulePass(name, pass) : this;
 
+  // Temporary internal source bridge for CodeGenerator.Backend.cs while its routing selector is being
+  // removed in the same retirement series. Keeping this internal prevents a second production policy
+  // API from being available to callers; the architectural test below deliberately rejects public policy.
+  [Obsolete("Use IrMiddleEndPipeline.Standard; remove this bridge with the backend selector cutover.")]
+  internal static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
+      IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false,
+      IIrArithmeticCostModel? arithmeticCostModel = null, int minimumIntegerStorageBits = 16)
+    => IrMiddleEndPipeline.Standard(optimizeForSpeed, includeModulePasses, dataLayoutTarget,
+      enableFpLookupTables, optimizeForSize, arithmeticCostModel, minimumIntegerStorageBits);
+
+  [Obsolete("Use IrMiddleEndPipeline.Legalize; remove this bridge with the backend selector cutover.")]
+  internal static IrPassManager Legalize() => IrMiddleEndPipeline.Legalize();
+
   /// <summary>Runs every function pass once.</summary>
   public int Run(IrFunction fn) => this._functionPasses.Run(fn);
 
