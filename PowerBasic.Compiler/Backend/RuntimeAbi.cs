@@ -712,6 +712,25 @@ internal static class RuntimeAbi {
     // so the two paths cannot disagree about where the cursor ends up.
     ["rt_cls"] = new("rt_cls", [], _callerSaved),
 
+    // The graphics statements. PSET takes its point in registers - AX = x, BX = y, DX = colour - and
+    // preserves both coordinate registers, which is what lets the caller record the last point
+    // referenced from the values it already had.
+    ["rt_pset"] = new("rt_pset",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.BX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // LINE and CIRCLE take everything through the runtime's own cells instead (rt_gx1 and friends),
+    // because the same cells ARE the graphics cursor: LINE with no start point reads where the last
+    // statement finished, and DRAW's whole notion of position is that pair. Passing the arguments in
+    // registers would leave the cursor to be written separately and the two could disagree.
+    // POINT(x, y) reads the pixel back: the same register pair PSET writes with, answered as a LONG.
+    ["rt_point"] = new("rt_point",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.BX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair),
+    ["rt_line"] = new("rt_line", [], _callerSaved),
+    ["rt_line_box"] = new("rt_linebox", [], _callerSaved),
+    ["rt_line_fill"] = new("rt_linefill", [], _callerSaved),
+    ["rt_circle"] = new("rt_circle", [], _callerSaved),
+    ["rt_arc"] = new("rt_arc", [], _callerSaved),
+
     // "RND(a, z): DX:AX=lower, CX:BX=upper -> DX:AX = lower + trunc(rnd * (upper-lower+1))"
     ["rt_rnd_range"] = new("rt_rndrange",
       [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Pair, Reg.BX, Reg.CX)],
