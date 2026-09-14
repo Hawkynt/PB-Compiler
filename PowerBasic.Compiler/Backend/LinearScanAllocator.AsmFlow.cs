@@ -184,6 +184,17 @@ public sealed partial class LinearScanAllocator {
   /// A region like that has no path that reaches the pop other than through the push, so what the
   /// linear scan counted is what every execution counts.
   /// </para>
+  /// <para>
+  /// Which leaves one piece of the compiler's own code that may sit inside the run after all: the
+  /// BLOCK BOUNDARY. A label in the middle of an asm run ends a machine block, and the block ends with
+  /// a <c>JMP</c> to the next one - the compiler's instruction, in the middle of the run, ending it.
+  /// Every <c>Vesa*_HLine</c> in the corpus is shaped that way and every one of them declined for it,
+  /// thirty-three times over, with an unpaired <c>! PUSH DI</c> reported as a promise a later
+  /// <c>CALL</c> destroys. A branch moves no data and leaves <c>SP</c> exactly where it found it, so
+  /// the depth argument survives it untouched; where the branch GOES is the closed-region question,
+  /// already asked and answered above. Only an unconditional or conditional jump qualifies - a
+  /// computed one goes somewhere <see cref="IsClosedRegion"/> cannot see, and a <c>CALL</c> pushes.
+  /// </para>
   /// </summary>
   private static void CancelSaveRestore(List<MBlock> blocks, Dictionary<string, int> blockOf,
       int[] start, int[] stop, InstructionFacts[] facts) {
@@ -191,7 +202,8 @@ public sealed partial class LinearScanAllocator {
     for (var i = 0; i < facts.Length; ++i) {
       var fact = facts[i];
       if (!fact.IsAsm) {
-        saved.Clear();                              // the compiler's own code ends the run
+        if (!fact.IsPlainBranch)
+          saved.Clear();                            // the compiler's own code ends the run
         continue;
       }
 
@@ -407,6 +419,13 @@ public sealed partial class LinearScanAllocator {
   private readonly record struct InstructionFacts(bool IsAsm, HashSet<Reg> Uses, HashSet<Reg> InferredUses,
       HashSet<Reg> Defines, HashSet<Reg> Kills, HashSet<Reg> Destroys, IReadOnlyList<string> JumpsTo) {
 
+    /// <summary>
+    /// A compiler-emitted branch to a label of this function - the BLOCK BOUNDARY rather than anything
+    /// in the middle of the run. See <see cref="CancelSaveRestore"/>: it is the one piece of the
+    /// compiler's own code that may sit between a save and its restore.
+    /// </summary>
+    public bool IsPlainBranch { get; init; }
+
     /// <summary>The save/restore half, read straight off the effect - see <see cref="CancelSaveRestore"/>.</summary>
     public Reg? Saves { get; init; }
 
@@ -442,7 +461,9 @@ public sealed partial class LinearScanAllocator {
       var destroys = new HashSet<Reg>(PhysicalWrites(instr));
       if (instr.Effect.WritesFlags)
         destroys.Add(_flagsPseudoRegister);
-      return new(false, [], [], [], [], destroys, []);
+      return new InstructionFacts(false, [], [], [], [], destroys, []) {
+        IsPlainBranch = instr.Opcode is MOpcode.Jmp or MOpcode.Jcc,
+      };
     }
   }
 }
