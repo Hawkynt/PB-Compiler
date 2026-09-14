@@ -11,7 +11,7 @@ public static class IrMiddleEndPipeline {
   public static IrPassManager Legalize() => new IrPassManager()
     .AddAnalyzed("mem2reg-faithful", (fn, _) => Conservative(() => Mem2Reg.RunForFaithfulSelection(fn)))
     .AddAnalyzed("instcombine-faithful", (fn, _) => Conservative(() => InstCombine.RunForFaithfulSelection(fn)))
-    .AddAnalyzed("dce", (fn, _) => Conservative(() => Dce.Run(fn)))
+    .AddAnalyzed("dce", Dce.Run)
     .AddAnalyzed("simplifycfg", (fn, _) => Conservative(() => SimplifyCfg.Run(fn)));
 
   /// <summary>Builds the analysis-aware optimizing middle end in its proven relative order.</summary>
@@ -81,7 +81,7 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("reciprocal-reuse", (fn, analyses) => ReciprocalSequenceReuse.Run(fn, arithmeticCostModel, analyses))
     .AddAnalyzed("unswitch", (fn, _) => Conservative(() => LoopUnswitch.Run(fn)))
     .AddAnalyzed("loopversion", (fn, _) => Conservative(() => LoopVersioning.Run(fn)))
-    .AddAnalyzed("dce", (fn, _) => Conservative(() => Dce.Run(fn)))
+    .AddAnalyzed("dce", Dce.Run)
     .AddAnalyzed("allocsink", (fn, _) => Conservative(() => AllocationSinking.Run(fn)))
     .AddAnalyzed("closed-form", (fn, _) => Conservative(() => RecurrenceClosedForm.Run(fn)))
     .AddAnalyzedWhen(optimizeForSpeed, "deadloop", (fn, _) => Conservative(() => DeadLoopElimination.Run(fn)))
