@@ -739,6 +739,17 @@ internal static class RuntimeAbi {
     // ENVIRON "NAME=VALUE" sets one, ENVIRON$("NAME") reads one back
     ["rt_set_environ"] = new("rt_setenv", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     ["rt_environ"] = new("rt_environ", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // The string intrinsics written WITHOUT parentheses: each reads the machine rather than an
+    // argument, and each answers with a fresh handle in AX. DATE$ and TIME$ are the clock, INKEY$ the
+    // keyboard buffer, COMMAND$ the PSP's tail, CURDIR$ the current directory.
+    ["rt_date_str"] = new("rt_datestr", [], _callerSaved, Result: Reg.AX),
+    ["rt_time_str"] = new("rt_timestr", [], _callerSaved, Result: Reg.AX),
+    ["rt_inkey"] = new("rt_inkey", [], _callerSaved, Result: Reg.AX),
+    ["rt_command"] = new("rt_command", [], _callerSaved, Result: Reg.AX),
+    ["rt_curdir"] = new("rt_curdir", [], _callerSaved, Result: Reg.AX),
+    // DIR$ is the DOS find-first/find-next pair behind one name: a mask handle in AX opens a search
+    // and a null one continues it, with the attribute mask in CX.
+    ["rt_dir"] = new("rt_dir", [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
     // GET / PUT of a screen rectangle: corners in the graphics cells, the buffer's offset and segment
     // in two more, and PUT's combining verb in a third.
     // FILEATTR(n, 2): the DOS handle behind a PB file number. AX in, BX out - which is the same

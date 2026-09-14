@@ -188,10 +188,22 @@ public sealed class BackendByRefRoutingTests {
     });
   }
 
+  /// <summary>
+  /// A DYNAMIC array's element passed BYREF. Its storage is in the far heap, so its address is not
+  /// something a near-pointer parameter can receive: the callee would read the offset through
+  /// <c>DS</c> and reach the program's own data.
+  ///
+  /// <para>
+  /// The direct emitter's answer is a hidden stack temp, copy-IN only - its BYREF push takes an
+  /// address only of a NEAR lvalue and copies anything else - so the callee's write lands in the temp
+  /// and is discarded. That is what <c>Bump values%(2)</c> does on that path, and the routed path now
+  /// does the same rather than declining the whole module. Asserting the two AGREE is the point; the
+  /// number they agree on is 10 because neither of them writes the element back.
+  /// </para>
+  /// </summary>
   [TestCase(false)]
   [TestCase(true)]
-  public void Route_GivenAFarDynamicArrayElementPassedByRef_ThenItDeclinesRatherThanDroppingTheSegment(
-      bool optimize) {
+  public void Execute_GivenAFarDynamicArrayElementPassedByRef_ThenBothPathsCopyInOnly(bool optimize) {
     const string source = """
       REDIM values%(0 TO 7)
       values%(2) = 10
@@ -201,21 +213,13 @@ public sealed class BackendByRefRoutingTests {
         value = value + 1
       END SUB
       """;
-    var generator = new CodeGenerator(Bind(source)) {
-      Optimize = optimize,
-      UseExperimentalBackend = true,
-    };
 
-    generator.EmitExecutable();
+    var (direct, routed, routedNames) = Execute(source, optimize);
 
     Assert.Multiple(() => {
-      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
-      Assert.That(generator.BackendRoutedNames, Does.Not.Contain("main"),
-        "a far element cannot enter a near-pointer call");
-      Assert.That(generator.BackendRoutedNames, Does.Not.Contain("Bump"),
-        "a whole-module lowering decline must not leave a partly routed callee");
-      Assert.That(generator.BackendDeclines.Select(d => d.Reason),
-        Has.Some.Contains("far pointer passed BYREF"));
+      Assert.That(routedNames, Does.Contain("main"), "a far element no longer takes the module body with it");
+      Assert.That(routed.Output, Is.EqualTo(direct.Output));
+      Assert.That(routed.Output.Trim(), Is.EqualTo("10"), "copy-in only: the callee's write is discarded");
     });
   }
 }

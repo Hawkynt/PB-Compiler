@@ -583,4 +583,92 @@ public sealed class BackendInlineAsmTests {
     Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
     Assert.That(routed, Is.EqualTo("202"), "66, then 67 rounded up to 68, then 68");
   }
+  /// <summary>
+  /// Whether a PROCEDURE routed, unoptimized. The fixture's other tests run the optimizer, which is
+  /// what hid the defect below for as long as it did: the optimizer's own rewriting happened to move
+  /// the block boundary out from between the save and its restore.
+  /// </summary>
+  private static (string Output, bool Routed) RunProcedure(string source, string procedure, bool routed) {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var cg = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = routed };
+    var image = cg.EmitExecutable();
+    Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
+    return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"),
+      cg.BackendRoutedNames.Contains(procedure, StringComparer.OrdinalIgnoreCase));
+  }
+
+  /// <summary>
+  /// An asm run whose own label splits it across machine BLOCKS, with a BASIC <c>CALL</c> between that
+  /// run and the next one. Every <c>Vesa*_HLine</c> in the SVGA corpus is this shape - thirty-three
+  /// declines, the largest single row in the mandatory-routing measurement.
+  ///
+  /// <para>
+  /// The label ends a block, the block ends with a compiler <c>JMP</c>, and the <c>JMP</c> sat between
+  /// <c>! PUSH DI</c> and <c>! POP DI</c> and ended the run - so the pair never cancelled, the
+  /// <c>POP</c> read as a definition, the next <c>PUSH</c> read as a use of it, and the <c>CALL</c>
+  /// between them destroyed the register. A branch moves no data and leaves <c>SP</c> where it found
+  /// it; where it goes is the closed-region question, asked separately.
+  /// </para>
+  /// <para>
+  /// The <c>CALL</c> is what makes this a test rather than a shape: without one the window between the
+  /// pop and the next push is empty and any model of the pair passes.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenARunSplitByItsOwnLabel_ThenTheSaveStillPairsAcrossTheBlock() {
+    const string source = """
+      DECLARE SUB Bump()
+      DIM hits AS SHARED WORD
+      DIM a(0 TO 7) AS SHARED BYTE
+      CALL Fill(2, 3)
+      PRINT a(0); a(1); a(2); a(4); a(5); a(6); hits
+      END
+      SUB Bump()
+        hits = hits + 1
+      END SUB
+      SUB Fill(n AS WORD, m AS WORD)
+        DIM p AS WORD, q AS WORD, lo AS WORD, hi AS WORD
+        p = VARPTR(a(0))
+        q = p + 4
+        lo = n
+        hi = m
+        ! PUSH ES
+        ! PUSH DI
+        ! MOV AX, DS
+        ! MOV ES, AX
+        ! MOV DI, p
+        ! MOV CX, lo
+        ! MOV AL, 7
+        ! CLD
+        ! TEST DI, 1
+        ! JZ FillAligned
+        ! STOSB
+        ! DEC CX
+        ! JZ FillDone
+        FillAligned:
+        ! REP STOSB
+        FillDone:
+        ! POP DI
+        ! POP ES
+        CALL Bump
+        ! PUSH ES
+        ! PUSH DI
+        ! MOV AX, DS
+        ! MOV ES, AX
+        ! MOV DI, q
+        ! MOV CX, hi
+        ! MOV AL, 9
+        ! CLD
+        ! REP STOSB
+        ! POP DI
+        ! POP ES
+      END SUB
+      """;
+
+    var (routed, tookIt) = RunProcedure(source, "Fill", routed: true);
+    Assert.That(tookIt, Is.True, "a label inside the run must not end it");
+    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Fill", routed: false).Output));
+    Assert.That(routed, Is.EqualTo("7  7  0  9  9  9  1"));
+  }
 }
