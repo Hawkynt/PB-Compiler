@@ -78,18 +78,27 @@ public sealed class BackendByteResultTests {
   }
 
   /// <summary>
-  /// The premise. This is the mixed-path case the bug actually needed: the byte-returning FUNCTION
-  /// routes while its caller does not, so an epilogue returning AL alone meets a caller reading AX.
-  /// If both ever routed, the fixture above would agree with itself and prove nothing.
+  /// The premise, and it has CHANGED. This used to be the mixed-path case the bug needed - the
+  /// byte-returning FUNCTION routed while its caller did not, so an epilogue returning AL alone met a
+  /// caller reading AX - and it required main NOT to route in order to stay that case.
+  ///
+  /// <para>
+  /// Main routes now: the selector learned <c>SExt i8 -&gt; i16</c>, which is the last thing the
+  /// module body here was declining on. The mixed boundary this program used to produce cannot be
+  /// produced by it any more, and pinning main to the direct emitter to keep it would be asserting a
+  /// gap rather than a behaviour. What still holds - and is what the fixture above actually needs -
+  /// is that the byte-returning callee routes, so the values it asserts are this back end's answer
+  /// and not the other one's. The routed/direct comparison moved into those four cases, which run
+  /// both paths over the same source.
+  /// </para>
   /// </summary>
   [Test]
-  public void Route_GivenAByteResult_ThenTheCalleeRoutesWhileItsCallerDoesNot() {
+  public void Route_GivenAByteResult_ThenTheByteReturningCalleeRoutes() {
     var (_, routed) = Run(routed: true, optimize: false);
 
     Assert.Multiple(() => {
       Assert.That(routed, Does.Contain("Flag"), "the byte-returning callee must route");
-      Assert.That(routed, Does.Not.Contain("main"),
-        "main must NOT route here - the mixed boundary is what the values above are measuring");
+      Assert.That(routed, Does.Contain("Signed"), "and so must the signed one, which returns through CBW");
     });
   }
 }

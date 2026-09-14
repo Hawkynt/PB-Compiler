@@ -5683,6 +5683,12 @@ public sealed partial class IrLowering {
       BinaryOp.And => IrBinaryOp.And,
       BinaryOp.Or => IrBinaryOp.Or,
       BinaryOp.Xor => IrBinaryOp.Xor,
+      // The pb36 shift OPERATORS, which are the SHIFT statement written as an expression. Arithmetic
+      // or logical is the operand's own signedness, exactly as the direct emitter picks SAR or SHR:
+      // a right shift of a signed value keeps its sign, and of an unsigned one does not.
+      BinaryOp.ShiftLeft => IrBinaryOp.Shl,
+      BinaryOp.ShiftRightArith => IrBinaryOp.AShr,
+      BinaryOp.ShiftRightLogical => IrBinaryOp.LShr,
       _ => throw new IrLoweringException($"unsupported binary op {expr.Op}"),
     };
     // A zero divisor raises Error 11, and that guard belongs to the LANGUAGE rather than to an
