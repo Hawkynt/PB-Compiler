@@ -419,4 +419,50 @@ public sealed class BackendQuadPrintTests {
       Assert.That(routedRun.Output, Is.EqualTo(directRun.Output));
     });
   }
+  /// <summary>
+  /// Two QUADs COMPARED. The back end could widen into one and print one, and had no way to order a
+  /// pair of them - the comparison fell through to the word path, asked for a register the value has
+  /// no way to be in, and declined the whole procedure.
+  ///
+  /// <para>
+  /// What actually asks for it is not a program that writes <c>a&amp;&amp; &lt; b&amp;&amp;</c>. It is
+  /// <c>LoopVersioning</c>: with <c>$ERROR BOUNDS</c> or <c>NUMERIC</c> armed it hoists the check out
+  /// of the loop by computing it at 64-bit width in the preheader, so an INTEGER counter arrives
+  /// sign-extended and compared against the width's own limits. Six tests declined on that alone, and
+  /// none of them mentions a QUAD.
+  /// </para>
+  /// <para>
+  /// The comparison is exact rather than approximately so: the x87's extended format carries a 64-bit
+  /// significand, which is every value an <c>i64</c> has, so <c>FILD</c> of a qword is lossless over
+  /// the whole range. The values here are chosen to say so - they differ only in their LOW word, and
+  /// only above the 53 bits a DOUBLE could have kept.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Execute_GivenQuadsCompared_WhenRouted_ThenTheOrderIsExactAtEveryBit() {
+    const string source = """
+      DIM a AS QUAD, b AS QUAD
+      a = 1152921504606846976
+      b = a + 1
+      PRINT a < b; b < a; a = b; a <= b; b >= a
+      a = -1152921504606846976
+      b = a - 1
+      PRINT a < b; b < a; a = b
+      """;
+
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var directImage = direct.EmitExecutable();
+    var routedImage = routed.EmitExecutable();
+
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the test must not pass through fallback");
+
+    var directRun = Cpu8086.Run(directImage);
+    var routedRun = Cpu8086.Run(routedImage);
+    Assert.Multiple(() => {
+      Assert.That(routedRun.Output, Is.EqualTo(directRun.Output));
+      Assert.That(routedRun.Output.Replace("\r\n", "|").Trim(),
+        Is.EqualTo("-1  0  0 -1 -1 | 0 -1  0 |"), "a differs from b only in the low bit");
+    });
+  }
 }

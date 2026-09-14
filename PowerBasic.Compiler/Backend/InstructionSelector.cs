@@ -2203,6 +2203,8 @@ public sealed partial class InstructionSelector {
   private bool SelectCmpValue(IrCmp cmp) {
     if (cmp.Lhs.Type.IsFloat)
       return this.SelectFloatCmpValue(cmp);
+    if (IsQuad(cmp.Lhs.Type))
+      return this.SelectQuadCmpValue(cmp);
     if (IsWide(cmp.Lhs.Type))
       return this.SelectWideCmpValue(cmp);
     var pred = this.PredicateOf(cmp);
@@ -2231,6 +2233,62 @@ public sealed partial class InstructionSelector {
         ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
     return this.MaterializeCondition(cmp, cc);
   }
+
+  /// <summary>
+  /// Two QUADs compared, on the x87 - which is where a QUAD already lives on this target. A qword cell
+  /// is what <c>FILD</c> takes, so the comparison is the float one with integer loads in front of it.
+  ///
+  /// <para>
+  /// Exact, and not approximately so: the x87's extended format carries a 64-bit significand, which is
+  /// every value an <c>i64</c> has. <c>FILD</c> of a qword is therefore lossless for the whole range,
+  /// and the ordering it reports is the integers' own. The conditions it reports are the UNSIGNED
+  /// ones - <c>FSTSW</c>/<c>SAHF</c> put the x87's C0/C3 into CF and ZF - so a signed predicate maps
+  /// to below/above here rather than to less/greater, which is not a loss of sign: the comparison was
+  /// already performed, and these flags only say which way it came out.
+  /// </para>
+  /// <para>
+  /// What asks for this is <c>LoopVersioning</c>: it hoists a bounds or overflow check out of a loop by
+  /// computing it at 64-bit width in the preheader, so a 16-bit counter arrives here sign-extended and
+  /// compared against the width's own limits. The widening selected; the comparison of it did not, and
+  /// the whole procedure declined for it.
+  /// </para>
+  /// </summary>
+  private bool SelectQuadCmpValue(IrCmp cmp) {
+    if (QuadCondition(this.PredicateOf(cmp)) is not { } cc)
+      return this.Decline($"compare as a value: 64-bit {this.PredicateOf(cmp)}");
+    if (!this.TryQwordSlot(cmp.Lhs, out var lhsSlot) || !this.TryQwordSlot(cmp.Rhs, out var rhsSlot))
+      return false;
+
+    // FILD left; FILD right leaves the right operand on top. FCOMPP compares ST(0) against ST(1), so
+    // FXCH restores source order - the same dance the float compare does, and for the same reason.
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(lhsSlot, MRegSize.Qword), reads: true);
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(rhsSlot, MRegSize.Qword), reads: true);
+    this._current.Instructions.Add(new MInstr(MOpcode.Fxch, [], MInstrEffect.None));
+    this._current.Instructions.Add(new MInstr(MOpcode.Fcompp, [], MInstrEffect.None));
+    this._current.Instructions.Add(new MInstr(MOpcode.FstswAx, [ax],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false), clobbers: [Reg.AX]));
+    this._current.Instructions.Add(new MInstr(MOpcode.Sahf, [ax],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
+    return this.MaterializeCondition(cmp, cc);
+  }
+
+  /// <summary>
+  /// The condition an x87 comparison reports for an integer predicate. Signed and unsigned spellings
+  /// answer alike because the ORDER was decided by the compare itself; what is left is only which of
+  /// CF and ZF <c>SAHF</c> set.
+  /// </summary>
+  private static Condition? QuadCondition(IrCmpPred pred) => pred switch {
+    IrCmpPred.Eq => Condition.Equal,
+    IrCmpPred.Ne => Condition.NotEqual,
+    IrCmpPred.Slt or IrCmpPred.Ult => Condition.Below,
+    IrCmpPred.Sle or IrCmpPred.Ule => Condition.BelowOrEqual,
+    IrCmpPred.Sgt or IrCmpPred.Ugt => Condition.Above,
+    IrCmpPred.Sge or IrCmpPred.Uge => Condition.AboveOrEqual,
+    _ => null,
+  };
 
   private bool SelectFloatCmpValue(IrCmp cmp) {
     if (MapFloatPredicate(cmp.Pred) is not { } cc)
