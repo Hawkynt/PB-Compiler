@@ -772,7 +772,10 @@ public sealed partial class IrLowering {
     // the high word still held. So a pointer that needs shared storage declines instead.
     if (symbol.Type is PointerType && this.NeedsSharedStorage(symbol))
       throw new IrLoweringException("pointer variable with shared storage");
-    if (this.NeedsSharedStorage(symbol))
+    // A $RESOURCE array IS the embedded file: the whole-program codegen lays its bytes into the data
+    // area under the very label g.<name> resolves to, so it has to be a named global rather than a
+    // frame slot. Given one, the routed program read four zeros where the file's bytes were.
+    if (this.NeedsSharedStorage(symbol) || this._model.ResourceData.ContainsKey(symbol))
       return this.GlobalFor(symbol);
     IrAlloca alloca;
     if (symbol.Type is PointerType) {
@@ -1348,6 +1351,7 @@ public sealed partial class IrLowering {
       case IterateStmt it: this.LowerIterate(it); break;
       case CallStmt c: this.LowerCallStatement(c); break;
       case CallPtrStmt cp: this.LowerCallPtr(cp); break;
+      case RequireStmt rq: this.LowerRequire(rq); break;
       case SelectStmt s: this.LowerSelect(s); break;
       case DimStmt d: this.LowerDim(d); break;
       case RedimStmt rdm: this.LowerRedim(rdm); break;
@@ -1377,6 +1381,10 @@ public sealed partial class IrLowering {
       // that contains it is unoptimized.
       case InlineAsmStmt asm: this.LowerInlineAsm(asm); break;
       case DataStmt: break;                          // DATA is gathered once into a module blob; the statement itself emits nothing
+      // $RESOURCE names bytes the whole-program codegen bakes into the data area; like DATA, the
+      // statement itself is a declaration and executes nothing. RESOURCE$ reads them back, and that
+      // is a call like any other.
+      case ResourceStmt: break;
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;
       case EndStmt: this.LowerEnd(); break;
@@ -4373,6 +4381,47 @@ public sealed partial class IrLowering {
     throw new IrLoweringException($"ITERATE {it.Kind} outside a matching loop");
   }
 
+  /// <summary>
+  /// A pb36 contract - <c>REQUIRE</c> / <c>ENSURE</c>. A violation prints the message, when one was
+  /// written, and raises Error 5.
+  ///
+  /// <para>
+  /// <c>$OPTIMIZE SPEED</c> is the release mode and compiles the check out entirely, which is not an
+  /// optimization this path may decide for itself: the direct emitter drops it on exactly that flag,
+  /// and a contract that survived in one build and not the other would be a program that stops in one
+  /// and not the other.
+  /// </para>
+  /// </summary>
+  private void LowerRequire(RequireStmt rq) {
+    if (CompilesContractsOut(this._model))
+      return;
+    var violated = this.NewBlock("contract.violated");
+    var ok = this.NewBlock("contract.ok");
+    this._b.CondBr(this.LowerCondition(rq.Condition), ok, violated);
+
+    this._b.Position(violated);
+    if (rq.Message is { Length: > 0 } message) {
+      var bytes = System.Text.Encoding.ASCII.GetBytes(message);
+      this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
+        this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
+      this.EmitIo(null, "print", "nl", IrType.Void, []);
+    }
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), new IrConstantInt(IrType.I32, 5));
+    this._b.Br(ok);
+    this._b.Position(ok);
+  }
+
+  /// <summary>
+  /// Whether <c>$OPTIMIZE SPEED</c> is in force for this module, which is the release mode contracts
+  /// disappear in. It is read from the METASTATEMENT rather than taken as a flag because that is the
+  /// only form the question has by the time the lowering runs: the code generator resolves SPEED from
+  /// the directive after its Tier 1 pre-passes, and one of those pre-passes is what first asks whether
+  /// a procedure routes - so the flag it would hand over is not yet set.
+  /// </summary>
+  private static bool CompilesContractsOut(SemanticModel model)
+    => model.MetaStatements.Any(m => m.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase)
+      && m.Arguments is [{ } mode, ..] && mode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase));
+
   private void LowerCallStatement(CallStmt c) {
     // a delegate invoked as a statement - `x 15`, `CALL x(15)`. The binder synthesized the invocation
     // expression this is a statement wrapper around; a FUNCTION delegate's result is discarded here
@@ -6245,6 +6294,13 @@ public sealed partial class IrLowering {
       // and the direct emitter emits nothing for it, so ignoring it here is the direct path's own
       // behaviour rather than a new claim.
       case "DIM":
+      // $FLOAT NPX / EMULATE / PROCEDURE chooses how floating point is REACHED, which is a property of
+      // the target rather than of a statement: RuntimeTargetForRuntime reads it out of
+      // model.MetaStatements in a pre-pass and folds X87 into the feature set. That is the same
+      // pre-pass $CPU and $ISA go through, and the same reason ignoring it here loses nothing - a
+      // routed module body never executes the statement list, and this directive was never applied
+      // there to begin with.
+      case "FLOAT":
         return;
       // $ERROR BOUNDS ON: every subscript is checked against its dimension and Error 9 raised when it
       // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set
