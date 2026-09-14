@@ -1345,6 +1345,62 @@ public sealed partial class IrLowering {
       case CommandStmt { Keyword: "ERRCLEAR" }:
         this._b.Store(new IrConstantInt(IrType.I16, 0), this.RuntimeCell("rt_err", IrType.I16));
         break;
+      // PSET (x,y)[,c] / PRESET. The runtime takes the point in registers and preserves both, which
+      // is why the LAST POINT REFERENCED can be recorded from the values already in hand: every
+      // graphics statement leaves that pair behind, and without it `PSET (10,10) : LINE -(20,20)`
+      // draws from wherever the previous statement finished.
+      case PsetStmt pset: {
+        var px = this.GraphicsWord(pset.Point.X);
+        var py = this.GraphicsWord(pset.Point.Y);
+        this._b.Call(IrType.Void,
+          this.RuntimeFn("rt_pset", IrType.Void, IrType.I16, IrType.I16, IrType.I16),
+          px, py, pset.Color is { } psetColour ? this.GraphicsWord(psetColour)
+            : new IrConstantInt(IrType.I16, pset.IsPreset ? 0 : 15));   // PRESET erases, PSET defaults to white
+        this._b.Store(px, this.RuntimeCell("rt_gx1", IrType.I16));
+        this._b.Store(py, this.RuntimeCell("rt_gy1", IrType.I16));
+        break;
+      }
+      // LINE [(x1,y1)]-(x2,y2) [,c] [,B|BF] [,style]. Everything travels through the runtime's cells
+      // because those cells are the graphics cursor - omitting the start point means "carry on from
+      // there", so the arguments and the cursor cannot be two separate things.
+      case LineStmt line: {
+        if (line.From is { } lineFrom) {
+          this._b.Store(this.GraphicsWord(lineFrom.X), this.RuntimeCell("rt_gx1", IrType.I16));
+          this._b.Store(this.GraphicsWord(lineFrom.Y), this.RuntimeCell("rt_gy1", IrType.I16));
+        }
+        this._b.Store(this.GraphicsWord(line.To.X), this.RuntimeCell("rt_gx2", IrType.I16));
+        this._b.Store(this.GraphicsWord(line.To.Y), this.RuntimeCell("rt_gy2", IrType.I16));
+        this._b.Store(line.Color is { } lineColour ? this.GraphicsWord(lineColour) : new IrConstantInt(IrType.I16, 15),
+          this.RuntimeCell("rt_gcolor", IrType.I16));
+        // the style mask is consulted a bit per pixel, so all-ones is a solid line
+        this._b.Store(line.Style is { } lineStyle ? this.GraphicsWord(lineStyle) : new IrConstantInt(IrType.I16, unchecked((short)0xFFFF)),
+          this.RuntimeCell("rt_gstyle", IrType.I16));
+        this._b.Call(IrType.Void, this.RuntimeFn(line switch {
+          { Box: true, Fill: true } => "rt_line_fill",
+          { Box: true } => "rt_line_box",
+          _ => "rt_line",
+        }, IrType.Void));
+        break;
+      }
+      // CIRCLE (x,y), r [,c] [,start] [,end] [,aspect]. The arc form defaults each angle where it was
+      // left out - a whole turn, and a ratio of one - which together make the arc walk draw exactly
+      // the circle the integer midpoint walk would, so the two forms agree where they overlap.
+      case CircleStmt circle: {
+        this._b.Store(this.GraphicsWord(circle.Center.X), this.RuntimeCell("rt_gcx", IrType.I16));
+        this._b.Store(this.GraphicsWord(circle.Center.Y), this.RuntimeCell("rt_gcy", IrType.I16));
+        this._b.Store(this.GraphicsWord(circle.Radius), this.RuntimeCell("rt_gr", IrType.I16));
+        this._b.Store(circle.Color is { } circleColour ? this.GraphicsWord(circleColour) : new IrConstantInt(IrType.I16, 15),
+          this.RuntimeCell("rt_gcolor", IrType.I16));
+        if (circle.Start is null && circle.End is null && circle.Aspect is null) {
+          this._b.Call(IrType.Void, this.RuntimeFn("rt_circle", IrType.Void));
+          break;
+        }
+        this.GraphicsAngle(circle.Start, "rt_gastart", 0.0);
+        this.GraphicsAngle(circle.End, "rt_gaend", Math.PI * 2);
+        this.GraphicsAngle(circle.Aspect, "rt_gaspect", 1.0);
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_arc", IrType.Void));
+        break;
+      }
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
         break;
@@ -4194,6 +4250,18 @@ public sealed partial class IrLowering {
   /// error triple was the first of them and gave this its old name; the random seed, the segment
   /// registers and the array-primitive parameter block all reach the same storage the same way.
   /// </summary>
+  /// <summary>A graphics coordinate: an INTEGER, which is the width the runtime's cells and registers hold.</summary>
+  private IrValue GraphicsWord(Expression e)
+    => this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer);
+
+  /// <summary>One of CIRCLE's optional angles as a double, or the default that makes the arc a whole circle.</summary>
+  private void GraphicsAngle(Expression? value, string cell, double fallback)
+    => this._b.Store(
+      value is null
+        ? new IrConstantFloat(IrType.F64, fallback)
+        : this.Coerce(this.LowerExpr(value), this._model.TypeOf(value), PbType.Double),
+      this.RuntimeCell(cell, IrType.F64));
+
   private IrGlobalVariable RuntimeCell(string name, IrType type) {
     if (this._module is null)
       throw new IrLoweringException($"{name} requires whole-module lowering");
@@ -4340,6 +4408,12 @@ public sealed partial class IrLowering {
     if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
         this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer));
+    // POINT(x, y) reads a pixel back, and takes its pair in the same registers PSET writes with.
+    if (name.Equals("POINT", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2)
+      return this.Coerce(
+        this._b.Call(IrType.I32, this.RuntimeFn("rt_point", IrType.I32, IrType.I16, IrType.I16),
+          this.GraphicsWord(call.Arguments[0]), this.GraphicsWord(call.Arguments[1])),
+        PbType.Long, this._model.TypeOf(call));
     // ROUND takes an optional decimal PLACE COUNT, so it is settled before the one-argument gate
     // rather than inside the switch behind it - the second spelling is the same intrinsic.
     if (name.Equals("ROUND", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count is 1 or 2)
