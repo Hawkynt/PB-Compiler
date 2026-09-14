@@ -21,9 +21,9 @@ public static class IrMiddleEndPipeline {
       int minimumIntegerStorageBits = 16)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     .AddEarlyModulePassWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
-    .AddAnalyzed("storagenarrow", (fn, _) => Conservative(() => StorageNarrowing.Run(fn, minimumIntegerStorageBits)))
+    .AddAnalyzed("storagenarrow", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
     .AddAnalyzed("mem2reg", (fn, _) => Conservative(() => Mem2Reg.Run(fn)))
-    .AddAnalyzed("storagenarrow-ssa", (fn, _) => Conservative(() => StorageNarrowing.Run(fn, minimumIntegerStorageBits)))
+    .AddAnalyzed("storagenarrow-ssa", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
     .AddAnalyzed("structpack", (fn, _) => Conservative(() => StructurePackingByRange.Run(fn)))
     .AddAnalyzed("fieldreorder", (fn, _) => Conservative(() => FieldReordering.Run(fn)))
     .AddAnalyzed("hotcold", (fn, _) => Conservative(() => HotColdFieldSplitting.Run(fn)))
@@ -57,9 +57,9 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("overflow-coalesce", (fn, _) => Conservative(() => OverflowCheckCoalescing.Run(fn)))
     .AddAnalyzed("sroa", (fn, _) => Conservative(() => ScalarReplaceArrays.Run(fn)))
     .AddAnalyzed("aggregate-sroa", (fn, _) => Conservative(() => ScalarReplaceAggregates.Run(fn)))
-    .AddAnalyzed("storagenarrow2", (fn, _) => Conservative(() => StorageNarrowing.Run(fn, minimumIntegerStorageBits)))
+    .AddAnalyzed("storagenarrow2", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
     .AddAnalyzed("mem2reg2", (fn, _) => Conservative(() => Mem2Reg.Run(fn)))
-    .AddAnalyzed("storagenarrow-ssa2", (fn, _) => Conservative(() => StorageNarrowing.Run(fn, minimumIntegerStorageBits)))
+    .AddAnalyzed("storagenarrow-ssa2", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
     .AddAnalyzed("strcow", (fn, _) => Conservative(() => StringCopyOnWriteElision.Run(fn)))
     .AddAnalyzed("ownership-elision", (fn, _) => Conservative(() => HandleOwnershipElision.Run(fn)))
     .AddAnalyzed("fpsimplify", (fn, analyses) => FpSimplify.Run(fn,
