@@ -1793,7 +1793,18 @@ public sealed partial class InstructionSelector {
       return this.Decline($"inline asm: {error}");
 
     var effect = TextAssembler.Analyze(asm.Text, kinds);
-    if (effect.Defines.Contains(Reg.BP) || effect.Defines.Contains(Reg.SP))
+    // A RESTORE is not a write in the sense that matters. `! POP BP` puts back what a `! PUSH BP`
+    // took, and nothing between them writes BP at all - so BP holds the frame at every instruction
+    // boundary, which is the only thing this check protects. The direct emitter addresses its frame
+    // through BP too and accepts the pair; refusing it here was stricter than the path being
+    // replaced, and it is what an interrupt handler saving the whole file looks like.
+    //
+    // An unbalanced pop would destroy the frame - and would destroy the direct emitter's too, so the
+    // program is broken either way rather than broken by this decision. What still declines is a
+    // write that is not a restore: MOV BP, AX and ADD SP, n mean to move the frame, and no allocation
+    // can answer that.
+    if ((effect.Defines.Contains(Reg.BP) && effect.Restores != Reg.BP)
+        || (effect.Defines.Contains(Reg.SP) && effect.Restores != Reg.SP))
       return this.Decline("inline asm: the block writes BP or SP, which the frame is addressed through");
 
     var operands = new List<MOperand> { new MOperand.InlineAsmText(asm.Text, asm.Names, effect) };
