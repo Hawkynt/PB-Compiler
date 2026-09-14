@@ -303,7 +303,22 @@ public sealed class IrSelect : IrInstruction {
 /// Source-level calling-convention identity carried through target-neutral IR. A target maps this
 /// identity to its concrete argument locations, stack order and cleanup rules.
 /// </summary>
-public enum IrCallConvention { Basic, Cdecl, Stdcall, Pascal, Fastcall, Watcall }
+public enum IrCallConvention {
+  Basic, Cdecl, Stdcall, Pascal, Fastcall, Watcall,
+  /// <summary>
+  /// A CALL SITE ONLY convention: the pb36 delegate call. The callee operand is the address of an
+  /// eight-byte closure - a far code pointer naming an entry thunk, then a far environment pointer -
+  /// and the first two arguments are that environment's offset and segment, which travel in BX and CX
+  /// where a capturing lambda's prologue reads them.
+  ///
+  /// <para>
+  /// No function is DEFINED with it. The thunk the code half names turns the far call back into a
+  /// near one, so the lifted procedure on the other side is an ordinary <see cref="Basic"/>
+  /// definition and cleans its own stack arguments exactly as it would under a direct call.
+  /// </para>
+  /// </summary>
+  BasicClosure,
+}
 
 /// <summary>
 /// A call: <c>[result =] call callee(args...)</c>. The callee is an operand, so indirect calls are

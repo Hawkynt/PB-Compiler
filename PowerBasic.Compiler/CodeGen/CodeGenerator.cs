@@ -1102,7 +1102,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
           .BackendCalleeNames(p => liveProcs.Contains(p) || !this.IsFullyOwned(p))
           .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var proc in model.ProcedureList)
-          if (routedCallees.Contains(proc.Name) && liveProcs.Add(proc))
+          if (routedCallees.Contains(Ir.IrLowering.IrNameOf(proc)) && liveProcs.Add(proc))
             changed = true;
       }
     foreach (var proc in model.ProcedureList)

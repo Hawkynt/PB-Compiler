@@ -248,6 +248,18 @@ public enum MOpcode {
   Push, Pop,
   Jmp, Jcc, Call, Ret,
   /// <summary>
+  /// A FAR call through a 32-bit memory cell - <c>CALL DWORD PTR [cell]</c>. The cell holds a
+  /// <c>CODEPTR32</c> value: the segment a pb36 delegate and a <c>CALL DWORD</c> target are both
+  /// stored as, whose offset half names a far entry thunk (<see cref="Ir.IrFarEntry"/>).
+  ///
+  /// <para>
+  /// Separate from <see cref="Call"/> because the two push different things - one word against two -
+  /// and the callee has to agree. Its operand is always a CELL, never a register: the 8086 has no far
+  /// call through a register, because the target does not fit in one.
+  /// </para>
+  /// </summary>
+  CallFar,
+  /// <summary>
   /// A jump THROUGH a memory cell - the only indirect transfer this back end emits. RESUME and
   /// RESUME NEXT go back to a statement the FAULT chose, so the destination is a value the runtime
   /// latched rather than a label anything here can name.

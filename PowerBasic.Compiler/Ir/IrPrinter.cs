@@ -116,6 +116,7 @@ public sealed class IrPrinter {
     IrNullPtr => "null",
     IrUndef => "undef",
     IrBlockAddress ba => $"blockaddress(%{ba.Block.Label})",
+    IrFarEntry fe => $"farentry(@{fe.Target.Name})",
     IrGlobalValue gv => "@" + gv.Name,
     _ => this._names.TryGetValue(value, out var n) ? n : "%<?>",
   };

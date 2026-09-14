@@ -127,8 +127,13 @@ public sealed partial class IrLowering {
     // AddInts%(BYVAL a%, BYVAL b%) names a symbol another object file supplies. Leaving it out of
     // the map meant every CALL to one declined, and the program with it, for want of a callee that
     // was never going to have a body.
-    foreach (var proc in model.Procedures.Values)
-      if (TrySignature(proc, out var irfn)) {
+    // ...over the EMISSION list as well as the name table, because a name table cannot hold all of
+    // them: a lifted lambda is keyed by the expression it was written as, and an overload past the
+    // first shares its name with the one that got there first. The direct emitter emits from
+    // ProcedureList, so a body it emits and this map lacks is a body nothing routed can call - which
+    // is what left "$lambda$1 has no lowered function" and every second overload behind.
+    foreach (var proc in model.Procedures.Values.Concat(model.LambdaProcs.Values).Concat(model.ProcedureList))
+      if (!procMap.ContainsKey(proc) && TrySignature(proc, out var irfn)) {
         procMap[proc] = irfn!;
         module.AddFunction(irfn!);
       }
@@ -278,9 +283,31 @@ public sealed partial class IrLowering {
             yield return symbol;
   }
 
+  /// <summary>
+  /// The name a procedure's IR function carries, which is its source name for all but an OVERLOAD.
+  ///
+  /// <para>
+  /// pb36 lets several procedures share a name, and an IR module's functions are keyed by one - so
+  /// every overload past the first had nowhere to live, and a program with two <c>Area</c>s routed
+  /// whichever the name happened to reach. The suffix is the direct emitter's own
+  /// (<c>p_Area__1</c>), so the label a routed call targets and the label the direct emitter binds are
+  /// the same string; <see cref="CodeGen.CodeGenerator.CalleeLabel"/> reads it back the same way.
+  /// </para>
+  /// </summary>
+  internal static string IrNameOf(ProcedureSymbol proc)
+    => proc.OverloadIndex == 0 ? proc.Name : $"{proc.Name}__{proc.OverloadIndex}";
+
   /// <summary>Builds an IR signature for a procedure, or false if it is outside the supported subset.</summary>
   private static bool TrySignature(ProcedureSymbol proc, out IrFunction? fn) {
     fn = null;
+    // A CAPTURING lambda or nested procedure reads its outer locals through the closure environment
+    // that arrives in BX:CX, at displacements the DIRECT emitter's frame layout decides. The routed
+    // back end lays out its own frames and has no prologue that receives those registers, so there is
+    // nothing here for a captured name to resolve to - and, left unsaid, SlotFor would hand it a
+    // private frame slot that starts at zero and shares nothing. That is a silent wrong answer where
+    // a decline is a working program, so the whole procedure stays with the emitter that can.
+    if (proc.Captures.Count > 0 || proc.ClosureEnvPtr is not null)
+      return false;
     var ret = IrType.Void;
     if (proc.IsFunction) {
       if (proc.ReturnType is StringType)
@@ -296,8 +323,12 @@ public sealed partial class IrLowering {
     }
     var args = new List<IrArgument>();
     foreach (var p in proc.Parameters) {
-      if (p.Seg || p.Optional)
-        return false;                                  // SEG / CDECL-optional excluded
+      // SEG is excluded, and so is an optional parameter a call site may really OMIT - a CDECL bracket
+      // one. A pb36 parameter with a DEFAULT is optional in the source and never omitted in the IR:
+      // the binder has already put the default expression in the call's positional list, so the callee
+      // receives it like any other argument.
+      if (p.Seg || (p.Optional && p.DefaultValue is null))
+        return false;
       if (p.Type is UdtType) {
         args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));   // a record is passed as a pointer (BYVAL = callee copies on entry)
         continue;
@@ -316,11 +347,24 @@ public sealed partial class IrLowering {
         args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));
         continue;
       }
+      // A DELEGATE crosses as its four words rather than one value: the IR's types are scalar, and
+      // eight bytes of closure are not one of them. Splitting it here is what gives the pushes and the
+      // incoming layout a shape the stack ABI already knows how to place - see
+      // IrLowering.Delegates.AddClosureArgument for why the words are listed in this order.
+      if (p.Type is ProcPtrType) {
+        if (!p.ByVal || proc.CallConv is not (CallConvention.Basic or CallConvention.Pascal))
+          return false;                                // BYREF / a right-to-left convention would reorder them
+        args.Add(new IrArgument(IrType.I16, args.Count, p.Name + ".envseg"));
+        args.Add(new IrArgument(IrType.I16, args.Count, p.Name + ".envoff"));
+        args.Add(new IrArgument(IrType.I16, args.Count, p.Name + ".codeseg"));
+        args.Add(new IrArgument(IrType.I16, args.Count, p.Name + ".codeoff"));
+        continue;
+      }
       if (!IrTypeMapper.TryMap(p.Type, out var pty) || pty.IsMbf)
         return false;                                  // scalar parameters only
       args.Add(new IrArgument(p.ByVal ? pty : IrType.Ptr, args.Count, p.Name));  // BYREF parameters arrive as pointers
     }
-    fn = new IrFunction(proc.Name, ret, args) { NoInline = proc.NoInline };
+    fn = new IrFunction(IrNameOf(proc), ret, args) { NoInline = proc.NoInline };
     return true;
   }
 
@@ -343,20 +387,26 @@ public sealed partial class IrLowering {
 
     // bind parameters: BYVAL copies the argument into a mutable local slot; BYREF
     // takes the incoming pointer as the variable's address (reads/writes go through it)
+    // ...walking the IR arguments with their own index, because a source parameter is not always one
+    // of them: a delegate is four (see IrLowering.Delegates), so the two run out of step from the
+    // first one onwards.
     if (proc is not null)
-      for (var i = 0; i < proc.Parameters.Count; ++i) {
+      for (int i = 0, argument = 0; i < proc.Parameters.Count; ++i, ++argument) {
         var p = proc.Parameters[i];
         if (p.Type is UdtType pudt) {
           if (p.ByVal) {                               // BYVAL record: copy the caller's record into a private local
             var local = this.SlotFor(p);
             this._b.Call(IrType.Void, this.RuntimeFn("llvm.memcpy.p0.p0.i32", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I1),
-              local, fn.Parameters[i], new IrConstantInt(IrType.I32, pudt.Size), IrBuilder.ConstBool(false));
+              local, fn.Parameters[argument], new IrConstantInt(IrType.I32, pudt.Size), IrBuilder.ConstBool(false));
           } else
-            this._addr[p] = fn.Parameters[i];          // BYREF record: use the caller's storage
+            this._addr[p] = fn.Parameters[argument];   // BYREF record: use the caller's storage
+        } else if (p.Type is ProcPtrType) {
+          this.BindClosureParameter(p, fn, argument);
+          argument += ClosureWords - 1;
         } else if (p.ByVal)
-          this._b.Store(fn.Parameters[i], this.SlotFor(p));
+          this._b.Store(fn.Parameters[argument], this.SlotFor(p));
         else
-          this._addr[p] = fn.Parameters[i];
+          this._addr[p] = fn.Parameters[argument];
       }
 
     // $ERROR STACK ON: the headroom probe, at the head of the procedure and before anything that
@@ -688,6 +738,12 @@ public sealed partial class IrLowering {
   private IrValue SlotFor(VariableSymbol symbol) {
     if (this._addr.TryGetValue(symbol, out var existing))
       return existing;
+    // A CAPTURED name is not storage this body owns - it lives in the enclosing frame, reached through
+    // the closure environment pointer - so there is no slot to mint for it and minting one would be a
+    // private zero that agrees with nothing. TrySignature refuses such a procedure outright; this is
+    // the same refusal where a symbol reaches here by another route.
+    if (symbol.Storage == VariableStorage.Captured)
+      throw new IrLoweringException($"captured outer local {symbol.Name}");
     // A PB INTERNAL variable (pbvFixDigits, pbvScrnCols, pbvDefSeg, ...) is not storage this pass may
     // invent. It names a cell the RUNTIME owns, initialises and reads: pbvFixDigits is the very count
     // rt_fixdn scales by, and pbvScrnCols is refreshed from the BIOS data area at startup. A frame
@@ -736,6 +792,9 @@ public sealed partial class IrLowering {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(elem) { Count = count, Name = symbol.Name });
     } else if (symbol.Type is UdtType udt) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = udt.Size, Name = symbol.Name });   // a packed record buffer
+    } else if (symbol.Type is ProcPtrType) {
+      alloca = this._entry.InsertAt(this._entryAllocaCount++,
+        new IrAlloca(IrType.I16) { Count = ClosureWords, Name = symbol.Name });   // a fat closure - see IrLowering.Delegates
     } else {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(MapType(symbol.Type)) { Name = symbol.Name });
     }
@@ -1275,6 +1334,7 @@ public sealed partial class IrLowering {
       case ExitFarStmt ef: this.LowerExitFar(ef); break;
       case IterateStmt it: this.LowerIterate(it); break;
       case CallStmt c: this.LowerCallStatement(c); break;
+      case CallPtrStmt cp: this.LowerCallPtr(cp); break;
       case SelectStmt s: this.LowerSelect(s); break;
       case DimStmt d: this.LowerDim(d); break;
       case RedimStmt rdm: this.LowerRedim(rdm); break;
@@ -1741,6 +1801,12 @@ public sealed partial class IrLowering {
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), fieldType), address);
       return;
     }
+    // a delegate takes a whole closure, never a number - the eight bytes are written as eight bytes
+    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var closureSym)
+        && closureSym.Type is ProcPtrType) {
+      this.StoreClosure(a.Value, this.SlotFor(closureSym));
+      return;
+    }
     var symbol = this.SymbolOf(a.Target);
     var slot = this.SlotFor(symbol);
     var value = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), symbol.Type);
@@ -2104,7 +2170,19 @@ public sealed partial class IrLowering {
       return this._b.Load(IrType.Ptr, this.SlotFor(symbol));
     if (e is PtrDerefExpr indirect)
       return this._b.Load(IrType.Ptr, this.DerefAddress(indirect));
-    throw new IrLoweringException("unsupported pointer value");
+    // pb36 scaled pointer arithmetic: `p +* i` steps the pointer by i TARGETS, which is the same
+    // scaling `@p[i]` performs and is why plain `p + n` keeps its unscaled pb35 meaning. A GEP over a
+    // byte offset is exactly that step, and the offset arithmetic is 16-bit because a real-mode near
+    // pointer is - the direct emitter wraps at 64K here too.
+    if (e is BinaryExpr { Op: BinaryOp.PointerAdd or BinaryOp.PointerSub } arith
+        && this._model.TypeOf(arith.Left) is PointerType pointer) {
+      var stride = Math.Max(pointer.Target.Size, 1);
+      var index = this.Coerce(this.LowerExpr(arith.Right), this._model.TypeOf(arith.Right), PbType.Integer);
+      var scaled = this._b.Mul(index, new IrConstantInt(IrType.I16, stride));
+      return this._b.Gep(this.PointerValue(arith.Left),
+        arith.Op == BinaryOp.PointerAdd ? scaled : this._b.Binary(IrBinaryOp.Sub, new IrConstantInt(IrType.I16, 0), scaled));
+    }
+    throw new IrLoweringException($"unsupported pointer value ({e.GetType().Name})");
   }
 
   /// <summary>
@@ -2700,7 +2778,7 @@ public sealed partial class IrLowering {
       // a user FUNCTION whose result is a string - its IR result already IS the handle
       case CallOrIndexExpr uc when this._model.CallBindings.TryGetValue(uc, out var proc) && proc.IsFunction:
         return this._procMap is not null && this._procMap.TryGetValue(proc, out var callee)
-          ? this.EmitCall(callee, proc, uc.Arguments)
+          ? this.EmitCall(callee, proc, this.PositionalArguments(uc, uc.Arguments))
           : throw new IrLoweringException($"call to {proc.Name} outside the modelled subset");
       case NameExpr bare when this._model.CallBindings.TryGetValue(bare, out var bareProc) && bareProc.IsFunction:
         return this._procMap is not null && this._procMap.TryGetValue(bareProc, out var bareCallee)
@@ -4258,9 +4336,19 @@ public sealed partial class IrLowering {
   }
 
   private void LowerCallStatement(CallStmt c) {
+    // a delegate invoked as a statement - `x 15`, `CALL x(15)`. The binder synthesized the invocation
+    // expression this is a statement wrapper around; a FUNCTION delegate's result is discarded here
+    // exactly as CALL of a FUNCTION discards one.
+    if (this._model.ProcPtrStatementCalls.TryGetValue(c, out var invoke)
+        && this._model.ProcPtrCalls.TryGetValue(invoke, out var invokeSignature)) {
+      var invoked = this.LowerClosureCall(invoke, invokeSignature);
+      if (invokeSignature.ReturnType is StringType)
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), invoked);
+      return;
+    }
     if (this._procMap is null || !this._model.CallBindings.TryGetValue(c, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
       throw new IrLoweringException($"call to unsupported procedure {c.Name}");
-    var result = this.EmitCall(callee, proc, c.Arguments);
+    var result = this.EmitCall(callee, proc, this.PositionalArguments(c, c.Arguments));
     if (proc is { IsFunction: true, ReturnType: StringType })
       this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), result);
   }
@@ -4393,6 +4481,16 @@ public sealed partial class IrLowering {
     // looked for in the symbol table it was never going to be in.
     if (this._model.Desugared.TryGetValue(expr, out var rewritten))
       return this.LowerExpr(rewritten);
+    // ...and a from-end subscript is the arithmetic the binder worked out for it, UBOUND(a) - n + 1.
+    // It is a separate table from Desugared because it is bound against the ARRAY the subscript
+    // belongs to, which only the array path knows; by the time the index is an expression the answer
+    // is already recorded.
+    // ...coerced back to the subscript's own type, which the rewrite does not share: the binder types
+    // the from-end node INTEGER while UBOUND(a) - n + 1 is bound at whatever DEF says an unsuffixed
+    // name is, and handing the array path an x87 value where it expects an index is a cast nothing
+    // downstream can make sense of.
+    if (this._model.RewrittenIndex.TryGetValue(expr, out var fromEnd))
+      return this.Coerce(this.LowerExpr(fromEnd), this._model.TypeOf(fromEnd), this._model.TypeOf(expr));
     if (this._model.ResolvedConstants.TryGetValue(expr, out var resolved)
         && this._model.TypeOf(expr) is ScalarType constantType)
       return this.Coerce(
@@ -4468,6 +4566,13 @@ public sealed partial class IrLowering {
         this._b.Position(done);
         return this._b.Load(MapType(ternaryType), slot);
       }
+      // A lambda in a NUMERIC position is its far code pointer and nothing else: the thunk's offset
+      // paired with CS, which is what CODEPTR32 of a named procedure answers with and what CALL DWORD
+      // can reach. The environment half of the closure has nowhere to go in a DWORD and is dropped -
+      // the direct emitter drops it here too, which is why only a NON-capturing lambda may be written
+      // this way and why a capturing one declines instead.
+      case LambdaExpr numericLambda when this._model.LambdaProcs.TryGetValue(numericLambda, out var lifted):
+        return this.LowerLambdaCodePointer(lifted, this._model.TypeOf(expr));
       default:
         throw new IrLoweringException($"unsupported expression: {expr.GetType().Name}");
     }
@@ -4677,21 +4782,24 @@ public sealed partial class IrLowering {
       return this.Coerce(this._b.Or(segment, this._b.ZExt(offset, IrType.U32)),
         PbType.Dword, this._model.TypeOf(call));
     }
-    // ...and of a PROCEDURE, which is its entry offset. The selector has always been able to name
-    // one - PtrToInt of an IrFunction becomes MOperand.LabelRef, which the emitter resolves through
-    // the same callee lookup a CALL uses - so the only thing missing was saying so here. It was 15
-    // declines over the SVGA corpus, each taking a module body.
+    // ...and of a PROCEDURE. The selector has always been able to name one - PtrToInt of an IrFunction
+    // becomes MOperand.LabelRef, which the emitter resolves through the same callee lookup a CALL
+    // uses - so the only thing missing was saying so here. It was 15 declines over the SVGA corpus,
+    // each taking a module body.
     //
-    // The far ENTRY THUNK the direct emitter synthesizes is not this and is not needed for it: the
-    // thunk exists so a FAR call can reach a near procedure, while CODEPTR asks for the offset, which
-    // is the procedure's own label either way. CODEPTR32 pairs that offset with CS, exactly as the
-    // label form below does.
+    // The two spellings answer with DIFFERENT addresses, and must. CODEPTR is the procedure's own
+    // entry, which is what a NEAR transfer needs. CODEPTR32 is a far pointer, and the only thing a FAR
+    // call may land on is the entry THUNK: a near procedure's RET pops one word where the far call
+    // pushed two. Answering both with the procedure's own label produced a number that looked right
+    // and returned to nowhere the moment CALL DWORD used it - and it disagreed with the direct
+    // emitter, which has always synthesized the thunk here.
     if (name.ToUpperInvariant() is "CODEPTR" or "CODEPTR32" && call.Arguments is [NameExpr procRef]
         && this._model.CallBindings.TryGetValue(procRef, out var codeProc)
         && this._procMap is not null && this._procMap.TryGetValue(codeProc, out var codeFn)) {
-      var entry = this._b.Cast(IrCastOp.PtrToInt, codeFn, IrType.U16);
       if (name.Equals("CODEPTR", StringComparison.OrdinalIgnoreCase))
-        return this.Coerce(entry, PbType.Word, this._model.TypeOf(call));
+        return this.Coerce(this._b.Cast(IrCastOp.PtrToInt, codeFn, IrType.U16),
+          PbType.Word, this._model.TypeOf(call));
+      var entry = this._b.Cast(IrCastOp.PtrToInt, new IrFarEntry(codeFn), IrType.U16);
       var codeSegment = this._b.Shl(
         this._b.ZExt(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)), IrType.U32),
         new IrConstantInt(IrType.U32, 16));
@@ -5546,11 +5654,41 @@ public sealed partial class IrLowering {
   }
 
   private IrValue LowerCallExpr(CallOrIndexExpr call) {
+    if (this._model.ProcPtrCalls.TryGetValue(call, out var signature))
+      return this.LowerClosureCall(call, signature);   // f(args) through a delegate
     if (this._procMap is null || !this._model.CallBindings.TryGetValue(call, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
       throw new IrLoweringException($"unsupported call/index {call.Name}");   // array index / intrinsic
     if (!proc.IsFunction)
       throw new IrLoweringException("SUB used in expression position");
-    return this.EmitCall(callee, proc, call.Arguments);
+    return this.EmitCall(callee, proc, this.PositionalArguments(call, call.Arguments));
+  }
+
+  /// <summary>
+  /// The arguments of a call in PARAMETER order, with every default filled in.
+  ///
+  /// <para>
+  /// pb36 named arguments and default values are resolved by the binder, not by either back end: it
+  /// records the complete positional list against the call node, and every consumer - the direct
+  /// emitter, the inliner, the constant propagator, the decompiler - reads it from there. This path
+  /// did not, so a call that named its arguments passed them in the order they were WRITTEN, and one
+  /// that omitted a defaulted argument passed one fewer than the callee takes. The second failed
+  /// loudly ("argument count mismatch"); the first would not have.
+  /// </para>
+  /// </summary>
+  private IReadOnlyList<Expression> PositionalArguments(object callSite, IReadOnlyList<Expression> written) {
+    if (this._model.ReorderedArguments.GetValueOrDefault(callSite) is { } reordered)
+      return reordered;
+    // A call that named no argument gets no entry, so a trailing DEFAULT is still missing here. The
+    // binder leaves that fill to the call site - the default is an expression evaluated there, not a
+    // value baked into the callee - and the direct emitter does it in EmitCall for the same reason.
+    if (!this._model.CallBindings.TryGetValue(callSite, out var proc)
+        || written.Count >= proc.Parameters.Count || proc.IsCdecl
+        || proc.Parameters[written.Count].DefaultValue is null)
+      return written;
+    var filled = new List<Expression>(written);
+    for (var i = written.Count; i < proc.Parameters.Count && proc.Parameters[i].DefaultValue is { } value; ++i)
+      filled.Add(value);
+    return filled;
   }
 
   /// <summary>
@@ -5593,6 +5731,10 @@ public sealed partial class IrLowering {
     var arrayArguments = new List<(IrValue Block, VariableSymbol Symbol, ArrayType Array)>();
     for (var i = 0; i < arguments.Count; ++i) {
       var p = proc.Parameters[i];
+      if (p.Type is ProcPtrType) {
+        this.AddClosureArgument(arguments[i], args);   // a delegate crosses as its four words
+        continue;
+      }
       args.Add(p.Type is UdtType
         ? this.UdtAddress(arguments[i])                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
         : p.Type is ArrayType
@@ -5782,6 +5924,32 @@ public sealed partial class IrLowering {
     return udt?.FindField(m.Member) is { ElementCount: 1, Type: ScalarType field } && field.Equals(paramType);
   }
 
+  /// <summary>
+  /// The value of a shift count that is known here, looking THROUGH the widening the operand pair was
+  /// brought to a common type with. <c>m &amp;&lt;&gt;&gt; 1</c> over a LONG coerces its INTEGER literal
+  /// with a sign extension, and a literal wearing a cast is still a literal - asking only whether the
+  /// operand is a constant answered no for every rotate over anything wider than the count's own type.
+  /// </summary>
+  private static long? KnownCount(IrValue value) => value switch {
+    IrConstantInt constant => constant.Value,
+    IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt or IrCastOp.Trunc, Value: IrConstantInt widened } => widened.Value,
+    _ => null,
+  };
+
+  /// <summary>
+  /// A rotate by a known number of places, as the two shifts it is: the bits that move up, ORed with
+  /// the bits that wrap round. <paramref name="places"/> has already been reduced modulo the width,
+  /// so both shift counts are strictly inside it and neither is the undefined shift-by-width.
+  /// </summary>
+  private IrValue LowerRotate(IrValue value, int places, IrType type, bool left) {
+    if (places == 0)
+      return value;                                    // a whole turn is no turn
+    var up = left ? places : type.Bits - places;
+    return this._b.Or(
+      this._b.Binary(IrBinaryOp.Shl, value, new IrConstantInt(type, up)),
+      this._b.Binary(IrBinaryOp.LShr, value, new IrConstantInt(type, type.Bits - up)));
+  }
+
   private IrValue LowerUnary(UnaryExpr u) {
     var pb = this._model.TypeOf(u);
     var ty = MapType(pb);
@@ -5833,6 +6001,15 @@ public sealed partial class IrLowering {
         if (!resultTy.IsFloat)
           throw new IrLoweringException("integer exponentiation");   // PB ^ yields a floating result
         return this._b.Call(resultTy, this.RuntimeFn($"llvm.pow.f{resultTy.Bits}", resultTy, resultTy, resultTy), l, r);
+      // The pb36 ROTATE operators. The IR has no rotate instruction and does not need one: by a KNOWN
+      // amount a rotate is a pair of shifts ORed together, which is what a target without the
+      // instruction would decompose it to anyway and what the x87-less 32-bit path already does by
+      // hand. A VARIABLE amount still declines - the second shift is width-minus-count, which is a
+      // shift by the whole width when the count is zero, and that is the one case no two targets agree
+      // about (the 8086 does not mask its count; a 186 and later mask it to five bits).
+      case BinaryOp.RotateLeft or BinaryOp.RotateRight when resultTy.IsInteger && KnownCount(r) is { } places:
+        return this.LowerRotate(l, (int)(((places % resultTy.Bits) + resultTy.Bits) % resultTy.Bits),
+          resultTy, expr.Op == BinaryOp.RotateLeft);
     }
 
     var op = expr.Op switch {

@@ -393,6 +393,8 @@ public sealed class MachineEmitter {
               $"CALL target {ops[0]} is neither a direct code label nor a word register/memory operand");
         }
         break;
+      // a far call through a CODEPTR32 cell: the thunk it names pops the extra word back off
+      case MOpcode.CallFar: asm.CallFar(this.Mem(ops[0])); break;
       case MOpcode.Push:
         switch (this.ToSource(ops[0])) {
           case Reg r: asm.Push(r); break;
