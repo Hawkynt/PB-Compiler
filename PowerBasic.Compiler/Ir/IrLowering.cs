@@ -309,9 +309,15 @@ public sealed partial class IrLowering {
     if (proc.Captures.Count > 0 || proc.ClosureEnvPtr is not null)
       return false;
     var ret = IrType.Void;
+    var returnsClosure = false;
     if (proc.IsFunction) {
       if (proc.ReturnType is StringType)
         ret = IrType.Ptr;                              // a string result IS its runtime handle
+      // A DELEGATE result is eight bytes, which the type lattice has no shape for. What crosses the IR
+      // is the ADDRESS of the closure the body built; where the bytes go is an ABI fact, recorded on
+      // the function - see IrFunction.ReturnsClosure.
+      else if (proc.ReturnType is ProcPtrType)
+        (ret, returnsClosure) = (IrType.Ptr, true);
       else if (proc.ReturnType is BcdType { IsFixedPoint: true })
         // A FIX cell is a scaled i64, but a FIX RESULT is not: the direct emitter's epilogue loads the
         // cell with FILD and calls rt_fixdn, so what crosses the boundary is the NUMERIC value in
@@ -364,7 +370,7 @@ public sealed partial class IrLowering {
         return false;                                  // scalar parameters only
       args.Add(new IrArgument(p.ByVal ? pty : IrType.Ptr, args.Count, p.Name));  // BYREF parameters arrive as pointers
     }
-    fn = new IrFunction(IrNameOf(proc), ret, args) { NoInline = proc.NoInline };
+    fn = new IrFunction(IrNameOf(proc), ret, args) { NoInline = proc.NoInline, ReturnsClosure = returnsClosure };
     return true;
   }
 
@@ -560,6 +566,13 @@ public sealed partial class IrLowering {
     this.ReleaseOwnedProcedureStrings();
     if (this._resultVar is null) {
       this._b.Ret();
+      return;
+    }
+    // A DELEGATE result is storage, not a value - there is nothing to load out of it - so the address
+    // of the closure the body assembled is what goes back. The epilogue turns that into the four
+    // registers the ABI puts it in.
+    if (this._resultVar.Type is ProcPtrType) {
+      this._b.Ret(this.SlotFor(this._resultVar));
       return;
     }
     var cell = this._b.Load(this._resultVar.Type is StringType ? IrType.Ptr : MapType(this._resultVar.Type),

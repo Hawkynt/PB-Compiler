@@ -86,6 +86,20 @@ public sealed class IrFunction : IrGlobalValue {
   public bool NoInline { get; init; }
 
   /// <summary>
+  /// True when this function's result is a pb36 DELEGATE - eight bytes of fat closure, which is not a
+  /// shape the IR's scalar type lattice has.
+  ///
+  /// <para>
+  /// The declared <see cref="ReturnType"/> is therefore a POINTER: the address of the closure the body
+  /// built, which is an ordinary IR value and needs no new type. Where the eight bytes actually go is
+  /// an ABI fact, and this is where it is written down - the x86-16 epilogue loads them into AX:DX and
+  /// BX:CX, exactly as the direct emitter does, and the call site reads them back into a closure of
+  /// its own. A target with a flat memory returns the pointer and is right about it.
+  /// </para>
+  /// </summary>
+  public bool ReturnsClosure { get; init; }
+
+  /// <summary>
   /// True when an interprocedural pass replaced this function's formal parameters, so the signature
   /// recorded here no longer describes the ABI the source declaration promised.
   ///

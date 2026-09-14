@@ -63,6 +63,12 @@ public sealed partial class InstructionSelector {
   private readonly Dictionary<IrValue, int> _qslots = new(ReferenceEqualityComparer.Instance);
   private MFunction _function = null!;
 
+  /// <summary>Whether this function's result is a pb36 closure - see <see cref="IrFunction.ReturnsClosure"/>.</summary>
+  private bool _returnsClosure;
+
+  /// <summary>The frame closure a delegate-returning CALL parked its four result registers in.</summary>
+  private readonly Dictionary<IrValue, int> _closureResults = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>
   /// The block instructions are appended to. Most selections stay inside one machine block, but
   /// materializing a comparison's value needs a branch - and therefore a split - so the cursor may
@@ -137,6 +143,7 @@ public sealed partial class InstructionSelector {
 
   private MFunction? Run(IrFunction fn) {
     this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
+    this._returnsClosure = fn.ReturnsClosure;
 
     if (this.UsesNativeDwordRegisters && IrDominators.Build(fn) is { } dominators)
       this._nativeDwordPhis.UnionWith(NativeDwordPhis(fn, dominators));
@@ -1847,6 +1854,9 @@ public sealed partial class InstructionSelector {
   /// </para>
   /// </summary>
   private MOperand? ClosureCell(IrValue closure) => closure switch {
+    // the closure a delegate-returning call parked its four registers in
+    _ when this._closureResults.TryGetValue(closure, out var returned)
+      => new MOperand.StackSlot(returned, MRegSize.Dword),
     // ...at the LAST of the alloca's slots, which is the block's lowest address and therefore its
     // base - slots are laid out downward from BP while the words are indexed upward, the same
     // inversion SelectAlloca points its own LEA through. Naming the first slot instead reads the
@@ -3043,6 +3053,31 @@ public sealed partial class InstructionSelector {
 
     if (call.Type.IsVoid)
       return true;
+
+    // A DELEGATE result arrives in four registers - AX:DX and BX:CX - and has nowhere to live as an
+    // SSA value, so it goes straight into a closure of this frame's own and the call's value is that
+    // closure's address. Immediately, and before anything else may touch the four: they are the whole
+    // caller-saved file, and the very next instruction is free to use any of them.
+    if (callee is { ReturnsClosure: true }) {
+      var closure = this._function.StackSlots.Count;
+      for (var word = 0; word < 4; ++word)
+        this._function.StackSlots.Add(2);
+      MOperand.Register[] channel = [
+        new(MReg.Physical_(Reg.AX, MRegSize.Word)), new(MReg.Physical_(Reg.DX, MRegSize.Word)),
+        new(MReg.Physical_(Reg.BX, MRegSize.Word)), new(MReg.Physical_(Reg.CX, MRegSize.Word)),
+      ];
+      // Slots run DOWN from BP while the words are indexed up, so the block's base is its last slot -
+      // the same inversion SelectAlloca points its own LEA through.
+      var baseSlot = closure + 3;
+      for (var word = 0; word < channel.Length; ++word) {
+        var destination = new MOperand.StackSlot(baseSlot, MRegSize.Word, word * 2);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, channel[word]],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: false, WritesMemory: true)));
+      }
+      this._closureResults[call] = baseSlot;
+      return true;
+    }
 
     if (IsQuad(call.Type)) {
       // QUAD shares the x87 return channel with real values, but the SSA result is an integer: park
@@ -4715,6 +4750,25 @@ public sealed partial class InstructionSelector {
   private static readonly Reg[] _callClobbers = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
 
   private bool SelectRet(IrRet ret, MBlock block) {
+    // A DELEGATE result: the value is the ADDRESS of the closure the body assembled, and the ABI wants
+    // its four words - the far code pointer in AX:DX, the far environment pointer in BX:CX, which is
+    // where the direct emitter's epilogue puts them. Naming the cell rather than walking a pointer
+    // keeps the address out of the allocator, for the reason a far call does the same.
+    if (ret.HasValue && this._returnsClosure) {
+      if (this.ClosureCell(ret.Value!) is not MOperand.StackSlot closure)
+        return this.Decline("return: a delegate result is not a frame closure this epilogue can place");
+      MOperand.Register[] channel = [
+        new(MReg.Physical_(Reg.AX, MRegSize.Word)), new(MReg.Physical_(Reg.DX, MRegSize.Word)),
+        new(MReg.Physical_(Reg.BX, MRegSize.Word)), new(MReg.Physical_(Reg.CX, MRegSize.Word)),
+      ];
+      for (var word = 0; word < channel.Length; ++word) {
+        var source = closure with { Size = MRegSize.Word, Disp = closure.Disp + word * 2 };
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [channel[word], source],
+          MovEffect(channel[word], source)));
+      }
+      this._current.Instructions.Add(ReturningIn(channel));
+      return true;
+    }
     if (ret.HasValue && ret.Value is { } wide && IsWide(wide.Type)) {
       // the PB convention returns a LONG in DX:AX (docs: "Results: AX / DX:AX / ST0 / string handle in AX")
       if (!this.TryOperandPair(wide, out var lo, out var hi))
