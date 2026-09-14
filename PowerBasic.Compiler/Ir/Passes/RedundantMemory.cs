@@ -14,6 +14,24 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class RedundantMemory {
 
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return RunCore(fn);
+  }
+
+  /// <summary>
+  /// Analysis-aware production entry. Forwarding/removing loads changes value and memory facts but
+  /// not CFG topology, so only CFG-derived analyses survive a successful rewrite.
+  /// </summary>
+  internal static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    var removed = RunCore(fn);
+    return removed == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(removed, IrAnalysisSets.Cfg);
+  }
+
+  private static int RunCore(IrFunction fn) {
     var removed = 0;
     foreach (var block in fn.Blocks) {
       var stored = new Dictionary<IrValue, IrValue>(ReferenceEqualityComparer.Instance);   // *ptr currently holds
