@@ -112,6 +112,13 @@ public sealed class MachineEmitter {
       ? function.ArgumentLoads.Any(load => allocation.ContainsKey(load.VirtualId))
       : paramOffsets.Length != 0);
 
+    // A pb36 capturing lambda receives its ENVIRONMENT in BX:CX - carried by the closure rather than
+    // pushed by the caller, which is why no ABI table describes it. CX does not survive the frame
+    // zero-fill below, so it is parked in DX first; BX and DX both do. The direct emitter's prologue
+    // performs exactly this pair, in this order, for the same reason.
+    if (function.ClosureEnvSlots is not null)
+      asm.Mov(Asm.Reg.DX, Asm.Reg.CX);
+
     if (!elideFrame || loadArgumentsThroughFrame) {
       asm.Push(Asm.Reg.BP);
       asm.Mov(Asm.Reg.BP, Asm.Reg.SP);
@@ -147,6 +154,14 @@ public sealed class MachineEmitter {
         asm.Rep();
         asm.Stosw();
       }
+    }
+
+    // ...and now the frame exists and the zero-fill is done, so the environment pair can be put where
+    // the body reads it. After the fill, deliberately: it would otherwise be zeroed along with
+    // everything else.
+    if (function.ClosureEnvSlots is { } env) {
+      asm.Mov(Asm.Mem.Word(Asm.Reg.BP, emitter._slotDisp[env.Offset]), Asm.Reg.BX);
+      asm.Mov(Asm.Mem.Word(Asm.Reg.BP, emitter._slotDisp[env.Segment]), Asm.Reg.DX);
     }
 
     // The caller pushed the arguments; load each into the register the allocator gave its vreg.

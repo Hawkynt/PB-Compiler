@@ -131,6 +131,15 @@ public sealed class SemanticModel {
   /// <summary>PB 3.6 inline lambdas: each LambdaExpr mapped to the anonymous proc it was lifted to; codegen emits the lambda value as that proc's code pointer.</summary>
   public Dictionary<Expression, ProcedureSymbol> LambdaProcs { get; } = new(ReferenceEqualityComparer.Instance);
 
+  /// <summary>
+  /// PB 3.6 lifted lambda mapped to the procedure it was WRITTEN INSIDE - null for one written in the
+  /// module body. A capturing lambda reads that procedure's locals through its environment pointer,
+  /// so the two have to agree about where those locals are; the binder knows the pairing while it is
+  /// lifting and nothing downstream could recover it, because the lifted procedure is top-level by
+  /// then and its captures name symbols without saying whose they are.
+  /// </summary>
+  public Dictionary<ProcedureSymbol, ProcedureSymbol?> LambdaEnclosing { get; } = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>PB 3.6 typed procedure-pointer calls: a call through a FUNCTION/SUB-pointer variable, mapped to its signature (codegen coerces args to it and calls through the pointer).</summary>
   public Dictionary<Expression, ProcPtrType> ProcPtrCalls { get; } = new(ReferenceEqualityComparer.Instance);
 

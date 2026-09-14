@@ -1688,6 +1688,14 @@ public sealed partial class InstructionSelector {
     for (var i = 0; i < count; ++i)
       this._function.StackSlots.Add(byteSize);
     this._slots[alloca] = slot;
+    // A closure environment half is written by the PROLOGUE out of BX or CX, not by anything in the
+    // body, so the emitter has to be told which slot it became - see IrAlloca.EnvRole.
+    if (alloca.EnvRole != Ir.ClosureEnvRole.None) {
+      var current = this._function.ClosureEnvSlots ?? (-1, -1);
+      this._function.ClosureEnvSlots = alloca.EnvRole == Ir.ClosureEnvRole.Offset
+        ? (slot, current.Item2)
+        : (current.Item1, slot);
+    }
     // The alloca result is the address the ELEMENTS are indexed from, and the two run in opposite
     // directions: slots are laid out downward from BP (slot 0 at [BP-2], slot 1 at [BP-4], ...) while
     // a GEP walks upward from the base. So a multi-slot alloca has to point at its LAST slot, the

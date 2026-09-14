@@ -3442,6 +3442,7 @@ public sealed class Binder {
   private void BindLambdaBodies() {
     foreach (var (lifted, enclosing, _) in this._pendingLambdas) {
       this._model.ProcedureList.Add(lifted);
+      this._model.LambdaEnclosing[lifted] = enclosing;   // whose locals its captures name
       var scope = new Scope(lifted, captureFrom: enclosing, capturesByEnv: true);
       foreach (var p in lifted.Parameters)
         lifted.Variables[VariableKey(p.Name, TypeSuffix.None, p.Type is ArrayType)] = p;

@@ -92,18 +92,12 @@ public sealed partial class IrLowering {
     }
 
     if (value is LambdaExpr lambda && this._model.LambdaProcs.TryGetValue(lambda, out var lifted)) {
-      // A CAPTURING lambda's environment is the enclosing frame (or a heap snapshot of it) at
-      // displacements the DIRECT emitter's frame layout decides. The routed back end lays out its own
-      // frames, so those displacements name nothing here - which is why this declines rather than
-      // building a closure whose environment pointer is right and whose offsets into it are not.
-      if (lifted.Captures.Count > 0)
-        throw new IrLoweringException("a capturing lambda's closure environment");
       if (this._procMap is null || !this._procMap.TryGetValue(lifted, out var liftedFn))
         throw new IrLoweringException($"lambda {lifted.Name} has no lowered function");
       this._b.Store(this._b.Cast(IrCastOp.PtrToInt, new IrFarEntry(liftedFn), IrType.U16),
         this.ClosureWord(closure, 0));
       this._b.Store(this.CodeSegment(), this.ClosureWord(closure, 1));
-      this.StoreNullEnvironment(closure);
+      this.StoreClosureEnvironment(lifted, closure);
       return;
     }
 

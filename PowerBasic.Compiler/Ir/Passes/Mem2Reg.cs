@@ -82,6 +82,12 @@ public static class Mem2Reg {
     // any particular use of it.
     if (a.Allocated.IsMbf)
       return false;
+    // A closure ENVIRONMENT half is written by the prologue, out of the BX:CX the closure carried,
+    // and never by anything in the IR. Every use of it is a load, so promotion sees a slot with no
+    // reaching store and folds it to nothing - which is right for any other load-only cell and wrong
+    // for this one, because the value does arrive. The captures then all read zero.
+    if (a.EnvRole != ClosureEnvRole.None)
+      return false;
     foreach (var user in a.Users)
       switch (user) {
         case IrLoad load when ReferenceEquals(load.Pointer, a) && load.Type.SameStorage(a.Allocated):

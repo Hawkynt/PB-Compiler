@@ -802,6 +802,8 @@ internal static class RuntimeAbi {
     ["rt_consin"] = new("rt_consin", [], _callerSaved, Result: Reg.AX),
     // INSTAT: no arguments, PB's -1/0 truth in AX
     ["rt_instat"] = new("rt_instat", [], _callerSaved, Result: Reg.AX),
+    // the stack segment: a pb36 stack closure's environment is the enclosing frame's capture record
+    ["rt_stack_seg"] = new("rt_stackseg", [], _callerSaved, Result: Reg.AX),
     ["rt_consout"] = new("rt_consout", [], _callerSaved, Result: Reg.AX),
     // DEF SEG: the argument form stores the word, the bare form puts DS back
     ["rt_defseg_reset"] = new("rt_defsegreset", [], _callerSaved),

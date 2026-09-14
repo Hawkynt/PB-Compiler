@@ -39,6 +39,9 @@ public sealed partial class DosRuntime {
   /// </summary>
   public Label InStat { get; private set; } = null!;
 
+  /// <summary>The stack segment - where a pb36 stack closure's environment record lives.</summary>
+  public Label StackSeg { get; private set; } = null!;
+
   /// <summary>DEF SEG with no argument: the default segment goes back to DS.</summary>
   public Label DefSegReset { get; private set; } = null!;
 
@@ -213,6 +216,14 @@ public sealed partial class DosRuntime {
     this.VarSeg = asm.MarkLabel("rt_varseg");
     {
       asm.Mov(Reg.AX, Reg.DS);
+      asm.Ret();
+    }
+
+    // The STACK segment, which a pb36 stack closure's environment lives in: the environment IS the
+    // enclosing frame's capture record, and a frame is addressed through SS.
+    this.StackSeg = asm.MarkLabel("rt_stackseg");
+    {
+      asm.Mov(Reg.AX, Reg.SS);
       asm.Ret();
     }
 

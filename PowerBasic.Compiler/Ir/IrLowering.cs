@@ -133,7 +133,7 @@ public sealed partial class IrLowering {
     // ProcedureList, so a body it emits and this map lacks is a body nothing routed can call - which
     // is what left "$lambda$1 has no lowered function" and every second overload behind.
     foreach (var proc in model.Procedures.Values.Concat(model.LambdaProcs.Values).Concat(model.ProcedureList))
-      if (!procMap.ContainsKey(proc) && TrySignature(proc, out var irfn)) {
+      if (!procMap.ContainsKey(proc) && TrySignature(model, proc, out var irfn)) {
         procMap[proc] = irfn!;
         module.AddFunction(irfn!);
       }
@@ -298,15 +298,14 @@ public sealed partial class IrLowering {
     => proc.OverloadIndex == 0 ? proc.Name : $"{proc.Name}__{proc.OverloadIndex}";
 
   /// <summary>Builds an IR signature for a procedure, or false if it is outside the supported subset.</summary>
-  private static bool TrySignature(ProcedureSymbol proc, out IrFunction? fn) {
+  private static bool TrySignature(SemanticModel model, ProcedureSymbol proc, out IrFunction? fn) {
     fn = null;
-    // A CAPTURING lambda or nested procedure reads its outer locals through the closure environment
-    // that arrives in BX:CX, at displacements the DIRECT emitter's frame layout decides. The routed
-    // back end lays out its own frames and has no prologue that receives those registers, so there is
-    // nothing here for a captured name to resolve to - and, left unsaid, SlotFor would hand it a
-    // private frame slot that starts at zero and shares nothing. That is a silent wrong answer where
-    // a decline is a working program, so the whole procedure stays with the emitter that can.
-    if (proc.Captures.Count > 0 || proc.ClosureEnvPtr is not null)
+    // A CAPTURING lambda reads its outer locals through the environment that arrives in BX:CX, and
+    // both halves of that now exist here: the prologue receives the pair (IrAlloca.EnvRole) and the
+    // captures live in a record laid out over the enclosing procedure (IrLowering.Closures). What
+    // still has no answer is a capturing lambda whose enclosing procedure is not known - the binder
+    // records the pairing, and without it the record cannot be laid out at all.
+    if (proc.Captures.Count > 0 && !model.LambdaEnclosing.ContainsKey(proc))
       return false;
     var ret = IrType.Void;
     var returnsClosure = false;
@@ -393,6 +392,8 @@ public sealed partial class IrLowering {
 
     // bind parameters: BYVAL copies the argument into a mutable local slot; BYREF
     // takes the incoming pointer as the variable's address (reads/writes go through it)
+    this.SetUpClosures(proc);
+
     // ...walking the IR arguments with their own index, because a source parameter is not always one
     // of them: a delegate is four (see IrLowering.Delegates), so the two run out of step from the
     // first one onwards.
@@ -751,12 +752,11 @@ public sealed partial class IrLowering {
   private IrValue SlotFor(VariableSymbol symbol) {
     if (this._addr.TryGetValue(symbol, out var existing))
       return existing;
-    // A CAPTURED name is not storage this body owns - it lives in the enclosing frame, reached through
-    // the closure environment pointer - so there is no slot to mint for it and minting one would be a
-    // private zero that agrees with nothing. TrySignature refuses such a procedure outright; this is
-    // the same refusal where a symbol reaches here by another route.
+    // A CAPTURED name is not storage this body owns - it lives in the enclosing procedure's capture
+    // record, reached through the environment pointer the closure carried - so its address is that
+    // far pointer plus the capture's offset, and never a slot of this frame's own.
     if (symbol.Storage == VariableStorage.Captured)
-      throw new IrLoweringException($"captured outer local {symbol.Name}");
+      return this._addr[symbol] = this.CapturedAddress(symbol);
     // A PB INTERNAL variable (pbvFixDigits, pbvScrnCols, pbvDefSeg, ...) is not storage this pass may
     // invent. It names a cell the RUNTIME owns, initialises and reads: pbvFixDigits is the very count
     // rt_fixdn scales by, and pbvScrnCols is refreshed from the BIOS data area at startup. A frame
@@ -777,6 +777,12 @@ public sealed partial class IrLowering {
     // frame slot. Given one, the routed program read four zeros where the file's bytes were.
     if (this.NeedsSharedStorage(symbol) || this._model.ResourceData.ContainsKey(symbol))
       return this.GlobalFor(symbol);
+    // ...and a local one of this procedure's lambdas CAPTURES lives in the capture record rather than
+    // in a slot of its own. That is what makes a non-escaping closure share it by reference: the
+    // lambda writing through the environment and this body writing through the name are writing to
+    // the same bytes.
+    if (this._captureOffsets is { } captured && captured.TryGetValue(symbol, out var within))
+      return this._addr[symbol] = this.OffsetWithin(this._captureRecord!, within);
     IrAlloca alloca;
     if (symbol.Type is PointerType) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });   // holds a near address
@@ -1388,6 +1394,12 @@ public sealed partial class IrLowering {
       // statement itself is a declaration and executes nothing. RESOURCE$ reads them back, and that
       // is a call like any other.
       case ResourceStmt: break;
+      // A compile-time declaration carries no code here either. A pb36 nested SUB/FUNCTION is LIFTED
+      // to its own top-level procedure and emitted separately - the declaration left behind marks
+      // where it was written and executes nothing, which is exactly what the direct emitter makes of
+      // the same statement.
+      case SubDecl or FunctionDecl or DeclareStmt or TypeDecl or UnionDecl or EnumDecl or DefTypeStmt:
+        break;
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;
       case EndStmt: this.LowerEnd(); break;
