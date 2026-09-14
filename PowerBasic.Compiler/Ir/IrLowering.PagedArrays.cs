@@ -99,7 +99,11 @@ public sealed partial class IrLowering {
         $"a {symbol.ArrayClass} array of rank {arr.Rank} (the direct emitter takes rank 1 only)");
     if (arr.Element is StringType or FlexType)
       throw new IrLoweringException($"dynamic strings inside a {symbol.ArrayClass} array");
-    if (arr.Element is not ScalarType)
+    // A RECORD element is addressed exactly as a scalar one is - the element address is a far pointer
+    // either way, and a field of it is that pointer plus the field's own offset, which is what the
+    // member path already does over any base. What it must NOT be is a shape with storage of its own
+    // to manage: a dynamic string inside the window is a handle the runtime owns, refused above.
+    if (arr.Element is not (ScalarType or UdtType))
       throw new IrLoweringException($"a {arr.Element} element of a {symbol.ArrayClass} array");
     if (this.NeedsSharedStorage(symbol))
       throw new IrLoweringException($"a {symbol.ArrayClass} array a procedure also reaches");
