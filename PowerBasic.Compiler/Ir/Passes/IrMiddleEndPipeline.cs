@@ -62,8 +62,8 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("storagenarrow-ssa2", (fn, _) => Conservative(() => StorageNarrowing.Run(fn, minimumIntegerStorageBits)))
     .AddAnalyzed("strcow", (fn, _) => Conservative(() => StringCopyOnWriteElision.Run(fn)))
     .AddAnalyzed("ownership-elision", (fn, _) => Conservative(() => HandleOwnershipElision.Run(fn)))
-    .AddAnalyzed("fpsimplify", (fn, _) => Conservative(() => FpSimplify.Run(fn,
-      optimizeForSpeed ? IrFastMathFlags.Fast : IrFastMathFlags.None)))
+    .AddAnalyzed("fpsimplify", (fn, analyses) => FpSimplify.Run(fn,
+      optimizeForSpeed ? IrFastMathFlags.Fast : IrFastMathFlags.None, analyses))
     .AddAnalyzed("reassociate", (fn, _) => Conservative(() => Reassociate.Run(fn)))
     .AddAnalyzedWhen(optimizeForSpeed, "fpfast",
       (fn, _) => Conservative(() => FpFastMath.Run(fn, IrFastMathFlags.Fast)))
