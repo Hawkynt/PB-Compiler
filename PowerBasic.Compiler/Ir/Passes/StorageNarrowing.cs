@@ -26,17 +26,30 @@ public static class StorageNarrowing {
   /// </summary>
   public static int Run(IrFunction fn, int minimumIntegerBits = 16) {
     ArgumentNullException.ThrowIfNull(fn);
+    return Run(fn, minimumIntegerBits, new IrAnalysisManager(fn)).Changes;
+  }
+
+  /// <summary>
+  /// Analysis-aware entry used by the production middle end. Storage narrowing rewrites values and
+  /// memory accesses but never CFG topology, so CFG-only analyses remain valid while ranges, MemorySSA,
+  /// known bits, FP domains and scalar evolution are deliberately invalidated.
+  /// </summary>
+  internal static IrPassResult Run(IrFunction fn, int minimumIntegerBits, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
     if (minimumIntegerBits is not (8 or 16 or 32 or 64))
       throw new ArgumentOutOfRangeException(nameof(minimumIntegerBits), minimumIntegerBits,
         "integer storage width must be 8, 16, 32, or 64 bits");
-    if (fn.Entry is null || IrRangeAnalysis.Build(fn) is not { } ranges)
-      return 0;
+    if (fn.Entry is null || analyses.Get(IrAnalyses.Ranges) is not { } ranges)
+      return IrPassResult.Unchanged;
 
     var changed = NarrowIntegerSlots(fn, ranges, minimumIntegerBits);
     changed += NarrowFloatSlots(fn, ranges);
     changed += NarrowIntegerPhis(fn, ranges, minimumIntegerBits);
     changed += NarrowFloatPhis(fn, ranges);
-    return changed;
+    return changed == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(changed, IrAnalysisSets.Cfg);
   }
 
   private static int NarrowIntegerSlots(IrFunction fn, IrRangeAnalysis ranges, int minimumIntegerBits) {
