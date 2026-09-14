@@ -11,6 +11,24 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class DeadStoreElim {
 
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return RunCore(fn);
+  }
+
+  /// <summary>
+  /// Analysis-aware production entry. Removing stores changes memory/value facts but never CFG
+  /// topology, so CFG-derived analyses remain valid while MemorySSA and dependent facts are dropped.
+  /// </summary>
+  internal static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    var removed = RunCore(fn);
+    return removed == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(removed, IrAnalysisSets.Cfg);
+  }
+
+  private static int RunCore(IrFunction fn) {
     var removed = RemoveUnreadPrivateFrameStores(fn);
     foreach (var block in fn.Blocks) {
       var pending = new List<IrStore>();             // written but not yet observed
