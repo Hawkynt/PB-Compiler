@@ -404,6 +404,14 @@ public sealed class MFunction(string name) {
   public List<int> StackSlots { get; } = [];
 
   /// <summary>
+  /// The two frame slots a pb36 capturing lambda's environment pointer lands in, when this function is
+  /// one - offset first, segment second. The environment arrives in <c>BX:CX</c> and is not an
+  /// argument, so the prologue writes it rather than the caller pushing it; see
+  /// <see cref="Ir.IrAlloca.EnvRole"/>.
+  /// </summary>
+  public (int Offset, int Segment)? ClosureEnvSlots { get; set; }
+
+  /// <summary>
   /// How the prologue loads the incoming arguments: which virtual register takes which word of which
   /// argument. A 16-bit argument contributes one entry, a 32-bit one contributes two (its low word at
   /// the parameter's own offset and its high word at +2) - which is why this is a table rather than

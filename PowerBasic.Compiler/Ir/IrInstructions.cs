@@ -109,7 +109,23 @@ public sealed class IrAlloca(IrType allocated) : IrInstruction(IrType.Ptr) {
 
   /// <summary>True when this slot represents a BASIC variable rather than lowering scaffolding.</summary>
   public bool IsSourceVariable { get; set; }
+
+  /// <summary>
+  /// Which half of a pb36 capturing lambda's ENVIRONMENT POINTER this slot holds, when it holds one.
+  ///
+  /// <para>
+  /// The environment arrives in <c>BX:CX</c> and is the one incoming value that is not an argument -
+  /// the closure carries it, not the call - so no ABI table describes it and the prologue has to be
+  /// told. Marking the two slots here is how: the selector records which frame slots they became, and
+  /// the emitter writes the pair into them before the body runs. A back end that has no such
+  /// convention ignores the mark and the slots are ordinary storage.
+  /// </para>
+  /// </summary>
+  public ClosureEnvRole EnvRole { get; set; }
 }
+
+/// <summary>Which half of a closure environment pointer a slot holds; see <see cref="IrAlloca.EnvRole"/>.</summary>
+public enum ClosureEnvRole { None, Offset, Segment }
 
 /// <summary>Loads a value of <see cref="Type"/> from a pointer: <c>result = load type, ptr</c>.</summary>
 public sealed class IrLoad : IrInstruction {
