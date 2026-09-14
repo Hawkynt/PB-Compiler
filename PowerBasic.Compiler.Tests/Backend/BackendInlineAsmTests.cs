@@ -671,4 +671,54 @@ public sealed class BackendInlineAsmTests {
     Assert.That(routed, Is.EqualTo(RunProcedure(source, "Fill", routed: false).Output));
     Assert.That(routed, Is.EqualTo("7  7  0  9  9  9  1"));
   }
+  /// <summary>
+  /// <c>! REP MOVSB</c> inside a FOR loop. The prefix counts <c>CX</c> down to zero and reads no flag
+  /// this pass models - the flag a string move really consumes is the DIRECTION flag, which nothing
+  /// here writes and nothing here tracks.
+  ///
+  /// <para>
+  /// Saying it read the arithmetic flags made every <c>REP MOVSB</c> the consumer of whatever last set
+  /// them. Around a loop that is the loop's own increment, so the body's own <c>! ADD DI, n</c> became
+  /// a promise the increment destroyed, and <c>Scroll_HardwareHorizontal</c> declined for it. Only the
+  /// CONDITIONAL forms re-test <c>ZF</c>, and those still say so.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenARepeatedMoveInALoop_ThenTheLoopIncrementIsNotADestroyer() {
+    const string source = """
+      DECLARE SUB Slide()
+      DIM src(0 TO 7) AS SHARED BYTE
+      DIM dst(0 TO 7) AS SHARED BYTE
+      src(0) = 3 : src(1) = 5 : src(2) = 9
+      Slide
+      PRINT dst(0); dst(1); dst(2); dst(3)
+      END
+      SUB Slide()
+        DIM i AS INTEGER, from AS WORD, into AS WORD
+        FOR i = 0 TO 1
+          from = VARPTR(src(0))
+          into = VARPTR(dst(0))
+          ! PUSH ES
+          ! PUSH SI
+          ! PUSH DI
+          ! MOV AX, DS
+          ! MOV ES, AX
+          ! MOV SI, from
+          ! MOV DI, into
+          ! ADD DI, 1
+          ! MOV CX, 3
+          ! CLD
+          ! REP MOVSB
+          ! POP DI
+          ! POP SI
+          ! POP ES
+        NEXT i
+      END SUB
+      """;
+
+    var (routed, tookIt) = RunProcedure(source, "Slide", routed: true);
+    Assert.That(tookIt, Is.True, "a repeated move in a loop must not read the increment's flags");
+    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Slide", routed: false).Output));
+    Assert.That(routed, Is.EqualTo("0  3  5  9"));
+  }
 }

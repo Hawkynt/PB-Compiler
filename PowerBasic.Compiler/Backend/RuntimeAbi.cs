@@ -789,6 +789,8 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
     ["rt_fget_str"] = new("rt_fgetstr",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    // INPUT$(n) with no file: the KEYBOARD form, which blocking-reads CX characters without echo.
+    ["rt_key_input"] = new("rt_keyinput", [new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
 
     // EOF(n): AX = the file number -> AX = PB's -1/0 truth
     ["rt_eof"] = new("rt_eof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
@@ -798,6 +800,8 @@ internal static class RuntimeAbi {
     // CSRLIN -> AX = the 1-based cursor row; CONSIN / CONSOUT -> AX = -1 for a console, 0 redirected
     ["rt_csrlin"] = new("rt_csrlin", [], _callerSaved, Result: Reg.AX),
     ["rt_consin"] = new("rt_consin", [], _callerSaved, Result: Reg.AX),
+    // INSTAT: no arguments, PB's -1/0 truth in AX
+    ["rt_instat"] = new("rt_instat", [], _callerSaved, Result: Reg.AX),
     ["rt_consout"] = new("rt_consout", [], _callerSaved, Result: Reg.AX),
     // DEF SEG: the argument form stores the word, the bare form puts DS back
     ["rt_defseg_reset"] = new("rt_defsegreset", [], _callerSaved),

@@ -65,10 +65,16 @@ public sealed partial class TextAssembler {
     /// </summary>
     private static bool Describe(string mnemonic, List<Operand> operands, bool repeated, EffectBuilder e) {
       if (repeated) {
-        // the prefix counts CX down to zero, and REPE/REPNE also re-test ZF each iteration
+        // The prefix counts CX down to zero. Only the CONDITIONAL forms re-test ZF each iteration:
+        // a plain REP reads no flag this pass models, and saying it did made every `REP MOVSB` look
+        // like the consumer of whatever last set the flags. Around a FOR loop that is the loop's own
+        // increment, so the body's arithmetic became a promise the increment destroyed and
+        // Scroll_HardwareHorizontal declined for it. The flag a string move really does read is the
+        // DIRECTION flag, which nothing here writes and nothing here tracks.
         e.Read(Reg.CX);
         e.Define(Reg.CX);
-        e.ReadsFlags = true;
+        e.ReadsFlags = mnemonic is not ("MOVSB" or "MOVSW" or "MOVSD" or "STOSB" or "STOSW" or "STOSD"
+          or "LODSB" or "LODSW" or "LODSD" or "INSB" or "INSW" or "OUTSB" or "OUTSW");
       }
 
       switch (mnemonic) {
