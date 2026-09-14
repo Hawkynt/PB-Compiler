@@ -3794,6 +3794,19 @@ public sealed partial class IrLowering {
       this.LowerPagedDim(d);
       return;
     }
+    // A pb36 STACK array is a FRAME array, and a frame array is what SlotFor already mints for a local
+    // one: an alloca of the element count. That is the whole of what the class means - each call, and
+    // each level of a recursion, gets its own copy, and there is no data-segment cell to share - so it
+    // needs no declaration code and no separate path, only permission to reach the one below.
+    //
+    // A SHARED or STATIC one would need that cell, and NeedsSharedStorage is what would hand it one,
+    // so it declines rather than quietly becoming a global that outlives the call.
+    if (d.Class == ArrayClass.Stack) {
+      foreach (var v in d.Variables)
+        if (this.ArrayVariable(v) is { } stackSymbol && this.NeedsSharedStorage(stackSymbol))
+          throw new IrLoweringException("a STACK array with shared storage");
+      return;
+    }
     if (d.Class != ArrayClass.Default)
       throw new IrLoweringException($"DIM {d.Class} array class");
 
@@ -4373,6 +4386,18 @@ public sealed partial class IrLowering {
   }
 
   private IrValue LowerExpr(Expression expr) {
+    // A bind-time rewrite or a compile-time resolution is answered first, exactly as the direct
+    // emitter's expression entry answers them: an interpolated string is the concatenation it was
+    // bound as, and an ENUM member is the integer the binder worked out. Neither has a NameExpr the
+    // rest of this switch could find a variable for - "unbound name Red" was an ENUM member being
+    // looked for in the symbol table it was never going to be in.
+    if (this._model.Desugared.TryGetValue(expr, out var rewritten))
+      return this.LowerExpr(rewritten);
+    if (this._model.ResolvedConstants.TryGetValue(expr, out var resolved)
+        && this._model.TypeOf(expr) is ScalarType constantType)
+      return this.Coerce(
+        new IrConstantInt(MapType(constantType), CodeGen.CodeGenerator.WrapToType(resolved, constantType)),
+        constantType, this._model.TypeOf(expr));
     switch (expr) {
       case IntegerLiteralExpr lit when this._model.TypeOf(lit) is BcdType bcdInt:
         return this.Coerce(new IrConstantFloat(IrType.F80, lit.Value), PbType.Ext, bcdInt);

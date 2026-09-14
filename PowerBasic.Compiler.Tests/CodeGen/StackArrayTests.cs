@@ -112,7 +112,13 @@ public sealed class StackArrayTests {
       Grid
       """;
     var unit = Parser.Parse(Lexer.Tokenize(source, "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
-    var image = new CodeGenerator(Binder.Bind(unit, Dialect.Pb36)).EmitExecutable();
+    // The DIRECT emitter, deliberately: the byte sequence below IS its prologue, and the invariant is
+    // about that encoding surviving the image-shrinking passes. The routed path lays the same array
+    // out as an ordinary frame alloca and emits no such sequence, so scanning for one there would be
+    // asserting the absence of a shape rather than the presence of a behaviour. What the behaviour
+    // costs is covered beside this, by Execute_GivenAStackArrayReusingAFrame_ThenItStartsZeroed.
+    var image = new CodeGenerator(Binder.Bind(unit, Dialect.Pb36)) { UseExperimentalBackend = false }
+      .EmitExecutable();
 
     // MOV CX,bytes / SUB SP,CX / PUSH DS / POP ES / MOV DI,SP / MOV CX,words / XOR AX,AX / REP STOSW
     var frames = 0;
@@ -129,6 +135,40 @@ public sealed class StackArrayTests {
       ++frames;
     }
     Assert.That(frames, Is.GreaterThan(0), "the zero-filled frame prologue must be present to be checked");
+  }
+
+  /// <summary>
+  /// The behaviour the frame prologue above exists for, asserted where it can be asserted of BOTH
+  /// paths: a STACK array starts zeroed, even when the frame it lands in was just written over.
+  ///
+  /// <para>
+  /// One SUB called twice at the same depth is what makes that a test rather than a hope - the two
+  /// invocations get the same frame bytes, so the second reads exactly what the first left unless
+  /// something clears them.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Execute_GivenAStackArrayReusingAFrame_ThenItStartsZeroed() {
+    const string source = """
+      SUB Both(BYVAL fill AS INTEGER)
+        DIM STACK g(1 TO 8) AS INTEGER
+        DIM i AS INTEGER, s AS INTEGER
+        IF fill THEN
+          FOR i = 1 TO 8
+            g(i) = 99
+          NEXT i
+        END IF
+        FOR i = 1 TO 8
+          s = s + g(i)
+        NEXT i
+        PRINT s;
+      END SUB
+      Both(-1)
+      Both(0)
+      """;
+
+    Assert.That(Run(source), Is.EqualTo(" 792  0"),
+      "the first call fills the frame and the second must still see zeroes");
   }
 
   [Test]
