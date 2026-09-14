@@ -56,9 +56,9 @@ public sealed class IrPassManagerTests {
     var fn = new IrFunction("test", IrType.Void);
     var calls = 0;
     var manager = new IrPassManager()
-      .Add("probe", _ => {
+      .AddAnalyzed("probe", (_, _) => {
         ++calls;
-        return 1;
+        return IrPassResult.Changed(1);
       });
 
     var changes = manager.RunToFixpoint(fn, maxIterations);
@@ -67,6 +67,27 @@ public sealed class IrPassManagerTests {
       Assert.That(changes, Is.Zero);
       Assert.That(calls, Is.Zero);
     });
+  }
+
+  [Test]
+  public void PassManager_PublicSurface_HasNoLegacyFunctionRegistrationOrPipelinePolicy() {
+    var publicMethods = typeof(IrPassManager).GetMethods(System.Reflection.BindingFlags.Public
+      | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);
+
+    Assert.Multiple(() => {
+      Assert.That(publicMethods.Any(m => m.Name == "Add"), Is.False,
+        "function transforms must enter through AddAnalyzed and report preservation");
+      Assert.That(publicMethods.Any(m => m.Name is "Standard" or "Legalize"), Is.False,
+        "pipeline policy belongs exclusively to IrMiddleEndPipeline");
+    });
+  }
+
+  [Test]
+  public void FunctionPipeline_PublicSurface_HasNoLegacyAdapter() {
+    var publicMethods = typeof(IrFunctionPassPipeline).GetMethods(System.Reflection.BindingFlags.Public
+      | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);
+
+    Assert.That(publicMethods.Any(m => m.Name == "AddLegacy"), Is.False);
   }
 
   private static IrFunction Lower(string source) {
@@ -78,7 +99,7 @@ public sealed class IrPassManagerTests {
   public void Standard_OverLoweredProgram_OptimizesToAVerifiedFixpoint() {
     var fn = Lower(
       "a% = 2\nb% = 3\nc% = a% + b%\nIF c% > 4 THEN\n  d% = c% * 2\nELSE\n  d% = 0\nEND IF");
-    var pm = IrPassManager.Standard();
+    var pm = IrMiddleEndPipeline.Standard();
     pm.VerifyEachPass = true;
 
     pm.RunToFixpoint(fn);
@@ -92,7 +113,7 @@ public sealed class IrPassManagerTests {
   public void Standard_FullyEvaluatesAConstantOnlyProgram() {
     // everything is compile-time constant and unused -> the body collapses to ret void
     var fn = Lower("a% = 10\nb% = 20\nc% = a% + b%");
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrPrinter.Print(fn), Is.EqualTo(
       "define void @main() {\n" +
@@ -105,7 +126,8 @@ public sealed class IrPassManagerTests {
   public void VerifyEachPass_ThrowsIfAPassWouldLeaveInvalidIr() {
     var fn = new IrFunction("bad", IrType.Void);
     fn.CreateBlock("entry").Append(new IrBinary(IrBinaryOp.Add, IrBuilder.ConstI32(1), IrBuilder.ConstI32(2)));  // no terminator
-    var pm = new IrPassManager { VerifyEachPass = true }.Add("noop", _ => 0);
+    var pm = new IrPassManager { VerifyEachPass = true }
+      .AddAnalyzed("noop", (_, _) => IrPassResult.Unchanged);
 
     Assert.That(() => pm.Run(fn), Throws.TypeOf<IrVerificationException>());
   }
@@ -113,7 +135,7 @@ public sealed class IrPassManagerTests {
   [Test]
   public void Standard_OverLoop_PromotesAndStaysVerifiable() {
     var fn = Lower("s% = 0\nFOR i% = 1 TO 10\n  s% = s% + i% * 2\nNEXT i%");
-    var pm = IrPassManager.Standard();
+    var pm = IrMiddleEndPipeline.Standard();
     pm.VerifyEachPass = true;
 
     pm.RunToFixpoint(fn);
