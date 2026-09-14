@@ -2614,6 +2614,27 @@ public sealed partial class IrLowering {
         return this._procMap is not null && this._procMap.TryGetValue(bareProc, out var bareCallee)
           ? this.EmitCall(bareCallee, bareProc, [])
           : throw new IrLoweringException($"call to {bareProc.Name} outside the modelled subset");
+      // The same branching ternary the numeric side lowers, over a string HANDLE. It has to be here
+      // as well as there because a string is not a value this lowering loads with LowerExpr - the arms
+      // are string EXPRESSIONS, and only LowerStringExpr knows how to produce one.
+      case IfExpr ternary: {
+        var slot = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = "iif.s" });
+        var whenTrue = this.NewBlock("iif.s.true");
+        var whenFalse = this.NewBlock("iif.s.false");
+        var done = this.NewBlock("iif.s.done");
+        this._b.CondBr(this.LowerCondition(ternary.Condition), whenTrue, whenFalse);
+
+        this._b.Position(whenTrue);
+        this._b.Store(this.LowerStringExpr(ternary.WhenTrue), slot);
+        this._b.Br(done);
+
+        this._b.Position(whenFalse);
+        this._b.Store(this.LowerStringExpr(ternary.WhenFalse), slot);
+        this._b.Br(done);
+
+        this._b.Position(done);
+        return this._b.Load(IrType.Ptr, slot);
+      }
       default:
         throw new IrLoweringException($"unsupported string expression: {expr.GetType().Name}");
     }
@@ -4211,6 +4232,32 @@ public sealed partial class IrLowering {
       // those arrive here as a MemberExpr - so it declines rather than reading the first word of one.
       case PtrDerefExpr deref when this._model.TypeOf(deref) is ScalarType target:
         return this._b.Load(MapType(target), this.DerefAddress(deref));
+      // IIF(c, a, b) - a ternary, and a BRANCHING one rather than a select: PowerBASIC evaluates only
+      // the arm it takes, so an untaken IIF(n <> 0, x \\ n, 0) must not divide. The result travels
+      // through a frame slot rather than a phi because that is how every value in this lowering
+      // crosses a block boundary; the SSA construction pass promotes it out again.
+      case IfExpr ternary: {
+        var ternaryType = this._model.TypeOf(ternary);
+        var slot = this._entry.InsertAt(this._entryAllocaCount++,
+          new IrAlloca(MapType(ternaryType)) { Name = "iif" });
+        var whenTrue = this.NewBlock("iif.true");
+        var whenFalse = this.NewBlock("iif.false");
+        var done = this.NewBlock("iif.done");
+        this._b.CondBr(this.LowerCondition(ternary.Condition), whenTrue, whenFalse);
+
+        this._b.Position(whenTrue);
+        this._b.Store(this.Coerce(this.LowerExpr(ternary.WhenTrue),
+          this._model.TypeOf(ternary.WhenTrue), ternaryType), slot);
+        this._b.Br(done);
+
+        this._b.Position(whenFalse);
+        this._b.Store(this.Coerce(this.LowerExpr(ternary.WhenFalse),
+          this._model.TypeOf(ternary.WhenFalse), ternaryType), slot);
+        this._b.Br(done);
+
+        this._b.Position(done);
+        return this._b.Load(MapType(ternaryType), slot);
+      }
       default:
         throw new IrLoweringException($"unsupported expression: {expr.GetType().Name}");
     }
@@ -4475,6 +4522,32 @@ public sealed partial class IrLowering {
       _ = this.LowerExpr(call.Arguments[0]);
       return this.Coerce(new IrConstantInt(IrType.I16, 0), PbType.Integer, this._model.TypeOf(call));
     }
+    // SCREEN(row, col [, attribute]) reads the TEXT page back - the character at that cell, or its
+    // colour attribute when the third argument is a non-zero constant. It is a far load rather than a
+    // call because there is nothing to call: the direct emitter computes the same offset into B800h
+    // inline, and the page is ordinary memory this back end can already name.
+    if (name.Equals("SCREEN", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count is 2 or 3) {
+      var row = this.GraphicsWord(call.Arguments[0]);
+      var col = this.GraphicsWord(call.Arguments[1]);
+      // (row - 1) * 160 + (col - 1) * 2, eighty columns of two bytes each
+      var offset = this._b.Binary(IrBinaryOp.Add,
+        this._b.Binary(IrBinaryOp.Mul, this._b.Binary(IrBinaryOp.Sub, row, new IrConstantInt(IrType.I16, 1)),
+          new IrConstantInt(IrType.I16, 160)),
+        this._b.Binary(IrBinaryOp.Mul, this._b.Binary(IrBinaryOp.Sub, col, new IrConstantInt(IrType.I16, 1)),
+          new IrConstantInt(IrType.I16, 2)));
+      // the attribute sits in the byte AFTER the character. Only a constant selects it, which is what
+      // the direct emitter accepts too - it folds the argument and adds one when it is not zero.
+      if (call.Arguments.Count == 3) {
+        if (call.Arguments[2] is not IntegerLiteralExpr wantsAttribute)
+          throw new IrLoweringException("SCREEN with a non-constant attribute selector");
+        if (wantsAttribute.Value != 0)
+          offset = this._b.Binary(IrBinaryOp.Add, offset, new IrConstantInt(IrType.I16, 1));
+      }
+      return this.Coerce(
+        this._b.ZExt(this._b.Load(IrType.I8,
+          this._b.FarPtr(new IrConstantInt(IrType.I16, unchecked((short)0xB800)), offset)), IrType.I16),
+        PbType.Integer, this._model.TypeOf(call));
+    }
     // POINT(x, y) reads a pixel back, and takes its pair in the same registers PSET writes with.
     if (name.Equals("POINT", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2)
       return this.Coerce(
@@ -4514,6 +4587,7 @@ public sealed partial class IrLowering {
       "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64, 8),
       "CVE" => this.LowerCv(call, "rt_str_cve", IrType.F80, 8),
       "POS" => this.LowerPos(call),
+      "LPOS" => this.LowerLPos(call),
       // RND and RND(n): the next value in [0, 1). A reseed argument is EVALUATED and then dropped,
       // which is what the direct emitter does with it - the reseed semantics are not modelled on
       // either path, and evaluating it keeps any side effect it carries.
@@ -4567,13 +4641,22 @@ public sealed partial class IrLowering {
       PbType.Double, this._model.TypeOf(call));
   }
 
-  private IrValue LowerPos(CallOrIndexExpr call) {
+  private IrValue LowerPos(CallOrIndexExpr call) => this.LowerColumn(call, "rt_col");
+
+  /// <summary>
+  /// <c>LPOS</c> is <c>POS</c> over the PRINTER's column instead of the screen's - a different cell
+  /// and nothing else, which is why they share this. Both are one-based and both evaluate the
+  /// argument they are handed and then ignore it, exactly as the direct emitter does.
+  /// </summary>
+  private IrValue LowerLPos(CallOrIndexExpr call) => this.LowerColumn(call, "rt_lcol");
+
+  private IrValue LowerColumn(CallOrIndexExpr call, string cell) {
     if (this._module is null)
       throw new IrLoweringException("POS requires whole-module lowering");
     foreach (var argument in call.Arguments)
       this.LowerExpr(argument);
-    var column = this._module.FindGlobal("rt_col")
-      ?? this._module.AddGlobal(new IrGlobalVariable("rt_col", IrType.I16) { IsZeroInitialized = true });
+    var column = this._module.FindGlobal(cell)
+      ?? this._module.AddGlobal(new IrGlobalVariable(cell, IrType.I16) { IsZeroInitialized = true });
     return this._b.Add(this._b.Load(IrType.I16, column), new IrConstantInt(IrType.I16, 1));
   }
 
@@ -5671,6 +5754,12 @@ public sealed partial class IrLowering {
       // as the class it was bound to.
       case "DYNAMIC":
       case "STATIC":
+      // $ISA picks what happens to an instruction the declared CPU cannot execute - native, emulated,
+      // or an error. It is policy the CODE GENERATOR holds, read out of model.MetaStatements by
+      // RuntimeIsaPolicyForRuntime in a pre-pass, which is the same argument $STRING above is ignored
+      // on: a routed module body never executes the statement list, so a directive applied during
+      // emission would be lost - and this one is not, because it was never applied there.
+      case "ISA":
       // $OPTION is four arms and not one of them is a statement. SIGNED changes the RESULT TYPE the
       // binder gives VARPTR/VARSEG and their relatives; VIDEO sets model.FastVideo, which the codegen
       // reads off the MODEL; CNTLBREAK installs an INT 23h handler from a codegen PRE-PASS over
