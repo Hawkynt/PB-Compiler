@@ -1754,6 +1754,16 @@ public sealed class Cpu8086 {
         this._r[_DX] = (ushort)this._ticks;
         this.SetReg8(0, 0);                                    // AL = 0: midnight has not passed
         return;
+      // The KEYBOARD, with nothing in it. INKEY$ asks AH=01 whether a key is waiting and reads it with
+      // AH=00 when one is; answering "empty" is the only honest thing a non-interactive run can say,
+      // and it is what makes INKEY$ observable rather than a hang. The zero flag is the answer.
+      case 0x16:
+        if (this.Reg8(4) is 0x01 or 0x11) {
+          this._zf = true;                                     // no keystroke available
+          return;
+        }
+        throw new Cpu8086Exception(
+          $"INT 16h AH={this.Reg8(4):X2}h would block: nothing has typed anything into this run");
       default: throw new Cpu8086Exception($"unhandled INT {number:X2}h (AX={this._r[_AX]:X4})");
     }
   }
@@ -2015,6 +2025,28 @@ public sealed class Cpu8086 {
         var name = this.CString(Linear(this._ds, this._r[_DX]));
         this._cf = name != "\\" && name != "." && !this._directories.Contains(name);
         if (this._cf) this._r[_AX] = 3;
+        return;
+      }
+      // The CLOCK, at a fixed reading. A real DOS answers from the CMOS and this interpreter has no
+      // clock of its own, so it answers with one moment - which is what makes DATE$ and TIME$ testable
+      // at all: the value is the machine's, and a machine that says something different every run can
+      // only ever be asserted about by length.
+      case 0x2A:                                               // get date -> CX year, DH month, DL day, AL weekday
+        this._r[_CX] = 1987;
+        this._r[_DX] = 0x0C1C;                                 // 12 December
+        this._r[_AX] = (ushort)((this._r[_AX] & 0xFF00) | 6);  // Saturday
+        return;
+      case 0x2C:                                               // get time -> CH hour, CL minute, DH second, DL 1/100s
+        this._r[_CX] = 0x0B1E;                                 // 11:30
+        this._r[_DX] = 0x0000;                                 // :00.00
+        return;
+      case 0x19: this._r[_AX] = (ushort)((this._r[_AX] & 0xFF00) | 2); return;   // current drive: C:
+      case 0x47: {                                             // get current directory into DS:SI (no leading backslash)
+        var at = Linear(this._ds, this._r[_SI]);
+        foreach (var c in "PBC")
+          this.WriteByte(at++, (byte)c);
+        this.WriteByte(at, 0);
+        this._cf = false;
         return;
       }
       case 0x58: this._cf = true; return;                      // UMB link/strategy: report unsupported

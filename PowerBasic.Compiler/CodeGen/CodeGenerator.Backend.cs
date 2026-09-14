@@ -363,8 +363,11 @@ public sealed partial class CodeGenerator {
         this._backendDeclines.Add((proc.Name, filtered));
         continue;
       }
-      if (!byName.TryGetValue(proc.Name, out var irFn)) {
-        this._backendDeclines.Add((proc.Name, module.ProcedureLoweringDeclines.TryGetValue(proc.Name, out var loweringWhy)
+      // ...by the IR NAME, which is the source one for all but an overload. Asking by the source name
+      // found the FIRST overload's function for every one of them, which is the same body emitted
+      // under several labels rather than a decline.
+      if (!byName.TryGetValue(Ir.IrLowering.IrNameOf(proc), out var irFn)) {
+        this._backendDeclines.Add((proc.Name, module.ProcedureLoweringDeclines.TryGetValue(Ir.IrLowering.IrNameOf(proc), out var loweringWhy)
           ? "lowering: " + loweringWhy
           : "lowering: the IR module has no defined function of this name"));
         continue;

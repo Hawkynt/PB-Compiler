@@ -179,7 +179,7 @@ public sealed partial class IrLowering {
         // ...and SAY SO. A cleared body leaves no trace in Functions' defined half, so a census over
         // IR functions counts this procedure in neither its numerator nor its denominator - the
         // procedure simply stops existing, and the coverage ratio goes UP because it did.
-        module.RecordProcedureLoweringDecline(proc.Name, e.Message);
+        module.RecordProcedureLoweringDecline(IrNameOf(proc), e.Message);   // keyed as the function is named
       }
     }
     return module;
@@ -2805,10 +2805,35 @@ public sealed partial class IrLowering {
         this._b.Position(done);
         return this._b.Load(IrType.Ptr, slot);
       }
+      // ...and a string intrinsic written WITHOUT parentheses. The binder does not turn a bare name
+      // into a call, so DATE$ arrives here as an ordinary name bound to nothing - the same route the
+      // numeric nullary intrinsics take into LowerNullaryIntrinsicName, and for the same reason.
+      case NameExpr nullary when NullaryStringIntrinsic(nullary.Name + nullary.Suffix.KeyText()) is { } routine:
+        return this._b.Call(IrType.Ptr, this.RuntimeFn(routine, IrType.Ptr));
+      // DIR$ without a mask is the find-NEXT half of the pair, which is the same routine with a null
+      // mask handle and no attribute. Written with one it is a call and goes through the intrinsic
+      // table; written bare it can only be the continuation.
+      case NameExpr dirNext when (dirNext.Name + dirNext.Suffix.KeyText()).Equals("DIR$", StringComparison.OrdinalIgnoreCase):
+        return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_dir", IrType.Ptr, IrType.Ptr, IrType.I16),
+          new IrNullPtr(), new IrConstantInt(IrType.I16, 0));
       default:
         throw new IrLoweringException($"unsupported string expression: {expr.GetType().Name}");
     }
   }
+
+  /// <summary>
+  /// The runtime routine a parenthesis-less string intrinsic answers with, or null when the name is
+  /// not one. Each reads the MACHINE rather than an argument - the clock, the keyboard buffer, the
+  /// PSP's command tail, the current directory - which is why none of them takes one.
+  /// </summary>
+  private static string? NullaryStringIntrinsic(string name) => name.ToUpperInvariant() switch {
+    "DATE$" => "rt_date_str",
+    "TIME$" => "rt_time_str",
+    "INKEY$" => "rt_inkey",
+    "COMMAND$" => "rt_command",
+    "CURDIR$" => "rt_curdir",
+    _ => null,
+  };
 
   /// <summary>
   /// A copy of a string that lives in STORAGE, so the value handed on is an owned temporary the
@@ -5887,11 +5912,14 @@ public sealed partial class IrLowering {
         && this._model.VariableBindings.TryGetValue(indexed, out var arrSym)
         && arrSym.Type is ArrayType) {
       var (address, element) = this.ElementAddress(indexed);
-      if (element.Equals(paramType)) {
-        if (address.Type.IsFarPointer)
-          throw new IrLoweringException("far pointer passed BYREF to a near parameter");
+      // A FAR element - a dynamic array's storage lives in the far heap - cannot be the address a
+      // near-pointer parameter receives: the callee would read the offset through DS and reach the
+      // program's own data. It falls to the temp copy below, which is not a compromise but the DIRECT
+      // emitter's own answer: its BYREF push takes the address only of a NEAR lvalue, and copies
+      // anything else into a hidden stack temp, copy-in only. So a callee's write to such a parameter
+      // is discarded on both paths, and `Bump values%(2)` leaves values%(2) alone on both.
+      if (element.Equals(paramType) && !address.Type.IsFarPointer)
         return address;
-      }
     }
     // A record MEMBER is storage like any other, and the callee writes THROUGH it. Falling to the
     // temp copy below turned a BYREF parameter into a BYVAL one without saying so: `CALL Neg(r.A)`
