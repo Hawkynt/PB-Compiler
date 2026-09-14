@@ -9,10 +9,10 @@ public static class IrMiddleEndPipeline {
 
   /// <summary>Builds the representation-only pipeline required even when source optimization is disabled.</summary>
   public static IrPassManager Legalize() => new IrPassManager()
-    .Add("mem2reg-faithful", Mem2Reg.RunForFaithfulSelection)
-    .Add("instcombine-faithful", InstCombine.RunForFaithfulSelection)
-    .Add("dce", Dce.Run)
-    .Add("simplifycfg", SimplifyCfg.Run);
+    .AddAnalyzed("mem2reg-faithful", (fn, _) => Conservative(() => Mem2Reg.RunForFaithfulSelection(fn)))
+    .AddAnalyzed("instcombine-faithful", (fn, _) => Conservative(() => InstCombine.RunForFaithfulSelection(fn)))
+    .AddAnalyzed("dce", (fn, _) => Conservative(() => Dce.Run(fn)))
+    .AddAnalyzed("simplifycfg", (fn, _) => Conservative(() => SimplifyCfg.Run(fn)));
 
   /// <summary>Builds the analysis-aware optimizing middle end in its proven relative order.</summary>
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
@@ -21,72 +21,74 @@ public static class IrMiddleEndPipeline {
       int minimumIntegerStorageBits = 16)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     .AddEarlyModulePassWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
-    .Add("storagenarrow", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
-    .Add("mem2reg", Mem2Reg.Run)
-    .Add("storagenarrow-ssa", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
-    .Add("structpack", StructurePackingByRange.Run)
-    .Add("fieldreorder", FieldReordering.Run)
-    .Add("hotcold", HotColdFieldSplitting.Run)
-    .Add("aos2soa", ArrayOfStructsToStructOfArrays.Run)
-    .Add("transpose", DataTransposition.Run)
-    .Add("arrayfusion", TemporaryArrayFusion.Run)
-    .Add("arraycontract", ArrayContraction.Run)
-    .Add("prefixscan", ParallelPrefixScan.Run)
-    .AddWhen(dataLayoutTarget?.PointerBits > 16, "ptrcompress",
-      fn => PointerCompression.Run(fn, dataLayoutTarget!.PointerBits))
-    .AddWhen(dataLayoutTarget?.CacheSizeBytes > 0, "cachepad",
-      fn => CacheConflictPadding.Run(fn, dataLayoutTarget!.CacheSizeBytes, dataLayoutTarget.CacheLineBytes, dataLayoutTarget.CacheAssociativity))
-    .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arraypad",
-      fn => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes))
-    .AddWhen(dataLayoutTarget?.VectorBytes > 1, "arrayalign",
-      fn => ArrayBaseAlignment.Run(fn, dataLayoutTarget!.VectorBytes, dataLayoutTarget.PointerBits))
-    .Add("looptemp-reuse", LoopTemporaryReuse.Run)
-    .Add("overflow-version", SpeculativeOverflowElimination.Run)
-    .Add("ownershipbatch", OwnershipBatching.Run)
-    .Add("unroll", LoopUnroll.Run)
-    .Add("instcombine", InstCombine.Run)
-    .AddWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
-    .Add("sccp", Sccp.Run)
+    .AddAnalyzed("storagenarrow", (fn, _) => Conservative(() => StorageNarrowing.Run(fn, minimumIntegerStorageBits)))
+    .AddAnalyzed("mem2reg", (fn, _) => Conservative(() => Mem2Reg.Run(fn)))
+    .AddAnalyzed("storagenarrow-ssa", (fn, _) => Conservative(() => StorageNarrowing.Run(fn, minimumIntegerStorageBits)))
+    .AddAnalyzed("structpack", (fn, _) => Conservative(() => StructurePackingByRange.Run(fn)))
+    .AddAnalyzed("fieldreorder", (fn, _) => Conservative(() => FieldReordering.Run(fn)))
+    .AddAnalyzed("hotcold", (fn, _) => Conservative(() => HotColdFieldSplitting.Run(fn)))
+    .AddAnalyzed("aos2soa", (fn, _) => Conservative(() => ArrayOfStructsToStructOfArrays.Run(fn)))
+    .AddAnalyzed("transpose", (fn, _) => Conservative(() => DataTransposition.Run(fn)))
+    .AddAnalyzed("arrayfusion", (fn, _) => Conservative(() => TemporaryArrayFusion.Run(fn)))
+    .AddAnalyzed("arraycontract", (fn, _) => Conservative(() => ArrayContraction.Run(fn)))
+    .AddAnalyzed("prefixscan", (fn, _) => Conservative(() => ParallelPrefixScan.Run(fn)))
+    .AddAnalyzedWhen(dataLayoutTarget?.PointerBits > 16, "ptrcompress",
+      (fn, _) => Conservative(() => PointerCompression.Run(fn, dataLayoutTarget!.PointerBits)))
+    .AddAnalyzedWhen(dataLayoutTarget?.CacheSizeBytes > 0, "cachepad",
+      (fn, _) => Conservative(() => CacheConflictPadding.Run(fn, dataLayoutTarget!.CacheSizeBytes,
+        dataLayoutTarget.CacheLineBytes, dataLayoutTarget.CacheAssociativity)))
+    .AddAnalyzedWhen(dataLayoutTarget?.VectorBytes > 1, "arraypad",
+      (fn, _) => Conservative(() => ArrayPaddingAlignment.Run(fn, dataLayoutTarget!.VectorBytes)))
+    .AddAnalyzedWhen(dataLayoutTarget?.VectorBytes > 1, "arrayalign",
+      (fn, _) => Conservative(() => ArrayBaseAlignment.Run(fn, dataLayoutTarget!.VectorBytes, dataLayoutTarget.PointerBits)))
+    .AddAnalyzed("looptemp-reuse", (fn, _) => Conservative(() => LoopTemporaryReuse.Run(fn)))
+    .AddAnalyzed("overflow-version", (fn, _) => Conservative(() => SpeculativeOverflowElimination.Run(fn)))
+    .AddAnalyzed("ownershipbatch", (fn, _) => Conservative(() => OwnershipBatching.Run(fn)))
+    .AddAnalyzed("unroll", (fn, _) => Conservative(() => LoopUnroll.Run(fn)))
+    .AddAnalyzed("instcombine", (fn, _) => Conservative(() => InstCombine.Run(fn)))
+    .AddAnalyzedWhen(optimizeForSpeed, "demandedbits", (fn, _) => Conservative(() => DemandedBits.Run(fn)))
+    .AddAnalyzed("sccp", (fn, _) => Conservative(() => Sccp.Run(fn)))
     .AddAnalyzed("correlate", CorrelatedValueProp.Run)
-    .Add("bbversion", BasicBlockVersioning.Run)
+    .AddAnalyzed("bbversion", (fn, _) => Conservative(() => BasicBlockVersioning.Run(fn)))
     .AddAnalyzed("ptrcheck", PointerCheckElim.Run)
-    .Add("rangefold", RangeCheckElim.Run)
-    .AddWhen(optimizeForSpeed, "specnarrow", SpeculativeIntegerNarrowing.Run)
-    .Add("conversion-rangefold", ConversionRangeCheckElim.Run)
-    .Add("overflow-coalesce", OverflowCheckCoalescing.Run)
-    .Add("sroa", ScalarReplaceArrays.Run)
-    .Add("aggregate-sroa", ScalarReplaceAggregates.Run)
-    .Add("storagenarrow2", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
-    .Add("mem2reg2", Mem2Reg.Run)
-    .Add("storagenarrow-ssa2", fn => StorageNarrowing.Run(fn, minimumIntegerStorageBits))
-    .Add("strcow", StringCopyOnWriteElision.Run)
-    .Add("ownership-elision", HandleOwnershipElision.Run)
-    .Add("fpsimplify", fn => FpSimplify.Run(fn,
-      optimizeForSpeed ? IrFastMathFlags.Fast : IrFastMathFlags.None))
-    .Add("reassociate", Reassociate.Run)
-    .AddWhen(optimizeForSpeed, "fpfast", fn => FpFastMath.Run(fn, IrFastMathFlags.Fast))
-    .Add("eqsat", EqualitySaturation.Run)
-    .Add("verified-arith", fn => VerifiedArithmeticLowering.Run(fn, optimizeForSpeed))
-    .Add("polynomial", PolynomialEvaluation.Run)
-    .Add("demote", FloatDemotion.Run)
-    .Add("ivsimplify", InductionVariableSimplification.Run)
-    .Add("phicong", PhiCongruence.Run)
+    .AddAnalyzed("rangefold", RangeCheckElim.Run)
+    .AddAnalyzedWhen(optimizeForSpeed, "specnarrow", (fn, _) => Conservative(() => SpeculativeIntegerNarrowing.Run(fn)))
+    .AddAnalyzed("conversion-rangefold", ConversionRangeCheckElim.Run)
+    .AddAnalyzed("overflow-coalesce", (fn, _) => Conservative(() => OverflowCheckCoalescing.Run(fn)))
+    .AddAnalyzed("sroa", (fn, _) => Conservative(() => ScalarReplaceArrays.Run(fn)))
+    .AddAnalyzed("aggregate-sroa", (fn, _) => Conservative(() => ScalarReplaceAggregates.Run(fn)))
+    .AddAnalyzed("storagenarrow2", (fn, _) => Conservative(() => StorageNarrowing.Run(fn, minimumIntegerStorageBits)))
+    .AddAnalyzed("mem2reg2", (fn, _) => Conservative(() => Mem2Reg.Run(fn)))
+    .AddAnalyzed("storagenarrow-ssa2", (fn, _) => Conservative(() => StorageNarrowing.Run(fn, minimumIntegerStorageBits)))
+    .AddAnalyzed("strcow", (fn, _) => Conservative(() => StringCopyOnWriteElision.Run(fn)))
+    .AddAnalyzed("ownership-elision", (fn, _) => Conservative(() => HandleOwnershipElision.Run(fn)))
+    .AddAnalyzed("fpsimplify", (fn, _) => Conservative(() => FpSimplify.Run(fn,
+      optimizeForSpeed ? IrFastMathFlags.Fast : IrFastMathFlags.None)))
+    .AddAnalyzed("reassociate", (fn, _) => Conservative(() => Reassociate.Run(fn)))
+    .AddAnalyzedWhen(optimizeForSpeed, "fpfast",
+      (fn, _) => Conservative(() => FpFastMath.Run(fn, IrFastMathFlags.Fast)))
+    .AddAnalyzed("eqsat", (fn, _) => Conservative(() => EqualitySaturation.Run(fn)))
+    .AddAnalyzed("verified-arith", (fn, _) => Conservative(() => VerifiedArithmeticLowering.Run(fn, optimizeForSpeed)))
+    .AddAnalyzed("polynomial", (fn, _) => Conservative(() => PolynomialEvaluation.Run(fn)))
+    .AddAnalyzed("demote", (fn, _) => Conservative(() => FloatDemotion.Run(fn)))
+    .AddAnalyzed("ivsimplify", InductionVariableSimplification.Run)
+    .AddAnalyzed("phicong", (fn, _) => Conservative(() => PhiCongruence.Run(fn)))
     .AddAnalyzed("gvn", Gvn.Run)
-    .Add("memopt", RedundantMemory.Run)
-    .Add("dse", DeadStoreElim.Run)
-    .Add("interchange", LoopInterchange.Run)
+    .AddAnalyzed("memopt", (fn, _) => Conservative(() => RedundantMemory.Run(fn)))
+    .AddAnalyzed("dse", (fn, _) => Conservative(() => DeadStoreElim.Run(fn)))
+    .AddAnalyzed("interchange", (fn, _) => Conservative(() => LoopInterchange.Run(fn)))
     .AddAnalyzed("licm", Licm.Run)
-    .Add("reciprocal-reuse", fn => ReciprocalSequenceReuse.Run(fn, arithmeticCostModel))
-    .Add("unswitch", LoopUnswitch.Run)
-    .Add("loopversion", LoopVersioning.Run)
-    .Add("dce", Dce.Run)
-    .Add("allocsink", AllocationSinking.Run)
-    .Add("closed-form", RecurrenceClosedForm.Run)
-    .AddWhen(optimizeForSpeed, "deadloop", DeadLoopElimination.Run)
-    .Add("ifconv", IfConversion.Run)
-    .Add("simplifycfg", SimplifyCfg.Run)
-    .Add("tailrec", TailRecursion.Run)
-    .Add("switchform", SwitchFormation.Run)
+    .AddAnalyzed("reciprocal-reuse", (fn, analyses) => ReciprocalSequenceReuse.Run(fn, arithmeticCostModel, analyses))
+    .AddAnalyzed("unswitch", (fn, _) => Conservative(() => LoopUnswitch.Run(fn)))
+    .AddAnalyzed("loopversion", (fn, _) => Conservative(() => LoopVersioning.Run(fn)))
+    .AddAnalyzed("dce", (fn, _) => Conservative(() => Dce.Run(fn)))
+    .AddAnalyzed("allocsink", (fn, _) => Conservative(() => AllocationSinking.Run(fn)))
+    .AddAnalyzed("closed-form", (fn, _) => Conservative(() => RecurrenceClosedForm.Run(fn)))
+    .AddAnalyzedWhen(optimizeForSpeed, "deadloop", (fn, _) => Conservative(() => DeadLoopElimination.Run(fn)))
+    .AddAnalyzed("ifconv", (fn, _) => Conservative(() => IfConversion.Run(fn)))
+    .AddAnalyzed("simplifycfg", (fn, _) => Conservative(() => SimplifyCfg.Run(fn)))
+    .AddAnalyzed("tailrec", (fn, _) => Conservative(() => TailRecursion.Run(fn)))
+    .AddAnalyzed("switchform", (fn, _) => Conservative(() => SwitchFormation.Run(fn)))
     .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)
     .AddModulePassWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
     .AddModulePassWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
@@ -120,4 +122,14 @@ public static class IrMiddleEndPipeline {
     .AddModulePassWhen(includeModulePasses, "devirt", WholeProgramDevirtualization.Run)
     .AddModulePassWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run)
     .AddModulePassWhen(includeModulePasses && optimizeForSize, "semantic-merge", SemanticFunctionMerging.Run);
+
+  /// <summary>
+  /// Adapts a transform that does not currently consume analyses to the analysis-aware execution contract.
+  /// Mutating transforms invalidate all cached facts; unchanged transforms preserve the complete cache.
+  /// This is deliberately local to pipeline policy so no second legacy registration API can reappear.
+  /// </summary>
+  private static IrPassResult Conservative(Func<int> run) {
+    var changes = run();
+    return changes == 0 ? IrPassResult.Unchanged : IrPassResult.Changed(changes);
+  }
 }
