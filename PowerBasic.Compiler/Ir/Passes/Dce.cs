@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -10,6 +12,24 @@ public static class Dce {
 
   /// <summary>Removes dead instructions in place; returns how many were removed.</summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return RunCore(fn);
+  }
+
+  /// <summary>
+  /// Analysis-aware entry used by the middle end. DCE never removes terminators, so CFG-derived
+  /// analyses remain valid while value-derived analyses are invalidated when an instruction dies.
+  /// </summary>
+  internal static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    var removed = RunCore(fn);
+    return removed == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(removed, IrAnalysisSets.Cfg);
+  }
+
+  private static int RunCore(IrFunction fn) {
     var removed = 0;
     var worklist = new Queue<IrInstruction>(fn.AllInstructions);
     while (worklist.Count > 0) {
