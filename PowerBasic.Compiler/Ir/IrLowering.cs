@@ -1401,6 +1401,65 @@ public sealed partial class IrLowering {
         this._b.Call(IrType.Void, this.RuntimeFn("rt_arc", IrType.Void));
         break;
       }
+      // ENVIRON "NAME=VALUE". One string, one call - and the string is CONSUMED, which is why this is
+      // the same shape as KILL below rather than something that has to free anything afterwards.
+      case CommandStmt { Keyword: "ENVIRON", Arguments: [{ } setting] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_set_environ", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(setting));
+        break;
+      // PCOPY from, to: two page numbers, source in AX and destination in DX.
+      case CommandStmt { Keyword: "PCOPY", Arguments: [{ } fromPage, { } toPage] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_pcopy", IrType.Void, IrType.I16, IrType.I16),
+          this.GraphicsWord(fromPage), this.GraphicsWord(toPage));
+        break;
+      // PAINT (x,y), colour [, border]. It floods from the graphics cursor, so it takes its point
+      // through the same cells LINE does; an omitted border means the paint colour itself, which is
+      // what the direct emitter expresses by leaving AX alone and storing it twice.
+      case CommandStmt { Keyword: "PAINT", Arguments: [{ } paintX, { } paintY, { } paintColour, ..] } paintCmd
+          when paintCmd.Arguments.Count <= 4: {
+        this._b.Store(this.GraphicsWord(paintX), this.RuntimeCell("rt_gx1", IrType.I16));
+        this._b.Store(this.GraphicsWord(paintY), this.RuntimeCell("rt_gy1", IrType.I16));
+        var paintInk = this.GraphicsWord(paintColour);
+        this._b.Store(paintInk, this.RuntimeCell("rt_gcolor", IrType.I16));
+        this._b.Store(
+          paintCmd.Arguments.Count == 4 && paintCmd.Arguments[3] is { } paintBorder
+            ? this.GraphicsWord(paintBorder) : paintInk,
+          this.RuntimeCell("rt_gpbord", IrType.I16));
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_paint", IrType.Void));
+        break;
+      }
+      // BSAVE name$, offset, length - the numbers go into their cells first because the filename's
+      // handle wants the register the runtime reads it from.
+      case CommandStmt { Keyword: "BSAVE", Arguments: [{ } saveName, { } saveOffset, { } saveLength] }:
+        this._b.Store(this.GraphicsWord(saveOffset), this.RuntimeCell("rt_bofs", IrType.I16));
+        this._b.Store(this.GraphicsWord(saveLength), this.RuntimeCell("rt_blen", IrType.I16));
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_bsave", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(saveName));
+        break;
+      // BLOAD name$ [, offset] - with no offset the block goes back where BSAVE recorded it, which
+      // rt_bhasofs is how the runtime is told.
+      case CommandStmt { Keyword: "BLOAD", Arguments: [{ } loadName, ..] } loadCmd
+          when loadCmd.Arguments.Count <= 2: {
+        var hasOffset = loadCmd.Arguments.Count == 2 && loadCmd.Arguments[1] is not null;
+        if (hasOffset)
+          this._b.Store(this.GraphicsWord(loadCmd.Arguments[1]!), this.RuntimeCell("rt_bofs", IrType.I16));
+        this._b.Store(new IrConstantInt(IrType.I16, hasOffset ? 1 : 0),
+          this.RuntimeCell("rt_bhasofs", IrType.I16));
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_bload", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(loadName));
+        break;
+      }
+      // PLAY is a parse-and-ignore stub on the direct path: the tune is EVALUATED and dropped. Doing
+      // the same here rather than declining keeps the two paths agreeing about a program that plays
+      // music - neither makes a sound, and both run the side effects in the argument.
+      case CommandStmt { Keyword: "PLAY" } playCmd: {
+        foreach (var tune in playCmd.Arguments)
+          if (tune is not null)
+            _ = this._model.TypeOf(tune) is StringType or FlexType
+              ? this.LowerStringExpr(tune)
+              : this.LowerExpr(tune);
+        break;
+      }
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
         break;
@@ -4408,6 +4467,14 @@ public sealed partial class IrLowering {
     if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
         this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer));
+    // PLAY(n) asks how much of the tune is still queued, and this runtime has no queue - so the
+    // answer is nought whatever is asked, which is what the direct emitter emits too. The ARGUMENT is
+    // still evaluated: it may have side effects, and dropping those would be a difference between the
+    // paths rather than a shared limitation.
+    if (name.Equals("PLAY", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1) {
+      _ = this.LowerExpr(call.Arguments[0]);
+      return this.Coerce(new IrConstantInt(IrType.I16, 0), PbType.Integer, this._model.TypeOf(call));
+    }
     // POINT(x, y) reads a pixel back, and takes its pair in the same registers PSET writes with.
     if (name.Equals("POINT", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2)
       return this.Coerce(
@@ -4814,6 +4881,9 @@ public sealed partial class IrLowering {
               Num(0), new IrConstantInt(IrType.I32,
                 (Math.Clamp((int)digits.Value, 1, 32) << 8) | (name == "HEX$" ? 4 : name == "OCT$" ? 3 : 1)))
           : throw new IrLoweringException($"{name} with a non-constant digit count"),
+      // ENVIRON$("NAME") reads one variable back; the runtime answers a fresh string handle.
+      "ENVIRON$" when ci.Arguments.Count == 1 =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_environ", IrType.Ptr, IrType.Ptr), Str(0)),
       "HEX$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_hex", IrType.Ptr, IrType.I32), Num(0)),
       "OCT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_oct", IrType.Ptr, IrType.I32), Num(0)),
       "BIN$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_bin", IrType.Ptr, IrType.I32), Num(0)),

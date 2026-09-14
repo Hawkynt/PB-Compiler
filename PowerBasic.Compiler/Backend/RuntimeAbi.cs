@@ -725,6 +725,20 @@ internal static class RuntimeAbi {
     ["rt_point"] = new("rt_point",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.BX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.Pair),
+    // PAINT floods from the point in rt_gx1/rt_gy1 with rt_gcolor up to rt_gpbord, so it takes its
+    // arguments the way LINE does and for the same reason - the point IS the graphics cursor.
+    ["rt_paint"] = new("rt_paint", [], _callerSaved),
+    // PCOPY from, to -> AX = source page, DX = destination page
+    ["rt_pcopy"] = new("rt_pcopy",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // BSAVE / BLOAD take the filename in AX; the offset and length travel in cells because the
+    // string handle wants the register. rt_bhasofs is how BLOAD says whether an offset was given at
+    // all - with none, the block goes back where BSAVE recorded it.
+    ["rt_bsave"] = new("rt_bsave", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_bload"] = new("rt_bload", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // ENVIRON "NAME=VALUE" sets one, ENVIRON$("NAME") reads one back
+    ["rt_set_environ"] = new("rt_setenv", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_environ"] = new("rt_environ", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_line"] = new("rt_line", [], _callerSaved),
     ["rt_line_box"] = new("rt_linebox", [], _callerSaved),
     ["rt_line_fill"] = new("rt_linefill", [], _callerSaved),
