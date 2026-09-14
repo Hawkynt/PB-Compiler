@@ -32,6 +32,13 @@ public sealed partial class DosRuntime {
   public Label ConsIn { get; private set; } = null!;
   public Label ConsOut { get; private set; } = null!;
 
+  /// <summary>
+  /// INSTAT: -1 when a keystroke is waiting, 0 when none is. A routine rather than the four
+  /// instructions the direct emitter writes inline, because the ROUTED path has no way to spell an
+  /// INT and a conditional in one expression - and the two answer alike either way.
+  /// </summary>
+  public Label InStat { get; private set; } = null!;
+
   /// <summary>DEF SEG with no argument: the default segment goes back to DS.</summary>
   public Label DefSegReset { get; private set; } = null!;
 
@@ -81,6 +88,20 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.DX);
       asm.Pop(Reg.CX);
       asm.Pop(Reg.BX);
+      asm.Ret();
+    }
+
+    // INSTAT: BIOS keyboard status. AH=1 peeks without consuming, and the zero flag is the answer.
+    this.InStat = asm.MarkLabel("rt_instat");
+    {
+      var noKey = asm.DefineLabel();
+      asm.Mov(Reg.AH, (Imm)1);
+      asm.Int(0x16);
+      asm.Jz(noKey);
+      asm.Mov(Reg.AX, -1);
+      asm.Ret();
+      asm.MarkLabel(noKey);
+      asm.Xor(Reg.AX, Reg.AX);
       asm.Ret();
     }
 

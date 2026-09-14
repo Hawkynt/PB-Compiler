@@ -163,13 +163,28 @@ public sealed class BackendPagedArrayTests {
   }
 
   /// <summary>
-  /// <c>FRE(-11)</c> is the free EMS byte count and lowers; every other FRE answers an advisory
-  /// constant after CONSUMING its argument, which is an ownership rule the IR does not model.
+  /// <c>FRE(-11)</c> is the free EMS byte count, which the runtime really can answer. Every other
+  /// spelling is an advisory constant - memory management is not modelled on either path - and the
+  /// argument is still evaluated, because discarding it is not free.
+  ///
+  /// <para>
+  /// A STRING argument is a handle the call RELEASES: that is what <c>FRE("")</c> MEANS, compact the
+  /// heap. Dropping it rather than freeing it would have the two paths disagree about ownership,
+  /// which is why this used to decline instead of answering - and is what the free below is.
+  /// </para>
   /// </summary>
   [Test]
-  public void Lower_GivenFreOtherThanTheEmsForm_ThenDeclines() {
+  public void Lower_GivenFre_ThenTheEmsFormAsksTheRuntimeAndTheRestAnswerAnAdvisory() {
     Assert.That(IrLowering.TryLowerModule(Bind("PRINT FRE(-11)"), out _), Is.Not.Null);
-    Assert.That(IrLowering.TryLowerModule(Bind("a$ = \"x\"\nPRINT FRE(a$)"), out var reason), Is.Null);
-    Assert.That(reason, Does.Contain("FRE"));
+
+    var module = IrLowering.TryLowerModule(Bind("a$ = \"x\"\nPRINT FRE(a$)"), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    var calls = module!.FindFunction("main")!.Blocks
+      .SelectMany(b => b.Instructions)
+      .OfType<IrCall>()
+      .Select(c => (c.Callee as IrFunction)?.Name)
+      .ToList();
+    Assert.That(calls, Does.Contain("rt_str_free"), "FRE(s$) consumes the handle it is given");
+    Assert.That(calls, Does.Not.Contain("rt_ems_fre"), "only FRE(-11) asks the EMS driver");
   }
 }

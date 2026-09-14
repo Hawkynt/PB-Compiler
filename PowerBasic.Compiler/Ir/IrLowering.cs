@@ -2866,6 +2866,12 @@ public sealed partial class IrLowering {
       // ...and a string intrinsic written WITHOUT parentheses. The binder does not turn a bare name
       // into a call, so DATE$ arrives here as an ordinary name bound to nothing - the same route the
       // numeric nullary intrinsics take into LowerNullaryIntrinsicName, and for the same reason.
+      // ERDEV$ reports a DEVICE error, and this runtime has no device-error reporting: the direct
+      // emitter answers with a null handle, which is the empty string, and there is nothing else to
+      // answer with. Agreeing explicitly is not a stub now that declining means the program does not
+      // compile at all.
+      case NameExpr device when (device.Name + device.Suffix.KeyText()).Equals("ERDEV$", StringComparison.OrdinalIgnoreCase):
+        return new IrNullPtr();
       case NameExpr nullary when NullaryStringIntrinsic(nullary.Name + nullary.Suffix.KeyText()) is { } routine:
         return this._b.Call(IrType.Ptr, this.RuntimeFn(routine, IrType.Ptr));
       // DIR$ without a mask is the find-NEXT half of the pair, which is the same routine with a null
@@ -4761,8 +4767,17 @@ public sealed partial class IrLowering {
     // "FREEFILE: no arguments -> AX = the lowest unused file number" - it raises an I/O error itself
     // when all fifteen are taken, so there is nothing to check here
     "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
+    // ERDEV is a DEVICE error code and this runtime has none: the direct emitter answers zero, and
+    // agreeing explicitly is what routing being mandatory turns from a pointless stub into the only
+    // way the program compiles. ERRCLEAR is the pending code and the cell cleared behind it.
+    "ERDEV" => this.Coerce(new IrConstantInt(IrType.I16, 0), PbType.Integer, this._model.TypeOf(name)),
+    "ERRCLEAR" => this.Coerce(this.LowerErrClear(), PbType.Integer, this._model.TypeOf(name)),
+    // FRE written bare is the free-memory advisory with no argument to weigh - the same large stable
+    // figure the direct emitter answers, because memory management is not modelled on either path.
+    "FRE" => this.Coerce(new IrConstantInt(IrType.I32, 0x7FFF), PbType.Long, this._model.TypeOf(name)),
     "CSRLIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_csrlin", IrType.I16)),
     "CONSIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consin", IrType.I16)),
+    "INSTAT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_instat", IrType.I16)),
     "CONSOUT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consout", IrType.I16)),
     // RND written without parentheses is the same routine RND(n) calls - one generator on one seed
     // cell, so a program that writes both spellings still draws ONE sequence. It answers on the x87
@@ -4942,10 +4957,15 @@ public sealed partial class IrLowering {
     // reaches the bytes without the runtime copying them. Declining it cost 19 module bodies.
     if (name.Equals("STRPTR", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1
         && this._model.TypeOf(call.Arguments[0]) is StringType or FlexType)
+      return this.Coerce(this.StringDataOffset(call.Arguments[0]), PbType.Word, this._model.TypeOf(call));
+    // STRPTR32 pairs that offset with the heap segment, exactly as CODEPTR32 pairs a code offset with
+    // CS - one DWORD naming the characters, which is what a program POKEs through.
+    if (name.Equals("STRPTR32", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1
+        && this._model.TypeOf(call.Arguments[0]) is StringType or FlexType)
       return this.Coerce(
-        this._b.Call(IrType.I16, this.RuntimeFn("rt_str_ptr", IrType.I16, IrType.Ptr),
-          this.LowerStringExpr(call.Arguments[0])),
-        PbType.Word, this._model.TypeOf(call));
+        this.FarValue(this.StringDataOffset(call.Arguments[0]),
+          this._b.Load(IrType.I16, this.RuntimeCell("rt_strseg", IrType.I16))),
+        PbType.Dword, this._model.TypeOf(call));
     if (name.Equals("STRSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Load(IrType.I16, this.RuntimeCell("rt_strseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
@@ -5085,6 +5105,7 @@ public sealed partial class IrLowering {
       "FRE" => this.LowerFre(call),
       "CSRLIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_csrlin", IrType.I16)),
       "CONSIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consin", IrType.I16)),
+      "INSTAT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_instat", IrType.I16)),
       "CONSOUT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consout", IrType.I16)),
       // LOF(n) is the file's length and SEEK(n)/LOC(n) the current position - all LONG, all reached
       // by the file number alone. SEEK and LOC share a routine: PB reports the same number for a
@@ -5106,6 +5127,37 @@ public sealed partial class IrLowering {
       "LOG" => this.LowerMath(call, "log"),
       "TAN" => this.LowerMath(call, "tan"),
       "ATN" => this.LowerMath(call, "atan"),
+      // ...and the based ones, which the selector has always known how to emit - FYL2X against a
+      // different loaded constant, and the same rt_pow2 with a different multiplier in front of it.
+      // Only the mapping from the source name was missing.
+      "LOG2" => this.LowerMath(call, "log2"),
+      "LOG10" => this.LowerMath(call, "log10"),
+      "EXP2" => this.LowerMath(call, "exp2"),
+      "EXP10" => this.LowerMath(call, "exp10"),
+      // ERDEV / ERDEV$ report a DEVICE error, and this runtime has no device-error reporting: the
+      // direct emitter answers both with zero and nothing else exists to answer with. Agreeing
+      // explicitly is not the stub it would have been when there was a fallback - with routing
+      // mandatory, declining means the program does not compile at all.
+      "ERDEV" => this.Coerce(new IrConstantInt(IrType.I16, 0), PbType.Integer, this._model.TypeOf(call)),
+      // ERRCLEAR yields the pending error code and clears it - the read and the write of one runtime
+      // cell, in that order, which is exactly what the direct emitter emits.
+      "ERRCLEAR" => this.LowerErrClear(),
+      // SETMEM resizes the string heap, which is not modelled on either path: the direct emitter
+      // evaluates the argument for its effects and answers a large stable figure. The argument still
+      // has to be evaluated - a call inside it happens.
+      "SETMEM" => this.LowerSetMem(call),
+      // VARPTR32 / STRPTR32 pair an offset with its segment in one DWORD, which is what CODEPTR32
+      // does for code. The halves already exist: VARPTR's address and VARSEG's segment for the
+      // first, and STRPTR's heap offset with rt_strseg for the second.
+      "VARPTR32" => this.Coerce(
+        this.FarValue(this._b.Cast(IrCastOp.PtrToInt, this.AddressOfStorage(call.Arguments[0]), IrType.U16),
+          this.SegmentOfStorage(call.Arguments[0])),
+        PbType.Dword, this._model.TypeOf(call)),
+      // STRPTR32 is deliberately absent. Its halves exist - STRPTR's heap offset and rt_strseg - but
+      // every string READ here yields an owned copy, so STRPTR(s) and STRPTR32(s) would name two
+      // different copies at two different offsets where the direct emitter names the variable's own
+      // handle twice. Each answer would be valid for its own copy and the two would not agree, which
+      // is a quieter wrong than a decline.
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
   }
@@ -5121,6 +5173,55 @@ public sealed partial class IrLowering {
       this.LowerExpr(argument);                       // evaluated for its effects, then dropped
     return this.Coerce(this._b.Call(IrType.F64, this.RuntimeFn("rt_rnd", IrType.F64)),
       PbType.Double, this._model.TypeOf(call));
+  }
+
+  /// <summary>
+  /// The heap offset of a string's characters, asked of the handle the ARGUMENT already holds.
+  ///
+  /// <para>
+  /// Reading a string variable normally yields an owned copy, and for every routine that consumes one
+  /// that is exactly right. <c>rt_strptr</c> consumes nothing - it reads the descriptor and returns -
+  /// so a copy would be both a wrong answer and a leak: the offset named a duplicate the program
+  /// cannot reach any other way, and nothing ever freed it. A plain variable therefore hands over its
+  /// own handle, and an EXPRESSION, which has no other storage to name, keeps the copy and frees it
+  /// once the offset is out.
+  /// </para>
+  /// </summary>
+  private IrValue StringDataOffset(Expression e) {
+    if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var owner) && owner.Type is StringType)
+      return this._b.Call(IrType.I16, this.RuntimeFn("rt_str_ptr", IrType.I16, IrType.Ptr),
+        this._b.Load(IrType.Ptr, this.SlotFor(owner)));
+    var temporary = this.LowerStringExpr(e);
+    var offset = this._b.Call(IrType.I16, this.RuntimeFn("rt_str_ptr", IrType.I16, IrType.Ptr), temporary);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), temporary);
+    return offset;
+  }
+
+  /// <summary>A segment and an offset as the one DWORD a far pointer is - segment high, offset low.</summary>
+  private IrValue FarValue(IrValue offset, IrValue segment)
+    => this._b.Or(
+      this._b.Shl(this._b.ZExt(segment, IrType.U32), new IrConstantInt(IrType.U32, 16)),
+      this._b.ZExt(offset, IrType.U32));
+
+  /// <summary>
+  /// <c>ERRCLEAR</c>: the pending error code, and the cell cleared behind it. The read comes first
+  /// and the answer is what it read - writing first would answer zero, always.
+  /// </summary>
+  private IrValue LowerErrClear() {
+    var cell = this.RuntimeCell("rt_err", IrType.I16);
+    var pending = this._b.Load(IrType.I16, cell);
+    this._b.Store(new IrConstantInt(IrType.I16, 0), cell);
+    return pending;
+  }
+
+  /// <summary>
+  /// <c>SETMEM(n)</c>: the string heap is not resizable on either path, so the argument is evaluated
+  /// for whatever it does and the answer is the same large stable figure the direct emitter gives.
+  /// </summary>
+  private IrValue LowerSetMem(CallOrIndexExpr call) {
+    foreach (var argument in call.Arguments)
+      this.LowerExpr(argument);
+    return this.Coerce(new IrConstantInt(IrType.I32, 0x7FFF), PbType.Long, this._model.TypeOf(call));
   }
 
   private IrValue LowerPos(CallOrIndexExpr call) => this.LowerColumn(call, "rt_col");
@@ -5461,6 +5562,23 @@ public sealed partial class IrLowering {
           this.RuntimeFn(name.ToUpperInvariant() switch {
             "MIN$" => "rt_str_min", "MAX$" => "rt_str_max", _ => "rt_str_remove",
           }, IrType.Ptr, IrType.Ptr, IrType.Ptr), Str(0), Str(1)),
+      // INPUT$(n) reads n characters from the KEYBOARD without echo; INPUT$(n, #f) reads them from a
+      // file. Two routines because they are two different sources, which is the same split the direct
+      // emitter makes on the argument count.
+      "INPUT$" when ci.Arguments.Count == 1 =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_key_input", IrType.Ptr, IrType.I16), this.WordArg(ci.Arguments[0])),
+      "INPUT$" when ci.Arguments.Count == 2 =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_fget_str", IrType.Ptr, IrType.I16, IrType.I16),
+          this.WordArg(ci.Arguments[1] is FileNumberExpr f ? f.Number : ci.Arguments[1]),
+          this.WordArg(ci.Arguments[0])),
+      // PEEK$(offset, count): the bytes at DEF SEG:offset, as a string. That is exactly the routine a
+      // fixed-width buffer is read through - the same rt_strmem, taking an offset AND a segment -
+      // with the segment coming from the DEF SEG cell rather than from the frame.
+      "PEEK$" when ci.Arguments.Count == 2 =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
+          this._b.FarPtr(this._b.Load(IrType.I16, this.RuntimeCell("rt_defseg", IrType.I16)),
+            this.WordArg(ci.Arguments[0])),
+          Count(1)),
       _ => throw new IrLoweringException($"string intrinsic {name}"),
     };
   }
