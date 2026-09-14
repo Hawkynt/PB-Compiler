@@ -247,6 +247,13 @@ public sealed class LlvmEmitter {
     IrBlockAddress ba => $"blockaddress(@{ba.Block.Parent?.Name ?? throw new Backend.BackendInvariantException(
       "LLVM back end", "LlvmEmitter.Ref",
       "a block whose address is taken belongs to a function (IrFunction.AddBlock sets Parent)")}, %{ba.Block.Label})",
+    // A far entry thunk is one word of 16-bit stack discipline, not a function LLVM can name: the
+    // adapter has no IR body to emit and its whole content is the difference between a far call and a
+    // near return. Declining keeps the module honest rather than pointing a delegate at the callee
+    // and losing the adaptation.
+    IrFarEntry farEntry => throw new EmitDeclinedException(
+      $"LLVM emission: the far entry thunk of '{farEntry.Target.Name}' - a real-mode adapter between "
+      + "a far call and a near return, which has no body to emit here"),
     IrGlobalValue gv => "@" + gv.Name,
     // Not "%undef": AssignNames names every parameter and every non-void instruction of the function
     // before a line of it is emitted, so a value with no name here is one from ANOTHER function, or a

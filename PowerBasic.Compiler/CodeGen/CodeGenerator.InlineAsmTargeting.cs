@@ -65,7 +65,8 @@ public sealed partial class CodeGenerator {
       return RuntimeCpuFeatures.GeneralPurpose32;
 
     if (!mnemonic.StartsWith('F') && !IsVectorMnemonic(mnemonic)
-        && (ContainsDwordGp(text) || text.Contains("DWORD PTR", StringComparison.Ordinal)))
+        && (ContainsDwordGp(text)
+          || (text.Contains("DWORD PTR", StringComparison.Ordinal) && !IsFarPointerOperand(mnemonic))))
       return RuntimeCpuFeatures.GeneralPurpose32;
 
     if (mnemonic == "EMMS")
@@ -101,6 +102,25 @@ public sealed partial class CodeGenerator {
 
     return RuntimeCpuFeatures.None;
   }
+
+  /// <summary>
+  /// Whether <c>DWORD PTR</c> after this mnemonic means a FAR POINTER rather than a 32-bit operand.
+  ///
+  /// <para>
+  /// The distinction is the whole of the 8086's segmented memory and predates the 386 by a decade:
+  /// <c>CALL DWORD PTR [cell]</c> is <c>FF /3</c>, a far call through a seg:off pair, and
+  /// <c>LES BX, DWORD PTR [cell]</c> is the load that produces one. Neither is a wide operand and
+  /// neither needs a 386 - reading the size as one rejected <c>$CPU 8086</c> code that every 8086 runs,
+  /// and the four such calls in the corpus's timer are exactly the far dispatch a delegate performs.
+  /// </para>
+  /// <para>
+  /// A REGISTER dword is unaffected and still means 386: <c>CALL EAX</c> is caught by the operand
+  /// scan above, which this does not touch. <c>LFS</c>/<c>LGS</c>/<c>LSS</c> are deliberately absent -
+  /// those segment registers arrived with the 386 themselves.
+  /// </para>
+  /// </summary>
+  private static bool IsFarPointerOperand(string mnemonic)
+    => mnemonic is "CALL" or "JMP" or "LES" or "LDS";
 
   private bool TryLowerCmov(InlineInstruction instruction, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;

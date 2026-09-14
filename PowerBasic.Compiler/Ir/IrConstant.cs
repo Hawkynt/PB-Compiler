@@ -149,6 +149,36 @@ public sealed class IrBlockAddress(IrBasicBlock block) : IrConstant(IrType.Ptr) 
 }
 
 /// <summary>
+/// The FAR ENTRY of a function - the address a far call may reach it at, which is not the function's
+/// own label.
+///
+/// <para>
+/// A procedure here is near: it ends in <c>RET n</c>, which pops one word. A far call pushes two, so
+/// calling one that way leaves the return segment on the stack and returns to nowhere. The entry
+/// thunk is the adapter - it pops the far return address, pushes back only its offset, and jumps into
+/// the procedure, whose ordinary <c>RET n</c> then returns straight to the far call site. The program
+/// is a single code segment, so the segment word it drops is always the caller's own.
+/// </para>
+/// <para>
+/// It is a distinct value rather than a flag on the function because it is a distinct ADDRESS: both
+/// are "where this procedure is", and a <c>CODEPTR</c> that answered with the wrong one would be a
+/// number that looks right and calls wrong. It exists so a pb36 delegate and a <c>CALL DWORD</c>
+/// target can be stored as the same 32-bit value the direct emitter stores, which is what lets a
+/// closure built in one path be called from the other.
+/// </para>
+/// </summary>
+public sealed class IrFarEntry(IrFunction target) : IrConstant(IrType.Ptr) {
+  /// <summary>The procedure the thunk jumps into.</summary>
+  public IrFunction Target { get; } = target;
+
+  /// <summary>The thunk's label name - the one the whole-program codegen binds for it.</summary>
+  public string ThunkName => ThunkNameOf(this.Target.Name);
+
+  /// <summary>The thunk label name for a procedure of this name.</summary>
+  public static string ThunkNameOf(string procedure) => "thk_" + procedure;
+}
+
+/// <summary>
 /// An undefined value of a given type. Reading it yields an arbitrary bit pattern;
 /// it marks "any value is acceptable here" so later passes are free to choose one.
 /// </summary>

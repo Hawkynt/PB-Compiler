@@ -469,7 +469,7 @@ internal static class Spiller {
     var filled = new List<Asm.Reg>();
     for (var j = index - 1; j >= 0; --j) {
       var instruction = block.Instructions[j];
-      if (instruction.Opcode is MOpcode.Call or MOpcode.InlineAsm)
+      if (instruction.Opcode is MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm)
         break;                                   // past the previous call, or out of the staging run
       foreach (var register in instruction.Clobbers)
         if (!filled.Contains(register))
@@ -486,6 +486,7 @@ internal static class Spiller {
     for (var j = index; j < block.Instructions.Count; ++j)
       switch (block.Instructions[j].Opcode) {
         case MOpcode.Call:
+        case MOpcode.CallFar:
           return true;
         case MOpcode.InlineAsm:
           return false;                          // hand-written assembly is nobody's argument staging

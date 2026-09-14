@@ -38,33 +38,26 @@ done
 PBC_X_BACKEND_STRICT=1 dotnet test PowerBasic.Compiler.Tests -c Release --filter "Category!=Performance"
 ```
 
-**The corpus is down to four declines** (`Timer_InterruptHandler`, `Timer_InterruptHandler8086`, `Scroll_HardwareVertical`, `CheckWidth`), from 127. **The suite is at 337 failing tests over 67 distinct constructs**, and that gap is the honest size of gate 1: the corpus exercises the graphics subset of the language, and the suite exercises all of it.
+**The corpus is down to four declines** (`Timer_InterruptHandler`, `Timer_InterruptHandler8086`, `Scroll_HardwareVertical`, `CheckWidth`), from 127. **The suite is at 49 failing tests**, from 337, and that gap is the honest size of gate 1: the corpus exercises the graphics subset of the language, and the suite exercises all of it.
 
 Read the two together before estimating. A corpus row is usually one procedure counted once per suite that includes it, and the `.dyn.g.*` "no addressable cell" rows are **cascade** — `SharedDynArrayUsersRouteTogether` hands a shared dynamic array's descriptor back to the direct emitter the moment one user of it is not routed, so a single procedure that cannot lower denies the routed side every array its file touches. One GIF header field was holding nine procedures.
 
-The suite's list, largest first — it is a long tail of unimplemented language surface rather than one blocker:
+The suite's list, largest first. A row counts DECLINE MESSAGES rather than tests — one failing test usually reports the same reason for every procedure in its program, so the counts are roughly double the tests behind them:
 
-| tests | first decline |
+| declines | first decline |
 |---:|---|
-| 89 | `selection: inline asm: a name in it is not a variable this pass could bind` (the `InlineAsmVirtualization` families: BMI, POPCNT, SSE) |
-| 56 | `lowering: unsupported statement: SCREEN` |
-| 12 | `lowering: unsupported type for IR lowering: ProcPtrType` |
-| 12 | `lowering: string intrinsic REMOVE$` |
-| 10 | `lowering: unsupported expression: IfExpr` |
-| 10 | `lowering: intrinsic ROUND` |
-| 9 | `lowering: intrinsic CEIL` |
-| 8 | `lowering: string intrinsic MIN$` |
-| 8 | `lowering: unsupported statement: TryStmt` |
-| 7 | `lowering: string intrinsic ENVIRON$` |
-| 7 | `lowering: intrinsic SCREEN with 2 arguments` |
-| 6 | `lowering: unsupported statement: ENVIRON`, `intrinsic FILEATTR with 2 arguments`, `metastatement $ISA` |
-| 5 | `lowering: unsupported statement: PCOPY`, `intrinsic ROUND with 2 arguments` |
-| 4 | `MKDIR`, `InterpolatedStringExpr`, `unsupported binary op ShiftLeft`, `selection: operand: IrCast has no register` |
-| 3 | `BSAVE`, `FRAC`, `PLAY`, `DIM Stack array class`, `selection: cast: SExt i8 -> i16` |
-| 2 | `CallPtrStmt`, `MAX$`, `WideIntType`, delegate parameter/return types, far pointer BYREF to a near parameter, an `!` block writing `BP`/`SP` |
-| 1 each | `BLOAD`, `RMDIR`, `LPOS`, and eleven more |
+| 33 | `allocation: inline asm: DI is set by one ! statement and read by a later one, and an instruction between them destroys it` |
+| 24 | `lowering: delegate value of type ProcPtrType` (a delegate produced by a FUNCTION, which returns eight bytes) |
+| 14 | `lowering: unsupported string expression: NameExpr` |
+| 10 | `lowering: the IR module has no defined function of this name` |
+| 8 | `selection: operand: IrCast has no register`, `lowering: far pointer passed BYREF to a near parameter` |
+| 6 | `lowering: a capturing lambda's closure environment` |
+| 4 | `! block writes BP or SP`, `WideIntType`, `RequireStmt`, `LOGN`, `EXPN`, a UDT value, a delegate RESULT type, a value live across a full-register clobber |
+| 2 each | `IrBinary has no register`, `SExt i8 -> i16`, `VARSEG` of a HUGE element, `SubDecl`/`FunctionDecl` as statements, `ResourceStmt`, `INSTAT`, `FRE`, `ERRCLEAR`, `ERDEV`, and a dozen more |
 
-Nothing on that list is known to be impossible; every one of them is a construct the lowering has no case for yet. The two `allocation:` rows and the `selection: operand:` rows are the exceptions worth reading first, because those are back-end limits rather than missing surface.
+Nothing on that list is known to be impossible; most are constructs the lowering has no case for yet. The `allocation:` rows and the `selection: operand:` rows are the exceptions worth reading first, because those are back-end limits rather than missing surface — and the largest row is now one of them.
+
+Two of the remaining groups are ABI work rather than surface. A **capturing** closure reads its outer locals through the environment pointer that arrives in `BX:CX`, at displacements the direct emitter's frame layout decides; the routed back end lays out its own frames and has no prologue that receives those registers, so closing it means closure conversion (the captured locals moved into a record both sides address the same way) plus a closure entry sequence. A delegate **returned** by a FUNCTION is the same eight bytes crossing the other way, which the result ABI has no shape for.
 
 Closed so far:
 

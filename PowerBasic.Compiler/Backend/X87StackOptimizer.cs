@@ -191,7 +191,7 @@ public static class X87StackOptimizer {
     var depth = 0;
     for (var i = 0; i < writerIndex; ++i) {
       var instruction = candidate.WriterBlock.Instructions[i];
-      if (instruction.Opcode is MOpcode.Call or MOpcode.InlineAsm)
+      if (instruction.Opcode is MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm)
         return false;
       if (!MOpcodes.UsesX87(instruction.Opcode))
         continue;
@@ -217,7 +217,7 @@ public static class X87StackOptimizer {
         ++depth;
         continue;
       }
-      if (instruction.Opcode is MOpcode.Call or MOpcode.InlineAsm || instruction.Clobbers.Count > 0)
+      if (instruction.Opcode is MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm || instruction.Clobbers.Count > 0)
         return false;
       if (!MOpcodes.UsesX87(instruction.Opcode))
         continue;
@@ -392,7 +392,7 @@ public static class X87StackOptimizer {
   }
 
   private static bool CanReorder(MInstr instruction)
-    => instruction.Opcode is not (MOpcode.Call or MOpcode.InlineAsm)
+    => instruction.Opcode is not (MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm)
       && !instruction.IsTerminator
       && instruction.Clobbers.Count == 0
       && !instruction.Effect.WritesMemory
@@ -402,7 +402,7 @@ public static class X87StackOptimizer {
     for (var i = from; i >= 0; --i) {
       if (TryStore(block.Instructions[i], out var stored) && stored.Equals(slot))
         return i;
-      if (block.Instructions[i].Opcode is MOpcode.Call or MOpcode.InlineAsm || block.Instructions[i].IsTerminator)
+      if (block.Instructions[i].Opcode is MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm || block.Instructions[i].IsTerminator)
         return -1;
       if (MOpcodes.UsesX87(block.Instructions[i].Opcode) && StackEffect(block.Instructions[i]) is null)
         return -1;
@@ -415,7 +415,7 @@ public static class X87StackOptimizer {
     var maximum = 0;
     for (var i = from; i < closingStore; ++i) {
       var instruction = block.Instructions[i];
-      if (instruction.Opcode is MOpcode.Call or MOpcode.InlineAsm || instruction.IsTerminator
+      if (instruction.Opcode is MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm || instruction.IsTerminator
           || instruction.Clobbers.Count > 0)
         return false;
       if (!MOpcodes.UsesX87(instruction.Opcode))

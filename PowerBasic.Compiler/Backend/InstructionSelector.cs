@@ -1836,6 +1836,35 @@ public sealed partial class InstructionSelector {
   };
 
   /// <summary>
+  /// The four-word closure a pb36 delegate call goes through, as one DWORD cell - the low half of it,
+  /// which is the far code pointer <c>CALL DWORD PTR</c> reads.
+  ///
+  /// <para>
+  /// It has to be a real cell rather than a computed address: the 8086's far call through memory
+  /// takes an r/m operand and no register form exists, and the lowering always hands over storage
+  /// (the delegate's own slot, or the temporary it copied one into before evaluating arguments) for
+  /// exactly that reason.
+  /// </para>
+  /// </summary>
+  private MOperand? ClosureCell(IrValue closure) => closure switch {
+    // ...at the LAST of the alloca's slots, which is the block's lowest address and therefore its
+    // base - slots are laid out downward from BP while the words are indexed upward, the same
+    // inversion SelectAlloca points its own LEA through. Naming the first slot instead reads the
+    // closure's top word, so the far call went through the environment segment and landed nowhere.
+    IrAlloca alloca when this._slots.TryGetValue(alloca, out var slot)
+      => new MOperand.StackSlot(slot + Math.Max(1, alloca.Count) - 1, MRegSize.Dword),
+    IrGlobalVariable global when IsAddressableGlobal(global)
+      => new MOperand.DataCell(global.Name, 0, MRegSize.Dword),
+    _ => this.DeclineClosureCell(closure),
+  };
+
+  private MOperand? DeclineClosureCell(IrValue closure) {
+    this.Decline($"call: a delegate's closure is {closure.GetType().Name} rather than storage a far "
+      + "call can name");
+    return null;
+  }
+
+  /// <summary>
   /// The WIDTH an inline-asm name denotes, which is the storage's own and not this back end's default.
   ///
   /// <para>
@@ -2667,6 +2696,17 @@ public sealed partial class InstructionSelector {
           this._vregs[cast] = labelReg;
           return true;
         }
+        // The FAR ENTRY of a procedure - its thunk, not its own label. Both are LabelRef and both
+        // resolve through the same callee lookup; naming the thunk is what makes the 32-bit value a
+        // far call may actually reach, which is the whole of what a delegate stores.
+        if (cast.Value is IrFarEntry farEntry) {
+          var thunkReg = this.FreshVreg(to);
+          var thunkDest = new MOperand.Register(thunkReg);
+          var thunk = new MOperand.LabelRef(farEntry.ThunkName);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [thunkDest, thunk], MovEffect(thunkDest, thunk)));
+          this._vregs[cast] = thunkReg;
+          return true;
+        }
         if (cast.Value is IrFunction function) {
           var offsetReg = this.FreshVreg(to);
           var offsetDest = new MOperand.Register(offsetReg);
@@ -2859,15 +2899,22 @@ public sealed partial class InstructionSelector {
       return this.Decline($"call: {calleeName} returns {call.Type} (unsupported result shape)");
 
     var abi = X86CallAbi.For(call.Convention);
-    if (abi.Distance != X86CallDistance.Near)
+    // A pb36 DELEGATE call is far by construction and is the only far one: the code half of a closure
+    // names an entry thunk, which turns the far call back into a near one before the callee sees it.
+    // Every other far convention still declines - there is no far DEFINITION here to return to.
+    var closureCall = call.Convention == IrCallConvention.BasicClosure;
+    if (abi.Distance != X86CallDistance.Near && !closureCall)
       return this.Decline($"call: {calleeName} uses a far return address");
     var callArguments = call.Args.ToList();
-    if (abi.ArgumentRegisters.Count > 0
-        && callArguments.FirstOrDefault(argument => !IsWordRegisterArgument(argument.Type)) is { } unsupported)
-      return this.Decline($"call: {calleeName} uses {call.Convention} register arguments "
-        + $"(word arguments only; got {unsupported.Type})");
 
     var registerArgumentCount = Math.Min(abi.ArgumentRegisters.Count, callArguments.Count);
+    // ...and only of the arguments that ACTUALLY travel in a register. Asking it of all of them
+    // declined a FASTCALL whose fourth argument - long past the three registers, on the stack like any
+    // other - happened to be a LONG, which the stack path has always handled.
+    if (callArguments.Take(registerArgumentCount)
+        .FirstOrDefault(argument => !IsWordRegisterArgument(argument.Type)) is { } unsupported)
+      return this.Decline($"call: {calleeName} uses {call.Convention} register arguments "
+        + $"(word arguments only; got {unsupported.Type})");
     var stackArguments = callArguments.Skip(registerArgumentCount);
     var arguments = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
       ? stackArguments.Reverse()
@@ -2880,7 +2927,16 @@ public sealed partial class InstructionSelector {
     }
 
     MOperand callTarget;
-    if (callee is not null)
+    if (closureCall) {
+      // The target is the closure's own CELL, read as a dword: `CALL DWORD PTR [cell]` is the only
+      // far call the 8086 has through memory, and there is no register form because the address does
+      // not fit in a register. Naming the cell rather than loading it also keeps the address out of
+      // the allocator, which matters here for the same reason it does for inline asm - the call
+      // clobbers everything, so a register holding the target across it has nowhere to live.
+      if (this.ClosureCell(call.Callee) is not { } cell)
+        return false;
+      callTarget = cell;
+    } else if (callee is not null)
       callTarget = new MOperand.LabelRef(callee.Name);
     else {
       // The IR's generic pointer type is a NEAR code offset here, not PB36's source-level fat closure
@@ -2913,7 +2969,7 @@ public sealed partial class InstructionSelector {
     if (callTarget is MOperand.Register)
       callReadRegs.Add(0);
     callReadRegs.AddRange(Enumerable.Range(1, registerArgumentCount));
-    this._current.Instructions.Add(new MInstr(MOpcode.Call, callOperands,
+    this._current.Instructions.Add(new MInstr(closureCall ? MOpcode.CallFar : MOpcode.Call, callOperands,
       new MInstrEffect(WrittenRegs: [], ReadRegs: callReadRegs, ReadsFlags: false, WritesFlags: true,
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));

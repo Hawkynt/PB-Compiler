@@ -10,15 +10,20 @@ namespace PowerBasic.Compiler.Tests.Backend;
 ///
 /// <para>
 /// Of a LABEL these already lowered. Of a procedure they declined - 15 times over the SVGA corpus,
-/// each taking the whole module body with it - on the grounds that the direct emitter answers with a
-/// far entry thunk it synthesizes beside the procedure. It does not: the thunk exists so a FAR call
-/// can reach a near procedure, while CODEPTR asks for the entry OFFSET, which is the procedure's own
-/// label either way.
+/// each taking the whole module body with it.
 /// </para>
 /// <para>
-/// The selector could already name one - <c>PtrToInt</c> of an <c>IrFunction</c> becomes
-/// <c>MOperand.LabelRef</c>, resolved through the same callee lookup a CALL uses - so the whole fix
-/// was saying so in the lowering.
+/// The two spellings answer with DIFFERENT addresses, and have to. <c>CODEPTR</c> is the procedure's
+/// own entry, which is what a near transfer needs. <c>CODEPTR32</c> is a far pointer, and the only
+/// thing a far call may land on is the ENTRY THUNK - a near procedure's <c>RET</c> pops one word
+/// where the far call pushed two, and the thunk is what reconciles them. The direct emitter has
+/// always synthesized one here; a routed <c>CODEPTR32</c> that answered with the near entry was a
+/// number that looked right and returned to nowhere the moment <c>CALL DWORD</c> used it.
+/// </para>
+/// <para>
+/// The selector could already name either - <c>PtrToInt</c> of an <c>IrFunction</c> or an
+/// <c>IrFarEntry</c> becomes <c>MOperand.LabelRef</c>, resolved through the same callee lookup a CALL
+/// uses - so the whole fix was saying which in the lowering.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -32,7 +37,8 @@ public sealed class BackendCodePtrTests {
     b = CODEPTR(Beta)
     w = CODEPTR32(Alpha)
     IF a <> 0 AND b <> 0 AND a <> b THEN PRINT "distinct" ELSE PRINT "BAD"
-    IF (w AND &HFFFF&) = a THEN PRINT "low matches" ELSE PRINT "BAD LOW"
+    IF (w AND &HFFFF&) <> 0 AND (w AND &HFFFF&) <> a THEN PRINT "far entry" ELSE PRINT "BAD FAR"
+    CALL DWORD w BDECL()
     END
     SUB Alpha()
       PRINT "a"
@@ -53,17 +59,24 @@ public sealed class BackendCodePtrTests {
 
   /// <summary>
   /// What is asserted is what an ADDRESS can promise: two different procedures have two different
-  /// entry offsets, neither is zero, and CODEPTR32's low half is the same number CODEPTR gives. The
-  /// offsets themselves are not asserted - they move whenever anything ahead of them in the image
-  /// does - but a lowering that answered 0, or the same label twice, or put the segment in the low
-  /// half, fails every one of these.
+  /// entry offsets, neither is zero, and CODEPTR32's low half is a third address again - the far
+  /// entry, not the near one. The offsets themselves are not asserted (they move whenever anything
+  /// ahead of them in the image does), but a lowering that answered 0, or the same label twice, or
+  /// put the segment in the low half, fails one of these.
+  ///
+  /// <para>
+  /// The <c>CALL DWORD</c> is the assertion that matters: it is the only thing the value is FOR, and
+  /// it is what the near entry cannot satisfy. Calling that one far leaves the return segment on the
+  /// stack and returns into whatever the caller last pushed, so this line either prints "a" or does
+  /// not come back at all.
+  /// </para>
   /// </summary>
   [TestCase(false)]
   [TestCase(true)]
-  public void Run_GivenCodePtrOfProcedures_ThenTheOffsetsAreDistinctAndPaired(bool optimize) {
+  public void Run_GivenCodePtrOfProcedures_ThenTheFarEntryDiffersAndIsCallable(bool optimize) {
     var (output, _) = Run(optimize);
 
-    Assert.That(output, Is.EqualTo("distinct|low matches"));
+    Assert.That(output, Is.EqualTo("distinct|far entry|a"));
   }
 
   /// <summary>

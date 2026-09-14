@@ -45,6 +45,10 @@ public sealed record X86CallAbi(
     X86StackArgumentOrder.LeftToRight, X86StackCleanup.Callee, X86CallDistance.Near, _FASTCALL_REGISTERS);
   private static readonly X86CallAbi _WATCALL = new(IrCallConvention.Watcall,
     X86StackArgumentOrder.RightToLeft, X86StackCleanup.Callee, X86CallDistance.Near, _WATCALL_REGISTERS);
+  /// <summary>The environment far pointer a pb36 closure call hands its callee - offset, then segment.</summary>
+  private static readonly IReadOnlyList<Reg> _CLOSURE_ENV_REGISTERS = Array.AsReadOnly(new[] { Reg.BX, Reg.CX });
+  private static readonly X86CallAbi _BASIC_CLOSURE = new(IrCallConvention.BasicClosure,
+    X86StackArgumentOrder.LeftToRight, X86StackCleanup.Callee, X86CallDistance.Far, _CLOSURE_ENV_REGISTERS);
 
   /// <summary>Returns the compiler's near, real-mode DOS ABI for a source convention.</summary>
   public static X86CallAbi For(IrCallConvention convention) => convention switch {
@@ -54,6 +58,7 @@ public sealed record X86CallAbi(
     IrCallConvention.Stdcall => _STDCALL,
     IrCallConvention.Fastcall => _FASTCALL,
     IrCallConvention.Watcall => _WATCALL,
+    IrCallConvention.BasicClosure => _BASIC_CLOSURE,
     _ => throw new ArgumentOutOfRangeException(nameof(convention), convention, null),
   };
 

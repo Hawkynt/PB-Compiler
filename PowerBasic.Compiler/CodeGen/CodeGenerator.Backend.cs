@@ -169,7 +169,13 @@ public sealed partial class CodeGenerator {
   /// The callee converts that cell through rt_fix_down when the parameter is read.
   /// </summary>
   private static bool IsBackendByValParameterAbiType(PbType type)
-    => IsBackendAbiType(type) || type is BcdType;
+    => IsBackendAbiType(type) || type is BcdType
+    // A DELEGATE crosses BYVAL as its eight bytes, the same four words the direct emitter pushes.
+    // The IR carries it as four i16 arguments rather than one value - eight bytes are not a shape the
+    // type lattice has - and the lowering reassembles them into the closure at entry, so the ABI the
+    // two paths agree on is the stack bytes, not the SSA form. Only BYVAL: a BYREF delegate would be
+    // one pointer word, which the lowering declines rather than guesses at.
+    || type is ProcPtrType;
 
   /// <summary>
   /// Value shapes a FUNCTION result can carry. FIX is admitted here at the OTHER representation from
@@ -231,7 +237,7 @@ public sealed partial class CodeGenerator {
     module.OwnsProcedureAbi = !this._backendAbiRewriteDenied
       && !this._isUnit && !this._allowExternalCalls
       && model.ProcedureList.All(p => p.IsExternal || p.Body is null
-        || module.FindFunction(p.Name) is { IsDeclaration: false });
+        || module.FindFunction(Ir.IrLowering.IrNameOf(p)) is { IsDeclaration: false });
     // The routed path honours the optimizer flag like every other part of the compiler. Without this
     // a --no-optimize build of a routed function was still fully optimized, which made the two builds
     // of a size comparison ONE build and made "optimizer off means vintage behaviour" - the promise
@@ -535,7 +541,7 @@ public sealed partial class CodeGenerator {
     if (!this.UseExperimentalBackend || this._backendModule is null || this._backendProcs is null)
       return true;
     if (!model.ProcedureList.Any(proc => !proc.IsExternal && proc.Body is not null
-        && this._backendModule.FindFunction(proc.Name) is { IsDeclaration: false, SignatureRewritten: true }))
+        && this._backendModule.FindFunction(Ir.IrLowering.IrNameOf(proc)) is { IsDeclaration: false, SignatureRewritten: true }))
       return true;
     return this._backendMain is not null
       && model.ProcedureList.All(proc => proc.IsExternal || proc.Body is null
@@ -924,12 +930,22 @@ public sealed partial class CodeGenerator {
     // function.
     if (name.StartsWith("rt_", System.StringComparison.Ordinal))
       return RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name) ? this._asm.Lbl(name) : null;
+    // A FAR ENTRY THUNK, which is a label this generator synthesizes rather than one any procedure
+    // owns - see Ir.IrFarEntry. Asking for it here REGISTERS it, and EmitFarThunks runs after every
+    // function is emitted, so a routed delegate and a directly emitted CODEPTR32 of the same
+    // procedure name the same adapter and the two paths' closure values are interchangeable.
+    if (name.StartsWith("thk_", System.StringComparison.Ordinal)) {
+      var thunkTarget = name["thk_".Length..];
+      var target = model.ProcedureList.FirstOrDefault(p =>
+        Ir.IrLowering.IrNameOf(p).Equals(thunkTarget, System.StringComparison.OrdinalIgnoreCase) && !p.IsExternal);
+      return target is null ? null : this.ThunkOf(target);
+    }
     if (this.IsBackendSemanticMerge(name))
       return this._asm.Lbl(name);
     if (this.GeneratedCalleeLabel(name) is { } generated)
       return generated;
     var proc = model.ProcedureList.FirstOrDefault(p =>
-      p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
+      Ir.IrLowering.IrNameOf(p).Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
     proc ??= this.DirectCalleeWithCompatibleAbi(name);
     // ...or an EXTERNAL procedure, which has no body here to route and needs none: ProcLabelOf gives
     // it the link symbol its ALIAS names, exactly as a directly-emitted call to it would get. An
@@ -940,7 +956,7 @@ public sealed partial class CodeGenerator {
     // has to be refused here, where refusing costs one function instead of the whole compilation.
     if (proc is null && this._allowExternalCalls)
       proc = model.ProcedureList.FirstOrDefault(p =>
-        p.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase) && p.IsExternal);
+        Ir.IrLowering.IrNameOf(p).Equals(name, System.StringComparison.OrdinalIgnoreCase) && p.IsExternal);
     return proc is null ? null : this.ProcLabelOf(proc);
   }
 
@@ -1186,7 +1202,7 @@ public sealed partial class CodeGenerator {
   /// </param>
   private IEnumerable<string> BackendCalleeNames(Func<Semantics.ProcedureSymbol, bool> isEmitted) {
     foreach (var proc in this.BackendProcs().Keys)
-      if (isEmitted(proc) && this._backendModule?.FindFunction(proc.Name) is { IsDeclaration: false } fn)
+      if (isEmitted(proc) && this._backendModule?.FindFunction(Ir.IrLowering.IrNameOf(proc)) is { IsDeclaration: false } fn)
         foreach (var name in CalleeNames(fn))
           yield return name;
     if (this.BackendMain() is not null && this._backendModule?.FindFunction("main") is { IsDeclaration: false } main)
@@ -1203,13 +1219,19 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>
-  private static IEnumerable<string> CalleeNames(IrFunction fn)
-    => fn.Blocks.SelectMany(b => b.Instructions)
-        .OfType<IrCall>()
-        .Select(c => c.Callee)
-        .OfType<IrFunction>()
-        .Where(f => !f.IsDeclaration)   // a runtime routine has a fixed ABI of its own - it is not converted
-        .Select(f => f.Name);
+  private static IEnumerable<string> CalleeNames(IrFunction fn) {
+    foreach (var instruction in fn.Blocks.SelectMany(b => b.Instructions)) {
+      if (instruction is IrCall { Callee: IrFunction { IsDeclaration: false } called })
+        yield return called.Name;   // a runtime routine has a fixed ABI of its own - it is not converted
+      // A delegate names its target without calling it, and the reference is the whole point: the
+      // procedure a closure carries is reached only through its far entry thunk, so a liveness walk
+      // that looked at calls alone concluded a lambda nothing calls directly is dead and dropped the
+      // body the delegate was about to jump into.
+      foreach (var operand in instruction.Operands)
+        if (operand is IrFarEntry { Target.IsDeclaration: false } farEntry)
+          yield return farEntry.Target.Name;
+    }
+  }
 
   /// <summary>
   /// Whether every defined callee uses the stack ABI emitted at this call site. Speed-optimized
@@ -1232,7 +1254,7 @@ public sealed partial class CodeGenerator {
       return null;
     var matches = model.ProcedureList
       .Where(proc => !proc.IsExternal && proc.Body is not null
-        && proc.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
+        && Ir.IrLowering.IrNameOf(proc).Equals(name, System.StringComparison.OrdinalIgnoreCase))
       .Take(2)
       .ToList();
     // A shared stack convention is necessary but not sufficient: the routed caller must also be able
@@ -1287,6 +1309,17 @@ public sealed partial class CodeGenerator {
       asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
+    // ...but a source parameter is not always ONE IR argument. A pb36 delegate is four, because eight
+    // bytes of closure are not a shape the IR's type lattice has, so an array with one entry per
+    // source parameter is both too short to index and wrong where it does. Where the counts differ,
+    // the incoming layout comes from the IR signature through the same X86CallAbi derivation a
+    // rewritten signature uses - which is also what makes RET n pop the right number of bytes.
+    if (this._backendModule?.FindFunction(Ir.IrLowering.IrNameOf(proc)) is { } routedSignature
+        && routedSignature.Parameters.Count != proc.Parameters.Count
+        && X86CallAbi.TryDefinitionStackLayout(routedSignature, out var widened, out _)) {
+      paramOffsets = widened.ParameterOffsets;
+      paramBytes = widened.ParameterBytes;
+    }
     // Source procedures still get their public/export frame from ProcedureSymbol. Generated private
     // definitions use the equivalent IR-derived layout in CodeGenerator.BackendGenerated.cs.
     //

@@ -145,7 +145,7 @@ public static class MachineScheduler {
     // call stretches its live range across the whole caller-saved file, which is precisely what the
     // allocator cannot satisfy. Scheduling ran before allocation and was making the pressure it then
     // failed on.
-    if (a.Opcode == MOpcode.Call || b.Opcode == MOpcode.Call)
+    if (a.Opcode is MOpcode.Call or MOpcode.CallFar || b.Opcode is MOpcode.Call or MOpcode.CallFar)
       return true;
     // Explicit physical clobbers also delimit pinned-register sequences. Allocation has not happened
     // yet, so an otherwise independent virtual instruction moved into such a sequence could later be
