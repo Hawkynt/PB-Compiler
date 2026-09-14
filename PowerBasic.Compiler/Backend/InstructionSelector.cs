@@ -2505,6 +2505,18 @@ public sealed partial class InstructionSelector {
         this._vregs[cast] = truth;
         return true;
       }
+      // ...and the LONG of it. A truth value is a full word of -1 or 0, so sign-extending it to 32
+      // bits repeats that word: -1 becomes FFFF:FFFF and 0 becomes 0000:0000. Both halves are
+      // therefore the same register, which is what `s& = (a% = b%)` asks for - BASIC's comparison IS
+      // a value, and a LONG one was the shape that declined.
+      case IrCastOp.SExt when from.IsBool && IsWide(to): {
+        if (!this.TryOperand(cast.Value, out var truthWide))
+          return false;
+        var (lowHalf, highHalf) = this.FreshPair(cast);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowHalf, truthWide], MovEffect(lowHalf, truthWide)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [highHalf, truthWide], MovEffect(highHalf, truthWide)));
+        return true;
+      }
       // ...and the BYTE of it. A truth value is a full word of -1 or 0, so its low byte is 0xFF or
       // 0x00 - which IS the byte truth value, with no work to do beyond naming the low half. The
       // rename is the same one a Trunc to a byte uses; the spiller gives each mention its own size

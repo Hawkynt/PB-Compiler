@@ -95,7 +95,12 @@ public sealed class ResourceContractTests {
           return true;
       return false;
     }
-    const string body = "DIM x AS INTEGER\nREQUIRE x = 0, \"XMARKX\"\nPRINT x\n";
+    // The condition has to be UNKNOWABLE here. Written as a bare `x = 0` over a variable that was
+    // never assigned, it is constant-true, and a check that cannot fail is one the optimizer is
+    // entitled to remove - which it does, so the marker went missing from the default build and the
+    // test read that as the contract having been compiled out. LEN(COMMAND$) is the program's own
+    // command line, which no pass can fold.
+    const string body = "DIM x AS INTEGER\nx = LEN(COMMAND$)\nREQUIRE x = 0, \"XMARKX\"\nPRINT x\n";
     Assert.Multiple(() => {
       Assert.That(HasMarker(Compile(body)), Is.True, "default builds keep the check (message literal present)");
       Assert.That(HasMarker(Compile("$OPTIMIZE SPEED\n" + body)), Is.False, "SPEED compiles the contract out");
