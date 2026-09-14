@@ -207,5 +207,23 @@ public static class MachineScheduler {
     return (reads, writes);
   }
 
-  private static int Key(MReg reg) => reg.IsVirtual ? reg.VirtualId : -((int)reg.Physical + 1);
+  /// <summary>
+  /// One scheduler key per resource: a virtual register's id, or a physical register's WORD.
+  ///
+  /// <para>
+  /// The word matters. <c>AL</c>, <c>AH</c> and <c>AX</c> are three different <see cref="Asm.Reg"/>
+  /// values and one resource, and keying them apart hid the dependency in the byte-widening staging:
+  /// <c>XOR AH, AH</c> then <c>MOV AL, v</c> then <c>MOV w, AX</c> reads a word two earlier
+  /// instructions built between them, and with three keys the scheduler saw no reason not to hoist the
+  /// read above both. It did, and <c>SCREEN(3, 2)</c> answered whatever was left in the register.
+  /// </para>
+  /// <para>
+  /// Merging them is an OVER-approximation and safe in the direction that matters: a scheduler that
+  /// sees a dependency which is not there loses a reordering, while one that misses a real dependency
+  /// emits the wrong program.
+  /// </para>
+  /// </summary>
+  private static int Key(MReg reg) => reg.IsVirtual
+    ? reg.VirtualId
+    : -((int)Asm.AsmRegisterEffect.WordOf(reg.Physical) + 1);
 }
