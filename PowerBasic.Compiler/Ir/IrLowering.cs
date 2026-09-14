@@ -3968,7 +3968,11 @@ public sealed partial class IrLowering {
           throw new IrLoweringException("a STACK array with shared storage");
       return;
     }
-    if (d.Class != ArrayClass.Default)
+    // DIM DYNAMIC and DIM STATIC say which HEAP the array lives in, and the binder has already read
+    // them: it marks the symbol's ArrayType IsDynamic or not, and every path below asks the SYMBOL.
+    // So the class needs permission to reach that path rather than a path of its own - written out,
+    // the two spellings of `DIM a%(7)` and `DIM DYNAMIC a%(7)` differ in nothing this lowering does.
+    if (d.Class is not (ArrayClass.Default or ArrayClass.Dynamic or ArrayClass.Static))
       throw new IrLoweringException($"DIM {d.Class} array class");
 
     // A STATIC array is laid out at compile time and the declaration emits nothing. A DYNAMIC one -
