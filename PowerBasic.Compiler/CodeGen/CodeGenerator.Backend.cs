@@ -420,34 +420,54 @@ public sealed partial class CodeGenerator {
     // Generated definitions participate in the exact same reachability set: if a source caller was
     // rebound to an O0283 clone, that clone is now a real private ABI partner rather than a stranded
     // name which forces the caller back to the direct emitter.
-    var routable = candidates.Select(c => c.Proc.Name).ToHashSet(System.StringComparer.OrdinalIgnoreCase);
-    routable.UnionWith(this.BackendSemanticMergeNames);
-    routable.UnionWith(this.BackendGeneratedNames);
-    for (var changed = true; changed;) {
-      changed = false;
-      for (var i = candidates.Count - 1; i >= 0; --i) {
-        if (CalleeNames(candidates[i].Fn)
-            .FirstOrDefault(name => !routable.Contains(name) && !this.CanCallDirectCallee(name))
-            is not { } stranded)
-          continue;
-        this._backendDeclines.Add((candidates[i].Proc.Name, $"routing: calls '{stranded}', which is not routed"));
-        routable.Remove(candidates[i].Proc.Name);
-        candidates.RemoveAt(i);
-        changed = true;
+    // Drops every candidate that calls something not routed and not directly callable, to a fixpoint -
+    // dropping one strands its own callers. Run TWICE, because the set shrinks twice: selection
+    // decides the first membership and ALLOCATION decides the second.
+    void PruneStrandedCallers<T>(List<T> set, System.Func<T, ProcedureSymbol> procOf, System.Func<T, IrFunction> fnOf) {
+      var routable = set.Select(c => Ir.IrLowering.IrNameOf(procOf(c))).ToHashSet(System.StringComparer.OrdinalIgnoreCase);
+      routable.UnionWith(this.BackendSemanticMergeNames);
+      routable.UnionWith(this.BackendGeneratedNames);
+      for (var changed = true; changed;) {
+        changed = false;
+        for (var i = set.Count - 1; i >= 0; --i) {
+          if (CalleeNames(fnOf(set[i]))
+              .FirstOrDefault(name => !routable.Contains(name) && !this.CanCallDirectCallee(name))
+              is not { } stranded)
+            continue;
+          this._backendDeclines.Add((procOf(set[i]).Name, $"routing: calls '{stranded}', which is not routed"));
+          routable.Remove(Ir.IrLowering.IrNameOf(procOf(set[i])));
+          set.RemoveAt(i);
+          changed = true;
+        }
       }
     }
 
+    PruneStrandedCallers(candidates, c => c.Proc, c => c.Fn);
+
+    // ...and again after allocation. A callee that SELECTED and then failed to allocate leaves the
+    // set here, and the pass above has already counted it as routable: its callers stayed routed
+    // pointing at a label nothing would ever bind, and the failure surfaced at EMISSION as a broken
+    // invariant that ended the whole compilation. `Shifted 3 : Shifted 5` under $OPTIMIZE SPEED is
+    // the case - SPEED is also what stops the direct definition being callable, because OptRegParm
+    // may still convert it.
+    var allocated = new List<(ProcedureSymbol Proc, IrFunction Fn, MFunction Machine,
+      IReadOnlyDictionary<int, Reg> Alloc)>();
     foreach (var (proc, irFn, mfn) in candidates) {
       MachineScheduler.Schedule(mfn, this.SelectionTarget);             // schedule first, then allocate the final order
       if (LinearScanAllocator.Allocate(mfn, this.SelectionTarget, out var noRegisters) is not { } alloc) {
         this._backendDeclines.Add((proc.Name, "allocation: " + (noRegisters ?? "unknown")));
         continue;                                 // a value live across a CALL has no register - decline
       }
+      allocated.Add((proc, irFn, mfn, alloc));
+    }
+
+    PruneStrandedCallers(allocated, a => a.Proc, a => a.Fn);
+
+    foreach (var (proc, irFn, mfn, alloc) in allocated)
       // O0070 is optimizer-gated here, after the last middle-end sweep. The IR proof deliberately
       // says nothing about the ABI or future spills; MachineEmitter re-checks both against the final
       // machine function before actually omitting BP.
       this._backendProcs[proc] = (mfn, alloc, this.Optimize && FrameElision.IsCandidate(irFn));
-    }
 
     // An allocation failure can strand a source caller, and a removed source callee can strand an
     // O0284 helper. Conversely removing that helper strands its entry thunks. An O0283 generated
@@ -955,6 +975,17 @@ public sealed partial class CodeGenerator {
     var proc = model.ProcedureList.FirstOrDefault(p =>
       Ir.IrLowering.IrNameOf(p).Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
     proc ??= this.DirectCalleeWithCompatibleAbi(name);
+    // ...and failing that, any LOCAL procedure with a body. Its label is bound whichever emitter takes
+    // it - the liveness closure keeps a routed caller's callee alive - so the question here is only
+    // whether a label EXISTS, and for a defined local one it always does. The ABI question
+    // DirectCalleeWithCompatibleAbi asks was settled when the call was routed.
+    //
+    // Asking it a second time here is what broke: its answer turns on Optimize and OptimizeSpeed, and
+    // those are resolved from $OPTIMIZE between the routing decision and emission. A caller admitted
+    // when the answer was yes reached an emitter where it had become no, and the missing label ended
+    // the whole compilation instead of costing one function.
+    proc ??= model.ProcedureList.FirstOrDefault(p => !p.IsExternal && p.Body is not null
+      && Ir.IrLowering.IrNameOf(p).Equals(name, System.StringComparison.OrdinalIgnoreCase));
     // ...or an EXTERNAL procedure, which has no body here to route and needs none: ProcLabelOf gives
     // it the link symbol its ALIAS names, exactly as a directly-emitted call to it would get. An
     // unoptimized local direct callee was resolved above through DirectCalleeWithCompatibleAbi.
