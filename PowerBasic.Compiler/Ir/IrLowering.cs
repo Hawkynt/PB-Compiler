@@ -916,15 +916,18 @@ public sealed partial class IrLowering {
   /// </summary>
   private (IrValue Address, PbType Element) ElementDataAddress(CallOrIndexExpr expr) {
     var (address, element) = this.ElementAddress(expr, farAllowed: true);
-    // a record element is copied by ADDRESS, not loaded, so it is in the same position as every
-    // other consumer below - the memcpy would take the far pointer for a near one.
+    // A RECORD element is copied by ADDRESS rather than loaded, and the copy is rt_memcpy - whose ABI
+    // row takes each side as a POINTER, which is an offset AND a segment register. So the far pointer
+    // survives the call intact and the copy really is a far one; it was the only consumer that
+    // needed checking, because a record has no value to load instead. What still declines is a far
+    // address in any of the NEAR positions the comment above lists, and those are refused elsewhere.
     //
     // A STRING element is not in that position. Its cell holds a HANDLE, one word, and both consumers
     // of this address move exactly that word: the read loads it and the assignment stores the new one
     // over it. Neither hands the ADDRESS to a string routine, which is what could not survive losing
     // a segment. Refusing it was therefore refusing a load and a store the far path already performs
     // for every scalar, and it cost the last routing class an array parameter had.
-    if (address is IrFarPtr && element is not (ScalarType or StringType))
+    if (address is IrFarPtr && element is not (ScalarType or StringType or UdtType))
       throw new IrLoweringException($"a {element} element of an ABSOLUTE array");
     return (address, element);
   }
@@ -1775,6 +1778,15 @@ public sealed partial class IrLowering {
       // and agreeing with it is the point. HUGE needs none of this: it steps a segment and maps
       // nothing, so its address survives anything the value does.
       if (arrSym.ArrayClass is ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+        // A RECORD element is copied whole and has no value to load, so the ordering argument reads
+        // differently for it: what has to come first is the SOURCE address, because forming it may
+        // map a different page over the one the destination needs.
+        if (arrTargetType.Element is UdtType pagedRecord) {
+          var pagedSource = this.UdtAddress(a.Value);
+          var (pagedInto, _) = this.ElementDataAddress(indexed);
+          this.CopyBlock(pagedInto, pagedSource, pagedRecord.Size);
+          return;
+        }
         var pagedValue = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), arrTargetType.Element);
         var (pagedAddress, _) = this.ElementDataAddress(indexed);
         this._b.Store(pagedValue, pagedAddress);
@@ -2060,8 +2072,26 @@ public sealed partial class IrLowering {
   /// </param>
   private (IrValue Address, UdtField Field) MemberFieldAddress(MemberExpr m, bool arrayFieldAllowed = false) {
     var (recordBase, field) = this.MemberFieldBase(m, arrayFieldAllowed);
-    var address = field.Offset == 0 ? recordBase : this._b.Gep(recordBase, new IrConstantInt(IrType.I32, field.Offset));
-    return (address, field);
+    return (this.OffsetWithin(recordBase, field.Offset), field);
+  }
+
+  /// <summary>
+  /// A fixed byte offset from a base address, in the base's OWN memory.
+  ///
+  /// <para>
+  /// A GEP would be wrong over a far one. <see cref="IrFarPtr"/> is typed as an ordinary pointer -
+  /// its segment travels on the instruction, not in the type - so a GEP built over it produces a
+  /// plain near address and the segment is simply lost. A record in EMS read through that would be
+  /// read out of the program's own data instead. So the offset moves the far pointer's OFFSET and the
+  /// segment is carried across unchanged, which is what "a field of this record" means either way.
+  /// </para>
+  /// </summary>
+  private IrValue OffsetWithin(IrValue basePtr, int bytes) {
+    if (bytes == 0)
+      return basePtr;
+    return basePtr is IrFarPtr far
+      ? this._b.FarPtr(far.Segment, this._b.Add(far.Offset, new IrConstantInt(IrType.I16, (short)bytes)))
+      : this._b.Gep(basePtr, new IrConstantInt(IrType.I32, bytes));
   }
 
   /// <summary>
@@ -2083,7 +2113,10 @@ public sealed partial class IrLowering {
       basePtr = this.SlotFor(baseSym);
       udt = nameUdt;
     } else if (m.Target is CallOrIndexExpr ce && this._model.VariableBindings.TryGetValue(ce, out var arrSym) && arrSym.Type is ArrayType { Element: UdtType elemUdt }) {
-      basePtr = this.ElementAddress(ce).Address;
+      // ...far included. A record in a HUGE/EMS/XMS array is reached through a segment computed per
+      // access, and a field of it is that same far pointer moved by the field's offset - which
+      // OffsetWithin does without flattening it to a near one.
+      basePtr = this.ElementAddress(ce, farAllowed: true).Address;
       udt = elemUdt;
     } else if (m.Target is PtrDerefExpr deref && this._model.TypeOf(deref) is UdtType derefUdt) {   // @q.Field - the record the pointer names
       basePtr = this.DerefAddress(deref);
@@ -2249,16 +2282,20 @@ public sealed partial class IrLowering {
   /// happen. The address itself is discarded and the pure half of it dies with DCE.
   /// </para>
   /// <para>
-  /// The paged classes decline: their segment is recomputed per element from the byte offset or from
-  /// the EMS window, so there is no one answer to give and inventing one would be the same defect
-  /// again. They decline BEFORE the address is formed, which is what a decline is for.
+  /// A paged class has no ONE segment - it is recomputed per element from the byte offset or from the
+  /// EMS window - but the question was never about the array. <c>VARSEG(h(1))</c> names an ELEMENT,
+  /// and the far pointer the access itself forms carries that element's segment; answering with it is
+  /// the same address the read of <c>h(1)</c> would use, formed the same way and including the EMS
+  /// remap, which is what the direct emitter does by building the place first.
   /// </para>
   /// </summary>
   private IrValue SegmentOfStorage(Expression e) {
     if (e is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var array)
         && array.Type is ArrayType element) {
       if (array.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
-        throw new IrLoweringException($"VARSEG of an element of the {array.ArrayClass} array {array.Name}");
+        return this.ElementAddress(indexed, farAllowed: true).Address is IrFarPtr paged
+          ? paged.Segment
+          : throw new IrLoweringException($"VARSEG of an element of the {array.ArrayClass} array {array.Name}");
       this.ElementAddress(indexed, farAllowed: true);
       if (array.ArrayClass == ArrayClass.Absolute)
         return this._absoluteSegments.TryGetValue(array, out var segmentCell)
@@ -5585,7 +5622,7 @@ public sealed partial class IrLowering {
     // an ARRAY ELEMENT of record type is storage in exactly the same way, one stride along
     if (e is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arr)
         && arr.Type is ArrayType { Element: UdtType })
-      return this.ElementAddress(indexed).Address;
+      return this.ElementDataAddress(indexed).Address;   // far included: the copy carries its segment
     // and so is a record-typed FIELD of another record
     if (e is MemberExpr member && !this._model.VariableBindings.ContainsKey(member)
         && this.MemberFieldAddress(member) is { Field.Type: UdtType } field)
