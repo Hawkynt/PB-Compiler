@@ -1308,6 +1308,7 @@ public sealed partial class IrLowering {
       case RestoreStmt rs: this.LowerRestore(rs); break;
       case EndStmt: this.LowerEnd(); break;
       case OnErrorStmt oe: this.LowerOnError(oe); break;
+      case TryStmt tryStmt: this.LowerTry(tryStmt); break;
       case ResumeStmt rs2: this.LowerResume(rs2); break;
       case ErrorStmt err: this.LowerErrorStatement(err); break;
       case MetaStmt meta: this.LowerMeta(meta); break;
@@ -2791,6 +2792,99 @@ public sealed partial class IrLowering {
     if (!this._labels.TryGetValue(oe.Target, out var handler))
       throw new IrLoweringException($"ON ERROR GOTO unknown label {oe.Target}");
     this._b.Call(IrType.Void, this.RuntimeFn("rt_onerr_arm", IrType.Void, IrType.Ptr), new IrBlockAddress(handler));
+  }
+
+  /// <summary>
+  /// <c>TRY … CATCH … FINALLY … END TRY</c>, which is <c>ON ERROR</c> with a scope.
+  ///
+  /// <para>
+  /// The arming is the same <c>rt_onerr_arm</c> every handler uses, so a fault inside the body is
+  /// delivered exactly as one inside an <c>ON ERROR</c> region: the runtime restores <c>BP</c> and
+  /// <c>SP</c> to the armed frame and jumps to the block whose address was armed.
+  /// </para>
+  /// <para>
+  /// The previous handler is saved to FRAME SLOTS rather than to the stack. The direct emitter pushes
+  /// the triple and pops it, which works because the arming records an <c>SP</c> below the pushes -
+  /// but a value in a register would not survive the non-local jump, and a slot does: <c>BP</c> is
+  /// restored before the handler runs, so the frame is addressable again the moment it is entered.
+  /// Nested TRYs each allocate their own three, which is what makes them nest.
+  /// </para>
+  /// <para>
+  /// Without a CATCH both edges carry a PENDING ERROR CODE through the FINALLY - nought from the
+  /// normal one, <c>ERR</c> from the faulting one - and re-raise it afterwards if it is not nought.
+  /// That is what makes <c>TRY … FINALLY</c> run its cleanup and still fault: swallowing the error
+  /// would be a different statement.
+  /// </para>
+  /// </summary>
+  private void LowerTry(TryStmt stmt) {
+    this._fn.HasErrorHandler = true;
+    var onerr = this.RuntimeCell("rt_onerr", IrType.I16);
+    var onerrBp = this.RuntimeCell("rt_onerr_bp", IrType.I16);
+    var onerrSp = this.RuntimeCell("rt_onerr_sp", IrType.I16);
+    IrAlloca Slot(string name) =>
+      this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I16) { Name = name });
+    var savedHandler = Slot("try.onerr");
+    var savedBp = Slot("try.bp");
+    var savedSp = Slot("try.sp");
+    var pending = stmt.Catch is null ? Slot("try.err") : null;   // only TRY/FINALLY carries one
+
+    void Restore() {
+      this._b.Store(this._b.Load(IrType.I16, savedHandler), onerr);
+      this._b.Store(this._b.Load(IrType.I16, savedBp), onerrBp);
+      this._b.Store(this._b.Load(IrType.I16, savedSp), onerrSp);
+    }
+
+    this._b.Store(this._b.Load(IrType.I16, onerr), savedHandler);
+    this._b.Store(this._b.Load(IrType.I16, onerrBp), savedBp);
+    this._b.Store(this._b.Load(IrType.I16, onerrSp), savedSp);
+
+    var dispatch = this.NewBlock("try.dispatch");
+    var cleanup = this.NewBlock("try.cleanup");
+    var end = this.NewBlock("try.end");
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_onerr_arm", IrType.Void, IrType.Ptr),
+      new IrBlockAddress(dispatch));
+
+    this.LowerStatements(stmt.Body);
+    if (!this.Terminated) {
+      Restore();
+      if (pending is not null)
+        this._b.Store(new IrConstantInt(IrType.I16, 0), pending);
+      this._b.Br(cleanup);
+    }
+
+    // the caught edge: rt_raise arrives here with the frame restored and ERR set
+    this._b.Position(dispatch);
+    Restore();
+    if (stmt.Catch is { } caught) {
+      this.LowerStatements(caught);
+      if (!this.Terminated)
+        this._b.Br(cleanup);
+    } else {
+      this._b.Store(this._b.Load(IrType.I16, this.RuntimeCell("rt_err", IrType.I16)), pending!);
+      this._b.Br(cleanup);
+    }
+
+    this._b.Position(cleanup);
+    if (stmt.Finally is { } cleanupBody)
+      this.LowerStatements(cleanupBody);
+    if (this.Terminated) {
+      this._b.Position(end);
+      return;
+    }
+    if (pending is null) {
+      this._b.Br(end);
+      this._b.Position(end);
+      return;
+    }
+    // TRY ... FINALLY with no CATCH: the cleanup has run, and the error it was hiding is raised now
+    var reraise = this.NewBlock("try.reraise");
+    var code = this._b.Load(IrType.I16, pending);
+    this._b.CondBr(this._b.Cmp(IrCmpPred.Ne, code, new IrConstantInt(IrType.I16, 0)), reraise, end);
+    this._b.Position(reraise);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32),
+      this._b.ZExt(code, IrType.I32));
+    this._b.Br(end);
+    this._b.Position(end);
   }
 
   private void LowerResume(ResumeStmt rs) {
