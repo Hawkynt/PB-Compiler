@@ -1045,6 +1045,11 @@ internal static class RuntimeAbi {
     // rt_capbuf instead of at a file handle. Neither takes an argument; rt_capoff answers the
     // captured bytes as a string handle in AX, which is what makes USING$ a string expression rather
     // than a statement (DosRuntime.Capture.cs).
+    // ...and the RUNTIME-format form, which the capture machinery cannot serve: the field layout is
+    // only known when the format string is, so the routine parses it itself. The value arrives on the
+    // x87 at DOUBLE width and the format as an ordinary string handle; the answer is a handle too.
+    ["rt_using_dynamic"] = new("rt_usingdyn",
+      [new(ArgKind.St0, default), new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_capture_begin"] = new("rt_capon", [], _callerSaved),
     ["rt_capture_end"] = new("rt_capoff", [], _callerSaved, Result: Reg.AX),
 

@@ -2505,13 +2505,23 @@ public sealed partial class IrLowering {
   /// </para>
   ///
   /// <para>
-  /// A non-literal format declines, as it does for <c>PRINT USING</c> and for the same reason - the
-  /// format is read at COMPILE time into fields, and there is nothing to read. The direct emitter
-  /// has a single-field runtime fallback (<c>rt_usingdyn</c>) for the two-argument case; answering
-  /// only that shape here would leave every other one silently unformatted, so this declines whole.
+  /// A non-literal format cannot go through that machinery at all: the format is read at COMPILE time
+  /// into fields, and there is nothing to read. The runtime parses one itself - <c>rt_usingdyn</c> -
+  /// for a SINGLE numeric field, and that is the whole of what either path offers. Every other shape
+  /// declines here exactly as it does on the other side, so answering this one is matching the direct
+  /// emitter rather than inventing a second behaviour.
   /// </para>
   /// </summary>
   private IrValue LowerUsingString(CallOrIndexExpr ci) {
+    if (ci.Arguments.Count > 0 && ci.Arguments[0] is not StringLiteralExpr) {
+      if (ci.Arguments.Count != 2)
+        throw new IrLoweringException("non-literal USING$ format with multiple values");
+      // the value first, because the format is a STRING expression and evaluating one never touches
+      // the x87 - which is where the value has to still be when the call happens
+      var rendered = this.Coerce(this.LowerExpr(ci.Arguments[1]), this._model.TypeOf(ci.Arguments[1]), PbType.Double);
+      return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_using_dynamic", IrType.Ptr, IrType.F64, IrType.Ptr),
+        rendered, this.LowerStringExpr(ci.Arguments[0]));
+    }
     if (ci.Arguments.Count == 0 || ci.Arguments[0] is not StringLiteralExpr format)
       throw new IrLoweringException("non-literal USING$ format");
     this._b.Call(IrType.Void, this.RuntimeFn("rt_capture_begin", IrType.Void));
