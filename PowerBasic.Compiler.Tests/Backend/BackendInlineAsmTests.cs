@@ -721,4 +721,47 @@ public sealed class BackendInlineAsmTests {
     Assert.That(routed, Is.EqualTo(RunProcedure(source, "Slide", routed: false).Output));
     Assert.That(routed, Is.EqualTo("0  3  5  9"));
   }
+  /// <summary>
+  /// <c>! PUSH BP</c> ... <c>! POP BP</c>, which is how a body that needs every register borrows the
+  /// frame pointer too. The selector refused any asm writing <c>BP</c> or <c>SP</c>, and a POP of BP
+  /// is a write by that reading.
+  ///
+  /// <para>
+  /// It is not a write in the sense the check protects. The pop puts back what the push took, and
+  /// nothing between them writes BP AT ALL - which is the condition, and is why `! MOV BP, v` still
+  /// declines: while BP is borrowed the frame is unreachable, and every asm line naming a local is
+  /// addressed through it. Here BP holds the frame at every instruction boundary. The
+  /// direct emitter addresses its frame through BP as well and accepts the pair - refusing it here was
+  /// stricter than the path being replaced. An unbalanced pop would destroy either emitter's frame, so
+  /// such a program is broken rather than broken by this decision; what still declines is a write that
+  /// is not a restore, <c>MOV BP, AX</c> and <c>ADD SP, n</c>.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenASavedFramePointer_ThenTheFunctionStillRoutes() {
+    const string source = """
+      DECLARE SUB Borrow()
+      DIM seen AS SHARED WORD
+      Borrow
+      PRINT seen
+      END
+      SUB Borrow()
+        DIM v AS WORD
+        v = 7
+        ! PUSH BP
+        ! PUSH ES
+        ! MOV AX, DS
+        ! MOV ES, AX
+        ! POP ES
+        ! POP BP
+        v = v + 1
+        seen = seen + v
+      END SUB
+      """;
+
+    var (routed, tookIt) = RunProcedure(source, "Borrow", routed: true);
+    Assert.That(tookIt, Is.True, "a saved and restored frame pointer must not decline the function");
+    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Borrow", routed: false).Output));
+    Assert.That(routed, Is.EqualTo("8"), "v is still reachable through BP after the pair");
+  }
 }
