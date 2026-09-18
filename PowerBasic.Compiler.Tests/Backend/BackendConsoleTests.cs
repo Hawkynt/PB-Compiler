@@ -270,4 +270,64 @@ public sealed class BackendConsoleTests {
     Assert.That(run.Screen.Split('|')[23], Is.EqualTo("L 30"));
     Assert.That(run.Row, Is.EqualTo(24));
   }
+
+  /// <summary>
+  /// <c>STDOUT</c>, which is a console PRINT that first says so.
+  ///
+  /// <para>
+  /// The direct emitter writes two cells before printing - the current output file, and the pointer to
+  /// the print COLUMN, since every open file carries its own - and then prints exactly as PRINT does.
+  /// That is the whole statement, so the routed lowering is the same two stores and the same items.
+  /// </para>
+  /// <para>
+  /// A <c>PRINT #</c> stands in front of the STDOUT here, because that is the only way to tell the two
+  /// stores from nothing at all: with output already sent to a file, a lowering that omitted them
+  /// would append to the file and leave the screen blank. The semicolon form is included for the other
+  /// half of the statement - it suppresses the newline, so the following PRINT continues the line.
+  /// </para>
+  /// </summary>
+  [TestCase(true)]
+  [TestCase(false)]
+  public void Execute_GivenStdOut_WhenRouted_ThenItGoesBackToTheConsole(bool optimize) {
+    var run = RunBothWays("""
+      OPEN "SO.TXT" FOR OUTPUT AS #1
+      PRINT #1, "to the file"
+      STDOUT "back";
+      STDOUT " here"
+      PRINT "after"
+      CLOSE #1
+      """, optimize);
+
+    Assert.That(RowOf(run, "back here"), Is.EqualTo(0), "the semicolon kept both pieces on one line");
+    Assert.That(RowOf(run, "after"), Is.EqualTo(1), "and the newline ended it");
+    Assert.That(RowOf(run, "to the file"), Is.EqualTo(-1), "the file's line never reached the screen");
+  }
+
+  /// <summary>
+  /// <c>STDIN LINE, s$</c> and <c>STDIN n, s$</c>: a read from PB file number zero.
+  ///
+  /// <para>
+  /// Both forms are the routines LINE INPUT and <c>INPUT$(n, #f)</c> already use, asked for file zero,
+  /// so what is asserted is that they behave the same as the direct emitter's calls to the same
+  /// routines - the interpreter has no keyboard, and what a read with nothing to read DOES is the
+  /// runtime's business rather than either emitter's. A comparison is the whole of what can be
+  /// claimed here, and it is also the whole of what matters: the two must not diverge.
+  /// </para>
+  /// </summary>
+  [TestCase(true)]
+  [TestCase(false)]
+  public void Execute_GivenStdIn_WhenRouted_ThenItMatchesTheDirectEmitter(bool optimize) {
+    var run = RunBothWays("""
+      DIM a$, b$
+      STDIN LINE, a$
+      STDIN 3, b$
+      PRINT "["; a$; "|"; b$; "]"
+      """, optimize);
+
+    // The interpreter has no keyboard and no DOS handle 0, so the read faults - and faults the SAME
+    // way on both paths, which is the claim. Asserting the fault rather than a value is what keeps
+    // this honest: a lowering that quietly did nothing would also reach the PRINT, and pass a test
+    // that only compared two outputs.
+    Assert.That(run.Output, Does.StartWith("RUNTIME ERROR"), "a console read with nothing to read faults");
+  }
 }
