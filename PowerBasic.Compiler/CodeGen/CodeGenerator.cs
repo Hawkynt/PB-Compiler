@@ -898,6 +898,23 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         OptRegParm.Apply(model, this.IsBackendRouted);   // back-end functions stay on the stack convention
     }
 
+    // SPEED/SIZE, resolved BEFORE anything can ask the back end a question. The objective is not only
+    // an emission setting: SelectionCost hands the selector a cost model under SPEED and null
+    // otherwise, so it decides every byte-for-cycles trade the selector may make - the membership
+    // masks, the perfect hash, the byte-index table.
+    //
+    // It used to be resolved further down, next to the peephole and scheduler switches it also sets,
+    // and that was correct for as long as nothing consulted the routing before then. Mandatory
+    // routing does: BackendDeclines forces BackendProcs/BackendMain, which runs selection. So under
+    // PBC_X_BACKEND_STRICT the selector ran with OptimizeSpeed still false, every cost-model trade
+    // declined, and the cached machine code was the compact form - strict mode did not merely measure
+    // a different program from the one it shipped, it emitted one. ResolveOptimizeObjective's own
+    // summary already promised "before backend selection and emission"; this is that promise.
+    //
+    // Nothing in an ordinary build moves. The only statement between here and the old position is
+    // TryLowerTrivialProgram, which reads neither flag.
+    this.ResolveOptimizeObjective(optimizeMeta);
+
     // Asked HERE, after the optimizer has had its say about calling conventions and before a single
     // byte is emitted, because the routing's answer depends on both. RequireBackend is off in every
     // ordinary build; when it is on, a decline is the program failing to compile, which is what the
@@ -918,8 +935,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // $OPTIMIZE SPEED gets the instruction scheduler (reorders the FINAL stream - after
     // unrolling/inlining/const-fold - to group memory/ALU ops), every other optimized standalone keeps
     // the peephole (staging coalesce, CMP->TEST). Gated on the optimizer flags, not the dialect (the
-    // optimizer is dialect-agnostic; SPEED merely defaults on for pb36).
-    this.ResolveOptimizeObjective(optimizeMeta);
+    // optimizer is dialect-agnostic; SPEED merely defaults on for pb36) - resolved above, before the
+    // back end could be asked anything.
     var standalone = this.Optimize && !this._allowExternalCalls && !this._isUnit;
     asm.EnableSchedule = standalone && this.OptimizeSpeed;
     asm.EnablePeephole = standalone && !asm.EnableSchedule;
