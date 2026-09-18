@@ -874,17 +874,47 @@ public sealed partial class IrLowering {
       ArrayType => throw new IrLoweringException("dynamic array with shared storage"),
       _ => (MapType(symbol.Type), 1),
     };
-    // The procedure qualification prevents same-named STATIC locals from aliasing; module globals
-    // need only the storage-class prefix because their source names are already module-unique.
+    // The procedure qualification prevents same-named STATIC locals from aliasing; a module global
+    // needs only the storage-class prefix, and its SOURCE SPELLING where the bare name is shared.
     var name = symbol.Storage == VariableStorage.Static
       ? StaticGlobalName(this._proc, symbol)
-      : $"g.{symbol.Name}";
+      : $"g.{this.GlobalSourceName(symbol)}";
     var suffix = 0;
     while (this._module!.FindGlobal(name) is not null)
       name = $"{name}.{++suffix}";
     var global = this._module.AddGlobal(new IrGlobalVariable(name, valueType) { Count = count });
     this._sharedStorage[symbol] = global;
     return global;
+  }
+
+  /// <summary>
+  /// What a module global is called in the IR: the source name, which reads well, except where that
+  /// name alone does not say WHICH variable - and then the binder's own key, suffix and all.
+  ///
+  /// <para>
+  /// <c>DIM total%</c> and <c>DIM total&amp;</c> are two module variables. A <c>VariableSymbol</c>
+  /// carries the bare spelling, so both wanted to be <c>g.total</c>; the uniquing loop below made the
+  /// second <c>g.total.1</c>, and the emitter could resolve neither - it keys the module table by the
+  /// SUFFIXED spelling, and refuses to guess between two symbols a bare name matches. That was the
+  /// whole of the <c>ambiguous-global</c> decline: not a shape the ABI could not express, just a name
+  /// that had thrown away the one character telling the two apart.
+  /// </para>
+  /// <para>
+  /// Only the ambiguous case is spelled out, so every other global keeps the readable name it has had
+  /// and the IR text tests that read those names keep reading them.
+  /// </para>
+  /// </summary>
+  private string GlobalSourceName(VariableSymbol symbol) {
+    var sharing = 0;
+    string? canonical = null;
+    foreach (var (key, candidate) in this._model.ModuleVariables) {
+      if (!candidate.Name.Equals(symbol.Name, StringComparison.OrdinalIgnoreCase))
+        continue;
+      ++sharing;
+      if (ReferenceEquals(candidate, symbol))
+        canonical = key;
+    }
+    return sharing > 1 && canonical is not null ? canonical : symbol.Name;
   }
 
   /// <summary>
