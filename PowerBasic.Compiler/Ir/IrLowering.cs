@@ -548,6 +548,12 @@ public sealed partial class IrLowering {
         // all three push a return id onto the same stack - the dispatched form no less than the two
         // that name their destination, since what it dispatches to is a GOSUB
         case GosubStmt or GosubPtrStmt or OnGotoStmt { IsGosub: true }: return true;
+        // ...and so does ON TIMER(n) GOSUB, which is a GOSUB nothing in the program performs. This
+        // runtime has no event dispatch, so the handler is unreachable and its RETURN never runs -
+        // but it is still a RETURN in the body, and refusing to build the stack for it is what
+        // declined the whole module with "RETURN without a matching GOSUB". The direct emitter
+        // compiles the same handler to the same never-taken return.
+        case OnEventStmt: return true;
         case IfStmt i when ContainsGosub(i.Then) || i.ElseIfs.Any(e => ContainsGosub(e.Body)) || (i.Else is { } el && ContainsGosub(el)):
           return true;
         case ForStmt f when ContainsGosub(f.Body): return true;
@@ -1402,7 +1408,11 @@ public sealed partial class IrLowering {
       // to its own top-level procedure and emitted separately - the declaration left behind marks
       // where it was written and executes nothing, which is exactly what the direct emitter makes of
       // the same statement.
-      case SubDecl or FunctionDecl or DeclareStmt or TypeDecl or UnionDecl or EnumDecl or DefTypeStmt:
+      // $ASSERT belongs with them: the binder has already evaluated the condition and reported it, so
+      // by the time a lowering sees one there is nothing left of it. A check that fired is a
+      // diagnostic, not code, and one that held emits nothing on either path.
+      case SubDecl or FunctionDecl or DeclareStmt or TypeDecl or UnionDecl or EnumDecl or DefTypeStmt
+        or StaticAssertStmt:
         break;
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;
@@ -1416,11 +1426,15 @@ public sealed partial class IrLowering {
       case CommandStmt { Keyword: "ROTATE LEFT" or "ROTATE RIGHT" } rotate: this.LowerRotate(rotate); break;
       case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
       // SCREEN n. The PB-number-to-BIOS-mode table lives in the runtime rather than in either
-      // emitter, so this is the whole statement: one word, one call, and both paths map alike. The
-      // further arguments PB accepts (active/visual page, burst) are not lowered rather than being
-      // dropped - the direct emitter ignores them too, and quietly inheriting that would bake a
-      // suspected gap into a second path instead of leaving it visible.
-      case CommandStmt { Keyword: "SCREEN", Arguments: [{ } screenMode] }:
+      // emitter, so this is the whole statement: one word, one call, and both paths map alike.
+      //
+      // The further arguments PB accepts - active page, visual page, burst - are IGNORED, which is
+      // what the direct emitter does with them too. This used to decline instead, on the reasoning
+      // that inheriting the gap quietly would bake it into a second path rather than leave it
+      // visible. That reasoning holds only while there IS a second path: with routing mandatory a
+      // decline is not a visible gap, it is `SCREEN 0, 0` failing to compile at all. The gap is real
+      // and belongs to the RUNTIME, which has no page switching to offer either emitter.
+      case CommandStmt { Keyword: "SCREEN", Arguments: [{ } screenMode, ..] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_screen_mode", IrType.Void, IrType.I16),
           this.Coerce(this.LowerExpr(screenMode), this._model.TypeOf(screenMode), PbType.Integer));
         break;
@@ -1653,6 +1667,56 @@ public sealed partial class IrLowering {
         this._b.Call(IrType.Void,
           this.RuntimeFn("rt_" + dirCmd.Keyword.ToLowerInvariant(), IrType.Void, IrType.Ptr),
           this.LowerStringExpr(dirPath));
+        break;
+      // NAME old$ AS new$ - two handles rather than one, and otherwise KILL again
+      case CommandStmt { Keyword: "NAME", Arguments: [{ } oldName, { } newName] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_rename", IrType.Void, IrType.Ptr, IrType.Ptr),
+          this.LowerStringExpr(oldName), this.LowerStringExpr(newName));
+        break;
+      // SHELL cmd$ hands the line to COMMAND.COM and comes back; EXECUTE is the same call written as
+      // the program's last statement, so it is that call and the exit the direct emitter jumps to.
+      case CommandStmt { Keyword: "SHELL" or "EXECUTE", Arguments: [{ } shellCommand] } shellCmd:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_shell", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(shellCommand));
+        if (shellCmd.Keyword == "EXECUTE")
+          this.LowerEnd();
+        break;
+      // BEEP is SOUND with the numbers written down - 880 Hz for four ticks - and not a routine of its
+      // own on either path, so the constants belong here rather than in the runtime.
+      case CommandStmt { Keyword: "BEEP" }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_sound", IrType.Void, IrType.I16, IrType.I16),
+          new IrConstantInt(IrType.I16, 880), new IrConstantInt(IrType.I16, 4));
+        break;
+      case CommandStmt { Keyword: "SOUND", Arguments: [{ } frequency, { } duration] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_sound", IrType.Void, IrType.I16, IrType.I16),
+          this.WordArg(frequency), this.WordArg(duration));
+        break;
+      // DELAY takes its count as a DOUBLE, which is how the direct emitter coerces it too - a delay of
+      // half a second is a delay the statement can express
+      case CommandStmt { Keyword: "DELAY", Arguments: [{ } seconds] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_delay", IrType.Void, IrType.F64),
+          this.Coerce(this.LowerExpr(seconds), this._model.TypeOf(seconds), PbType.Double));
+        break;
+      // POKE$ address, s$ writes the string's bytes into DEF SEG at the offset - the string half of
+      // POKE, and the same shape: an offset and a value, no answer
+      case CommandStmt { Keyword: "POKE$", Arguments: [{ } pokeStrAddress, { } pokeStrValue] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_poke_str", IrType.Void, IrType.I16, IrType.Ptr),
+          this.WordArg(pokeStrAddress), this.LowerStringExpr(pokeStrValue));
+        break;
+      // TIMER/KEY/COM/PEN/STRIG ON|OFF|STOP and their ON <event> GOSUB handlers. This runtime has no
+      // event dispatch at all, so the direct emitter reaches a bare `break` for both - and the BINDER
+      // has already warned that they do nothing, which is where that belongs. A program hooking the
+      // timer does it the way TIMER.SUB does, with an interrupt vector and inline assembly.
+      case OnEventStmt or EventControlStmt:
+        break;
+      // The statements this runtime accepts and does nothing for. That is not a gap in the lowering:
+      // the direct emitter reaches the same `break` for exactly this list, and a routed program that
+      // declined over one would be refusing to compile something the other path compiles to nothing.
+      // The binder has already warned where a warning is owed.
+      case CommandStmt {
+        Keyword: "COLOR" or "WIDTH" or "KEY" or "VIEW" or "VIEW TEXT" or "VIEW PRINT" or "VIEW SCREEN"
+          or "WINDOW" or "PALETTE" or "PALETTE USING" or "OPTION BASE",
+      }:
         break;
       // DEF SEG = n stores the word; bare DEF SEG puts DS back, which only the runtime can say
       case DefSegStmt { Segment: { } segment }:
@@ -4166,8 +4230,11 @@ public sealed partial class IrLowering {
       cmd.Arguments.Count > index && cmd.Arguments[index] is { } e
         ? this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer)
         : new IrConstantInt(IrType.I16, 0);
-    if (cmd.Arguments.Count > 2)
-      throw new IrLoweringException("LOCATE with a cursor-shape argument");
+    // The cursor-shape arguments - visibility, and the two scan lines bounding the block - are
+    // IGNORED, exactly as the direct emitter ignores them: rt_locate moves the cursor and this
+    // runtime has no cursor shape to set. Declining instead kept the gap visible while there was a
+    // second path to fall back to; with routing mandatory it only means `LOCATE 1, 1, 0` does not
+    // compile, which is worse than the behaviour the other emitter has always had.
     this._b.Call(IrType.Void, this.RuntimeFn("rt_locate", IrType.Void, IrType.I16, IrType.I16),
       Argument(0), Argument(1));
   }

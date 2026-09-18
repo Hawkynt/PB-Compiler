@@ -61,7 +61,9 @@ public sealed class ModuleLoweringTests {
       "y% = f%(3)\n" +
       "\n" +
       "FUNCTION f%(BYVAL n%)\n" +
-      "  BEEP\n" +                  // hardware command, unsupported -> body declines, signature stays
+      // A statement outside the subset, whichever one that currently is - this was BEEP until BEEP
+      // became a call to rt_sound. WAIT is a spin on an I/O port, which the IR cannot name.
+      "  WAIT &H3DA, 8\n" +
       "  f% = n%\n" +
       "END FUNCTION");
 
