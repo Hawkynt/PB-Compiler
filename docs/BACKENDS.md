@@ -353,13 +353,18 @@ modes; its SPEED caller adds the second optimized gain, moving 257/254 to 259/25
 from 159/161 to 160/161. Selection and allocation move from 262/262 to 263/263.
 
 **Whole classes are absent from the corpus and are no less real.** `BackendRoutingGateTests` holds one
-program each and pins the routing's own reason for it: QUAD and BYTE parameters and results, FIX and
-EXT parameters, a record parameter, `CDECL`/`STDCALL`/`FASTCALL`/
-`WATCALL`, error handling inside a procedure body, and an array parameter (which stops the whole
-module lowering) - fourteen decline rows, none of which the corpus would have noticed stopping or
-starting. FIX arithmetic in a module body was the fifteenth and has moved to the routing list. Each compiles to an executable byte-identical to the
-unrouted build, because the module body is stranded by the very call the filter refused: one
-construct silently costs a whole program's routing today, and a compile error tomorrow.
+program each: QUAD and BYTE parameters and results, FIX and EXT parameters, a record parameter, the
+four non-default conventions `CDECL`/`STDCALL`/`FASTCALL`/`WATCALL`, error handling inside a procedure
+body, and an array parameter - none of which the corpus would have noticed stopping or starting.
+
+Every one of them routes today. The fixture used to carry a decline list beside its routing list, and
+closing an item meant moving its row from one to the other; the last row to move was `ERASE` of an
+ABSOLUTE array, and the list went with the test that consumed it rather than being kept empty, because
+a routing that refuses nothing cannot be shown to be refusing and an empty case source proves nothing
+while looking like coverage. What each row now pins is the opposite claim - that the construct is still
+taken - which is why the fixture asserts the routing table by name as well as execution equivalence: a
+byte-identical image no longer means whole-program fallback once a declined procedure and a routed
+caller can share one stack ABI.
 
 **Six constructs the routed path declined OUTRIGHT now route, and none of them was in the corpus
 either.** A sweep of the declarative surface - rather than of the programs to hand - found them; each
