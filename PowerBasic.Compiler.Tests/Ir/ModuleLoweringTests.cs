@@ -60,18 +60,20 @@ public sealed class ModuleLoweringTests {
   ///
   /// <para>
   /// The subject is a moving target BY DESIGN - the subset it sits outside of is the thing this
-  /// project is growing - and it has moved three times already: <c>BEEP</c> became a call to
-  /// rt_sound, <c>WAIT</c> became blocks over rt_inp, and <c>GOTO DWORD</c> became an indirect
-  /// branch with no in-function successors. Each time it was chosen as "the durable one".
+  /// project is growing - and it has moved four times: <c>BEEP</c> became a call to rt_sound,
+  /// <c>WAIT</c> became blocks over rt_inp, <c>GOTO DWORD</c> became an indirect branch with no
+  /// in-function successors, and <c>END</c> became a call to rt_exit. Three of those were chosen as
+  /// "the durable one".
   /// </para>
   /// <para>
   /// So it is named ONCE, here, rather than guessed at again: when this test starts failing because
   /// the construct now lowers, that is the subset growing and the fix is to point
-  /// <see cref="_OutsideTheSubset"/> at something still outside it.
-  /// <c>Compile_GivenEveryStatementForm</c> keeps the list to choose from.
+  /// <see cref="_OutsideTheSubset"/> at something still outside it. Any decline will do - the
+  /// property under test is about what happens to a body that cannot lower, not about which body it
+  /// is - and <c>IrLoweringException</c>'s own message list is where to look.
   /// </para>
   /// </summary>
-  private const string _OutsideTheSubset = "  END\n";   // END inside a procedure
+  private const string _OutsideTheSubset = "  DIM t%(1 TO 2, 1 TO 2)\n  ARRAY SORT t%()\n";
 
   [Test]
   public void Module_FunctionWithUnsupportedBodyBecomesADeclaration() {
