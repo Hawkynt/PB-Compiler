@@ -35,9 +35,15 @@ public sealed class EmitLlvmTests {
     Assert.That(output, Does.Not.Contain("@sq"));        // sq() inlined away (INPUT's runtime calls remain)
   }
 
+  /// <summary>
+  /// The subject is a placeholder for "something the lowering has no answer for", and which statement
+  /// that is moves as the subset grows - this was <c>BEEP</c> until BEEP became a call to rt_sound.
+  /// <c>WAIT port, mask</c> is the current one: a spin on an I/O port, which the direct emitter writes
+  /// inline and the IR has no way to name. <c>Compile_GivenEveryStatementForm</c> is the list.
+  /// </summary>
   [Test]
   public void EmitLlvm_ForAnUnsupportedProgram_FailsWithADiagnostic() {
-    var (code, _, err) = RunEmit("BEEP");   // hardware command, not in the subset
+    var (code, _, err) = RunEmit("WAIT &H3DA, 8");   // a port spin, not in the subset
 
     Assert.That(code, Is.EqualTo(1));
     Assert.That(err, Does.Contain("--emit-llvm"));

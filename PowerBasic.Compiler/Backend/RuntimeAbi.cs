@@ -269,6 +269,22 @@ internal static class RuntimeAbi {
     ["rt_mkdir"] = new("rt_mkdir", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     ["rt_rmdir"] = new("rt_rmdir", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     ["rt_chdir"] = new("rt_chdir", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // NAME old AS new -> the two handles in AX and DX, the order the direct emitter pushes them in.
+    ["rt_rename"] = new("rt_rename",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // SHELL cmd$ -> the command line's handle in AX. EXECUTE is the same call and then an exit, which
+    // the lowering writes as the two statements it is.
+    ["rt_shell"] = new("rt_shell", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // SOUND freq, ticks -> AX = frequency, DX = duration. BEEP is this call with 880 and 4, which is
+    // what the direct emitter emits for it rather than a routine of its own.
+    ["rt_sound"] = new("rt_sound",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // DELAY seconds -> the count on the x87 stack, as every other floating argument travels.
+    ["rt_delay"] = new("rt_delay", [new(ArgKind.St0, default)], _callerSaved),
+    // POKE$ address, s$ -> DI = the offset, AX = the string handle. DI rather than the usual second
+    // word because the routine stores through it, which is the whole of what it does.
+    ["rt_poke_str"] = new("rt_pokestr",
+      [new(ArgKind.Word, Reg.DI), new(ArgKind.Word, Reg.AX)], _callerSaved),
 
     // rt_str_concat(ptr,ptr) -> ptr is the runtime's StrCat: AX=left, DX=right -> AX, consuming both
     ["rt_str_concat"] = new("rt_strcat",
