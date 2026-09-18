@@ -2,6 +2,7 @@ using System.Text;
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -250,6 +251,12 @@ public sealed class BackendNeverThrowsTests {
   /// stack trace before it was converted to a decline. They are held apart from the generator because
   /// the assertion is stronger: the routed build must behave exactly like the unrouted one, which is
   /// what a decline promises and a throw cannot.
+  ///
+  /// <para>
+  /// A decline is the FLOOR and not the goal. <c>ambiguous-global</c> has left this list because it
+  /// routes now - see <see cref="AmbiguousGlobal_WhenCompiledRouted_ThenItRoutesAndAgreesWithTheDirectBuild"/>
+  /// - and the right end for each of the four left is the same one, not a tidier fallback.
+  /// </para>
   /// </summary>
   private static readonly (string Name, string Source)[] _formerlyRaised = [
     // MachineEmitter.EmitInlineAsm. The lowering proved the text parses against its OWN stand-in
@@ -260,10 +267,28 @@ public sealed class BackendNeverThrowsTests {
     ("asm-inc-export", "DIM n%\nn% = 3\n! INC GetStrLoc\nPRINT n%\nEND\n"),
     ("asm-cmp-export", "DIM n%\nn% = 3\n! CMP AX, GetStrLoc\nPRINT n%\nEND\n"),
     ("asm-xchg-export", "DIM n%\nn% = 3\n! XCHG AX, GetStrLoc\nPRINT n%\nEND\n"),
-    // MachineEmitter.ResolveData. The IR names a module variable by its source spelling WITHOUT the
-    // type suffix and the binder's table is keyed WITH it, so these two symbols are one g.total. The
-    // resolver refuses to alias them and had nowhere to say so.
-    ("ambiguous-global", """
+  ];
+
+  /// <summary>
+  /// <c>DIM total%</c> and <c>DIM total&amp;</c>: two module variables whose BARE names are the same.
+  ///
+  /// <para>
+  /// This was in the list above, as a decline reading "global 'g.total' has no cell the emitter can
+  /// address" - which sounds like a shape the back end cannot express and was nothing of the kind. A
+  /// <c>VariableSymbol</c> carries the unsuffixed spelling, so both variables wanted the same IR name;
+  /// the uniquing loop made the second <c>g.total.1</c>, and the emitter could resolve neither, because
+  /// it keys the module table by the SUFFIXED spelling and will not guess between two symbols a bare
+  /// name matches. The name had thrown away the one character telling the two apart.
+  /// </para>
+  /// <para>
+  /// So the assertion is the positive one now: both bodies route, and the program prints what the
+  /// direct build prints. Comparing only the output is the point - the two emitters lay out frames
+  /// differently and the images have never matched for a routed program.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void AmbiguousGlobal_WhenCompiledRouted_ThenItRoutesAndAgreesWithTheDirectBuild() {
+    const string source = """
       DIM total% : DIM total&
       total% = 1 : total& = 2
       CALL Bump
@@ -274,8 +299,27 @@ public sealed class BackendNeverThrowsTests {
         total% = total% + 1
         total& = total& + 1
       END SUB
-      """),
-  ];
+      """;
+
+    SemanticModel Bind() => Binder.Bind(
+      Parser.Parse(Lexer.Tokenize(source, "AMBIG.BAS", Dialect.Pb36), "AMBIG.BAS", Dialect.Pb36), Dialect.Pb36);
+    var routed = new CodeGenerator(Bind()) { Optimize = false, UseExperimentalBackend = true };
+    var routedImage = routed.EmitExecutable();
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the module body must route");
+    Assert.That(routed.BackendRoutedNames, Does.Contain("Bump"), "and so must the SUB that shares them");
+
+    var direct = new CodeGenerator(Bind()) { Optimize = false, UseExperimentalBackend = false };
+    var directImage = direct.EmitExecutable();
+    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+
+    var output = Cpu8086.Run(routedImage).Output.Trim();
+    Assert.Multiple(() => {
+      Assert.That(output, Is.EqualTo(Cpu8086.Run(directImage).Output.Trim()));
+      // and the two are still two: a lowering that aliased them would print one number twice
+      Assert.That(output, Is.EqualTo("2  3"), "total% went 1 -> 2 and total& went 2 -> 3");
+    });
+  }
 
   [Test]
   public void FormerlyRaisingShapes_WhenCompiledRouted_ThenTheyDeclineAndBehaveLikeTheUnroutedBuild() {
@@ -297,12 +341,31 @@ public sealed class BackendNeverThrowsTests {
         var routedImage = routed.EmitExecutable();
         if (!directImage.SequenceEqual(routedImage))
           failures.Add($"{label}: declined but produced a different image than the direct build");
-        if (direct.Errors.Count != routed.Errors.Count)
-          failures.Add($"{label}: direct reported {direct.Errors.Count} diagnostics, routed {routed.Errors.Count}");
+        if (ProgramDiagnostics(direct) != ProgramDiagnostics(routed))
+          failures.Add($"{label}: direct reported {ProgramDiagnostics(direct)} diagnostics, "
+            + $"routed {ProgramDiagnostics(routed)}");
       }
 
     Assert.That(failures, Is.Empty, "\n  " + string.Join("\n  ", failures));
   }
+
+  /// <summary>
+  /// What the PROGRAM had to say, which is what the comparison above is about - and never what the
+  /// harness had to say about routing.
+  ///
+  /// <para>
+  /// Under <c>PBC_X_BACKEND_STRICT</c> a decline becomes a diagnostic of its own, so the routed build
+  /// of a program that declines reports one more than the direct build of the same program and the two
+  /// stopped comparing equal. That is the flag doing its job, not a difference in the program. All four
+  /// rows here are inline asm the ASSEMBLER refuses - <c>pbc --no-x-backend</c> answers
+  /// <c>inline asm 'LEA BX, GetStrLoc': Register, memory operands expected</c> for every one of them -
+  /// so they are not routing gaps at all: they do not compile on either path, and what this fixture
+  /// asserts of them is that the routed build says the same thing rather than raising.
+  /// </para>
+  /// </summary>
+  private static int ProgramDiagnostics(CodeGenerator generator)
+    => generator.Errors.Count(e =>
+      !e.Message.StartsWith("routing is mandatory and", StringComparison.Ordinal));
 
   /// <summary>
   /// And the corpus half needs the same guarantee: at least one corpus program must really route,
