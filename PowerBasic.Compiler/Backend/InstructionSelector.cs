@@ -1101,10 +1101,14 @@ public sealed partial class InstructionSelector {
   /// stay on the direct path because the processor masks them and would change BASIC's loop semantics.
   /// </summary>
   private bool SelectQwordShift(IrBinary bin, MOpcode opcode) {
-    if (this._target is not { Cpu386OrLater: true, Optimize: true }
-        || opcode is not (MOpcode.Shl or MOpcode.Shr)
-        || WideShiftCount(bin.Rhs) is not { } count || count is < 1 or > 31)
-      return this.Decline($"64-bit shift: {bin.Op} (needs an optimized 386 constant count 1..31)");
+    // An ARITHMETIC right shift is not this: BASIC's SHIFT RIGHT is logical on both paths, and a sign
+    // smeared across the words is a different operation that nothing here asked for.
+    if (opcode is not (MOpcode.Shl or MOpcode.Shr))
+      return this.Decline($"64-bit shift: {bin.Op} is not a logical shift");
+    if (WideShiftCount(bin.Rhs) is not { } count || count < 0)
+      return this.Decline($"64-bit shift: {bin.Op} by a count that is not a non-negative constant");
+    if (this._target is not { Cpu386OrLater: true, Optimize: true } || count is < 1 or > 31)
+      return this.SelectQwordShiftByWords(bin, opcode, count);
     if (!this.TryQwordSlot(bin.Lhs, out var source))
       return false;
 
@@ -1143,6 +1147,94 @@ public sealed partial class InstructionSelector {
       [new MOperand.StackSlot(result, MRegSize.Dword, 4), edx],
       new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
         ReadsMemory: false, WritesMemory: true), condition: null, clobbers: clobbers));
+    return true;
+  }
+
+  /// <summary>
+  /// A QUAD shift by a constant count, on any processor and with the optimizer off: each result word
+  /// is built out of the one or two source words that reach it.
+  ///
+  /// <para>
+  /// A shift by <c>n</c> moves every bit <c>n / 16</c> whole words along and then <c>n % 16</c> bits
+  /// within the word, so result word <c>i</c> is one source word shifted by that remainder with the
+  /// neighbour's departing bits shifted in from the other end. Where the remainder is zero the
+  /// neighbour contributes nothing and the word is copied - which also avoids asking the hardware for
+  /// a shift by sixteen, the one count a word shift cannot express (the 8086 does not mask it and
+  /// every later part does, so it is not even one answer).
+  /// </para>
+  /// <para>
+  /// It replaces a decline. The only 64-bit shift the selector took was the optimized-386 SHLD form,
+  /// so <c>SHIFT LEFT x&amp;&amp;, 5</c> without <c>$CPU 80386</c> refused the whole function and the
+  /// direct emitter compiled it as a per-bit RCL/RCR chain, CX times round a loop. The two agree
+  /// where it matters: a count of zero leaves the value (the loop's JCXZ), and a count of 64 or more
+  /// clears it (every bit walked off the end), which is what indexing off the end of the word run
+  /// gives here.
+  /// </para>
+  /// <para>
+  /// A RUNTIME count still declines, and visibly: the loop is a loop, and writing one here would mean
+  /// building blocks from inside the selector.
+  /// </para>
+  /// </summary>
+  private bool SelectQwordShiftByWords(IrBinary bin, MOpcode opcode, long count) {
+    if (!this.TryQwordSlot(bin.Lhs, out var source))
+      return false;
+
+    var result = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[bin] = result;
+    const int words = 4;
+    var left = opcode == MOpcode.Shl;
+    var wholeWords = (int)Math.Min(count / 16, words);
+    var bits = (int)(count % 16);
+
+    // Every word is computed before any is stored: the source and the result are different cells, so
+    // this is not an aliasing requirement - it just keeps the reads together and the writes together.
+    var computed = new MOperand.Register[words];
+    for (var i = 0; i < words; ++i) {
+      // the source words whose bits land in result word i - the second one only when a partial shift
+      // makes the neighbour's top (or bottom) bits cross the boundary
+      var primary = left ? i - wholeWords : i + wholeWords;
+      var carried = left ? primary - 1 : primary + 1;
+      var value = new MOperand.Register(MReg.Virtual(this._nextVreg++, MRegSize.Word));
+      computed[i] = value;
+
+      if (primary is < 0 or >= words) {             // nothing reaches this word: it is zeroed
+        var zero = new MOperand.Immediate(0);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [value, zero], MovEffect(value, zero)));
+        continue;
+      }
+
+      var primaryCell = new MOperand.StackSlot(source, MRegSize.Word, primary * 2);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [value, primaryCell], MovEffect(value, primaryCell)));
+      if (bits == 0)
+        continue;                                   // a whole number of words: the word is copied
+
+      var shift = new MOperand.Immediate(bits);
+      this._current.Instructions.Add(new MInstr(opcode, [value, shift],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+      if (carried is < 0 or >= words)
+        continue;                                   // no neighbour to take the crossing bits from
+
+      var neighbour = new MOperand.Register(MReg.Virtual(this._nextVreg++, MRegSize.Word));
+      var carriedCell = new MOperand.StackSlot(source, MRegSize.Word, carried * 2);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [neighbour, carriedCell],
+        MovEffect(neighbour, carriedCell)));
+      var complement = new MOperand.Immediate(16 - bits);
+      this._current.Instructions.Add(new MInstr(left ? MOpcode.Shr : MOpcode.Shl, [neighbour, complement],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Or, [value, neighbour],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+    }
+
+    for (var i = 0; i < words; ++i) {
+      var cell = new MOperand.StackSlot(result, MRegSize.Word, i * 2);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cell, computed[i]],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+          ReadsMemory: false, WritesMemory: true)));
+    }
     return true;
   }
 
