@@ -84,8 +84,11 @@ Extends the OMF reader/linker + calling-convention work already landed.
   CDECL, STDCALL, FASTCALL or WATCALL identity. The x86-16 descriptor maps order, cleanup, distance and
   register slots; routed CDECL/STDCALL callers use right-to-left argument groups and CDECL caller
   cleanup. Routed FASTCALL/WATCALL callers stage their leading 8/16-bit or near-pointer values in
-  AX/DX/BX(/CX), push overflow in the declared direction and leave cleanup to the callee.
-  Non-BASIC/PASCAL procedure definitions and wider register value classes remain below.
+  AX/DX/BX(/CX), push overflow in the declared direction and leave cleanup to the callee. Source
+  procedure DEFINITIONS route under all six conventions as well, the register ones through a prologue
+  that spills those same registers into their frame cells. Wider register value classes remain below,
+  as does a GENERATED definition under a register convention: its layout comes from the IR signature
+  alone, which carries no spill plan.
 - **Vendor-specific register ABI identities.** The current BASIC `FASTCALL` surface names the
   repository's established AX/DX/BX convention, but Microsoft and Borland register conventions are not
   interchangeable across compiler versions. Split those identities, decoration rules and size classes

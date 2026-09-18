@@ -388,21 +388,29 @@ functions get genuine integer IR and the selector fires. The routing (`CodeGener
 
 ### Definition ABI and call-site ABIs (`CallingConventionTests`, `BackendCallRoutingTests`)
 
-`MachineEmitter.EmitFunction` implements exactly one calling convention: arguments pushed left to
+`MachineEmitter.EmitFunction` began with exactly one calling convention: arguments pushed left to
 right at `[BP+4..]`, callee-cleans through `RET n`, nothing in a register. That is PowerBASIC's
 default (`BASIC`, and `PASCAL`, which is identical in every respect the frame cares about). Procedure
-**definitions** using another convention therefore still decline. The former selector also assumed
+**definitions** using another convention therefore declined, and the former selector also assumed
 that same convention at every ordinary call site, which miscompiled foreign stack calls:
 
-| declared | what routing produced |
+| declared | what routing produced BEFORE the ABI work below |
 |---|---|
 | `WATCALL` / `FASTCALL` | `LayoutFrame` puts the leading parameters at NEGATIVE offsets, filled only by the direct prologue's `AX,DX,BX(,CX)` spill. The routed prologue has no spill, so the body reads its arguments out of an unwritten frame — the recursive probe printed ` 0` for a call that answers ` 13` |
 | `CDECL` / `STDCALL` definition | the routed frame would still lay parameters out for left-to-right arguments rather than the declared right-to-left order |
 | `CDECL` definition | the routed epilogue would still emit callee cleanup instead of an ordinary `RET` |
 
-`IsBackendAbiConvention` is the gate, and it is written in terms of the two predicates the direct
-emitter already uses (`PushesRightToLeft`, `CallerCleansStack`) plus `IsRegisterConvention`, so a
-convention added later is excluded until someone states its stack discipline.
+All three rows are closed: every near convention routes as a definition as well as a call site.
+`EmitFunction` takes the incoming `AX,DX,BX(,CX)` as an explicit prologue spill for a register
+convention, and starts its own stack slots below that reservation, so an `alloca` is never handed
+parameter 0's address; `X86CallAbi.TryDefinitionStackLayout` supplies the `[BP+offset]` order and the
+cleanup for the stack ones. `IsBackendAbiConvention` therefore no longer gates routing - it answers the
+narrower question its name reads as, which is whether this is the one frame shape BOTH emitters lay out
+identically. `DirectCalleeWithCompatibleAbi` and the semantic merger's call-target filter are what ask
+it, because each crosses the routed/direct boundary and cannot cross a frame the two paths describe
+differently. It is written in terms of the two predicates the direct emitter already uses
+(`PushesRightToLeft`, `CallerCleansStack`) plus `IsRegisterConvention`, so a convention added later is
+excluded until someone states its stack discipline.
 
 Calls are now distinct from definitions. `IrCall.Convention` carries BASIC, PASCAL, CDECL, STDCALL,
 FASTCALL or WATCALL identity through cloning and optimization. `X86CallAbi` maps that identity to near
