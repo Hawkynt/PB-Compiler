@@ -38,7 +38,23 @@ done
 PBC_X_BACKEND_STRICT=1 dotnet test PowerBasic.Compiler.Tests -c Release --filter "Category!=Performance"
 ```
 
-**The corpus is down to four declines** (`Timer_InterruptHandler`, `Timer_InterruptHandler8086`, `Scroll_HardwareVertical`, `CheckWidth`), from 127. **The suite is at 49 failing tests**, from 337, and that gap is the honest size of gate 1: the corpus exercises the graphics subset of the language, and the suite exercises all of it.
+**Gate 1 is met.** The corpus has **no routing declines**, from 127; the suite has **no failing tests** with routing mandatory, from 337. A third measurement was added along the way, because the first two together still missed things: `Compile_GivenEveryStatementForm` compiles every statement form the language has through BOTH emitters, and it is at **299 of 299** but `FILES`, which neither emitter generates.
+
+```text
+corpus (31 suites)        0 routing declines
+suite (strict)            0 failing of 6564
+statement census        299/299 except FILES
+golden battery          568 pass / 0 fail / 0 skip
+round-trip              284 pass / 0 fail
+```
+
+The corpus's two non-routing declines are expected and are not gate-1 rows: `SVGA.BAS` needs `SVGAENG.SUB`, which the test harness synthesizes rather than keeping on disk, and `VESA.BAS` is the suite genuine PBC 3.50 rejects too.
+
+**What the three measurements caught that the others could not.** The corpus is real graphics programs, so it exercises the constructs someone actually wrote; the suite is the language as the tests use it; and the census is the language as the *grammar* defines it, which is the only one of the three that noticed `BEEP`, `SOUND`, `SHELL`, `NAME`, `WAIT`, `SLEEP`, `STDOUT`, `STDIN`, `PALETTE`, `VIEW`, `WINDOW`, `TIMER ON` and twenty more had no lowering at all. It read 259/299 the first time it was asked under strict routing, against a suite that was already down to 19 failures.
+
+**And none of the three catches everything.** `END n` threw its exit code away on the routed path — `END 3` exited 3 directly and 0 routed, on the DEFAULT path — while all of the above were green, because the differential harness compares `RESULT.TXT` and a program's exit code is not in it. `END` inside a procedure declined at the same time, and the census has no row for it because it measures statement FORMS in isolation. Both were found by probing what the code does rather than by reading what it claims.
+
+The historical list below is kept as written; it is the record of how the 49 came down.
 
 Read the two together before estimating. A corpus row is usually one procedure counted once per suite that includes it, and the `.dyn.g.*` "no addressable cell" rows are **cascade** — `SharedDynArrayUsersRouteTogether` hands a shared dynamic array's descriptor back to the direct emitter the moment one user of it is not routed, so a single procedure that cannot lower denies the routed side every array its file touches. One GIF header field was holding nine procedures.
 
@@ -421,6 +437,38 @@ exploratory:
   `!IsBackendRouted(p)`, so with everything routing it selected nothing.
 - ISA emulation for inline assembly does NOT go, and must not: it is reached through a callback now
   and is shared infrastructure rather than direct-emitter code.
+### What is left, measured rather than estimated
+
+With gate 1 met, nothing that COMPILES needs the direct emitter any more. What still holds
+`CodeGen/` in the tree is the tests, and the shape of that debt is not what "57 fixtures that assert
+its byte shapes" suggests:
+
+| | files | what deleting the emitter does to them |
+|---|---:|---|
+| use `UseExperimentalBackend = false` at all | 65 | |
+| ...and also `= true` | **55** | lose their ORACLE - they compare routed against direct |
+| ...direct only | **10** | lose their SUBJECT - they assert the direct emitter's byte shapes |
+
+The 10 are `ArrayParameterRedimTests`, `AutoVectorizeTests`, `OptDeadGlobalsTests`,
+`FloatResultForwardingTests`, `SearchAlgorithmSelectionTests`, `StackArrayTests`,
+`O0308ArrayPreflightTests`, `BoundsCheckLoweringTests`, `SharedDivideTests` and
+`InterpreterSanityTests`.
+
+**The 55 are the interesting half, and they are less alarming than the count.** For every historic
+dialect the oracle is not the direct emitter at all - it is the genuine vintage compiler, and the
+golden battery already asks it 568 times per run. The direct emitter is the only second opinion for
+**pb36-only** constructs, where no vintage compiler exists to ask: wide integers, closures,
+delegates, `USING` blocks. Those tests need absolute expectations rather than a comparison, which is
+what a differential test should carry anyway - two emitters can agree on nonsense, and during this
+work agreement is precisely what revealed three WRONG EXPECTATIONS of the author's rather than three
+compiler bugs.
+
+And `CodeGen/` is 65 files and ~31k lines of which the routed path needs a substantial share: the
+whole-program driver, the Tier-1 optimizer pre-passes, `RuntimeTrimmer`, and the routing bridge in
+`CodeGenerator.Backend.cs` that the routed path enters at 23 call sites. Deleting the emitter is a
+SEPARATION across that directory, not a removal of it - which is what the top of this document says,
+and is why the work is sequenced as gate 5 rather than as a cleanup.
+
 ## Reference architecture
 
 This split follows the same layering used by LLVM's code-generation pipeline: target-independent IR optimization is followed by target machine lowering, scheduling, target-specific machine optimizations and register allocation. x87 stack handling and ABI mechanics therefore belong in the x86 backend rather than in a target-neutral source emitter.
