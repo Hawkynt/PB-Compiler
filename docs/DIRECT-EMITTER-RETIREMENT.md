@@ -432,9 +432,24 @@ exploratory:
   and belongs to neither emitter.
 - Twelve pure-emission files delete outright. `CodeGenerator.cs` goes from 4458 lines to ~1200; what
   remains is the driver - `EmitExecutable`, `EmitUnit`, `DescribeImage`, frame layout, linking.
-- `EmitFarThunks` goes with it: only direct emission ever populated `_farThunks`.
-- The O6 "inlined at every call site, so purge it" pass goes too - its predicate already read
-  `!IsBackendRouted(p)`, so with everything routing it selected nothing.
+- `EmitFarThunks` does **not** go with it, and the bullet above already says so - the two
+  contradicted each other and the deletion bullet was the wrong one. A routed DELEGATE names its
+  adapter `thk_<proc>`, and `CalleeLabel` mints it by calling `ThunkOf`, which is what populates
+  `_farThunks`; so the routed path both registers and needs the thunks. This was true from the moment
+  closures began lowering, and a deletion that followed the old bullet would have taken every routed
+  delegate's entry point with it.
+- The O6 "inlined at every call site, so purge it" pass goes too, but it is a CONSEQUENCE of the
+  deletion rather than a step available before it. Its predicate reads `!IsBackendRouted(p)`, which
+  selects nothing only while everything routes - and `UseExperimentalBackend = false`, which 65 test
+  fixtures still set, makes it select everything again. It is dead when the direct path is gone, not
+  when routing is universal.
+
+**Re-verify each item before acting on it.** Both of the two bullets above were written when they were
+true and were false by the time they were read; the four shared symbols were re-checked at the same
+time and all four still hold (`TryDirectCell` at `CodeGenerator.Backend.cs`, `ContainsErrorHandling`
+beside it, `EmitStoreReadValue` reached from the shared `EmitDataArea`, `EmitFarThunks` as above). A
+plan for deleting code ages against the code it describes, and this one aged in the direction that
+breaks things quietly.
 - ISA emulation for inline assembly does NOT go, and must not: it is reached through a callback now
   and is shared infrastructure rather than direct-emitter code.
 ### What is left, measured rather than estimated
