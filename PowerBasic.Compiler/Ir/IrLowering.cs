@@ -1389,6 +1389,16 @@ public sealed partial class IrLowering {
   }
 
   private void LowerStatement(Statement statement) {
+    // A statement the BINDER rewrote is lowered as what it was rewritten to. pb36's member call
+    // `r.Dispose()` is `Res.Dispose(r)` and a property set `o.P = x` is `Type.set_P(o, x)`, both
+    // resolved at bind time against the receiver's TYPE - so the side table is where the answer
+    // already is, and re-deriving it here would be a second implementation of the overload rules.
+    // The direct emitter has consulted it from the start; the lowering never did, which declined
+    // every USING block (its END USING is a compiler-inserted Dispose call) and every property set.
+    if (this._model.DesugaredStatements.TryGetValue(statement, out var desugared)) {
+      this.LowerStatement(desugared);
+      return;
+    }
     switch (statement) {
       case AssignStmt a: this.LowerAssign(a); break;
       case IncrDecrStmt id: this.LowerIncrDecr(id); break;
