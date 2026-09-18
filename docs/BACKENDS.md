@@ -317,8 +317,33 @@ PBU named by `$LINK`, so `LINKDEMO` is measured with the same `MATHUNIT.PBU` inp
 Its numeric, BYREF, nested-call and dynamic-string calls use the routed stack ABI in both optimizer
 modes, through either a PBU or a PBL. Routed calls to near CDECL and STDCALL declarations now preserve
 their IR convention identity, push argument groups right-to-left, and apply caller/callee cleanup as
-declared. FASTCALL/WATCALL external calls still decline per callee until register-argument staging is
-selectable; merely having a link input no longer rejects the entire module.
+declared. Near FASTCALL/WATCALL calls stage their leading one-word values in the ABI registers, push
+the overflow in the declared direction and leave its cleanup to the callee; source-declared
+FASTCALL/WATCALL *definitions* route with them, because the routed prologue now pushes those same
+registers into the negative frame cells `LayoutFrame` had always assigned them. Merely having a link
+input no longer rejects the entire module.
+
+Two limits remain. A register-convention value wider than a word - LONG, float, far pointer, multiword
+aggregate - is refused on the routed and the direct path alike, because the per-compiler rules for
+splitting one across a register pair differ between FASTCALL and WATCALL and neither is modelled; the
+call side and the definition side share one predicate for it, which is what stops a definition and its
+call sites disagreeing about which shapes exist. And a GENERATED definition - a clone, or a procedure
+whose signature an interprocedural pass rewrote - has no `ProcedureSymbol` carrying that spill plan, so
+`X86CallAbi.TryDefinitionStackLayout` derives the frame from the IR signature alone and declines a
+register convention outright.
+
+The six near conventions and the rules each one selects:
+
+<!-- x86-call-abi: re-derived from X86CallAbi by BackendCallAbiDocumentationTests -->
+
+| convention | argument registers | stack argument order | stack cleanup |
+|---|---|---|---|
+| `BASIC` | - | left-to-right | callee |
+| `PASCAL` | - | left-to-right | callee |
+| `CDECL` | - | right-to-left | caller |
+| `STDCALL` | - | right-to-left | callee |
+| `FASTCALL` | AX, DX, BX | left-to-right | callee |
+| `WATCALL` | AX, DX, BX, CX | right-to-left | callee |
 
 Dynamic-string `SWAP` removes the former invisible lowering row. The IR loads the raw handle from
 each owner cell and crosses the stores; it neither borrows a duplicate nor frees a handle because the
@@ -328,13 +353,18 @@ modes; its SPEED caller adds the second optimized gain, moving 257/254 to 259/25
 from 159/161 to 160/161. Selection and allocation move from 262/262 to 263/263.
 
 **Whole classes are absent from the corpus and are no less real.** `BackendRoutingGateTests` holds one
-program each and pins the routing's own reason for it: QUAD and BYTE parameters and results, FIX and
-EXT parameters, a record parameter, `CDECL`/`STDCALL`/`FASTCALL`/
-`WATCALL`, error handling inside a procedure body, and an array parameter (which stops the whole
-module lowering) - fourteen decline rows, none of which the corpus would have noticed stopping or
-starting. FIX arithmetic in a module body was the fifteenth and has moved to the routing list. Each compiles to an executable byte-identical to the
-unrouted build, because the module body is stranded by the very call the filter refused: one
-construct silently costs a whole program's routing today, and a compile error tomorrow.
+program each: QUAD and BYTE parameters and results, FIX and EXT parameters, a record parameter, the
+four non-default conventions `CDECL`/`STDCALL`/`FASTCALL`/`WATCALL`, error handling inside a procedure
+body, and an array parameter - none of which the corpus would have noticed stopping or starting.
+
+Every one of them routes today. The fixture used to carry a decline list beside its routing list, and
+closing an item meant moving its row from one to the other; the last row to move was `ERASE` of an
+ABSOLUTE array, and the list went with the test that consumed it rather than being kept empty, because
+a routing that refuses nothing cannot be shown to be refusing and an empty case source proves nothing
+while looking like coverage. What each row now pins is the opposite claim - that the construct is still
+taken - which is why the fixture asserts the routing table by name as well as execution equivalence: a
+byte-identical image no longer means whole-program fallback once a declined procedure and a routed
+caller can share one stack ABI.
 
 **Six constructs the routed path declined OUTRIGHT now route, and none of them was in the corpus
 either.** A sweep of the declarative surface - rather than of the programs to hand - found them; each
