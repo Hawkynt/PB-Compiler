@@ -1778,6 +1778,12 @@ public sealed partial class IrLowering {
       case WriteStmt write:
         this.LowerWrite(write);
         break;
+      case StdOutStmt stdOut:
+        this.LowerStdOut(stdOut);
+        break;
+      case StdInStmt stdIn:
+        this.LowerStdIn(stdIn);
+        break;
       case ChainStmt chain:
         this.LowerChain(chain);
         break;
@@ -2712,6 +2718,40 @@ public sealed partial class IrLowering {
     var bytes = System.Text.Encoding.ASCII.GetBytes(text);
     this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
       this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
+  }
+
+  /// <summary>
+  /// <c>STDOUT expr [;]</c>: an ordinary console PRINT, with the console pointed back at itself first.
+  ///
+  /// <para>
+  /// Those two stores are the whole of what STDOUT adds, and they are the same two the routed path
+  /// already emits after a <c>PRINT #n</c> - the file number and the print COLUMN the console keeps,
+  /// since each open file carries its own. Writing them again here rather than assuming the console is
+  /// already selected is what the direct emitter does, and the assumption would be one statement away
+  /// from wrong: STDOUT exists precisely to be reachable when output has been sent somewhere else.
+  /// </para>
+  /// </summary>
+  private void LowerStdOut(StdOutStmt stdOut) {
+    this._b.Store(new IrConstantInt(IrType.I16, 1), this.RuntimeCell("rt_curout", IrType.I16));
+    this._b.Store(this.RuntimeCell("rt_col", IrType.I16), this.RuntimeCell("rt_colptr", IrType.Ptr));
+    if (stdOut.Value is { } value)
+      this.LowerPrintItem(null, value);
+    if (!stdOut.NoNewline)
+      this.EmitIo(null, "print", "nl", IrType.Void, []);
+  }
+
+  /// <summary>
+  /// <c>STDIN LINE, s$</c> / <c>STDIN n, s$</c>: a read from PB file number 0, which is the console.
+  /// The two forms are the two routines LINE INPUT and <c>INPUT$(n, #f)</c> already use, asked for
+  /// file zero - so nothing here is a second implementation of either.
+  /// </summary>
+  private void LowerStdIn(StdInStmt stdIn) {
+    var zero = new IrConstantInt(IrType.I32, 0);
+    var line = stdIn.Line
+      ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_finput_line", IrType.Ptr, IrType.I32), zero)
+      : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_fget_str", IrType.Ptr, IrType.I32, IrType.I32),
+        zero, this.WordArg(stdIn.Count ?? throw new IrLoweringException("STDIN with neither LINE nor a count")));
+    this._b.Store(line, this.StringTargetAddress(stdIn.Target));
   }
 
   private void LowerPrintItem(IrValue? file, Expression expr) {
