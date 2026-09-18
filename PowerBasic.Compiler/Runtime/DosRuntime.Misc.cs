@@ -24,6 +24,9 @@ public sealed partial class DosRuntime {
   public Label Cls { get; private set; } = null!;
   public Label Sound { get; private set; } = null!;
   public Label Delay { get; private set; } = null!;
+
+  /// <summary>SLEEP's blocking key read - see EmitMiscProcedures.</summary>
+  public Label SleepKey { get; private set; } = null!;
   public Label ScreenMode { get; private set; } = null!;
   public Label Spc { get; private set; } = null!;
   public Label Tab { get; private set; } = null!;
@@ -297,6 +300,23 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.DX);
       asm.Pop(Reg.CX);
       asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
+    // SLEEP with no count, or a count of zero: block until a key is pressed, and CONSUME it.
+    //
+    // rt_instat only peeks and rt_inkey answers with a string handle, so neither is this: spinning on
+    // the first would leave the key in the buffer for a later INKEY$ to find, and the second would
+    // allocate and leak a handle on every SLEEP. The read itself is two instructions, which is why the
+    // direct emitter writes them inline; the routed path has no way to spell an INT, so they need a
+    // name. Nothing else changes - the reachability trimmer drops the section for a program that never
+    // sleeps.
+    this.SleepKey = asm.MarkLabel("rt_sleepkey");
+    {
+      asm.Push(Reg.AX);
+      asm.Xor(Reg.AH, Reg.AH);                    // BIOS blocking read
+      asm.Int(0x16);
       asm.Pop(Reg.AX);
       asm.Ret();
     }

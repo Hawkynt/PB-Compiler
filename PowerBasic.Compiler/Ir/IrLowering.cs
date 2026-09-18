@@ -1473,6 +1473,11 @@ public sealed partial class IrLowering {
       // target says it is. Both operands are INTEGERs for the reason LOCATE's are: the argument slot
       // is a word, and a LONG the selector cannot prove word-sized declines the whole module body.
       // It was 46 routing declines, all of them graphics code setting a VGA register.
+      // SLEEP [n] - wait n seconds, or for a key when n is zero or absent. The choice is made at RUN
+      // time when n is a variable, so it is a branch and not two spellings of one statement.
+      case CommandStmt { Keyword: "SLEEP" } sleep when sleep.Arguments.Count <= 1:
+        this.LowerSleep(sleep.Arguments.Count == 1 ? sleep.Arguments[0] : null);
+        break;
       // WAIT port, mask [, xor] - spin until (INP(port) XOR xor) AND mask is non-zero. The direct
       // emitter writes the poll inline as four instructions round a label; here it is the same poll
       // written as blocks, over the rt_inp the routed path already reads a port with. No runtime
@@ -2725,6 +2730,44 @@ public sealed partial class IrLowering {
     var bytes = System.Text.Encoding.ASCII.GetBytes(text);
     this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
       this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
+  }
+
+  /// <summary>
+  /// <c>SLEEP [n]</c>: delay n seconds, or - when n is zero or was not written - block until a key.
+  ///
+  /// <para>
+  /// The two are alternatives rather than a sequence, which is worth stating because the statement
+  /// reads like "sleep, then wake on a key": a non-zero SLEEP returns when the time is up and no key
+  /// will shorten it, and a zero SLEEP waits for the key with no timeout. The direct emitter decides
+  /// with an <c>FTST</c> on the value it has already pushed, so the test is on the DOUBLE and a count
+  /// like 0.4 sleeps rather than waiting for a key.
+  /// </para>
+  /// <para>
+  /// <c>SLEEP</c> with no argument at all needs no test and lowers to the key wait directly, which is
+  /// also what the direct emitter does - it marks the wait label instead of emitting the comparison.
+  /// </para>
+  /// </summary>
+  private void LowerSleep(Expression? seconds) {
+    if (seconds is null) {
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_sleep_key", IrType.Void));
+      return;
+    }
+
+    var count = this.Coerce(this.LowerExpr(seconds), this._model.TypeOf(seconds), PbType.Double);
+    var delay = this.NewBlock("sleep.delay");
+    var key = this.NewBlock("sleep.key");
+    var done = this.NewBlock("sleep.done");
+    this._b.CondBr(this._b.Cmp(IrCmpPred.Fone, count, IrBuilder.ConstFloat(IrType.F64, 0)), delay, key);
+
+    this._b.Position(delay);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_delay", IrType.Void, IrType.F64), count);
+    this._b.Br(done);
+
+    this._b.Position(key);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_sleep_key", IrType.Void));
+    this._b.Br(done);
+
+    this._b.Position(done);
   }
 
   /// <summary>
