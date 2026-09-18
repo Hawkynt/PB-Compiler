@@ -281,6 +281,9 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
     // DELAY seconds -> the count on the x87 stack, as every other floating argument travels.
     ["rt_delay"] = new("rt_delay", [new(ArgKind.St0, default)], _callerSaved),
+    // SLEEP's key wait: no arguments, no answer, and it preserves everything - the whole routine is a
+    // blocking BIOS read between a push and a pop.
+    ["rt_sleep_key"] = new("rt_sleepkey", [], []),
     // POKE$ address, s$ -> DI = the offset, AX = the string handle. DI rather than the usual second
     // word because the routine stores through it, which is the whole of what it does.
     ["rt_poke_str"] = new("rt_pokestr",
