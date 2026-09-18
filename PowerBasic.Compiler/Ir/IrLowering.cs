@@ -814,6 +814,9 @@ public sealed partial class IrLowering {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(elem) { Count = count, Name = symbol.Name });
     } else if (symbol.Type is UdtType udt) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = udt.Size, Name = symbol.Name });   // a packed record buffer
+    } else if (symbol.Type is WideIntType wide) {
+      alloca = this._entry.InsertAt(this._entryAllocaCount++,
+        new IrAlloca(IrType.I16) { Count = wide.Words, Name = symbol.Name });   // a run of words - see IrLowering.WideIntegers
     } else if (symbol.Type is ProcPtrType) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++,
         new IrAlloca(IrType.I16) { Count = ClosureWords, Name = symbol.Name });   // a fat closure - see IrLowering.Delegates
@@ -856,6 +859,7 @@ public sealed partial class IrLowering {
       FixedStringType fs => (IrType.I8, fs.Length),
       AsciizType az => (IrType.I8, az.Length),
       UdtType udt => (IrType.I8, udt.Size),
+      WideIntType wide => (IrType.I16, wide.Words),
       ArrayType { IsDynamic: false } arr => arr.Element switch {
         StringType => (IrType.Ptr, arr.ElementCount),
         UdtType ue => (IrType.I8, arr.ElementCount * ue.Size),
@@ -1850,6 +1854,16 @@ public sealed partial class IrLowering {
     if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var closureSym)
         && closureSym.Type is ProcPtrType) {
       this.StoreClosure(a.Value, this.SlotFor(closureSym));
+      return;
+    }
+    // ...and a wide integer is a run of words rather than a value, in both directions - see
+    // IrLowering.WideIntegers
+    if (this.IsWideAssignment(a, out var wideTarget)) {
+      this.LowerWideAssign(a, wideTarget);
+      return;
+    }
+    if (this._model.TypeOf(a.Value) is WideIntType && this.TargetTypeOf(a.Target) is ScalarType { IsFloat: false } narrowed) {
+      this._b.Store(this.LowerWideTruncation(a.Value, narrowed), this.SlotFor(this.SymbolOf(a.Target)));
       return;
     }
     var symbol = this.SymbolOf(a.Target);

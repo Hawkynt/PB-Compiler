@@ -77,6 +77,98 @@ public sealed class WideIntegerTests {
     Assert.That(image[0], Is.EqualTo((byte)'M'));
   }
 
+  /// <summary>
+  /// What the two tests above do not check: the arithmetic. Both assert that an image comes out, which
+  /// a lowering storing zeros everywhere would also satisfy - and the whole of a wide integer that a
+  /// program can observe is the low words a truncation hands back, so the carry has to be caught where
+  /// it crosses INTO them.
+  ///
+  /// <para>
+  /// <c>65535 + 65535</c> is that place. It is 131070, and a chain that dropped the carry out of word
+  /// zero would answer 65534 - the same sum with bit 16 missing. The borrow is the mirror: <c>0 - 1</c>
+  /// is -1 across every word, and a chain that did not borrow would leave 65535 in word zero and
+  /// nothing above it. Both numbers fit a LONG, so the truncation can report them.
+  /// </para>
+  /// <para>
+  /// Run through BOTH back ends, because the two compute it differently on purpose: the direct emitter
+  /// walks the words with <c>ADC</c>/<c>SBB</c> and the routed one adds each word in thirty-two bits,
+  /// the IR having no way to name a flag between two instructions.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Execute_GivenWideAddAndSubtract_ThenTheCarryCrossesTheWordBoundary() {
+    const string source = """
+      DIM a AS INT128, b AS INT128, c AS INT128
+      DIM x&, lo&
+      x& = 65535
+      a = x&
+      b = x&
+      c = a + b
+      lo& = c
+      PRINT lo&
+      x& = 0
+      a = x&
+      x& = 1
+      b = x&
+      c = a - b
+      lo& = c
+      PRINT lo&
+      a = -5
+      c = a
+      lo& = c
+      PRINT lo&
+      """;
+
+    var routed = Run(source, routed: true);
+    Assert.Multiple(() => {
+      Assert.That(routed, Is.EqualTo(Run(source, routed: false)), "the two back ends agree");
+      Assert.That(routed, Is.EqualTo("131070 |-1 |-5"),
+        "the carry left word zero, the borrow entered it, and a negative constant sign-extended");
+    });
+  }
+
+  /// <summary>
+  /// The FILL above the words a value actually occupies. It is read off the SOURCE and never the
+  /// destination, which is the whole of what signedness decides here: a negative <c>INT128</c> widening
+  /// into an <c>INT256</c> fills the eight words above it with ones, and a <c>LONG</c> of -1 stored into
+  /// a <c>UINT128</c> fills with ones too - the destination being unsigned changes what the value MEANS
+  /// and not which bits arrive.
+  /// </summary>
+  [Test]
+  public void Execute_GivenAWideningAssignment_ThenTheFillComesFromTheSource() {
+    const string source = """
+      DIM a AS INT128, d AS INT256
+      DIM u AS UINT128
+      DIM x&, lo&
+      a = -5
+      d = a
+      lo& = d
+      PRINT lo&
+      x& = -1
+      u = x&
+      lo& = u
+      PRINT lo&
+      """;
+
+    var routed = Run(source, routed: true);
+    Assert.Multiple(() => {
+      Assert.That(routed, Is.EqualTo(Run(source, routed: false)), "the two back ends agree");
+      Assert.That(routed, Is.EqualTo("-5 |-1"), "both widened with their own sign");
+    });
+  }
+
+  private static string Run(string source, bool routed) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = routed };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    if (routed)
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the body must route");
+    return Exec.Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
+  }
+
   [Test]
   public void Bind_GivenWideMultiply_ThenReportsNotYetSupported() {
     // only + and - are wired; multiply/compare/etc. still diagnose at bind time rather than miscompile
