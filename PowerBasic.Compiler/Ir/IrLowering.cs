@@ -792,7 +792,10 @@ public sealed partial class IrLowering {
     IrAlloca alloca;
     if (symbol.Type is PointerType) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });   // holds a near address
-    } else if (symbol.Type is StringType) {
+    } else if (symbol.Type is StringType or FlexType) {
+      // FLEX is a string handle too - "stored like a dynamic string handle", and the binder and the
+      // direct emitter both spell the pair `StringType or FlexType` wherever a handle is meant. This
+      // layer was the only one that had picked up the first half and not the second.
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });  // holds a string handle
       // ...starting EMPTY, which is both what PB says a string variable holds before its first
       // assignment and what makes the handle readable at all. An alloca is uninitialised, so anything
@@ -1886,7 +1889,7 @@ public sealed partial class IrLowering {
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), derefTarget), derefAddress);
       return;
     }
-    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var strSym) && strSym.Type is StringType) {
+    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var strSym) && strSym.Type is StringType or FlexType) {
       // the value FIRST, so `t = t + "x"` has taken its own copy before the old handle goes
       var strSlot = this.SlotFor(strSym);
       var strValue = this.LowerStringExpr(a.Value);
@@ -2600,7 +2603,7 @@ public sealed partial class IrLowering {
 
       // a string in a numeric field prints as itself: PB's '&' approximation, and what the direct
       // emitter does with it
-      if (this._model.TypeOf(value) is StringType or FixedStringType or AsciizType) {
+      if (this._model.TypeOf(value) is StringType or FlexType or FixedStringType or AsciizType) {
         this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(value));
         continue;
       }
@@ -2694,7 +2697,7 @@ public sealed partial class IrLowering {
       if (i > 0)
         this.WritePunctuation(file, ",");
       var item = write.Items[i];
-      if (this._model.TypeOf(item) is StringType or FixedStringType or AsciizType) {
+      if (this._model.TypeOf(item) is StringType or FlexType or FixedStringType or AsciizType) {
         this.WritePunctuation(file, "\"");
         this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(item));
         this.WritePunctuation(file, "\"");
@@ -2860,7 +2863,7 @@ public sealed partial class IrLowering {
       this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
       return;
     }
-    if (this._model.TypeOf(expr) is StringType or FixedStringType or AsciizType) {
+    if (this._model.TypeOf(expr) is StringType or FlexType or FixedStringType or AsciizType) {
       this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(expr));
       return;
     }
@@ -3074,7 +3077,7 @@ public sealed partial class IrLowering {
       // consumes what it prints. Handing them the variable's handle destroys the variable: PRINT a$
       // twice printed "hello" and then nothing, and a$ + b$ emptied both. The direct emitter
       // duplicates here for the same reason.
-      case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var sym) && sym.Type is StringType:
+      case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var sym) && sym.Type is StringType or FlexType:
         return this.BorrowString(this._b.Load(IrType.Ptr, this.SlotFor(sym)));
       case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var fsym) && fsym.Type is FixedStringType fixedStr:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
@@ -5939,7 +5942,7 @@ public sealed partial class IrLowering {
     var argument = call.Arguments[0];
     var resultType = this._model.TypeOf(call);
     switch (this._model.TypeOf(argument)) {
-      case StringType: {
+      case StringType or FlexType: {
         var length = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_len", IrType.I32, IrType.Ptr), this.LowerStringExpr(argument));
         return this.Coerce(length, PbType.Long, resultType);   // LEN result narrows to its bound type
       }
@@ -6484,7 +6487,7 @@ public sealed partial class IrLowering {
     var resultPb = this._model.TypeOf(expr);
     return expr.Op switch {
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
-        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType or FixedStringType or AsciizType
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType or FlexType or FixedStringType or AsciizType
           ? this.LowerStringComparison(expr, resultPb)
           : leftPb is UdtType
             ? this.LowerUdtComparison(expr, resultPb)
