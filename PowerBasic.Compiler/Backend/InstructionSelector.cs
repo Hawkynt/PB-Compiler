@@ -2579,21 +2579,26 @@ public sealed partial class InstructionSelector {
         this._vregs[cast] = narrow;
         return true;
       }
-      // A BYTE widened to a WORD. There were cases here for a bool source, for a word reaching a
-      // dword and for either reaching a qword, and none for a byte - so `u8 -> i16` declined 339
-      // times over the SVGA corpus alone, and with `-> u16` 354 of the routing gaps there: the
-      // largest single reason the direct emitter could not be retired.
+      // A BYTE widened to a WORD or a DWORD. There were cases here for a bool source, for a word
+      // reaching a dword and for either reaching a qword, and none for a byte - so `u8 -> i16`
+      // declined 339 times over the SVGA corpus alone, `-> u16` 15 more and `-> i32` 94: 448 of the
+      // routing gaps there, the largest single reason the direct emitter could not be retired. The
+      // SIGNED twin is the case immediately below, where CBW does the whole of it.
       //
       // Staged through the physical AX rather than through a byte VIEW of the destination vreg.
       // The view is what ScratchU8ToWord does; it depends on every consumer handing a mention back
       // its own size, and staging avoids the question. MOVZX is not in this back end's opcode set,
       // which is why the extension is written out rather than named.
       //
-      // `u8 -> i32` is NOT here, and the reason is measured: a version of this case that also built
-      // the dword pair made five DRAW_* corpus suites fail with `Operand size mismatch: DX vs
-      // [BP-90]` - the long-result convention reading its high half from a byte-sized slot. Removing
-      // only the 32-bit half made them clean again, so the defect is in forming that pair rather than
-      // in anything the newly routed functions reach. 94 declines wait on it.
+      // The 32-bit half arrived second, and its first diagnosis is kept here because it was WRONG. A
+      // version of this case that also built the dword pair made five DRAW_* corpus suites fail with
+      // `Operand size mismatch: DX vs [BP-90]`, and removing only that half made them clean again,
+      // which read as a defect in forming the pair. It was not. Dumping the machine IR showed the
+      // extension emitting correctly - XOR AH,AH / MOV AL,[slot] / MOV lo,AX / XOR hi,hi - and then
+      // the 32-bit CALL ARGUMENT staging peeling the widening cast away and reading the ORIGINAL byte
+      // into DX: its guard was `!IsWide(...)`, "narrower than 32 bits", which a BYTE satisfies too.
+      // That peel requires a word source now, so the pair stands and the 94 declines are closed. Two
+      // rounds of reasoning about the spiller had not found it; one instruction dump did.
       case IrCastOp.ZExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16 or 32: {
         if (!this.TryOperand(cast.Value, out var source))
           return false;
