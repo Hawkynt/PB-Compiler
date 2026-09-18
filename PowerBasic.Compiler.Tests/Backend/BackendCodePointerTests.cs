@@ -193,16 +193,26 @@ public sealed class BackendCodePointerTests {
   }
 
   /// <summary>
-  /// A computed jump in a function with no labels declines rather than being given a target list it
-  /// cannot fill. The list is not how the branch chooses - the address is - but it is how the CFG
-  /// says where control can arrive, and an empty one would claim the jump goes nowhere.
+  /// A computed jump in a function with no labels LOWERS, with no targets listed.
+  ///
+  /// <para>
+  /// This used to decline, on the reasoning that an empty target list "would claim the jump goes
+  /// nowhere". It claims something narrower and true: no block of THIS function follows. A jump whose
+  /// address is <c>CODEPTR32</c> of a procedure - or, as here, a number - leaves the function, and the
+  /// CFG saying so is not a gap in it.
+  /// </para>
+  /// <para>
+  /// The list is not how the branch chooses; the address is. What the list protects against is a label
+  /// block the jump can reach being called unreachable and deleted, and that needs a label block to
+  /// exist - which in a function with no labels is exactly what does not.
+  /// </para>
   /// </summary>
   [Test]
-  public void Lowering_GivenAComputedJumpWithNoLabelsToReach_ThenItDeclines() {
+  public void Lowering_GivenAComputedJumpWithNoLabelsToReach_ThenItLowersWithNoTargets() {
     Assert.That(DeclineReason("""
       DIM g AS DWORD
       g = 0
       GOTO DWORD g
-      """), Is.EqualTo("GOTO/GOSUB DWORD in a function with no labels to reach"));
+      """), Is.Null, "a jump out of the function is a jump, not a decline");
   }
 }

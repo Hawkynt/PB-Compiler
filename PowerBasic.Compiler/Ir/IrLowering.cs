@@ -3423,18 +3423,25 @@ public sealed partial class IrLowering {
   /// Every block a computed jump in this function could land on: its labels.
   ///
   /// <para>
-  /// A superset of the truth, and deliberately so - <c>CODEPTR32</c> of a label can only name a label
-  /// of the function it is written in, so listing them all cannot miss one, and missing one is the
-  /// only error that matters here. The list does not steer the branch; it is what keeps the CFG from
-  /// claiming those blocks are unreachable, which is what reachability, liveness and phi placement all
-  /// read. A function with no labels has nowhere a computed jump could go and declines.
+  /// A superset of the truth, and deliberately so. The list does not steer the branch - the selector
+  /// jumps through the address register whatever is listed - it is what keeps the CFG from claiming
+  /// those blocks are unreachable, which is what reachability, liveness and phi placement all read.
+  /// Listing every label cannot miss one, and missing one is the only error that matters.
+  /// </para>
+  /// <para>
+  /// A function with NO labels used to decline here, on the reasoning that a computed jump had nowhere
+  /// to go. It has somewhere to go; it just is not in this function. <c>CODEPTR32</c> of a PROCEDURE
+  /// is the case the fixture uses and the reasoning missed, and an address arriving in a DWORD at run
+  /// time need not name anything in this function either. What the empty list says is exactly that: no
+  /// block HERE is a successor.
+  /// </para>
+  /// <para>
+  /// It is sound precisely because the function has no labels. The danger an empty list would pose -
+  /// a label block the jump can reach being marked unreachable and deleted - needs a label block to
+  /// exist, and in this case there are none. Where labels do exist they are all still listed.
   /// </para>
   /// </summary>
-  private IReadOnlyList<IrBasicBlock> ComputedJumpTargets() {
-    if (this._labels.Count == 0)
-      throw new IrLoweringException("GOTO/GOSUB DWORD in a function with no labels to reach");
-    return [.. this._labels.Values];
-  }
+  private IReadOnlyList<IrBasicBlock> ComputedJumpTargets() => [.. this._labels.Values];
 
   private void LowerGotoPtr(GotoPtrStmt g)
     => this._b.IndirectBr(this.CodeAddress(g.Pointer), this.ComputedJumpTargets());
