@@ -1459,7 +1459,7 @@ public sealed partial class IrLowering {
         break;
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;
-      case EndStmt: this.LowerEnd(); break;
+      case EndStmt end: this.LowerEnd(end.ExitCode); break;
       case OnErrorStmt oe: this.LowerOnError(oe); break;
       case TryStmt tryStmt: this.LowerTry(tryStmt); break;
       case ResumeStmt rs2: this.LowerResume(rs2); break;
@@ -1734,7 +1734,7 @@ public sealed partial class IrLowering {
         this._b.Call(IrType.Void, this.RuntimeFn("rt_shell", IrType.Void, IrType.Ptr),
           this.LowerStringExpr(shellCommand));
         if (shellCmd.Keyword == "EXECUTE")
-          this.LowerEnd();
+          this.LowerEnd(null);
         break;
       // BEEP is SOUND with the numbers written down - 880 Hz for four ticks - and not a routine of its
       // own on either path, so the constants belong here rather than in the runtime.
@@ -3628,12 +3628,36 @@ public sealed partial class IrLowering {
     this._b.Store(new IrConstantInt(IrType.I32, offset), cursor);
   }
 
-  private void LowerEnd() {
-    // END terminates the whole program. In main that is simply a return; inside a
-    // procedure it would need a program-exit primitive the IR does not model yet.
-    if (!this._isMain)
-      throw new IrLoweringException("END inside a procedure");
-    this.ReturnFromFunction();
+  /// <summary>
+  /// <c>END [n]</c> terminates the whole PROGRAM, wherever it is written and whatever is on the stack.
+  ///
+  /// <para>
+  /// In main with no exit code that is simply a return, because main's own epilogue is the exit - it
+  /// ends in <c>MOV AL, 0</c> and a jump to <c>rt_exit</c>. Every other case needs to reach that
+  /// routine directly, which is what the direct emitter does from anywhere: it loads the code and
+  /// jumps. A CALL rather than a jump costs a return address that is never popped, on a stack the
+  /// next instruction abandons.
+  /// </para>
+  /// <para>
+  /// Two things were wrong before, and they were the same thing. <c>END</c> inside a PROCEDURE
+  /// declined - "a program-exit primitive the IR does not model yet" - and <c>END n</c> anywhere threw
+  /// its exit code away, because this read neither the argument nor anything but <c>_isMain</c>. The
+  /// second was the quieter of the two: <c>END 3</c> routed exits 0 where the direct emitter exits 3,
+  /// on the DEFAULT path, and no gate sees it - the differential harness compares RESULT.TXT, and a
+  /// program's exit code is not in it.
+  /// </para>
+  /// </summary>
+  private void LowerEnd(Expression? exitCode) {
+    if (this._isMain && exitCode is null) {
+      this.ReturnFromFunction();
+      return;
+    }
+    // rt_exit reads AL, so the code travels in the word register that contains it
+    var code = exitCode is null
+      ? new IrConstantInt(IrType.I16, 0)
+      : this.Coerce(this.LowerExpr(exitCode), this._model.TypeOf(exitCode), PbType.Integer);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_end", IrType.Void, IrType.I16), code);
+    this._b.Unreachable();
   }
 
   /// <summary>

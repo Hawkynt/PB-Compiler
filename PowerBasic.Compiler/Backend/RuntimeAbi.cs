@@ -284,6 +284,10 @@ internal static class RuntimeAbi {
     // SLEEP's key wait: no arguments, no answer, and it preserves everything - the whole routine is a
     // blocking BIOS read between a push and a pop.
     ["rt_sleep_key"] = new("rt_sleepkey", [], []),
+    // END [n] -> AL holds the code DOS reports, which rt_exit hands to INT 21h AH=4Ch. It does not
+    // return, so the clobber list is a formality; it is the caller-saved file because saying less
+    // would be a claim nobody needs.
+    ["rt_end"] = new("rt_exit", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     // POKE$ address, s$ -> DI = the offset, AX = the string handle. DI rather than the usual second
     // word because the routine stores through it, which is the whole of what it does.
     ["rt_poke_str"] = new("rt_pokestr",
