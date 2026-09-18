@@ -211,7 +211,7 @@ public sealed partial class LinearScanAllocator {
     var progress = Spiller.Progress.Of(function);
     for (var budget = moveBudget ?? BudgetFor(function); budget > 0; --budget) {
       // recomputed each round, because spilling renumbers the instructions the windows are measured in
-      var asmHeld = AsmHeldByIndex(function, out var asmConflict);
+      var asmHeld = AsmHeldByIndex(function, out var asmConflict, out var asmNamed);
       if (asmConflict is not null) {
         // a register an inline-asm statement left for a later one, destroyed in between by something
         // no allocation can move: there is nothing to choose, so the whole function goes back
@@ -223,7 +223,15 @@ public sealed partial class LinearScanAllocator {
         return assignment;
       }
       if (!AdvanceSpiller(function, ref progress)) {
-        reason = Blocker(function, asmHeld, target);
+        // nothing left to move, so the choice is no longer between a better allocation and a worse one
+        // but between an allocation and none. The reservations the asm text NAMED still stand; the ones
+        // merely inferred from a statement nobody could read are given up, because the alternative is
+        // giving up the function - and the path this one replaces holds none of them at all.
+        if (TryAllocate(function, asmNamed, target) is { } relaxed) {
+          reason = null;
+          return relaxed;
+        }
+        reason = Blocker(function, asmNamed, target);
         return null;
       }
       ++rounds;
