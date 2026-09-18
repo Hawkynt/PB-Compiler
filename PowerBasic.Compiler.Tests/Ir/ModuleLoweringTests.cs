@@ -54,19 +54,33 @@ public sealed class ModuleLoweringTests {
     Assert.That(module.FindFunction("main")!.AllInstructions.OfType<IrCall>().Single().Type, Is.EqualTo(IrType.Void));
   }
 
+  /// <summary>
+  /// One statement the lowering has no case for, standing in for all of them: the FUNCTION keeps its
+  /// signature and loses its body, and the caller is still a valid module.
+  ///
+  /// <para>
+  /// The subject is a moving target BY DESIGN - the subset it sits outside of is the thing this
+  /// project is growing - and it has moved three times already: <c>BEEP</c> became a call to
+  /// rt_sound, <c>WAIT</c> became blocks over rt_inp, and <c>GOTO DWORD</c> became an indirect
+  /// branch with no in-function successors. Each time it was chosen as "the durable one".
+  /// </para>
+  /// <para>
+  /// So it is named ONCE, here, rather than guessed at again: when this test starts failing because
+  /// the construct now lowers, that is the subset growing and the fix is to point
+  /// <see cref="_OutsideTheSubset"/> at something still outside it.
+  /// <c>Compile_GivenEveryStatementForm</c> keeps the list to choose from.
+  /// </para>
+  /// </summary>
+  private const string _OutsideTheSubset = "  END\n";   // END inside a procedure
+
   [Test]
   public void Module_FunctionWithUnsupportedBodyBecomesADeclaration() {
     var module = LowerModule(
       "DECLARE FUNCTION f%(BYVAL n%)\n" +
-      "DIM gp AS DWORD\n" +
       "y% = f%(3)\n" +
       "\n" +
       "FUNCTION f%(BYVAL n%)\n" +
-      // A construct outside the subset, whichever one that currently is - this was BEEP, then WAIT,
-      // and each stopped being one. A computed jump to a PROCEDURE address is the durable choice: the
-      // lowering branches indirectly over the labels of the function it is in, and a procedure is not
-      // one of those.
-      "  GOTO DWORD gp\n" +
+      _OutsideTheSubset +
       "  f% = n%\n" +
       "END FUNCTION");
 
