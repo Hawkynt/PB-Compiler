@@ -764,4 +764,63 @@ public sealed class BackendInlineAsmTests {
     Assert.That(routed, Is.EqualTo(RunProcedure(source, "Borrow", routed: false).Output));
     Assert.That(routed, Is.EqualTo("8"), "v is still reachable through BP after the pair");
   }
+
+  /// <summary>
+  /// A BASIC statement standing between a row of <c>! POP</c>s and a statement the assembler cannot
+  /// read. This is <c>Timer_InterruptHandler</c> in the SVGA corpus, and it declined with "a value is
+  /// live across an instruction that clobbers every register, and cannot move to memory".
+  ///
+  /// <para>
+  /// Nothing about the program is hard. The pops restore the caller's registers, the opaque statement
+  /// afterwards is assumed to read every one of them, and backward liveness therefore carries a claim
+  /// on the WHOLE allocatable file across the two moves in between - leaving the allocator no register
+  /// for a load and an add. The claim is a guess: what an <c>INT</c> or a <c>CALL DWORD PTR</c> reads
+  /// is exactly what the compiler does not know. The pushes cannot cancel the pops here either, because
+  /// the opaque statement between them moves the stack by an unknown amount.
+  /// </para>
+  /// <para>
+  /// A guess is worth a preference and not a refusal, so it is given up at the one point where the
+  /// alternative is not a worse allocation but none - after the spiller has run out of moves. The
+  /// reservations the text NAMES are unaffected, and the direct emitter holds neither kind: it loads
+  /// this statement through <c>AX</c> and <c>DX</c> without asking.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenABasicStatementBetweenRestoresAndAnOpaqueRead_ThenTheFunctionStillRoutes() {
+    const string source = """
+      DECLARE SUB Relay()
+      DIM seed AS SHARED WORD
+      DIM seen AS SHARED WORD
+      seed = 40
+      Relay
+      PRINT seen
+      END
+      SUB Relay()
+        DIM v AS WORD
+        ! PUSH AX
+        ! PUSH BX
+        ! PUSH CX
+        ! PUSH DX
+        ! PUSH SI
+        ! PUSH DI
+        ! MOV AH, &H30
+        ! INT &H21
+        ! POP DI
+        ! POP SI
+        ! POP DX
+        ! POP CX
+        ! POP BX
+        ! POP AX
+        v = seed + 2
+        ! MOV AH, &H30
+        ! INT &H21
+        seen = v
+      END SUB
+      """;
+
+    var (routed, tookIt) = RunProcedure(source, "Relay", routed: true);
+    Assert.That(tookIt, Is.True, "an inferred read of the whole file must not refuse the function");
+    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Relay", routed: false).Output));
+    Assert.That(routed, Is.EqualTo("42"), "the statement between the two runs still computed");
+  }
 }

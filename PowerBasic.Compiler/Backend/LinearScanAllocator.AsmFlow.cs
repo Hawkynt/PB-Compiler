@@ -49,8 +49,34 @@ public sealed partial class LinearScanAllocator {
   /// both reload <c>ES</c> immediately in front of a far access, which is where the value would go.
   /// </para>
   /// </summary>
-  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> AsmHeldByIndex(MFunction function, out string? conflict) {
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> AsmHeldByIndex(MFunction function, out string? conflict)
+    => AsmHeldByIndex(function, out conflict, out _);
+
+  /// <summary>
+  /// The same analysis, additionally yielding the reservations the asm TEXT asked for by naming the
+  /// register - <paramref name="precise"/> - separately from the full map, which also carries the ones
+  /// inferred from a statement the assembler could not read.
+  ///
+  /// <para>
+  /// The two are not equally good evidence, and the class comment above already says so about the
+  /// conflict check. An inferred read is a guess: <c>! CALL DWORD PTR v</c> reads whatever the routine
+  /// behind <c>v</c> reads, which the compiler cannot know, so the analysis assumes the whole file.
+  /// Reserving on that basis is right as a PREFERENCE and wrong as an ultimatum - in
+  /// <c>Timer_InterruptHandler</c> the nine <c>! POP</c>s restoring the caller's registers are read by
+  /// the chaining <c>! CALL</c> two statements later, so every register in the file is held across the
+  /// pair of moves that loads the vector, and a function that the direct emitter compiles by simply
+  /// using <c>AX</c> there had no register left for them.
+  /// </para>
+  /// <para>
+  /// So <paramref name="precise"/> exists to be used once, at the point where the alternative is not a
+  /// better allocation but no allocation at all - <see cref="AllocatePlain"/>'s last resort, after the
+  /// spiller has run out of moves. Everything before that keeps both.
+  /// </para>
+  /// </summary>
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> AsmHeldByIndex(MFunction function,
+      out string? conflict, out IReadOnlyDictionary<int, IReadOnlyList<Reg>> precise) {
     conflict = null;
+    precise = _noReservations;
     var blocks = function.Blocks;
     var total = 0;
     var hasAsm = false;
@@ -85,6 +111,7 @@ public sealed partial class LinearScanAllocator {
     Forwards(blocks, blockOf, start, stop, facts, out var before);
 
     var map = new Dictionary<int, IReadOnlyList<Reg>>();
+    var named = new Dictionary<int, IReadOnlyList<Reg>>();
     for (var i = 0; i < total; ++i) {
       if (!facts[i].IsAsm)
         foreach (var live in afterPrecise[i])
@@ -92,14 +119,20 @@ public sealed partial class LinearScanAllocator {
             conflict ??= Conflict(live);
 
       var held = new HashSet<Reg>(afterPrecise[i]);
-      held.UnionWith(afterInferred[i]);
       held.RemoveWhere(value => !Reaches(before[i], value));
       held.Remove(_flagsPseudoRegister);
       if (held.Count > 0)
         // the reservation is refused to an INTERVAL, and intervals are the word registers the
         // allocator hands out - a half held is the whole word withheld
+        named[i] = [.. held.Select(AsmRegisterEffect.WordOf).Distinct()];
+
+      held.UnionWith(afterInferred[i]);
+      held.RemoveWhere(value => !Reaches(before[i], value));
+      held.Remove(_flagsPseudoRegister);
+      if (held.Count > 0)
         map[i] = [.. held.Select(AsmRegisterEffect.WordOf).Distinct()];
     }
+    precise = named;
     return map;
   }
 
