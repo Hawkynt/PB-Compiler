@@ -183,16 +183,30 @@ public sealed class BackendQuadPrintTests {
       "the dword double shift must reach the encoder");
   }
 
+  /// <summary>
+  /// The conditions on the NATIVE double shift, which are narrower than the conditions on shifting a
+  /// QUAD at all.
+  ///
+  /// <para>
+  /// This used to assert that selection DECLINED outside them, and that was the same statement while
+  /// the native form was the only 64-bit shift the selector had. It is not any more: a constant count
+  /// on any processor builds each result word out of the source words that reach it, so what is left
+  /// to pin here is that <c>SHLD</c>/<c>SHRD</c> stay inside their own conditions - an optimized 386
+  /// and a count of 1..31, where the processor's masking and the instruction's semantics both hold.
+  /// </para>
+  /// </summary>
   [TestCase(false, false, 1)]
   [TestCase(false, true, 1)]
   [TestCase(true, false, 1)]
   [TestCase(true, true, 0)]
   [TestCase(true, true, 32)]
-  public void Select_GivenUnsupportedTargetOrCount_ThenDeclinesQuadShift(bool target386, bool optimize, long count) {
-    var machine = InstructionSelector.TrySelect(QwordShiftFunction(IrBinaryOp.Shl, count), out _,
+  public void Select_GivenUnsupportedTargetOrCount_ThenAvoidsTheNativeQuadShift(bool target386, bool optimize, long count) {
+    var machine = InstructionSelector.TrySelect(QwordShiftFunction(IrBinaryOp.Shl, count), out var reason,
       new SelectionTarget(CpuLevel: target386 ? 386 : 86, Optimize: optimize));
 
-    Assert.That(machine, Is.Null, "only optimized 386 counts 1..31 may use the native double shift");
+    Assert.That(machine, Is.Not.Null, reason);
+    Assert.That(machine!.AllInstructions.Any(i => i.Opcode is MOpcode.Shld or MOpcode.Shrd), Is.False,
+      "only an optimized 386 with a count of 1..31 may use the native double shift");
   }
 
   [Test]
@@ -463,6 +477,59 @@ public sealed class BackendQuadPrintTests {
       Assert.That(routedRun.Output, Is.EqualTo(directRun.Output));
       Assert.That(routedRun.Output.Replace("\r\n", "|").Trim(),
         Is.EqualTo("-1  0  0 -1 -1 | 0 -1  0 |"), "a differs from b only in the low bit");
+    });
+  }
+
+  /// <summary>
+  /// <c>SHIFT LEFT</c> / <c>SHIFT RIGHT</c> of a QUAD by a constant count, WITHOUT <c>$CPU 80386</c>.
+  ///
+  /// <para>
+  /// The selector took only the optimized-386 <c>SHLD</c>/<c>SHRD</c> form, so this refused the whole
+  /// function and the direct emitter compiled it as a per-bit <c>RCL</c>/<c>RCR</c> chain, CX times
+  /// round a loop. A constant count needs neither: the shift moves every bit <c>n / 16</c> whole words
+  /// along and <c>n % 16</c> bits within the word, so each result word is one source word shifted with
+  /// the neighbour's departing bits shifted in.
+  /// </para>
+  /// <para>
+  /// The counts are chosen for the seams rather than for coverage. 16 and 32 are whole words, where
+  /// the remainder is zero and the neighbour must contribute NOTHING - a chain that asked for the
+  /// complementary shift there would be asking for a shift by sixteen, which the 8086 does not mask
+  /// and every later part does, so it is not even one answer. 20 and 40 cross a word boundary with a
+  /// remainder. 0 must leave the value alone, as the direct emitter's JCXZ does. And the last pair
+  /// shifts a value out through the top and back, which is 0 only if the bits really left.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Execute_GivenAQuadShiftByAConstant_WhenNo386_ThenItRoutesAndMatchesTheDirectEmitter() {
+    const string source = """
+      DIM x AS QUAD
+      x = 1 : SHIFT LEFT x, 5 : PRINT x
+      x = 1 : SHIFT LEFT x, 16 : PRINT x
+      x = 1 : SHIFT LEFT x, 20 : PRINT x
+      x = 1 : SHIFT LEFT x, 40 : PRINT x
+      x = 305419896 : SHIFT LEFT x, 0 : PRINT x
+      x = 305419896 : SHIFT RIGHT x, 4 : PRINT x
+      x = 305419896 : SHIFT RIGHT x, 16 : PRINT x
+      x = 305419896 : SHIFT LEFT x, 32 : SHIFT RIGHT x, 32 : PRINT x
+      x = 305419896 : SHIFT LEFT x, 40 : SHIFT RIGHT x, 40 : PRINT x
+      """;
+
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var directImage = direct.EmitExecutable();
+    var routedImage = routed.EmitExecutable();
+
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the body must route without a 386");
+
+    var output = Cpu8086.Run(routedImage).Output.Replace("\r\n", "|").Trim();
+    Assert.Multiple(() => {
+      Assert.That(output, Is.EqualTo(Cpu8086.Run(directImage).Output.Replace("\r\n", "|").Trim()),
+        "the word chain must answer what the per-bit loop answers");
+      // 1<<5, 1<<16, 1<<20, 1<<40; then 0x12345678 unshifted, >>4, >>16; then the two round trips,
+      // which keep only what survived the trip up and back
+      Assert.That(output, Is.EqualTo(
+        "32 | 65536 | 1048576 | 1099511627776 | 305419896 | 19088743 | 4660 | 305419896 | 3430008 |"));
     });
   }
 }
