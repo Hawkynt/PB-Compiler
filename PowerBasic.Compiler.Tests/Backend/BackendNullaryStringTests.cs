@@ -72,6 +72,7 @@ public sealed class BackendNullaryStringTests {
     Assert.That(lengths[1].Trim(), Is.EqualTo("8"), "TIME$ is HH:MM:SS");
     Assert.That(lengths[2].Trim(), Is.EqualTo("0"), "nothing has been typed, so INKEY$ is empty");
   }
+
   /// <summary>
   /// The long tail of small intrinsics that had no lowering: the based logarithms and powers, the two
   /// device-error stubs, <c>ERRCLEAR</c>, <c>SETMEM</c>, the two 32-bit pointer spellings and
@@ -132,10 +133,6 @@ public sealed class BackendNullaryStringTests {
       Assert.That(routed, Does.StartWith("3  3 "), "log2 8 and log10 1000");
       Assert.That(routed, Does.Contain(" 8  100 "), "2^3 and 10^2");
       Assert.That(routed, Does.Contain(" 0  0  0 "), "ERDEV, ERDEV$ and a cleared error are all nothing");
-      // the ADDRESSES themselves are each emitter's own - the two lay out frames differently - so
-      // what is asserted is the RELATIONSHIP, which holds on both: the low half of the 32-bit
-      // spelling is the 16-bit one. A LONG holds it because a frame offset near the top of the
-      // segment does not fit an INTEGER, and truncating it compared -6 against 65530.
       // the ADDRESS itself is each emitter's own - the two lay out frames differently - so what is
       // asserted is the RELATIONSHIP, which holds on both: the low half of the 32-bit spelling is the
       // 16-bit one. A LONG holds it because a frame offset near the top of the segment does not fit
@@ -143,6 +140,44 @@ public sealed class BackendNullaryStringTests {
       Assert.That(routed, Does.Contain("-1 |-1 |-1 |"), "each 32-bit pointer's low half is the 16-bit one, and PEEK$ reads v");
       Assert.That(routed, Does.Contain(" 0  32767  32767 "), "nothing is typed, and free memory is the advisory figure");
       Assert.That(routed, Does.EndWith("hello"), "INPUT$ read five characters back out of the file");
+    });
+  }
+
+  /// <summary>
+  /// <c>USING$</c> whose FORMAT is not a literal. The literal form is read at compile time into fields
+  /// and emitted through capture mode; a runtime one has nothing to read, so the runtime parses it
+  /// itself - for a single numeric field, which is the whole of what either path offers. Every other
+  /// shape declines on both sides.
+  /// </summary>
+  [Test]
+  public void Execute_GivenARuntimeUsingFormat_WhenRouted_ThenItMatchesTheDirectEmitter() {
+    const string source = """
+      DIM f AS STRING
+      f = "##.##"
+      PRINT USING$(f, 3.14159)
+      PRINT USING$("##.##", 3.14159)
+      f = "#####"
+      PRINT USING$(f, 42)
+      """;
+
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var routedGen = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+    var routedImage = routedGen.EmitExecutable();
+    Assert.That(routedGen.Errors, Is.Empty, string.Join("; ", routedGen.Errors));
+    Assert.That(routedGen.BackendRoutedNames, Does.Contain("main"), "the body must route");
+
+    var directGen = new CodeGenerator(Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36)) {
+      Optimize = false,
+      UseExperimentalBackend = false,
+    };
+    var directImage = directGen.EmitExecutable();
+    Assert.That(directGen.Errors, Is.Empty, string.Join("; ", directGen.Errors));
+
+    var routed = Cpu8086.Run(routedImage).Output.Trim().Replace("\r\n", "|");
+    Assert.Multiple(() => {
+      Assert.That(routed, Is.EqualTo(Cpu8086.Run(directImage).Output.Trim().Replace("\r\n", "|")));
+      Assert.That(routed, Does.StartWith("3.14| 3.14"), "the runtime format renders what the literal one does");
     });
   }
 }
