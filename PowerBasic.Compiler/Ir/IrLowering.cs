@@ -1473,6 +1473,13 @@ public sealed partial class IrLowering {
       // target says it is. Both operands are INTEGERs for the reason LOCATE's are: the argument slot
       // is a word, and a LONG the selector cannot prove word-sized declines the whole module body.
       // It was 46 routing declines, all of them graphics code setting a VGA register.
+      // WAIT port, mask [, xor] - spin until (INP(port) XOR xor) AND mask is non-zero. The direct
+      // emitter writes the poll inline as four instructions round a label; here it is the same poll
+      // written as blocks, over the rt_inp the routed path already reads a port with. No runtime
+      // routine appears for it on either side, which is the point: the loop IS the statement.
+      case CommandStmt { Keyword: "WAIT", Arguments: [{ } waitPort, { } waitMask, ..] } waitCmd:
+        this.LowerWait(waitPort, waitMask, waitCmd.Arguments.Count > 2 ? waitCmd.Arguments[2] : null);
+        break;
       case CommandStmt { Keyword: "OUT", Arguments: [{ } outPort, { } outValue] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_outp", IrType.Void, IrType.I16, IrType.I16),
           this.Coerce(this.LowerExpr(outPort), this._model.TypeOf(outPort), PbType.Integer),
@@ -2718,6 +2725,40 @@ public sealed partial class IrLowering {
     var bytes = System.Text.Encoding.ASCII.GetBytes(text);
     this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
       this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
+  }
+
+  /// <summary>
+  /// <c>WAIT port, mask [, xor]</c>: read the port until a bit the caller names comes up.
+  ///
+  /// <para>
+  /// The XOR argument is what lets one statement wait for either edge - without it the test is "any of
+  /// these bits set", and with <c>xor</c> equal to the mask it becomes "any of them clear". It
+  /// defaults to zero, which is the plain form.
+  /// </para>
+  /// <para>
+  /// Everything is byte-wide because the port is: <c>IN AL, DX</c> reads eight bits, and the direct
+  /// emitter puts the mask in CL and the XOR value in CH for exactly that reason. Masking to a byte
+  /// here keeps the routed test asking the same question - a 16-bit AND against a mask above 255 would
+  /// wait for a bit the port cannot deliver, and wait forever.
+  /// </para>
+  /// </summary>
+  private void LowerWait(Expression port, Expression mask, Expression? flip) {
+    var byteMask = new IrConstantInt(IrType.I16, 0xFF);
+    var wanted = this._b.And(this.WordArg(mask), byteMask);
+    var inverted = this._b.And(flip is null ? new IrConstantInt(IrType.I16, 0) : this.WordArg(flip), byteMask);
+    var address = this.WordArg(port);
+
+    var poll = this.NewBlock("wait.poll");
+    var done = this.NewBlock("wait.done");
+    this._b.Br(poll);
+
+    this._b.Position(poll);
+    var sample = this._b.And(
+      this._b.Call(IrType.I16, this.RuntimeFn("rt_inp", IrType.I16, IrType.I16), address), byteMask);
+    var tested = this._b.And(this._b.Xor(sample, inverted), wanted);
+    this._b.CondBr(this._b.Cmp(IrCmpPred.Ne, tested, new IrConstantInt(IrType.I16, 0)), done, poll);
+
+    this._b.Position(done);
   }
 
   /// <summary>
