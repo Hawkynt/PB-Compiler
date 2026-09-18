@@ -58,12 +58,15 @@ public sealed class ModuleLoweringTests {
   public void Module_FunctionWithUnsupportedBodyBecomesADeclaration() {
     var module = LowerModule(
       "DECLARE FUNCTION f%(BYVAL n%)\n" +
+      "DIM gp AS DWORD\n" +
       "y% = f%(3)\n" +
       "\n" +
       "FUNCTION f%(BYVAL n%)\n" +
-      // A statement outside the subset, whichever one that currently is - this was BEEP until BEEP
-      // became a call to rt_sound. WAIT is a spin on an I/O port, which the IR cannot name.
-      "  WAIT &H3DA, 8\n" +
+      // A construct outside the subset, whichever one that currently is - this was BEEP, then WAIT,
+      // and each stopped being one. A computed jump to a PROCEDURE address is the durable choice: the
+      // lowering branches indirectly over the labels of the function it is in, and a procedure is not
+      // one of those.
+      "  GOTO DWORD gp\n" +
       "  f% = n%\n" +
       "END FUNCTION");
 
