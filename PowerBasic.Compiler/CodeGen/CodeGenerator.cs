@@ -883,22 +883,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (model.Dialect.IsGwBasica())
       this._unreachableDeferred = UnreachableDeferredSource(model.MainBody, this.OptFolder);
 
-    // pb36 O2/O10: drop unreachable statements and redundant DEF SEGs first -
-    // dead code also vanishes from the trivial-lowering analysis below
-    if (this.Optimize && !this._isUnit) {
+    // Legacy bound-AST optimizations belong only to the direct-emitter oracle. Production compilation
+    // lowers the bound program first and performs optimization in IrMiddleEndPipeline; letting these
+    // mutate the model beforehand would retain a second middle end whose results the IR path inherits.
+    if (this.Optimize && !this._isUnit && !this.UseExperimentalBackend) {
       OptPruner.Prune(model);
-      OptLoopFusion.Fuse(model);   // O0062: merge adjacent same-bound FOR loops (after pruning makes them adjacent)
+      OptLoopFusion.Fuse(model);
       OptFloatDemotion.Apply(model);
-      this._ipcp = OptIpcp.Analyze(model); // O18: constants into callee bodies
-      this._pureFold = OptPureFold.Analyze(model); // O25: compile-time-evaluate pure-function calls with constant args
-      this.ScheduleInlineAsmBlocks(); // reorder inline-asm runs to group memory/ALU ops (dependency-preserving)
-      // $OPTIMIZE SPEED: pass internal parameters in registers (AX,DX,BX,CX) instead of on
-      // the stack when we own every call site. Self-contained programs only (a separately
-      // compiled unit could otherwise call a converted procedure with the stack convention).
-      // Gated on the optimizer flags, not the dialect - the optimizer is dialect-agnostic, so
-      // any dialect compiled with the optimizer + SPEED gets it; it merely defaults on for pb36.
+      this._ipcp = OptIpcp.Analyze(model);
+      this._pureFold = OptPureFold.Analyze(model);
+      this.ScheduleInlineAsmBlocks();
       if (this.OptimizeSpeed && !this._allowExternalCalls)
-        OptRegParm.Apply(model, this.IsBackendRouted);   // back-end functions stay on the stack convention
+        OptRegParm.Apply(model, this.IsBackendRouted);
     }
 
     // SPEED/SIZE, resolved BEFORE anything can ask the back end a question. The objective is not only
@@ -925,10 +921,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (this.RaiseWhenRoutingIsMandatoryAndSomethingDeclined())
       return [];
 
-    // P7: programs whose only effect is printing compile-time text lower to a
-    // raw COM-style image of a few dozen bytes (docs/PB36.md) - a lean-output
-    // optimization, available to any dialect under the optimizer flag
-    if (this.Optimize && !this._allowExternalCalls && !this._isUnit
+    // The raw trivial-program shortcut is part of the historical direct emitter. Production has already
+    // committed to the IR/native route above and must not escape it after the mandatory-routing gate.
+    if (!this.UseExperimentalBackend && this.Optimize && !this._allowExternalCalls && !this._isUnit
         && this.TryLowerTrivialProgram() is { } trivial)
       return trivial;
 
