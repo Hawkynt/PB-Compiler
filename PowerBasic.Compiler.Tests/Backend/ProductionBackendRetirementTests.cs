@@ -23,6 +23,19 @@ public sealed class ProductionBackendRetirementTests {
   }
 
   [Test]
+  public void CodeGenerator_PublicSurface_HasNoBackendRoutingSelector() {
+    var properties = typeof(CodeGenerator).GetProperties(System.Reflection.BindingFlags.Public
+      | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);
+
+    Assert.Multiple(() => {
+      Assert.That(properties.Any(p => p.Name == "UseExperimentalBackend"), Is.False,
+        "production callers must not be able to reactivate the retired direct emitter");
+      Assert.That(properties.Any(p => p.Name == "RequireBackend"), Is.False,
+        "mandatory IR routing is no longer a selectable production policy");
+    });
+  }
+
+  [Test]
   public void Driver_GivenLegacyDirectEmitterSwitch_ThenRejectsIt() {
     using var stderr = new StringWriter();
 
