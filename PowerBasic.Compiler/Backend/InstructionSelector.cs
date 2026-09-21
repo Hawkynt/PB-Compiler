@@ -63,6 +63,12 @@ public sealed partial class InstructionSelector {
   private readonly Dictionary<IrValue, int> _qslots = new(ReferenceEqualityComparer.Instance);
   private MFunction _function = null!;
 
+  /// <summary>Whether this function's result is a pb36 closure - see <see cref="IrFunction.ReturnsClosure"/>.</summary>
+  private bool _returnsClosure;
+
+  /// <summary>The frame closure a delegate-returning CALL parked its four result registers in.</summary>
+  private readonly Dictionary<IrValue, int> _closureResults = new(ReferenceEqualityComparer.Instance);
+
   /// <summary>
   /// The block instructions are appended to. Most selections stay inside one machine block, but
   /// materializing a comparison's value needs a branch - and therefore a split - so the cursor may
@@ -137,6 +143,7 @@ public sealed partial class InstructionSelector {
 
   private MFunction? Run(IrFunction fn) {
     this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
+    this._returnsClosure = fn.ReturnsClosure;
 
     if (this.UsesNativeDwordRegisters && IrDominators.Build(fn) is { } dominators)
       this._nativeDwordPhis.UnionWith(NativeDwordPhis(fn, dominators));
@@ -1094,10 +1101,14 @@ public sealed partial class InstructionSelector {
   /// stay on the direct path because the processor masks them and would change BASIC's loop semantics.
   /// </summary>
   private bool SelectQwordShift(IrBinary bin, MOpcode opcode) {
-    if (this._target is not { Cpu386OrLater: true, Optimize: true }
-        || opcode is not (MOpcode.Shl or MOpcode.Shr)
-        || WideShiftCount(bin.Rhs) is not { } count || count is < 1 or > 31)
-      return this.Decline($"64-bit shift: {bin.Op} (needs an optimized 386 constant count 1..31)");
+    // An ARITHMETIC right shift is not this: BASIC's SHIFT RIGHT is logical on both paths, and a sign
+    // smeared across the words is a different operation that nothing here asked for.
+    if (opcode is not (MOpcode.Shl or MOpcode.Shr))
+      return this.Decline($"64-bit shift: {bin.Op} is not a logical shift");
+    if (WideShiftCount(bin.Rhs) is not { } count || count < 0)
+      return this.Decline($"64-bit shift: {bin.Op} by a count that is not a non-negative constant");
+    if (this._target is not { Cpu386OrLater: true, Optimize: true } || count is < 1 or > 31)
+      return this.SelectQwordShiftByWords(bin, opcode, count);
     if (!this.TryQwordSlot(bin.Lhs, out var source))
       return false;
 
@@ -1136,6 +1147,94 @@ public sealed partial class InstructionSelector {
       [new MOperand.StackSlot(result, MRegSize.Dword, 4), edx],
       new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
         ReadsMemory: false, WritesMemory: true), condition: null, clobbers: clobbers));
+    return true;
+  }
+
+  /// <summary>
+  /// A QUAD shift by a constant count, on any processor and with the optimizer off: each result word
+  /// is built out of the one or two source words that reach it.
+  ///
+  /// <para>
+  /// A shift by <c>n</c> moves every bit <c>n / 16</c> whole words along and then <c>n % 16</c> bits
+  /// within the word, so result word <c>i</c> is one source word shifted by that remainder with the
+  /// neighbour's departing bits shifted in from the other end. Where the remainder is zero the
+  /// neighbour contributes nothing and the word is copied - which also avoids asking the hardware for
+  /// a shift by sixteen, the one count a word shift cannot express (the 8086 does not mask it and
+  /// every later part does, so it is not even one answer).
+  /// </para>
+  /// <para>
+  /// It replaces a decline. The only 64-bit shift the selector took was the optimized-386 SHLD form,
+  /// so <c>SHIFT LEFT x&amp;&amp;, 5</c> without <c>$CPU 80386</c> refused the whole function and the
+  /// direct emitter compiled it as a per-bit RCL/RCR chain, CX times round a loop. The two agree
+  /// where it matters: a count of zero leaves the value (the loop's JCXZ), and a count of 64 or more
+  /// clears it (every bit walked off the end), which is what indexing off the end of the word run
+  /// gives here.
+  /// </para>
+  /// <para>
+  /// A RUNTIME count still declines, and visibly: the loop is a loop, and writing one here would mean
+  /// building blocks from inside the selector.
+  /// </para>
+  /// </summary>
+  private bool SelectQwordShiftByWords(IrBinary bin, MOpcode opcode, long count) {
+    if (!this.TryQwordSlot(bin.Lhs, out var source))
+      return false;
+
+    var result = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[bin] = result;
+    const int words = 4;
+    var left = opcode == MOpcode.Shl;
+    var wholeWords = (int)Math.Min(count / 16, words);
+    var bits = (int)(count % 16);
+
+    // Every word is computed before any is stored: the source and the result are different cells, so
+    // this is not an aliasing requirement - it just keeps the reads together and the writes together.
+    var computed = new MOperand.Register[words];
+    for (var i = 0; i < words; ++i) {
+      // the source words whose bits land in result word i - the second one only when a partial shift
+      // makes the neighbour's top (or bottom) bits cross the boundary
+      var primary = left ? i - wholeWords : i + wholeWords;
+      var carried = left ? primary - 1 : primary + 1;
+      var value = new MOperand.Register(MReg.Virtual(this._nextVreg++, MRegSize.Word));
+      computed[i] = value;
+
+      if (primary is < 0 or >= words) {             // nothing reaches this word: it is zeroed
+        var zero = new MOperand.Immediate(0);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [value, zero], MovEffect(value, zero)));
+        continue;
+      }
+
+      var primaryCell = new MOperand.StackSlot(source, MRegSize.Word, primary * 2);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [value, primaryCell], MovEffect(value, primaryCell)));
+      if (bits == 0)
+        continue;                                   // a whole number of words: the word is copied
+
+      var shift = new MOperand.Immediate(bits);
+      this._current.Instructions.Add(new MInstr(opcode, [value, shift],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+      if (carried is < 0 or >= words)
+        continue;                                   // no neighbour to take the crossing bits from
+
+      var neighbour = new MOperand.Register(MReg.Virtual(this._nextVreg++, MRegSize.Word));
+      var carriedCell = new MOperand.StackSlot(source, MRegSize.Word, carried * 2);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [neighbour, carriedCell],
+        MovEffect(neighbour, carriedCell)));
+      var complement = new MOperand.Immediate(16 - bits);
+      this._current.Instructions.Add(new MInstr(left ? MOpcode.Shr : MOpcode.Shl, [neighbour, complement],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+      this._current.Instructions.Add(new MInstr(MOpcode.Or, [value, neighbour],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+    }
+
+    for (var i = 0; i < words; ++i) {
+      var cell = new MOperand.StackSlot(result, MRegSize.Word, i * 2);
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [cell, computed[i]],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+          ReadsMemory: false, WritesMemory: true)));
+    }
     return true;
   }
 
@@ -1681,6 +1780,14 @@ public sealed partial class InstructionSelector {
     for (var i = 0; i < count; ++i)
       this._function.StackSlots.Add(byteSize);
     this._slots[alloca] = slot;
+    // A closure environment half is written by the PROLOGUE out of BX or CX, not by anything in the
+    // body, so the emitter has to be told which slot it became - see IrAlloca.EnvRole.
+    if (alloca.EnvRole != Ir.ClosureEnvRole.None) {
+      var current = this._function.ClosureEnvSlots ?? (-1, -1);
+      this._function.ClosureEnvSlots = alloca.EnvRole == Ir.ClosureEnvRole.Offset
+        ? (slot, current.Item2)
+        : (current.Item1, slot);
+    }
     // The alloca result is the address the ELEMENTS are indexed from, and the two run in opposite
     // directions: slots are laid out downward from BP (slot 0 at [BP-2], slot 1 at [BP-4], ...) while
     // a GEP walks upward from the base. So a multi-slot alloca has to point at its LAST slot, the
@@ -1768,11 +1875,28 @@ public sealed partial class InstructionSelector {
       return this.Decline("inline asm: a name in it is not a variable this pass could bind");
 
     var kinds = new AsmNameKinds(asm);
-    if (!new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out var error))
+    // The re-parse is here to catch the EMITTER's resolver disagreeing with the lowering's stand-in
+    // symbols, and it can only do that for text the plain assembler emits. A line the ISA policy owns
+    // never reaches that assembler - the policy encodes it natively or emulates it - so asking this
+    // question of one answers "unknown mnemonic" about an instruction the compiler emits perfectly
+    // well.
+    if (!PolicyOwnedInlineAsm(asm.Text)
+        && !new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out var error))
       return this.Decline($"inline asm: {error}");
 
     var effect = TextAssembler.Analyze(asm.Text, kinds);
-    if (effect.Defines.Contains(Reg.BP) || effect.Defines.Contains(Reg.SP))
+    // A RESTORE is not a write in the sense that matters. `! POP BP` puts back what a `! PUSH BP`
+    // took, and nothing between them writes BP at all - so BP holds the frame at every instruction
+    // boundary, which is the only thing this check protects. The direct emitter addresses its frame
+    // through BP too and accepts the pair; refusing it here was stricter than the path being
+    // replaced, and it is what an interrupt handler saving the whole file looks like.
+    //
+    // An unbalanced pop would destroy the frame - and would destroy the direct emitter's too, so the
+    // program is broken either way rather than broken by this decision. What still declines is a
+    // write that is not a restore: MOV BP, AX and ADD SP, n mean to move the frame, and no allocation
+    // can answer that.
+    if ((effect.Defines.Contains(Reg.BP) && effect.Restores != Reg.BP)
+        || (effect.Defines.Contains(Reg.SP) && effect.Restores != Reg.SP))
       return this.Decline("inline asm: the block writes BP or SP, which the frame is addressed through");
 
     var operands = new List<MOperand> { new MOperand.InlineAsmText(asm.Text, asm.Names, effect) };
@@ -1790,6 +1914,23 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
+  /// Whether every line of this block is one the ISA policy emits - see
+  /// <c>CodeGenerator.PolicyOwnsInlineAsmLine</c>, which the lowering consults for the same reason
+  /// and must agree with, or a block routes here and is refused there.
+  /// </summary>
+  private static bool PolicyOwnedInlineAsm(string text) {
+    var any = false;
+    foreach (var line in text.Split('\n')) {
+      if (line.Trim().Length == 0)
+        continue;
+      if (!CodeGen.CodeGenerator.PolicyOwnsInlineAsmLine(line))
+        return false;
+      any = true;
+    }
+    return any;
+  }
+
+  /// <summary>
   /// The frame cell an inline-asm name denotes, addressed DIRECTLY rather than through a register.
   ///
   /// <see cref="PointerMemory"/> would answer <c>[v0]</c> for a local, because an alloca whose address
@@ -1803,13 +1944,68 @@ public sealed partial class InstructionSelector {
   /// </summary>
   private MOperand? AsmCell(IrValue pointer) => pointer switch {
     IrAlloca alloca when this._slots.TryGetValue(alloca, out var slot)
-      => new MOperand.StackSlot(slot, MRegSize.Word),
+      => new MOperand.StackSlot(slot, AsmCellSize(alloca.Allocated)),
     IrGlobalVariable g when IsAddressableGlobal(g)
-      => new MOperand.DataCell(g.Name, 0, MRegSize.Word),
+      => new MOperand.DataCell(g.Name, 0, AsmCellSize(g.ValueType)),
     // a BASIC label the text jumps to. Not a cell at all - the block's own machine label, which is
     // the same thing CODEPTR32 asks for and the same operand it is answered with
     IrBlockAddress block => new MOperand.BlockOffset(block.Block.Label),
     _ => this.DeclineCell(pointer),
+  };
+
+  /// <summary>
+  /// The four-word closure a pb36 delegate call goes through, as one DWORD cell - the low half of it,
+  /// which is the far code pointer <c>CALL DWORD PTR</c> reads.
+  ///
+  /// <para>
+  /// It has to be a real cell rather than a computed address: the 8086's far call through memory
+  /// takes an r/m operand and no register form exists, and the lowering always hands over storage
+  /// (the delegate's own slot, or the temporary it copied one into before evaluating arguments) for
+  /// exactly that reason.
+  /// </para>
+  /// </summary>
+  private MOperand? ClosureCell(IrValue closure) => closure switch {
+    // the closure a delegate-returning call parked its four registers in
+    _ when this._closureResults.TryGetValue(closure, out var returned)
+      => new MOperand.StackSlot(returned, MRegSize.Dword),
+    // ...at the LAST of the alloca's slots, which is the block's lowest address and therefore its
+    // base - slots are laid out downward from BP while the words are indexed upward, the same
+    // inversion SelectAlloca points its own LEA through. Naming the first slot instead reads the
+    // closure's top word, so the far call went through the environment segment and landed nowhere.
+    IrAlloca alloca when this._slots.TryGetValue(alloca, out var slot)
+      => new MOperand.StackSlot(slot + Math.Max(1, alloca.Count) - 1, MRegSize.Dword),
+    IrGlobalVariable global when IsAddressableGlobal(global)
+      => new MOperand.DataCell(global.Name, 0, MRegSize.Dword),
+    _ => this.DeclineClosureCell(closure),
+  };
+
+  private MOperand? DeclineClosureCell(IrValue closure) {
+    this.Decline($"call: a delegate's closure is {closure.GetType().Name} rather than storage a far "
+      + "call can name");
+    return null;
+  }
+
+  /// <summary>
+  /// The WIDTH an inline-asm name denotes, which is the storage's own and not this back end's default.
+  ///
+  /// <para>
+  /// Answering <c>Word</c> for everything is right for the 8086 mnemonics the corpus uses and wrong
+  /// the moment an instruction checks its operand widths against each other:
+  /// <c>! POPCNT EAX, source&amp;</c> is rejected as "source width must match the 32-bit destination"
+  /// when <c>source&amp;</c> is reported as a word. The direct emitter's resolver has always answered
+  /// with the variable's real size; this is that, from the IR's type rather than the symbol table.
+  /// </para>
+  /// <para>
+  /// Anything wider than a dword - a record, a fixed string, an EXT - has no register width to report
+  /// and keeps the word default, which is what those names always were: an ADDRESS the text indexes
+  /// off, never a value an instruction loads whole.
+  /// </para>
+  /// </summary>
+  private static MRegSize AsmCellSize(IrType type) => type switch {
+    { IsInteger: true, Bits: 8 } => MRegSize.Byte,
+    { IsInteger: true, Bits: 32 } => MRegSize.Dword,
+    { IsIeeeFloat: true, Bits: 32 } => MRegSize.Dword,
+    _ => MRegSize.Word,
   };
 
   private MOperand? DeclineCell(IrValue pointer) {
@@ -2128,6 +2324,8 @@ public sealed partial class InstructionSelector {
   private bool SelectCmpValue(IrCmp cmp) {
     if (cmp.Lhs.Type.IsFloat)
       return this.SelectFloatCmpValue(cmp);
+    if (IsQuad(cmp.Lhs.Type))
+      return this.SelectQuadCmpValue(cmp);
     if (IsWide(cmp.Lhs.Type))
       return this.SelectWideCmpValue(cmp);
     var pred = this.PredicateOf(cmp);
@@ -2156,6 +2354,62 @@ public sealed partial class InstructionSelector {
         ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
     return this.MaterializeCondition(cmp, cc);
   }
+
+  /// <summary>
+  /// Two QUADs compared, on the x87 - which is where a QUAD already lives on this target. A qword cell
+  /// is what <c>FILD</c> takes, so the comparison is the float one with integer loads in front of it.
+  ///
+  /// <para>
+  /// Exact, and not approximately so: the x87's extended format carries a 64-bit significand, which is
+  /// every value an <c>i64</c> has. <c>FILD</c> of a qword is therefore lossless for the whole range,
+  /// and the ordering it reports is the integers' own. The conditions it reports are the UNSIGNED
+  /// ones - <c>FSTSW</c>/<c>SAHF</c> put the x87's C0/C3 into CF and ZF - so a signed predicate maps
+  /// to below/above here rather than to less/greater, which is not a loss of sign: the comparison was
+  /// already performed, and these flags only say which way it came out.
+  /// </para>
+  /// <para>
+  /// What asks for this is <c>LoopVersioning</c>: it hoists a bounds or overflow check out of a loop by
+  /// computing it at 64-bit width in the preheader, so a 16-bit counter arrives here sign-extended and
+  /// compared against the width's own limits. The widening selected; the comparison of it did not, and
+  /// the whole procedure declined for it.
+  /// </para>
+  /// </summary>
+  private bool SelectQuadCmpValue(IrCmp cmp) {
+    if (QuadCondition(this.PredicateOf(cmp)) is not { } cc)
+      return this.Decline($"compare as a value: 64-bit {this.PredicateOf(cmp)}");
+    if (!this.TryQwordSlot(cmp.Lhs, out var lhsSlot) || !this.TryQwordSlot(cmp.Rhs, out var rhsSlot))
+      return false;
+
+    // FILD left; FILD right leaves the right operand on top. FCOMPP compares ST(0) against ST(1), so
+    // FXCH restores source order - the same dance the float compare does, and for the same reason.
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(lhsSlot, MRegSize.Qword), reads: true);
+    this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(rhsSlot, MRegSize.Qword), reads: true);
+    this._current.Instructions.Add(new MInstr(MOpcode.Fxch, [], MInstrEffect.None));
+    this._current.Instructions.Add(new MInstr(MOpcode.Fcompp, [], MInstrEffect.None));
+    this._current.Instructions.Add(new MInstr(MOpcode.FstswAx, [ax],
+      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+        ReadsMemory: false, WritesMemory: false), clobbers: [Reg.AX]));
+    this._current.Instructions.Add(new MInstr(MOpcode.Sahf, [ax],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false)));
+    return this.MaterializeCondition(cmp, cc);
+  }
+
+  /// <summary>
+  /// The condition an x87 comparison reports for an integer predicate. Signed and unsigned spellings
+  /// answer alike because the ORDER was decided by the compare itself; what is left is only which of
+  /// CF and ZF <c>SAHF</c> set.
+  /// </summary>
+  private static Condition? QuadCondition(IrCmpPred pred) => pred switch {
+    IrCmpPred.Eq => Condition.Equal,
+    IrCmpPred.Ne => Condition.NotEqual,
+    IrCmpPred.Slt or IrCmpPred.Ult => Condition.Below,
+    IrCmpPred.Sle or IrCmpPred.Ule => Condition.BelowOrEqual,
+    IrCmpPred.Sgt or IrCmpPred.Ugt => Condition.Above,
+    IrCmpPred.Sge or IrCmpPred.Uge => Condition.AboveOrEqual,
+    _ => null,
+  };
 
   private bool SelectFloatCmpValue(IrCmp cmp) {
     if (MapFloatPredicate(cmp.Pred) is not { } cc)
@@ -2362,6 +2616,18 @@ public sealed partial class InstructionSelector {
         this._vregs[cast] = truth;
         return true;
       }
+      // ...and the LONG of it. A truth value is a full word of -1 or 0, so sign-extending it to 32
+      // bits repeats that word: -1 becomes FFFF:FFFF and 0 becomes 0000:0000. Both halves are
+      // therefore the same register, which is what `s& = (a% = b%)` asks for - BASIC's comparison IS
+      // a value, and a LONG one was the shape that declined.
+      case IrCastOp.SExt when from.IsBool && IsWide(to): {
+        if (!this.TryOperand(cast.Value, out var truthWide))
+          return false;
+        var (lowHalf, highHalf) = this.FreshPair(cast);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowHalf, truthWide], MovEffect(lowHalf, truthWide)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [highHalf, truthWide], MovEffect(highHalf, truthWide)));
+        return true;
+      }
       // ...and the BYTE of it. A truth value is a full word of -1 or 0, so its low byte is 0xFF or
       // 0x00 - which IS the byte truth value, with no work to do beyond naming the low half. The
       // rename is the same one a Trunc to a byte uses; the spiller gives each mention its own size
@@ -2405,21 +2671,26 @@ public sealed partial class InstructionSelector {
         this._vregs[cast] = narrow;
         return true;
       }
-      // A BYTE widened to a WORD. There were cases here for a bool source, for a word reaching a
-      // dword and for either reaching a qword, and none for a byte - so `u8 -> i16` declined 339
-      // times over the SVGA corpus alone, and with `-> u16` 354 of the routing gaps there: the
-      // largest single reason the direct emitter could not be retired.
+      // A BYTE widened to a WORD or a DWORD. There were cases here for a bool source, for a word
+      // reaching a dword and for either reaching a qword, and none for a byte - so `u8 -> i16`
+      // declined 339 times over the SVGA corpus alone, `-> u16` 15 more and `-> i32` 94: 448 of the
+      // routing gaps there, the largest single reason the direct emitter could not be retired. The
+      // SIGNED twin is the case immediately below, where CBW does the whole of it.
       //
       // Staged through the physical AX rather than through a byte VIEW of the destination vreg.
       // The view is what ScratchU8ToWord does; it depends on every consumer handing a mention back
       // its own size, and staging avoids the question. MOVZX is not in this back end's opcode set,
       // which is why the extension is written out rather than named.
       //
-      // `u8 -> i32` is NOT here, and the reason is measured: a version of this case that also built
-      // the dword pair made five DRAW_* corpus suites fail with `Operand size mismatch: DX vs
-      // [BP-90]` - the long-result convention reading its high half from a byte-sized slot. Removing
-      // only the 32-bit half made them clean again, so the defect is in forming that pair rather than
-      // in anything the newly routed functions reach. 94 declines wait on it.
+      // The 32-bit half arrived second, and its first diagnosis is kept here because it was WRONG. A
+      // version of this case that also built the dword pair made five DRAW_* corpus suites fail with
+      // `Operand size mismatch: DX vs [BP-90]`, and removing only that half made them clean again,
+      // which read as a defect in forming the pair. It was not. Dumping the machine IR showed the
+      // extension emitting correctly - XOR AH,AH / MOV AL,[slot] / MOV lo,AX / XOR hi,hi - and then
+      // the 32-bit CALL ARGUMENT staging peeling the widening cast away and reading the ORIGINAL byte
+      // into DX: its guard was `!IsWide(...)`, "narrower than 32 bits", which a BYTE satisfies too.
+      // That peel requires a word source now, so the pair stands and the 94 declines are closed. Two
+      // rounds of reasoning about the spiller had not found it; one instruction dump did.
       case IrCastOp.ZExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16 or 32: {
         if (!this.TryOperand(cast.Value, out var source))
           return false;
@@ -2446,6 +2717,38 @@ public sealed partial class InstructionSelector {
         var word = new MOperand.Register(dest);
         this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, ax], MovEffect(word, ax)));
         this._vregs[cast] = dest;
+        return true;
+      }
+      // The SIGNED twin of the widening above, and CBW is the whole of it: the 8086 sign-extends AL
+      // into AX in one instruction, so the staging is a byte move and that. It goes through the
+      // physical AX for the same reason the zero-extension does - a byte VIEW of the destination
+      // vreg is not spill-safe - and CBW has nowhere else to work anyway.
+      case IrCastOp.SExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16 or 32: {
+        if (!this.TryOperand(cast.Value, out var source))
+          return false;
+
+        var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+        var al = new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte));
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [al, source], MovEffect(al, source)));
+        this._current.Instructions.Add(new MInstr(MOpcode.Cbw, [],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: false, WritesMemory: false), condition: null, clobbers: [Reg.AX]));
+        if (IsWide(to)) {
+          // ...and CWD carries the sign on into the high word, which is what makes this a 32-bit
+          // signed widening rather than a 16-bit one with rubbish above it.
+          var (low, high) = this.FreshPair(cast);
+          var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+          this._current.Instructions.Add(new MInstr(MOpcode.Cwd, [],
+            new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
+              ReadsMemory: false, WritesMemory: false), condition: null, clobbers: [Reg.DX]));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, ax], MovEffect(low, ax)));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, dx], MovEffect(high, dx)));
+          return true;
+        }
+        var widened = this.FreshVreg(cast.Type);
+        var wide = new MOperand.Register(widened);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [wide, ax], MovEffect(wide, ax)));
+        this._vregs[cast] = widened;
         return true;
       }
       case IrCastOp.SExt or IrCastOp.ZExt when IsWide(to) && from.IsInteger && from.Bits == 16: {
@@ -2587,6 +2890,17 @@ public sealed partial class InstructionSelector {
           var here = new MOperand.BlockOffset(blockAddress.Block.Label);
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [labelDest, here], MovEffect(labelDest, here)));
           this._vregs[cast] = labelReg;
+          return true;
+        }
+        // The FAR ENTRY of a procedure - its thunk, not its own label. Both are LabelRef and both
+        // resolve through the same callee lookup; naming the thunk is what makes the 32-bit value a
+        // far call may actually reach, which is the whole of what a delegate stores.
+        if (cast.Value is IrFarEntry farEntry) {
+          var thunkReg = this.FreshVreg(to);
+          var thunkDest = new MOperand.Register(thunkReg);
+          var thunk = new MOperand.LabelRef(farEntry.ThunkName);
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [thunkDest, thunk], MovEffect(thunkDest, thunk)));
+          this._vregs[cast] = thunkReg;
           return true;
         }
         if (cast.Value is IrFunction function) {
@@ -2781,15 +3095,22 @@ public sealed partial class InstructionSelector {
       return this.Decline($"call: {calleeName} returns {call.Type} (unsupported result shape)");
 
     var abi = X86CallAbi.For(call.Convention);
-    if (abi.Distance != X86CallDistance.Near)
+    // A pb36 DELEGATE call is far by construction and is the only far one: the code half of a closure
+    // names an entry thunk, which turns the far call back into a near one before the callee sees it.
+    // Every other far convention still declines - there is no far DEFINITION here to return to.
+    var closureCall = call.Convention == IrCallConvention.BasicClosure;
+    if (abi.Distance != X86CallDistance.Near && !closureCall)
       return this.Decline($"call: {calleeName} uses a far return address");
     var callArguments = call.Args.ToList();
-    if (abi.ArgumentRegisters.Count > 0
-        && callArguments.FirstOrDefault(argument => !IsWordRegisterArgument(argument.Type)) is { } unsupported)
-      return this.Decline($"call: {calleeName} uses {call.Convention} register arguments "
-        + $"(word arguments only; got {unsupported.Type})");
 
     var registerArgumentCount = Math.Min(abi.ArgumentRegisters.Count, callArguments.Count);
+    // ...and only of the arguments that ACTUALLY travel in a register. Asking it of all of them
+    // declined a FASTCALL whose fourth argument - long past the three registers, on the stack like any
+    // other - happened to be a LONG, which the stack path has always handled.
+    if (callArguments.Take(registerArgumentCount)
+        .FirstOrDefault(argument => !IsWordRegisterArgument(argument.Type)) is { } unsupported)
+      return this.Decline($"call: {calleeName} uses {call.Convention} register arguments "
+        + $"(word arguments only; got {unsupported.Type})");
     var stackArguments = callArguments.Skip(registerArgumentCount);
     var arguments = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
       ? stackArguments.Reverse()
@@ -2802,7 +3123,16 @@ public sealed partial class InstructionSelector {
     }
 
     MOperand callTarget;
-    if (callee is not null)
+    if (closureCall) {
+      // The target is the closure's own CELL, read as a dword: `CALL DWORD PTR [cell]` is the only
+      // far call the 8086 has through memory, and there is no register form because the address does
+      // not fit in a register. Naming the cell rather than loading it also keeps the address out of
+      // the allocator, which matters here for the same reason it does for inline asm - the call
+      // clobbers everything, so a register holding the target across it has nowhere to live.
+      if (this.ClosureCell(call.Callee) is not { } cell)
+        return false;
+      callTarget = cell;
+    } else if (callee is not null)
       callTarget = new MOperand.LabelRef(callee.Name);
     else {
       // The IR's generic pointer type is a NEAR code offset here, not PB36's source-level fat closure
@@ -2835,7 +3165,7 @@ public sealed partial class InstructionSelector {
     if (callTarget is MOperand.Register)
       callReadRegs.Add(0);
     callReadRegs.AddRange(Enumerable.Range(1, registerArgumentCount));
-    this._current.Instructions.Add(new MInstr(MOpcode.Call, callOperands,
+    this._current.Instructions.Add(new MInstr(closureCall ? MOpcode.CallFar : MOpcode.Call, callOperands,
       new MInstrEffect(WrittenRegs: [], ReadRegs: callReadRegs, ReadsFlags: false, WritesFlags: true,
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
@@ -2851,6 +3181,31 @@ public sealed partial class InstructionSelector {
 
     if (call.Type.IsVoid)
       return true;
+
+    // A DELEGATE result arrives in four registers - AX:DX and BX:CX - and has nowhere to live as an
+    // SSA value, so it goes straight into a closure of this frame's own and the call's value is that
+    // closure's address. Immediately, and before anything else may touch the four: they are the whole
+    // caller-saved file, and the very next instruction is free to use any of them.
+    if (callee is { ReturnsClosure: true }) {
+      var closure = this._function.StackSlots.Count;
+      for (var word = 0; word < 4; ++word)
+        this._function.StackSlots.Add(2);
+      MOperand.Register[] channel = [
+        new(MReg.Physical_(Reg.AX, MRegSize.Word)), new(MReg.Physical_(Reg.DX, MRegSize.Word)),
+        new(MReg.Physical_(Reg.BX, MRegSize.Word)), new(MReg.Physical_(Reg.CX, MRegSize.Word)),
+      ];
+      // Slots run DOWN from BP while the words are indexed up, so the block's base is its last slot -
+      // the same inversion SelectAlloca points its own LEA through.
+      var baseSlot = closure + 3;
+      for (var word = 0; word < channel.Length; ++word) {
+        var destination = new MOperand.StackSlot(baseSlot, MRegSize.Word, word * 2);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, channel[word]],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: false, WritesMemory: true)));
+      }
+      this._closureResults[call] = baseSlot;
+      return true;
+    }
 
     if (IsQuad(call.Type)) {
       // QUAD shares the x87 return channel with real values, but the SSA result is an integer: park
@@ -3179,11 +3534,10 @@ public sealed partial class InstructionSelector {
           break;
         }
         case RuntimeAbi.ArgKind.Pointer: {
-          if (!this.TryRuntimePointer(arg, callee.Name, out var source, out var segment))
+          if (!this.TryRuntimePointer(arg, callee.Name, out var source, out var segmentSource))
             return false;
           var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
           var segmentDest = new MOperand.Register(MReg.Physical_(slot.High, MRegSize.Word));
-          var segmentSource = new MOperand.Register(MReg.Physical_(segment, MRegSize.Word));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, source], MovEffect(dest, source),
             condition: null, clobbers: stagedRegisters[i]));
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [segmentDest, segmentSource],
@@ -3315,15 +3669,51 @@ public sealed partial class InstructionSelector {
     return this.PlaceRuntimeResult(call, routine);
   }
 
-  /// <summary>Materializes a near pointer and identifies the segment containing its base object.</summary>
-  private bool TryRuntimePointer(IrValue value, string callee, out MOperand offset, out Reg segment) {
+  /// <summary>
+  /// Materializes a pointer for a runtime slot that takes one as a register PAIR: the offset, and
+  /// whatever the segment has to be moved FROM.
+  ///
+  /// <para>
+  /// For an ordinary pointer the segment is a fixed register the type implies - <c>DS</c> for a
+  /// global, <c>SS</c> for a frame cell - and nothing is loaded. A pointer into the FAR ARRAY HEAP
+  /// names its own segment instead, and there is correspondingly nothing to derive: both halves are
+  /// staged like any other operand, which is <c>MOV SI, [rt_arrseg]</c> where the near case emits
+  /// <c>MOV SI, DS</c>. The direct emitter arrives at the same instruction from the other end - it
+  /// loads <c>ES</c> from that cell in front of the <c>LEA</c> and hands the runtime <c>SI = ES</c> -
+  /// so this is its behaviour, not a second convention.
+  /// </para>
+  /// <para>
+  /// Declining it cost far more than the one statement. <c>GET fh, , Store(i)</c> into a SHARED
+  /// dynamic array is how <c>DRAW_TIF.SUB</c> reads a strip table, and a shared dynamic array whose
+  /// users are SPLIT across the two paths has its descriptor handed back to the direct emitter whole -
+  /// so the one procedure that could not take the address denied the routed side every array the TIFF
+  /// code touches, eight further procedures and the module body with it.
+  /// </para>
+  /// </summary>
+  private bool TryRuntimePointer(IrValue value, string callee, out MOperand offset, out MOperand segment) {
     offset = null!;
-    segment = default;
-    if (value.Type.IsFarPointer)
-      return this.Decline($"call: {callee} takes an address in the far array heap, whose segment is a runtime cell and not a register");
+    segment = null!;
+    if (value is IrFarPtr far)
+      return this.TryOperand(far.Offset, out offset) && this.TryOperand(far.Segment, out segment);
+    if (value.Type.IsFarPointer) {
+      // Any other far-typed value is an OFFSET into the one far address space this program has, and
+      // the segment is the cell SegmentCellOf names - the same one FarMemory loads ES from in front
+      // of an ordinary element access. A GEP off a far base arrives here rather than as a composed
+      // pair, and it is the common shape: an element of a dynamic array, not the array.
+      if (SegmentCellOf(value.Type) is not { } cell)
+        return this.Decline($"call: {callee} takes a far address in no named segment");
+      segment = new MOperand.DataCell(cell, 0, MRegSize.Word);
+      // The offset has to be a VALUE the staging can move, on the same terms as the near case below:
+      // an address expression staged with a MOV would be read THROUGH rather than taken, which is a
+      // wrong answer rather than a missing one.
+      if (!this.TryOperand(value, out offset))
+        return false;
+      return offset is MOperand.Register or MOperand.Immediate
+        || this.Decline($"call: {callee} far pointer is not an address register");
+    }
     if (PointerSegmentOf(value) is not { } sourceSegment)
       return this.Decline($"call: {callee} cannot derive the segment of pointer {value}");
-    segment = sourceSegment;
+    segment = new MOperand.Register(MReg.Physical_(sourceSegment, MRegSize.Word));
     if (value is IrGlobalVariable global) {
       offset = new MOperand.DataOffset(global.Name, 0);
       return true;
@@ -3338,6 +3728,13 @@ public sealed partial class InstructionSelector {
     IrAlloca => Reg.SS,
     IrGep gep => PointerSegmentOf(gep.BasePtr),
     IrCast cast when cast.Type.IsPointer => PointerSegmentOf(cast.Value),
+    // A NEAR pointer PARAMETER: the address of whatever the caller passed BYREF. Which object it
+    // points at is not knowable here and does not have to be - PB's near model puts the globals and
+    // the stack in one segment, so DS and SS name the same bytes. The direct emitter settles it the
+    // same way and more bluntly: it says DS for every place that is not FAR, a frame cell of its own
+    // included. Declining instead cost DrawCur_ReadCursorData, which reads a directory entry into a
+    // record its caller owns.
+    IrArgument when value.Type is { IsPointer: true, IsFarPointer: false } => Reg.DS,
     _ => null,
   };
 
@@ -4481,6 +4878,25 @@ public sealed partial class InstructionSelector {
   private static readonly Reg[] _callClobbers = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
 
   private bool SelectRet(IrRet ret, MBlock block) {
+    // A DELEGATE result: the value is the ADDRESS of the closure the body assembled, and the ABI wants
+    // its four words - the far code pointer in AX:DX, the far environment pointer in BX:CX, which is
+    // where the direct emitter's epilogue puts them. Naming the cell rather than walking a pointer
+    // keeps the address out of the allocator, for the reason a far call does the same.
+    if (ret.HasValue && this._returnsClosure) {
+      if (this.ClosureCell(ret.Value!) is not MOperand.StackSlot closure)
+        return this.Decline("return: a delegate result is not a frame closure this epilogue can place");
+      MOperand.Register[] channel = [
+        new(MReg.Physical_(Reg.AX, MRegSize.Word)), new(MReg.Physical_(Reg.DX, MRegSize.Word)),
+        new(MReg.Physical_(Reg.BX, MRegSize.Word)), new(MReg.Physical_(Reg.CX, MRegSize.Word)),
+      ];
+      for (var word = 0; word < channel.Length; ++word) {
+        var source = closure with { Size = MRegSize.Word, Disp = closure.Disp + word * 2 };
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [channel[word], source],
+          MovEffect(channel[word], source)));
+      }
+      this._current.Instructions.Add(ReturningIn(channel));
+      return true;
+    }
     if (ret.HasValue && ret.Value is { } wide && IsWide(wide.Type)) {
       // the PB convention returns a LONG in DX:AX (docs: "Results: AX / DX:AX / ST0 / string handle in AX")
       if (!this.TryOperandPair(wide, out var lo, out var hi))

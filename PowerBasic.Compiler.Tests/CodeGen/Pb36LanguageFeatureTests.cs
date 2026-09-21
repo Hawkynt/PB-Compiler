@@ -815,6 +815,40 @@ public sealed class Pb36LanguageFeatureTests {
     Assert.That(Run(source), Is.EqualTo(" 10\n 15\n"));
   }
 
+  /// <summary>
+  /// A FUNCTION whose RESULT is a delegate, with nothing captured. Eight bytes cross back - the far
+  /// code pointer in AX:DX and the far environment pointer in BX:CX, which is where the direct
+  /// emitter's epilogue puts them - and eight bytes are not a shape the IR's type lattice has, so what
+  /// travels through the IR is the ADDRESS of the closure the body built, placed by the epilogue
+  /// (IrFunction.ReturnsClosure).
+  ///
+  /// <para>
+  /// The result is called TWICE, which is the assertion that matters: those four registers are the
+  /// whole caller-saved file, so a call site that did not park them immediately would have the second
+  /// call reading whatever the first one left in them.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void Execute_GivenAFunctionReturningADelegate_WhenCalledTwice_ThenTheClosureSurvives() {
+    const string source = """
+      DECLARE FUNCTION Adder(BYVAL x AS LONG) AS LONG
+      DECLARE FUNCTION MakeInc() AS Adder
+      DECLARE SUB Demo()
+      Demo
+      END
+      FUNCTION MakeInc() AS Adder
+        MakeInc = FUNCTION(BYVAL x AS LONG) AS LONG => x + 1
+      END FUNCTION
+      SUB Demo()
+        DIM inc AS Adder
+        inc = MakeInc()
+        PRINT inc(5)
+        PRINT inc(41)
+      END SUB
+      """;
+    Assert.That(Run(source), Is.EqualTo(" 6\n 42\n"));
+  }
+
   [Test]
   public void Execute_GivenEscapingCapturingLambda_WhenCalledAfterProducerExits_ThenHeapEnvSurvives() {
     // stage-2 ESCAPING closure: MakeAdder builds a capturing lambda and RETURNS it,

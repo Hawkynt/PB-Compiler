@@ -122,7 +122,7 @@ public sealed partial class CodeGenerator {
       return false;
     }
     if (!this.DataGlobalsResolve(function, out var unaddressable)) {
-      decline = $"routing: global '{unaddressable}' has no cell the emitter can address";
+      decline = this.UnaddressableGlobal(unaddressable);
       return false;
     }
     if (InstructionSelector.TrySelect(function, out var declineReason, this.SelectionTarget) is not { } machine) {

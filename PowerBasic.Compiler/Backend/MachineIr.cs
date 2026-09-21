@@ -248,6 +248,18 @@ public enum MOpcode {
   Push, Pop,
   Jmp, Jcc, Call, Ret,
   /// <summary>
+  /// A FAR call through a 32-bit memory cell - <c>CALL DWORD PTR [cell]</c>. The cell holds a
+  /// <c>CODEPTR32</c> value: the segment a pb36 delegate and a <c>CALL DWORD</c> target are both
+  /// stored as, whose offset half names a far entry thunk (<see cref="Ir.IrFarEntry"/>).
+  ///
+  /// <para>
+  /// Separate from <see cref="Call"/> because the two push different things - one word against two -
+  /// and the callee has to agree. Its operand is always a CELL, never a register: the 8086 has no far
+  /// call through a register, because the target does not fit in one.
+  /// </para>
+  /// </summary>
+  CallFar,
+  /// <summary>
   /// A jump THROUGH a memory cell - the only indirect transfer this back end emits. RESUME and
   /// RESUME NEXT go back to a statement the FAULT chose, so the destination is a value the runtime
   /// latched rather than a label anything here can name.
@@ -390,6 +402,14 @@ public sealed class MFunction(string name) {
 
   /// <summary>The frame stack slots (allocas + register spills), as byte sizes; frame offsets are assigned at emission.</summary>
   public List<int> StackSlots { get; } = [];
+
+  /// <summary>
+  /// The two frame slots a pb36 capturing lambda's environment pointer lands in, when this function is
+  /// one - offset first, segment second. The environment arrives in <c>BX:CX</c> and is not an
+  /// argument, so the prologue writes it rather than the caller pushing it; see
+  /// <see cref="Ir.IrAlloca.EnvRole"/>.
+  /// </summary>
+  public (int Offset, int Segment)? ClosureEnvSlots { get; set; }
 
   /// <summary>
   /// How the prologue loads the incoming arguments: which virtual register takes which word of which

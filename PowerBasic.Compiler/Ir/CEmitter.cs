@@ -583,6 +583,14 @@ public sealed class CEmitter {
       + "a label is one. GCC's '&&label' is an extension, and even with it the jump ON ERROR performs "
       + "is non-local, from an arbitrary fault point, so it needs setjmp/longjmp rather than a "
       + "computed goto - which this emitter does not model yet."),
+    // The far entry thunk of a procedure. It exists because a 16-bit far call pushes one word more
+    // than a near RET pops - a distinction a hosted C target does not have and cannot be given a
+    // truthful address for, so a delegate declines here rather than being emitted as the function
+    // itself and silently losing the ABI the value was built for.
+    IrFarEntry farEntry => throw new EmitDeclinedException(
+      $"C emission: the far entry thunk of '{farEntry.Target.Name}' - an adapter that exists only "
+      + "because a far call and a near return disagree about the stack by one word, which is a "
+      + "real-mode fact with no hosted equivalent"),
     // a global's IR value is its ADDRESS: a byte blob is an array (which decays), a scalar
     // global is a plain object whose address has to be taken
     // a global's IR value is its ADDRESS: an array (byte blob or element array) decays, a

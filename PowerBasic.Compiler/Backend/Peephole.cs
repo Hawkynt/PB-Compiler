@@ -278,7 +278,7 @@ public static class Peephole {
   private static bool Disturbs(MInstr instr, IReadOnlyCollection<MReg> address) {
     if (instr.Effect.WritesMemory || instr.Clobbers.Count > 0)
       return true;
-    if (instr.Opcode is MOpcode.Call or MOpcode.InlineAsm || instr.IsTerminator)
+    if (instr.Opcode is MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm || instr.IsTerminator)
       return true;
     if (address.Count == 0)
       return false;

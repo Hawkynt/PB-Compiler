@@ -897,6 +897,23 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         OptRegParm.Apply(model, this.IsBackendRouted);   // back-end functions stay on the stack convention
     }
 
+    // SPEED/SIZE, resolved BEFORE anything can ask the back end a question. The objective is not only
+    // an emission setting: SelectionCost hands the selector a cost model under SPEED and null
+    // otherwise, so it decides every byte-for-cycles trade the selector may make - the membership
+    // masks, the perfect hash, the byte-index table.
+    //
+    // It used to be resolved further down, next to the peephole and scheduler switches it also sets,
+    // and that was correct for as long as nothing consulted the routing before then. Mandatory
+    // routing does: BackendDeclines forces BackendProcs/BackendMain, which runs selection. So under
+    // PBC_X_BACKEND_STRICT the selector ran with OptimizeSpeed still false, every cost-model trade
+    // declined, and the cached machine code was the compact form - strict mode did not merely measure
+    // a different program from the one it shipped, it emitted one. ResolveOptimizeObjective's own
+    // summary already promised "before backend selection and emission"; this is that promise.
+    //
+    // Nothing in an ordinary build moves. The only statement between here and the old position is
+    // TryLowerTrivialProgram, which reads neither flag.
+    this.ResolveOptimizeObjective(optimizeMeta);
+
     // Asked HERE, after the optimizer has had its say about calling conventions and before a single
     // byte is emitted, because the routing's answer depends on both. RequireBackend is off in every
     // ordinary build; when it is on, a decline is the program failing to compile, which is what the
@@ -917,8 +934,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // $OPTIMIZE SPEED gets the instruction scheduler (reorders the FINAL stream - after
     // unrolling/inlining/const-fold - to group memory/ALU ops), every other optimized standalone keeps
     // the peephole (staging coalesce, CMP->TEST). Gated on the optimizer flags, not the dialect (the
-    // optimizer is dialect-agnostic; SPEED merely defaults on for pb36).
-    this.ResolveOptimizeObjective(optimizeMeta);
+    // optimizer is dialect-agnostic; SPEED merely defaults on for pb36) - resolved above, before the
+    // back end could be asked anything.
     var standalone = this.Optimize && !this._allowExternalCalls && !this._isUnit;
     asm.EnableSchedule = standalone && this.OptimizeSpeed;
     asm.EnablePeephole = standalone && !asm.EnableSchedule;
@@ -1085,6 +1102,25 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       foreach (var proc in inlinedAway)
         liveProcs.Remove(proc);
     }
+    // The reachability above is an AST walk, and the routed path emits from the IR - inlined, cloned
+    // and specialized since. A procedure the routed code still CALLS keeps its body whatever that walk
+    // concluded: the alternative is a link that stops on a label nothing bound, with no diagnostic to
+    // work from. See BackendCalleeNames for the corpus shape that does it.
+    //
+    // It CLOSES over the live set rather than seeding from every routed body, because routing is
+    // decided for dead procedures too: taking their callees as live would resurrect whole trees the
+    // walk was right to drop. The condition asked is the emission condition on the next line, so the
+    // two cannot drift apart.
+    if (liveProcs != null)
+      for (var changed = true; changed;) {
+        changed = false;
+        var routedCallees = this
+          .BackendCalleeNames(p => liveProcs.Contains(p) || !this.IsFullyOwned(p))
+          .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var proc in model.ProcedureList)
+          if (routedCallees.Contains(Ir.IrLowering.IrNameOf(proc)) && liveProcs.Add(proc))
+            changed = true;
+      }
     foreach (var proc in model.ProcedureList)
       if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc))) {
         if (this.IsBackendRouted(proc))

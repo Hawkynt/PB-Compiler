@@ -106,4 +106,52 @@ public sealed class BackendPortOutTests {
 
     Assert.That(routed, Does.Contain("main"), "a body containing OUT must route now");
   }
+
+  /// <summary>
+  /// <c>WAIT port, mask [, xor]</c> - the spin OUT's read half is the other end of. The direct emitter
+  /// writes it inline as four instructions round a label; the lowering had no case for it at all.
+  ///
+  /// <para>
+  /// A test can only run this because the poll's exit condition is arrangeable: the interpreter
+  /// answers a port with whatever was last written to it, so an <c>OUT</c> in front of the
+  /// <c>WAIT</c> decides what the first read sees. Without that the loop would be a hang rather than
+  /// a failure, which is the shape of test worth avoiding.
+  /// </para>
+  /// <para>
+  /// Both forms are here because the XOR argument inverts the question rather than refining it: plain
+  /// <c>WAIT p, 8</c> leaves when bit 3 is SET, and <c>WAIT p, 8, 8</c> leaves when it is CLEAR. A
+  /// lowering that ignored the third argument would still pass the first case and hang on the second,
+  /// so the two are not two samples of one thing.
+  /// </para>
+  /// </summary>
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenWait_WhenRouted_ThenThePollLeavesOnTheBitItNames(bool optimize) {
+    const string source = """
+      DIM p AS INTEGER
+      p = &H210
+      OUT p, 8
+      WAIT p, 8
+      PRINT "set";
+      OUT p, 0
+      WAIT p, 8, 8
+      PRINT " clear"
+      """;
+
+    static (string Output, IEnumerable<string> Routed) Compile(string text, bool optimize, bool routed) {
+      var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(text, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+      Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+      var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+      var image = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      return (Cpu8086.Run(image).Output.Trim(), generator.BackendRoutedNames.ToList());
+    }
+
+    var (output, names) = Compile(source, optimize, routed: true);
+    Assert.That(names, Does.Contain("main"), "a body containing WAIT must route now");
+    Assert.Multiple(() => {
+      Assert.That(output, Is.EqualTo(Compile(source, optimize, routed: false).Output));
+      Assert.That(output, Is.EqualTo("set clear"), "both polls left, and neither before its turn");
+    });
+  }
 }

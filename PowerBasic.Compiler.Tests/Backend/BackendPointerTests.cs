@@ -440,17 +440,34 @@ public sealed class BackendPointerTests {
   }
 
   /// <summary>
-  /// The paged classes decline instead of answering. Their segment is recomputed per element - HUGE
-  /// steps it by <c>byteOffset >> 4</c> and the EMS pair by which page is in the window - so there is
-  /// no one segment to name, and inventing one would be the same defect the two cases above were.
+  /// A paged class has no ONE segment - HUGE steps it by <c>byteOffset >> 4</c> and the EMS pair by
+  /// which page is in the window - but the question was never about the array. <c>VARSEG(h%(1))</c>
+  /// names an ELEMENT, and the far pointer the access itself forms carries that element's segment.
+  ///
+  /// <para>
+  /// Answering with it is not an invention: it is the same address a read of <c>h%(1)</c> would use,
+  /// formed the same way and including the EMS remap, which is exactly what the direct emitter does by
+  /// building the place before asking which segment it is in. So the two are compared rather than a
+  /// number being asserted - the segment itself depends on where DOS put the block.
+  /// </para>
   /// </summary>
   [Test]
-  public void Lowering_GivenVarSegOfAPagedArrayElement_ThenItDeclines() {
-    Assert.That(DeclineReason("""
+  public void Execute_GivenVarSegOfAPagedArrayElement_ThenItIsTheElementsOwnSegment() {
+    var (direct, routed, names) = RunBothWays("""
       DIM HUGE h%(0 TO 40000)
       h%(1) = 2
-      PRINT VARSEG(h%(1))
-      """), Is.EqualTo("VARSEG of an element of the Huge array h"));
+      h%(40000) = 3
+      PRINT h%(1); h%(40000)
+      PRINT VARSEG(h%(40000)) - VARSEG(h%(1))
+      """);
+
+    Assert.Multiple(() => {
+      Assert.That(names, Does.Contain("main"), "VARSEG of a paged element no longer declines");
+      Assert.That(routed, Is.EqualTo(direct));
+      // the array starts at index 0, so element 40000 is 80000 bytes in - 5000 paragraphs past
+      // element 1, which sits in the first one
+      Assert.That(routed.Replace("\r\n", "|").Trim(), Is.EqualTo("2  3 | 5000 |"));
+    });
   }
 
   /// <summary>

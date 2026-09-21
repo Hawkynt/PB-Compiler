@@ -54,6 +54,27 @@ public sealed class ModuleLoweringTests {
     Assert.That(module.FindFunction("main")!.AllInstructions.OfType<IrCall>().Single().Type, Is.EqualTo(IrType.Void));
   }
 
+  /// <summary>
+  /// One statement the lowering has no case for, standing in for all of them: the FUNCTION keeps its
+  /// signature and loses its body, and the caller is still a valid module.
+  ///
+  /// <para>
+  /// The subject is a moving target BY DESIGN - the subset it sits outside of is the thing this
+  /// project is growing - and it has moved four times: <c>BEEP</c> became a call to rt_sound,
+  /// <c>WAIT</c> became blocks over rt_inp, <c>GOTO DWORD</c> became an indirect branch with no
+  /// in-function successors, and <c>END</c> became a call to rt_exit. Three of those were chosen as
+  /// "the durable one".
+  /// </para>
+  /// <para>
+  /// So it is named ONCE, here, rather than guessed at again: when this test starts failing because
+  /// the construct now lowers, that is the subset growing and the fix is to point
+  /// <see cref="_OutsideTheSubset"/> at something still outside it. Any decline will do - the
+  /// property under test is about what happens to a body that cannot lower, not about which body it
+  /// is - and <c>IrLoweringException</c>'s own message list is where to look.
+  /// </para>
+  /// </summary>
+  private const string _OutsideTheSubset = "  DIM t%(1 TO 2, 1 TO 2)\n  ARRAY SORT t%()\n";
+
   [Test]
   public void Module_FunctionWithUnsupportedBodyBecomesADeclaration() {
     var module = LowerModule(
@@ -61,7 +82,7 @@ public sealed class ModuleLoweringTests {
       "y% = f%(3)\n" +
       "\n" +
       "FUNCTION f%(BYVAL n%)\n" +
-      "  BEEP\n" +                  // hardware command, unsupported -> body declines, signature stays
+      _OutsideTheSubset +
       "  f% = n%\n" +
       "END FUNCTION");
 

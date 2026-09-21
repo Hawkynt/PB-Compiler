@@ -136,6 +136,13 @@ internal static class Spiller {
   /// address form, which recomputes from the frame, or a constant, which depends on nothing at all.
   /// </summary>
   private static bool IsRecomputable(MOpcode opcode, MOperand source) => opcode switch {
+    // ...but an address formed from TWO registers is not freely redoable on this target. 16-bit
+    // addressing pairs an index only with BX or BP, so recomputing one demands BX specifically - and
+    // the place a recomputation goes is the front of a use's preparation run, which for a call is
+    // exactly where the convention has just put an argument IN BX. Leaving it where the selector put
+    // it, above the staging, costs nothing and is what the allocator can actually satisfy: it is the
+    // whole of why GET into an element of a dynamic array declined.
+    MOpcode.Lea when source is MOperand.Memory { Base: not null, Index: not null } => false,
     MOpcode.Lea => source is MOperand.StackSlot or MOperand.DataOffset or MOperand.Memory,
     MOpcode.Mov => source is MOperand.Immediate,
     _ => false,
@@ -445,18 +452,46 @@ internal static class Spiller {
   /// bytes into a segment made out of a frame offset, and the read-back printed the zeroes the frame
   /// prologue had left. Every instruction was defensible on its own.
   /// </para>
+  /// <para>
+  /// <b>A clobber list is not by itself evidence of staging</b>, and reading it as one is what declined
+  /// <c>Vga_GetPixel</c> in the SVGA corpus. An inline-asm block declares the whole register file, so a
+  /// backward walk that only stopped at a <c>CALL</c> went straight through one and reported all six
+  /// registers as filled - which every instruction the spiller then inserted below the block claimed,
+  /// leaving nothing for the <c>BYREF</c> pointer the body writes its result through. The staging run
+  /// is bounded at both ends instead: there has to be a pending <c>CALL</c> ahead for anything to be
+  /// staged FOR, and the walk back stops at the first instruction that is not a staging move.
+  /// </para>
   /// </summary>
   private static IReadOnlyList<Asm.Reg> StagingFilledAt(MBlock block, int index) {
+    if (!IsStagingForACall(block, index))
+      return [];
+
     var filled = new List<Asm.Reg>();
     for (var j = index - 1; j >= 0; --j) {
       var instruction = block.Instructions[j];
-      if (instruction.Opcode == MOpcode.Call)
-        break;                                   // past the previous call: nothing is staged yet
+      if (instruction.Opcode is MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm)
+        break;                                   // past the previous call, or out of the staging run
       foreach (var register in instruction.Clobbers)
         if (!filled.Contains(register))
           filled.Add(register);
     }
     return filled;
+  }
+
+  /// <summary>
+  /// Whether a <c>CALL</c> is still ahead in this block with nothing but staging between - the
+  /// condition for there being a pending call whose arguments anything here could be filling.
+  /// </summary>
+  private static bool IsStagingForACall(MBlock block, int index) {
+    for (var j = index; j < block.Instructions.Count; ++j)
+      switch (block.Instructions[j].Opcode) {
+        case MOpcode.Call:
+        case MOpcode.CallFar:
+          return true;
+        case MOpcode.InlineAsm:
+          return false;                          // hand-written assembly is nobody's argument staging
+      }
+    return false;
   }
 
   /// <summary>The instruction's own clobbers plus whatever staging is pending where it is being placed.</summary>

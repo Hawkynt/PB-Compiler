@@ -99,7 +99,11 @@ public sealed partial class IrLowering {
         $"a {symbol.ArrayClass} array of rank {arr.Rank} (the direct emitter takes rank 1 only)");
     if (arr.Element is StringType or FlexType)
       throw new IrLoweringException($"dynamic strings inside a {symbol.ArrayClass} array");
-    if (arr.Element is not ScalarType)
+    // A RECORD element is addressed exactly as a scalar one is - the element address is a far pointer
+    // either way, and a field of it is that pointer plus the field's own offset, which is what the
+    // member path already does over any base. What it must NOT be is a shape with storage of its own
+    // to manage: a dynamic string inside the window is a handle the runtime owns, refused above.
+    if (arr.Element is not (ScalarType or UdtType))
       throw new IrLoweringException($"a {arr.Element} element of a {symbol.ArrayClass} array");
     if (this.NeedsSharedStorage(symbol))
       throw new IrLoweringException($"a {symbol.ArrayClass} array a procedure also reaches");
@@ -281,10 +285,11 @@ public sealed partial class IrLowering {
   /// that a VIRTUAL array really went to EMS, which is exactly what DIFF17 asserts.
   ///
   /// <para>
-  /// Every OTHER spelling of FRE declines. The direct emitter answers them with an advisory 32767
-  /// after evaluating and discarding the argument - and discarding it is not free, because a STRING
-  /// argument is a handle the call RELEASES. Lowering the informative case and refusing the ones whose
-  /// only content is a side effect keeps the two paths from disagreeing about ownership.
+  /// Every OTHER spelling is an advisory 32767 - memory management is not modelled on either path -
+  /// and the argument is still evaluated, because discarding it is not free. A STRING argument is a
+  /// handle the call RELEASES, which is what <c>FRE("")</c> means: compact the heap. Dropping the
+  /// handle instead of freeing it would have the two paths disagree about ownership, which is why
+  /// this used to decline rather than answer.
   /// </para>
   /// </summary>
   private IrValue LowerFre(CallOrIndexExpr call) {
@@ -292,9 +297,16 @@ public sealed partial class IrLowering {
     var isEms = call.Arguments is [{ } argument]
       && argument is IntegerLiteralExpr { Value: -11 }
         or UnaryExpr { Op: UnaryOp.Negate, Operand: IntegerLiteralExpr { Value: 11 } };
-    if (!isEms)
-      throw new IrLoweringException("FRE other than FRE(-11)");
-    return this.Coerce(this._b.Call(IrType.I32, this.RuntimeFn("rt_ems_fre", IrType.I32)),
-      PbType.Long, this._model.TypeOf(call));
+    if (isEms)
+      return this.Coerce(this._b.Call(IrType.I32, this.RuntimeFn("rt_ems_fre", IrType.I32)),
+        PbType.Long, this._model.TypeOf(call));
+
+    foreach (var other in call.Arguments)
+      if (this._model.TypeOf(other) is StringType or FlexType)
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(other));               // FRE(s$) consumes the handle it is given
+      else
+        this.LowerExpr(other);                        // evaluated for its effects, then dropped
+    return this.Coerce(new IrConstantInt(IrType.I32, 0x7FFF), PbType.Long, this._model.TypeOf(call));
   }
 }

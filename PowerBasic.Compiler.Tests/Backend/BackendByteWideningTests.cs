@@ -70,6 +70,42 @@ public sealed class BackendByteWideningTests {
   }
 
   /// <summary>
+  /// The SIGNED byte, which is the other half of the same question and answers it the other way: a
+  /// BYTE is unsigned and an SBYTE is not, so -5 must widen to -5 and 127 stay 127. <c>CBW</c> is the
+  /// whole instruction, with <c>CWD</c> carrying the sign on into the high word for the LONG.
+  /// </summary>
+  private const string _signed = """
+    FUNCTION Widen%(BYVAL b AS SBYTE) NOINLINE
+      Widen% = b
+    END FUNCTION
+
+    FUNCTION WidenLong&(BYVAL b AS SBYTE) NOINLINE
+      WidenLong& = b
+    END FUNCTION
+
+    DIM lo AS SBYTE
+    lo = -5
+    PRINT Widen%(lo)
+    PRINT WidenLong&(lo)
+    lo = -128
+    PRINT Widen%(lo)
+    PRINT WidenLong&(lo)
+    """;
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Run_GivenASignedByteWidened_ThenTheSignIsCarried(bool optimize) {
+    var (output, routed) = Run(_signed, optimize);
+
+    Assert.Multiple(() => {
+      Assert.That(routed, Does.Contain("Widen"), "i8 -> i16 must route, or the values below are the direct emitter's");
+      Assert.That(routed, Does.Contain("WidenLong"), "i8 -> i32 must route");
+      Assert.That(output, Is.EqualTo("-5 |-5 |-128 |-128"),
+        "an SBYTE is signed: -5 widens to -5, and the high half of the LONG is all ones");
+    });
+  }
+
+  /// <summary>
   /// The premise: these functions must actually ROUTE. Before the selector learned the byte source
   /// they declined, and the values above would then be the direct emitter's - correct, and proving
   /// nothing about this back end.

@@ -57,6 +57,37 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>
+  /// Whether the ISA POLICY will emit this line, whatever the plain assembler makes of it.
+  ///
+  /// <para>
+  /// <c>TextAssembler</c>'s table predates <c>POPCNT</c>, the BMI sets, AES/PCLMUL and the 0F38/0F3A
+  /// SIMD maps - <see cref="TryEmitPolicyInlineAsm"/> says so itself - so it answers "unknown
+  /// mnemonic" for instructions this compiler emits natively on a capable target and EMULATES on
+  /// everything else. The lowering was taking that answer as "this text cannot be assembled" and
+  /// marking the block un-routable, which put every BMI and POPCNT program on the direct emitter: 89
+  /// tests in the mandatory-routing measurement, the largest single row in it.
+  /// </para>
+  /// <para>
+  /// Naming a CPU feature is the test, because that is the same question
+  /// <see cref="TryEmitPolicyInlineAsm"/> asks before it decides between native and emulated. A
+  /// mnemonic the policy has no feature for is one it has no opinion about, and an unknown one of
+  /// those really is unknown.
+  /// </para>
+  /// </summary>
+  internal static bool PolicyOwnsInlineAsmLine(string line) {
+    var instruction = InlineInstruction.Parse(line);
+    if (instruction.Mnemonic.Length == 0)
+      return false;
+    if (IsX87InlineMnemonic(instruction.Mnemonic))
+      return true;
+
+    var required = RequiredFeature(instruction)
+      | RequiredBitManipulationFeature(instruction) | RequiredSupplementalFeature(instruction)
+      | RequiredCryptoFeature(instruction) | RequiredBmiFeature(instruction);
+    return required != RuntimeCpuFeatures.None;
+  }
+
+  /// <summary>
   /// The inline-asm mnemonic in <paramref name="statements"/> that the declared target cannot
   /// execute, or null when every one of them can.
   ///

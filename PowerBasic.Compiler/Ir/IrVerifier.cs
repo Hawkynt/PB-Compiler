@@ -207,8 +207,10 @@ public sealed class IrVerifier {
       case IrIndirectBr ib:
         if (!ib.Address.Type.IsPointer)
           this.Error($"indirectbr address must be a pointer, got {ib.Address.Type}");
-        if (ib.Targets.Count == 0)
-          this.Error("indirectbr with no possible target: the CFG would not show where it can go");
+        // No targets is a jump that LEAVES the function - GOTO DWORD CODEPTR32(SomeProc), and any
+        // address computed at run time that names nothing here. The CFG then says the truth, which is
+        // that no block of this function follows; it is only a lie when a block the jump could reach
+        // has been left out, and the lowering lists every label there is.
         break;
       case IrSelect sel:
         if (!sel.Condition.Type.IsBool)

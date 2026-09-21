@@ -127,8 +127,13 @@ public sealed partial class IrLowering {
     // AddInts%(BYVAL a%, BYVAL b%) names a symbol another object file supplies. Leaving it out of
     // the map meant every CALL to one declined, and the program with it, for want of a callee that
     // was never going to have a body.
-    foreach (var proc in model.Procedures.Values)
-      if (TrySignature(proc, out var irfn)) {
+    // ...over the EMISSION list as well as the name table, because a name table cannot hold all of
+    // them: a lifted lambda is keyed by the expression it was written as, and an overload past the
+    // first shares its name with the one that got there first. The direct emitter emits from
+    // ProcedureList, so a body it emits and this map lacks is a body nothing routed can call - which
+    // is what left "$lambda$1 has no lowered function" and every second overload behind.
+    foreach (var proc in model.Procedures.Values.Concat(model.LambdaProcs.Values).Concat(model.ProcedureList))
+      if (!procMap.ContainsKey(proc) && TrySignature(model, proc, out var irfn)) {
         procMap[proc] = irfn!;
         module.AddFunction(irfn!);
       }
@@ -174,7 +179,7 @@ public sealed partial class IrLowering {
         // ...and SAY SO. A cleared body leaves no trace in Functions' defined half, so a census over
         // IR functions counts this procedure in neither its numerator nor its denominator - the
         // procedure simply stops existing, and the coverage ratio goes UP because it did.
-        module.RecordProcedureLoweringDecline(proc.Name, e.Message);
+        module.RecordProcedureLoweringDecline(IrNameOf(proc), e.Message);   // keyed as the function is named
       }
     }
     return module;
@@ -278,13 +283,40 @@ public sealed partial class IrLowering {
             yield return symbol;
   }
 
+  /// <summary>
+  /// The name a procedure's IR function carries, which is its source name for all but an OVERLOAD.
+  ///
+  /// <para>
+  /// pb36 lets several procedures share a name, and an IR module's functions are keyed by one - so
+  /// every overload past the first had nowhere to live, and a program with two <c>Area</c>s routed
+  /// whichever the name happened to reach. The suffix is the direct emitter's own
+  /// (<c>p_Area__1</c>), so the label a routed call targets and the label the direct emitter binds are
+  /// the same string; <see cref="CodeGen.CodeGenerator.CalleeLabel"/> reads it back the same way.
+  /// </para>
+  /// </summary>
+  internal static string IrNameOf(ProcedureSymbol proc)
+    => proc.OverloadIndex == 0 ? proc.Name : $"{proc.Name}__{proc.OverloadIndex}";
+
   /// <summary>Builds an IR signature for a procedure, or false if it is outside the supported subset.</summary>
-  private static bool TrySignature(ProcedureSymbol proc, out IrFunction? fn) {
+  private static bool TrySignature(SemanticModel model, ProcedureSymbol proc, out IrFunction? fn) {
     fn = null;
+    // A CAPTURING lambda reads its outer locals through the environment that arrives in BX:CX, and
+    // both halves of that now exist here: the prologue receives the pair (IrAlloca.EnvRole) and the
+    // captures live in a record laid out over the enclosing procedure (IrLowering.Closures). What
+    // still has no answer is a capturing lambda whose enclosing procedure is not known - the binder
+    // records the pairing, and without it the record cannot be laid out at all.
+    if (proc.Captures.Count > 0 && !model.LambdaEnclosing.ContainsKey(proc))
+      return false;
     var ret = IrType.Void;
+    var returnsClosure = false;
     if (proc.IsFunction) {
       if (proc.ReturnType is StringType)
         ret = IrType.Ptr;                              // a string result IS its runtime handle
+      // A DELEGATE result is eight bytes, which the type lattice has no shape for. What crosses the IR
+      // is the ADDRESS of the closure the body built; where the bytes go is an ABI fact, recorded on
+      // the function - see IrFunction.ReturnsClosure.
+      else if (proc.ReturnType is ProcPtrType)
+        (ret, returnsClosure) = (IrType.Ptr, true);
       else if (proc.ReturnType is BcdType { IsFixedPoint: true })
         // A FIX cell is a scaled i64, but a FIX RESULT is not: the direct emitter's epilogue loads the
         // cell with FILD and calls rt_fixdn, so what crosses the boundary is the NUMERIC value in
@@ -296,8 +328,12 @@ public sealed partial class IrLowering {
     }
     var args = new List<IrArgument>();
     foreach (var p in proc.Parameters) {
-      if (p.Seg || p.Optional)
-        return false;                                  // SEG / CDECL-optional excluded
+      // SEG is excluded, and so is an optional parameter a call site may really OMIT - a CDECL bracket
+      // one. A pb36 parameter with a DEFAULT is optional in the source and never omitted in the IR:
+      // the binder has already put the default expression in the call's positional list, so the callee
+      // receives it like any other argument.
+      if (p.Seg || (p.Optional && p.DefaultValue is null))
+        return false;
       if (p.Type is UdtType) {
         args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));   // a record is passed as a pointer (BYVAL = callee copies on entry)
         continue;
@@ -316,11 +352,24 @@ public sealed partial class IrLowering {
         args.Add(new IrArgument(IrType.Ptr, args.Count, p.Name));
         continue;
       }
+      // A DELEGATE crosses as its four words rather than one value: the IR's types are scalar, and
+      // eight bytes of closure are not one of them. Splitting it here is what gives the pushes and the
+      // incoming layout a shape the stack ABI already knows how to place - see
+      // IrLowering.Delegates.AddClosureArgument for why the words are listed in this order.
+      if (p.Type is ProcPtrType) {
+        if (!p.ByVal || proc.CallConv is not (CallConvention.Basic or CallConvention.Pascal))
+          return false;                                // BYREF / a right-to-left convention would reorder them
+        args.Add(new IrArgument(IrType.I16, args.Count, p.Name + ".envseg"));
+        args.Add(new IrArgument(IrType.I16, args.Count, p.Name + ".envoff"));
+        args.Add(new IrArgument(IrType.I16, args.Count, p.Name + ".codeseg"));
+        args.Add(new IrArgument(IrType.I16, args.Count, p.Name + ".codeoff"));
+        continue;
+      }
       if (!IrTypeMapper.TryMap(p.Type, out var pty) || pty.IsMbf)
         return false;                                  // scalar parameters only
       args.Add(new IrArgument(p.ByVal ? pty : IrType.Ptr, args.Count, p.Name));  // BYREF parameters arrive as pointers
     }
-    fn = new IrFunction(proc.Name, ret, args) { NoInline = proc.NoInline };
+    fn = new IrFunction(IrNameOf(proc), ret, args) { NoInline = proc.NoInline, ReturnsClosure = returnsClosure };
     return true;
   }
 
@@ -343,20 +392,28 @@ public sealed partial class IrLowering {
 
     // bind parameters: BYVAL copies the argument into a mutable local slot; BYREF
     // takes the incoming pointer as the variable's address (reads/writes go through it)
+    this.SetUpClosures(proc);
+
+    // ...walking the IR arguments with their own index, because a source parameter is not always one
+    // of them: a delegate is four (see IrLowering.Delegates), so the two run out of step from the
+    // first one onwards.
     if (proc is not null)
-      for (var i = 0; i < proc.Parameters.Count; ++i) {
+      for (int i = 0, argument = 0; i < proc.Parameters.Count; ++i, ++argument) {
         var p = proc.Parameters[i];
         if (p.Type is UdtType pudt) {
           if (p.ByVal) {                               // BYVAL record: copy the caller's record into a private local
             var local = this.SlotFor(p);
             this._b.Call(IrType.Void, this.RuntimeFn("llvm.memcpy.p0.p0.i32", IrType.Void, IrType.Ptr, IrType.Ptr, IrType.I32, IrType.I1),
-              local, fn.Parameters[i], new IrConstantInt(IrType.I32, pudt.Size), IrBuilder.ConstBool(false));
+              local, fn.Parameters[argument], new IrConstantInt(IrType.I32, pudt.Size), IrBuilder.ConstBool(false));
           } else
-            this._addr[p] = fn.Parameters[i];          // BYREF record: use the caller's storage
+            this._addr[p] = fn.Parameters[argument];   // BYREF record: use the caller's storage
+        } else if (p.Type is ProcPtrType) {
+          this.BindClosureParameter(p, fn, argument);
+          argument += ClosureWords - 1;
         } else if (p.ByVal)
-          this._b.Store(fn.Parameters[i], this.SlotFor(p));
+          this._b.Store(fn.Parameters[argument], this.SlotFor(p));
         else
-          this._addr[p] = fn.Parameters[i];
+          this._addr[p] = fn.Parameters[argument];
       }
 
     // $ERROR STACK ON: the headroom probe, at the head of the procedure and before anything that
@@ -491,6 +548,12 @@ public sealed partial class IrLowering {
         // all three push a return id onto the same stack - the dispatched form no less than the two
         // that name their destination, since what it dispatches to is a GOSUB
         case GosubStmt or GosubPtrStmt or OnGotoStmt { IsGosub: true }: return true;
+        // ...and so does ON TIMER(n) GOSUB, which is a GOSUB nothing in the program performs. This
+        // runtime has no event dispatch, so the handler is unreachable and its RETURN never runs -
+        // but it is still a RETURN in the body, and refusing to build the stack for it is what
+        // declined the whole module with "RETURN without a matching GOSUB". The direct emitter
+        // compiles the same handler to the same never-taken return.
+        case OnEventStmt: return true;
         case IfStmt i when ContainsGosub(i.Then) || i.ElseIfs.Any(e => ContainsGosub(e.Body)) || (i.Else is { } el && ContainsGosub(el)):
           return true;
         case ForStmt f when ContainsGosub(f.Body): return true;
@@ -510,6 +573,13 @@ public sealed partial class IrLowering {
     this.ReleaseOwnedProcedureStrings();
     if (this._resultVar is null) {
       this._b.Ret();
+      return;
+    }
+    // A DELEGATE result is storage, not a value - there is nothing to load out of it - so the address
+    // of the closure the body assembled is what goes back. The epilogue turns that into the four
+    // registers the ABI puts it in.
+    if (this._resultVar.Type is ProcPtrType) {
+      this._b.Ret(this.SlotFor(this._resultVar));
       return;
     }
     var cell = this._b.Load(this._resultVar.Type is StringType ? IrType.Ptr : MapType(this._resultVar.Type),
@@ -586,6 +656,22 @@ public sealed partial class IrLowering {
       this.AsmVariable(name) is null && this._labels.ContainsKey(name) ? probe.Lbl(name) : null);
     var parsed = new Asm.TextAssembler(probe).TryParse(stmt.Text, seen, out _);
 
+    // A mnemonic the assembler's table has never heard of is not automatically one this compiler
+    // cannot emit. POPCNT, the BMI sets and the extended SIMD maps are emitted by the ISA POLICY -
+    // natively where the target has them and emulated where it does not - and the table predates all
+    // of them. Asking the policy is what stops "unknown mnemonic" meaning "goes to the direct
+    // emitter", which is where every BMI and POPCNT program was going.
+    //
+    // The NAMES still have to come from the parser, and they do: Analyze parses the operands through
+    // the resolver before it decides it has no entry for the mnemonic, so a variable in one is
+    // collected exactly as it would be in a MOV. Scanning the text for identifiers instead is the
+    // guess this node exists to avoid - it cannot tell a register from a variable.
+    if (!parsed && PolicyEmitsEveryLine(stmt.Text)) {
+      foreach (var line in stmt.Text.Split('\n'))
+        Asm.TextAssembler.Analyze(line, seen);
+      parsed = true;
+    }
+
     var routable = parsed;
     foreach (var name in seen.Collected)
       // a VARIABLE first, exactly as the direct emitter's resolver orders it: a label sharing a
@@ -600,6 +686,23 @@ public sealed partial class IrLowering {
     node.Routable = routable;
     this._b.InlineAsm(node);
     this._fn.HasInlineAsm = true;
+  }
+
+  /// <summary>
+  /// Whether every line of a block the plain assembler refused is one the ISA policy owns. All of
+  /// them, because a block is emitted or declined whole - one line the policy has no opinion about
+  /// still has to reach an assembler that has never heard of it.
+  /// </summary>
+  private static bool PolicyEmitsEveryLine(string text) {
+    var any = false;
+    foreach (var line in text.Split('\n')) {
+      if (line.Trim().Length == 0)
+        continue;
+      if (!CodeGen.CodeGenerator.PolicyOwnsInlineAsmLine(line))
+        return false;
+      any = true;
+    }
+    return any;
   }
 
   /// <summary>
@@ -655,6 +758,11 @@ public sealed partial class IrLowering {
   private IrValue SlotFor(VariableSymbol symbol) {
     if (this._addr.TryGetValue(symbol, out var existing))
       return existing;
+    // A CAPTURED name is not storage this body owns - it lives in the enclosing procedure's capture
+    // record, reached through the environment pointer the closure carried - so its address is that
+    // far pointer plus the capture's offset, and never a slot of this frame's own.
+    if (symbol.Storage == VariableStorage.Captured)
+      return this._addr[symbol] = this.CapturedAddress(symbol);
     // A PB INTERNAL variable (pbvFixDigits, pbvScrnCols, pbvDefSeg, ...) is not storage this pass may
     // invent. It names a cell the RUNTIME owns, initialises and reads: pbvFixDigits is the very count
     // rt_fixdn scales by, and pbvScrnCols is refreshed from the BIOS data area at startup. A frame
@@ -670,12 +778,24 @@ public sealed partial class IrLowering {
     // the high word still held. So a pointer that needs shared storage declines instead.
     if (symbol.Type is PointerType && this.NeedsSharedStorage(symbol))
       throw new IrLoweringException("pointer variable with shared storage");
-    if (this.NeedsSharedStorage(symbol))
+    // A $RESOURCE array IS the embedded file: the whole-program codegen lays its bytes into the data
+    // area under the very label g.<name> resolves to, so it has to be a named global rather than a
+    // frame slot. Given one, the routed program read four zeros where the file's bytes were.
+    if (this.NeedsSharedStorage(symbol) || this._model.ResourceData.ContainsKey(symbol))
       return this.GlobalFor(symbol);
+    // ...and a local one of this procedure's lambdas CAPTURES lives in the capture record rather than
+    // in a slot of its own. That is what makes a non-escaping closure share it by reference: the
+    // lambda writing through the environment and this body writing through the name are writing to
+    // the same bytes.
+    if (this._captureOffsets is { } captured && captured.TryGetValue(symbol, out var within))
+      return this._addr[symbol] = this.OffsetWithin(this._captureRecord!, within);
     IrAlloca alloca;
     if (symbol.Type is PointerType) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });   // holds a near address
-    } else if (symbol.Type is StringType) {
+    } else if (symbol.Type is StringType or FlexType) {
+      // FLEX is a string handle too - "stored like a dynamic string handle", and the binder and the
+      // direct emitter both spell the pair `StringType or FlexType` wherever a handle is meant. This
+      // layer was the only one that had picked up the first half and not the second.
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = symbol.Name });  // holds a string handle
       // ...starting EMPTY, which is both what PB says a string variable holds before its first
       // assignment and what makes the handle readable at all. An alloca is uninitialised, so anything
@@ -703,6 +823,12 @@ public sealed partial class IrLowering {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(elem) { Count = count, Name = symbol.Name });
     } else if (symbol.Type is UdtType udt) {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I8) { Count = udt.Size, Name = symbol.Name });   // a packed record buffer
+    } else if (symbol.Type is WideIntType wide) {
+      alloca = this._entry.InsertAt(this._entryAllocaCount++,
+        new IrAlloca(IrType.I16) { Count = wide.Words, Name = symbol.Name });   // a run of words - see IrLowering.WideIntegers
+    } else if (symbol.Type is ProcPtrType) {
+      alloca = this._entry.InsertAt(this._entryAllocaCount++,
+        new IrAlloca(IrType.I16) { Count = ClosureWords, Name = symbol.Name });   // a fat closure - see IrLowering.Delegates
     } else {
       alloca = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(MapType(symbol.Type)) { Name = symbol.Name });
     }
@@ -742,6 +868,7 @@ public sealed partial class IrLowering {
       FixedStringType fs => (IrType.I8, fs.Length),
       AsciizType az => (IrType.I8, az.Length),
       UdtType udt => (IrType.I8, udt.Size),
+      WideIntType wide => (IrType.I16, wide.Words),
       ArrayType { IsDynamic: false } arr => arr.Element switch {
         StringType => (IrType.Ptr, arr.ElementCount),
         UdtType ue => (IrType.I8, arr.ElementCount * ue.Size),
@@ -750,17 +877,47 @@ public sealed partial class IrLowering {
       ArrayType => throw new IrLoweringException("dynamic array with shared storage"),
       _ => (MapType(symbol.Type), 1),
     };
-    // The procedure qualification prevents same-named STATIC locals from aliasing; module globals
-    // need only the storage-class prefix because their source names are already module-unique.
+    // The procedure qualification prevents same-named STATIC locals from aliasing; a module global
+    // needs only the storage-class prefix, and its SOURCE SPELLING where the bare name is shared.
     var name = symbol.Storage == VariableStorage.Static
       ? StaticGlobalName(this._proc, symbol)
-      : $"g.{symbol.Name}";
+      : $"g.{this.GlobalSourceName(symbol)}";
     var suffix = 0;
     while (this._module!.FindGlobal(name) is not null)
       name = $"{name}.{++suffix}";
     var global = this._module.AddGlobal(new IrGlobalVariable(name, valueType) { Count = count });
     this._sharedStorage[symbol] = global;
     return global;
+  }
+
+  /// <summary>
+  /// What a module global is called in the IR: the source name, which reads well, except where that
+  /// name alone does not say WHICH variable - and then the binder's own key, suffix and all.
+  ///
+  /// <para>
+  /// <c>DIM total%</c> and <c>DIM total&amp;</c> are two module variables. A <c>VariableSymbol</c>
+  /// carries the bare spelling, so both wanted to be <c>g.total</c>; the uniquing loop below made the
+  /// second <c>g.total.1</c>, and the emitter could resolve neither - it keys the module table by the
+  /// SUFFIXED spelling, and refuses to guess between two symbols a bare name matches. That was the
+  /// whole of the <c>ambiguous-global</c> decline: not a shape the ABI could not express, just a name
+  /// that had thrown away the one character telling the two apart.
+  /// </para>
+  /// <para>
+  /// Only the ambiguous case is spelled out, so every other global keeps the readable name it has had
+  /// and the IR text tests that read those names keep reading them.
+  /// </para>
+  /// </summary>
+  private string GlobalSourceName(VariableSymbol symbol) {
+    var sharing = 0;
+    string? canonical = null;
+    foreach (var (key, candidate) in this._model.ModuleVariables) {
+      if (!candidate.Name.Equals(symbol.Name, StringComparison.OrdinalIgnoreCase))
+        continue;
+      ++sharing;
+      if (ReferenceEquals(candidate, symbol))
+        canonical = key;
+    }
+    return sharing > 1 && canonical is not null ? canonical : symbol.Name;
   }
 
   /// <summary>
@@ -808,15 +965,18 @@ public sealed partial class IrLowering {
   /// </summary>
   private (IrValue Address, PbType Element) ElementDataAddress(CallOrIndexExpr expr) {
     var (address, element) = this.ElementAddress(expr, farAllowed: true);
-    // a record element is copied by ADDRESS, not loaded, so it is in the same position as every
-    // other consumer below - the memcpy would take the far pointer for a near one.
+    // A RECORD element is copied by ADDRESS rather than loaded, and the copy is rt_memcpy - whose ABI
+    // row takes each side as a POINTER, which is an offset AND a segment register. So the far pointer
+    // survives the call intact and the copy really is a far one; it was the only consumer that
+    // needed checking, because a record has no value to load instead. What still declines is a far
+    // address in any of the NEAR positions the comment above lists, and those are refused elsewhere.
     //
     // A STRING element is not in that position. Its cell holds a HANDLE, one word, and both consumers
     // of this address move exactly that word: the read loads it and the assignment stores the new one
     // over it. Neither hands the ADDRESS to a string routine, which is what could not survive losing
     // a segment. Refusing it was therefore refusing a load and a store the far path already performs
     // for every scalar, and it cost the last routing class an array parameter had.
-    if (address is IrFarPtr && element is not (ScalarType or StringType))
+    if (address is IrFarPtr && element is not (ScalarType or StringType or UdtType))
       throw new IrLoweringException($"a {element} element of an ABSOLUTE array");
     return (address, element);
   }
@@ -1232,6 +1392,16 @@ public sealed partial class IrLowering {
   }
 
   private void LowerStatement(Statement statement) {
+    // A statement the BINDER rewrote is lowered as what it was rewritten to. pb36's member call
+    // `r.Dispose()` is `Res.Dispose(r)` and a property set `o.P = x` is `Type.set_P(o, x)`, both
+    // resolved at bind time against the receiver's TYPE - so the side table is where the answer
+    // already is, and re-deriving it here would be a second implementation of the overload rules.
+    // The direct emitter has consulted it from the start; the lowering never did, which declined
+    // every USING block (its END USING is a compiler-inserted Dispose call) and every property set.
+    if (this._model.DesugaredStatements.TryGetValue(statement, out var desugared)) {
+      this.LowerStatement(desugared);
+      return;
+    }
     switch (statement) {
       case AssignStmt a: this.LowerAssign(a); break;
       case IncrDecrStmt id: this.LowerIncrDecr(id); break;
@@ -1242,6 +1412,8 @@ public sealed partial class IrLowering {
       case ExitFarStmt ef: this.LowerExitFar(ef); break;
       case IterateStmt it: this.LowerIterate(it); break;
       case CallStmt c: this.LowerCallStatement(c); break;
+      case CallPtrStmt cp: this.LowerCallPtr(cp); break;
+      case RequireStmt rq: this.LowerRequire(rq); break;
       case SelectStmt s: this.LowerSelect(s); break;
       case DimStmt d: this.LowerDim(d); break;
       case RedimStmt rdm: this.LowerRedim(rdm); break;
@@ -1271,21 +1443,61 @@ public sealed partial class IrLowering {
       // that contains it is unoptimized.
       case InlineAsmStmt asm: this.LowerInlineAsm(asm); break;
       case DataStmt: break;                          // DATA is gathered once into a module blob; the statement itself emits nothing
+      // $RESOURCE names bytes the whole-program codegen bakes into the data area; like DATA, the
+      // statement itself is a declaration and executes nothing. RESOURCE$ reads them back, and that
+      // is a call like any other.
+      case ResourceStmt: break;
+      // A compile-time declaration carries no code here either. A pb36 nested SUB/FUNCTION is LIFTED
+      // to its own top-level procedure and emitted separately - the declaration left behind marks
+      // where it was written and executes nothing, which is exactly what the direct emitter makes of
+      // the same statement.
+      // $ASSERT belongs with them: the binder has already evaluated the condition and reported it, so
+      // by the time a lowering sees one there is nothing left of it. A check that fired is a
+      // diagnostic, not code, and one that held emits nothing on either path.
+      case SubDecl or FunctionDecl or DeclareStmt or TypeDecl or UnionDecl or EnumDecl or DefTypeStmt
+        or StaticAssertStmt:
+        break;
       case ReadStmt rd: this.LowerRead(rd); break;
       case RestoreStmt rs: this.LowerRestore(rs); break;
-      case EndStmt: this.LowerEnd(); break;
+      case EndStmt end: this.LowerEnd(end.ExitCode); break;
       case OnErrorStmt oe: this.LowerOnError(oe); break;
+      case TryStmt tryStmt: this.LowerTry(tryStmt); break;
       case ResumeStmt rs2: this.LowerResume(rs2); break;
       case ErrorStmt err: this.LowerErrorStatement(err); break;
       case MetaStmt meta: this.LowerMeta(meta); break;
       case CommandStmt { Keyword: "SHIFT LEFT" or "SHIFT RIGHT" } shift: this.LowerShift(shift); break;
       case CommandStmt { Keyword: "ROTATE LEFT" or "ROTATE RIGHT" } rotate: this.LowerRotate(rotate); break;
       case CommandStmt { Keyword: "LOCATE" } locate: this.LowerLocate(locate); break;
+      // SCREEN n. The PB-number-to-BIOS-mode table lives in the runtime rather than in either
+      // emitter, so this is the whole statement: one word, one call, and both paths map alike.
+      //
+      // The further arguments PB accepts - active page, visual page, burst - are IGNORED, which is
+      // what the direct emitter does with them too. This used to decline instead, on the reasoning
+      // that inheriting the gap quietly would bake it into a second path rather than leave it
+      // visible. That reasoning holds only while there IS a second path: with routing mandatory a
+      // decline is not a visible gap, it is `SCREEN 0, 0` failing to compile at all. The gap is real
+      // and belongs to the RUNTIME, which has no page switching to offer either emitter.
+      case CommandStmt { Keyword: "SCREEN", Arguments: [{ } screenMode, ..] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_screen_mode", IrType.Void, IrType.I16),
+          this.Coerce(this.LowerExpr(screenMode), this._model.TypeOf(screenMode), PbType.Integer));
+        break;
       // OUT port, value. The direct emitter writes it inline as OUT DX, AL; here it is named, because
       // the same declaration reaches --emit-c and --emit-llvm where a port write is whatever that
       // target says it is. Both operands are INTEGERs for the reason LOCATE's are: the argument slot
       // is a word, and a LONG the selector cannot prove word-sized declines the whole module body.
       // It was 46 routing declines, all of them graphics code setting a VGA register.
+      // SLEEP [n] - wait n seconds, or for a key when n is zero or absent. The choice is made at RUN
+      // time when n is a variable, so it is a branch and not two spellings of one statement.
+      case CommandStmt { Keyword: "SLEEP" } sleep when sleep.Arguments.Count <= 1:
+        this.LowerSleep(sleep.Arguments.Count == 1 ? sleep.Arguments[0] : null);
+        break;
+      // WAIT port, mask [, xor] - spin until (INP(port) XOR xor) AND mask is non-zero. The direct
+      // emitter writes the poll inline as four instructions round a label; here it is the same poll
+      // written as blocks, over the rt_inp the routed path already reads a port with. No runtime
+      // routine appears for it on either side, which is the point: the loop IS the statement.
+      case CommandStmt { Keyword: "WAIT", Arguments: [{ } waitPort, { } waitMask, ..] } waitCmd:
+        this.LowerWait(waitPort, waitMask, waitCmd.Arguments.Count > 2 ? waitCmd.Arguments[2] : null);
+        break;
       case CommandStmt { Keyword: "OUT", Arguments: [{ } outPort, { } outValue] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_outp", IrType.Void, IrType.I16, IrType.I16),
           this.Coerce(this.LowerExpr(outPort), this._model.TypeOf(outPort), PbType.Integer),
@@ -1303,8 +1515,263 @@ public sealed partial class IrLowering {
       case CommandStmt { Keyword: "ERRCLEAR" }:
         this._b.Store(new IrConstantInt(IrType.I16, 0), this.RuntimeCell("rt_err", IrType.I16));
         break;
+      // PSET (x,y)[,c] / PRESET. The runtime takes the point in registers and preserves both, which
+      // is why the LAST POINT REFERENCED can be recorded from the values already in hand: every
+      // graphics statement leaves that pair behind, and without it `PSET (10,10) : LINE -(20,20)`
+      // draws from wherever the previous statement finished.
+      case PsetStmt pset: {
+        var px = this.GraphicsWord(pset.Point.X);
+        var py = this.GraphicsWord(pset.Point.Y);
+        this._b.Call(IrType.Void,
+          this.RuntimeFn("rt_pset", IrType.Void, IrType.I16, IrType.I16, IrType.I16),
+          px, py, pset.Color is { } psetColour ? this.GraphicsWord(psetColour)
+            : new IrConstantInt(IrType.I16, pset.IsPreset ? 0 : 15));   // PRESET erases, PSET defaults to white
+        this._b.Store(px, this.RuntimeCell("rt_gx1", IrType.I16));
+        this._b.Store(py, this.RuntimeCell("rt_gy1", IrType.I16));
+        break;
+      }
+      // LINE [(x1,y1)]-(x2,y2) [,c] [,B|BF] [,style]. Everything travels through the runtime's cells
+      // because those cells are the graphics cursor - omitting the start point means "carry on from
+      // there", so the arguments and the cursor cannot be two separate things.
+      case LineStmt line: {
+        if (line.From is { } lineFrom) {
+          this._b.Store(this.GraphicsWord(lineFrom.X), this.RuntimeCell("rt_gx1", IrType.I16));
+          this._b.Store(this.GraphicsWord(lineFrom.Y), this.RuntimeCell("rt_gy1", IrType.I16));
+        }
+        this._b.Store(this.GraphicsWord(line.To.X), this.RuntimeCell("rt_gx2", IrType.I16));
+        this._b.Store(this.GraphicsWord(line.To.Y), this.RuntimeCell("rt_gy2", IrType.I16));
+        this._b.Store(line.Color is { } lineColour ? this.GraphicsWord(lineColour) : new IrConstantInt(IrType.I16, 15),
+          this.RuntimeCell("rt_gcolor", IrType.I16));
+        // the style mask is consulted a bit per pixel, so all-ones is a solid line
+        this._b.Store(line.Style is { } lineStyle ? this.GraphicsWord(lineStyle) : new IrConstantInt(IrType.I16, unchecked((short)0xFFFF)),
+          this.RuntimeCell("rt_gstyle", IrType.I16));
+        this._b.Call(IrType.Void, this.RuntimeFn(line switch {
+          { Box: true, Fill: true } => "rt_line_fill",
+          { Box: true } => "rt_line_box",
+          _ => "rt_line",
+        }, IrType.Void));
+        break;
+      }
+      // CIRCLE (x,y), r [,c] [,start] [,end] [,aspect]. The arc form defaults each angle where it was
+      // left out - a whole turn, and a ratio of one - which together make the arc walk draw exactly
+      // the circle the integer midpoint walk would, so the two forms agree where they overlap.
+      case CircleStmt circle: {
+        this._b.Store(this.GraphicsWord(circle.Center.X), this.RuntimeCell("rt_gcx", IrType.I16));
+        this._b.Store(this.GraphicsWord(circle.Center.Y), this.RuntimeCell("rt_gcy", IrType.I16));
+        this._b.Store(this.GraphicsWord(circle.Radius), this.RuntimeCell("rt_gr", IrType.I16));
+        this._b.Store(circle.Color is { } circleColour ? this.GraphicsWord(circleColour) : new IrConstantInt(IrType.I16, 15),
+          this.RuntimeCell("rt_gcolor", IrType.I16));
+        if (circle.Start is null && circle.End is null && circle.Aspect is null) {
+          this._b.Call(IrType.Void, this.RuntimeFn("rt_circle", IrType.Void));
+          break;
+        }
+        this.GraphicsAngle(circle.Start, "rt_gastart", 0.0);
+        this.GraphicsAngle(circle.End, "rt_gaend", Math.PI * 2);
+        this.GraphicsAngle(circle.Aspect, "rt_gaspect", 1.0);
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_arc", IrType.Void));
+        break;
+      }
+      // ENVIRON "NAME=VALUE". One string, one call - and the string is CONSUMED, which is why this is
+      // the same shape as KILL below rather than something that has to free anything afterwards.
+      // DRAW "..." with a CONSTANT string, expanded into the moves it denotes. DRAW is a macro
+      // language and the obvious way to run one is an interpreter in the runtime - it does not need
+      // one when the string is written down, because every delta is knowable while compiling and each
+      // step is a few stores against the graphics cursor. A computed string still declines, as does
+      // one using A, S, TA, P or X: those carry state from one step to the next, and the whole point
+      // of doing it here is that the answer is knowable.
+      case CommandStmt { Keyword: "DRAW", Arguments: [StringLiteralExpr picture] }: {
+        if (!Semantics.MacroStringValidator.TryParseDraw(picture.Value, out var steps, out var declined))
+          throw new IrLoweringException(declined ?? "DRAW string");
+        var x1 = this.RuntimeCell("rt_gx1", IrType.I16);
+        var y1 = this.RuntimeCell("rt_gy1", IrType.I16);
+        var x2 = this.RuntimeCell("rt_gx2", IrType.I16);
+        var y2 = this.RuntimeCell("rt_gy2", IrType.I16);
+        this._b.Store(new IrConstantInt(IrType.I16, unchecked((short)0xFFFF)),
+          this.RuntimeCell("rt_gstyle", IrType.I16));      // solid; DRAW has no style mask
+        foreach (var step in steps) {
+          if (step.Kind == Semantics.DrawStepKind.Colour) {
+            this._b.Store(new IrConstantInt(IrType.I16, step.X), this.RuntimeCell("rt_gcolor", IrType.I16));
+            continue;
+          }
+          // where this step ends: a delta from the current point, or the point itself
+          if (step.Kind == Semantics.DrawStepKind.Relative) {
+            IrValue Stepped(IrGlobalVariable from, int delta) {
+              var start = this._b.Load(IrType.I16, from);
+              return delta == 0 ? start : this._b.Add(start, new IrConstantInt(IrType.I16, delta));
+            }
+            this._b.Store(Stepped(x1, step.X), x2);
+            this._b.Store(Stepped(y1, step.Y), y2);
+          } else {
+            this._b.Store(new IrConstantInt(IrType.I16, step.X), x2);
+            this._b.Store(new IrConstantInt(IrType.I16, step.Y), y2);
+          }
+          // B moves without drawing: the endpoint simply becomes the current point
+          if (step.Blank) {
+            this._b.Store(this._b.Load(IrType.I16, x2), x1);
+            this._b.Store(this._b.Load(IrType.I16, y2), y1);
+            continue;
+          }
+          // N draws and comes back, so the point it started from is kept over the call that moves it
+          var keptX = step.NoUpdate ? this._b.Load(IrType.I16, x1) : null;
+          var keptY = step.NoUpdate ? this._b.Load(IrType.I16, y1) : null;
+          this._b.Call(IrType.Void, this.RuntimeFn("rt_line", IrType.Void));
+          if (keptX is not null && keptY is not null) {
+            this._b.Store(keptX, x1);
+            this._b.Store(keptY, y1);
+          }
+        }
+        break;
+      }
+      // GET (x1,y1)-(x2,y2), a%() captures a rectangle of the screen into an array; PUT (x,y), a%()
+      // [, verb] draws one back. Both travel through the runtime's cells for the same reason LINE
+      // does - the corners ARE the graphics cursor - and the buffer through two more, because the
+      // runtime needs its segment as well as its offset and there is only one register pair.
+      //
+      // The array is normally written whole, a%(), which is the only spelling genuine PBC 3.50 takes;
+      // an element is accepted too, because QuickBASIC's line writes one and it means the same thing.
+      // VARPTR and VARSEG are exactly the two questions being asked, so they are what answers them.
+      case GetPutGraphicsStmt graphics: {
+        var verbs = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) {
+          ["PSET"] = 0, ["PRESET"] = 1, ["AND"] = 2, ["OR"] = 3, ["XOR"] = 4,
+        };
+        if (graphics.Verb is { } verbName && !verbs.ContainsKey(verbName))
+          throw new IrLoweringException($"PUT action '{verbName}'");
+        if (graphics.IsGet && graphics.To is null)
+          throw new IrLoweringException("GET without both corners of the rectangle");
+
+        this._b.Store(this.GraphicsWord(graphics.From.X), this.RuntimeCell("rt_gx1", IrType.I16));
+        this._b.Store(this.GraphicsWord(graphics.From.Y), this.RuntimeCell("rt_gy1", IrType.I16));
+        if (graphics.To is { } far) {
+          this._b.Store(this.GraphicsWord(far.X), this.RuntimeCell("rt_gx2", IrType.I16));
+          this._b.Store(this.GraphicsWord(far.Y), this.RuntimeCell("rt_gy2", IrType.I16));
+        }
+        this._b.Store(this._b.Cast(IrCastOp.PtrToInt, this.AddressOfStorage(graphics.Array), IrType.I16),
+          this.RuntimeCell("rt_gbufofs", IrType.I16));
+        this._b.Store(this.SegmentOfStorage(graphics.Array), this.RuntimeCell("rt_gbufseg", IrType.I16));
+        if (graphics.IsGet) {
+          this._b.Call(IrType.Void, this.RuntimeFn("rt_gget", IrType.Void));
+          break;
+        }
+        this._b.Store(new IrConstantInt(IrType.I16, verbs[graphics.Verb ?? "XOR"]),
+          this.RuntimeCell("rt_gverb", IrType.I16));
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_gput", IrType.Void));
+        break;
+      }
+      case CommandStmt { Keyword: "ENVIRON", Arguments: [{ } setting] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_set_environ", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(setting));
+        break;
+      // PCOPY from, to: two page numbers, source in AX and destination in DX.
+      case CommandStmt { Keyword: "PCOPY", Arguments: [{ } fromPage, { } toPage] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_pcopy", IrType.Void, IrType.I16, IrType.I16),
+          this.GraphicsWord(fromPage), this.GraphicsWord(toPage));
+        break;
+      // PAINT (x,y), colour [, border]. It floods from the graphics cursor, so it takes its point
+      // through the same cells LINE does; an omitted border means the paint colour itself, which is
+      // what the direct emitter expresses by leaving AX alone and storing it twice.
+      case CommandStmt { Keyword: "PAINT", Arguments: [{ } paintX, { } paintY, { } paintColour, ..] } paintCmd
+          when paintCmd.Arguments.Count <= 4: {
+        this._b.Store(this.GraphicsWord(paintX), this.RuntimeCell("rt_gx1", IrType.I16));
+        this._b.Store(this.GraphicsWord(paintY), this.RuntimeCell("rt_gy1", IrType.I16));
+        var paintInk = this.GraphicsWord(paintColour);
+        this._b.Store(paintInk, this.RuntimeCell("rt_gcolor", IrType.I16));
+        this._b.Store(
+          paintCmd.Arguments.Count == 4 && paintCmd.Arguments[3] is { } paintBorder
+            ? this.GraphicsWord(paintBorder) : paintInk,
+          this.RuntimeCell("rt_gpbord", IrType.I16));
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_paint", IrType.Void));
+        break;
+      }
+      // BSAVE name$, offset, length - the numbers go into their cells first because the filename's
+      // handle wants the register the runtime reads it from.
+      case CommandStmt { Keyword: "BSAVE", Arguments: [{ } saveName, { } saveOffset, { } saveLength] }:
+        this._b.Store(this.GraphicsWord(saveOffset), this.RuntimeCell("rt_bofs", IrType.I16));
+        this._b.Store(this.GraphicsWord(saveLength), this.RuntimeCell("rt_blen", IrType.I16));
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_bsave", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(saveName));
+        break;
+      // BLOAD name$ [, offset] - with no offset the block goes back where BSAVE recorded it, which
+      // rt_bhasofs is how the runtime is told.
+      case CommandStmt { Keyword: "BLOAD", Arguments: [{ } loadName, ..] } loadCmd
+          when loadCmd.Arguments.Count <= 2: {
+        var hasOffset = loadCmd.Arguments.Count == 2 && loadCmd.Arguments[1] is not null;
+        if (hasOffset)
+          this._b.Store(this.GraphicsWord(loadCmd.Arguments[1]!), this.RuntimeCell("rt_bofs", IrType.I16));
+        this._b.Store(new IrConstantInt(IrType.I16, hasOffset ? 1 : 0),
+          this.RuntimeCell("rt_bhasofs", IrType.I16));
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_bload", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(loadName));
+        break;
+      }
+      // PLAY is a parse-and-ignore stub on the direct path: the tune is EVALUATED and dropped. Doing
+      // the same here rather than declining keeps the two paths agreeing about a program that plays
+      // music - neither makes a sound, and both run the side effects in the argument.
+      case CommandStmt { Keyword: "PLAY" } playCmd: {
+        foreach (var tune in playCmd.Arguments)
+          if (tune is not null)
+            _ = this._model.TypeOf(tune) is StringType or FlexType
+              ? this.LowerStringExpr(tune)
+              : this.LowerExpr(tune);
+        break;
+      }
       case CommandStmt { Keyword: "KILL", Arguments: [{ } file] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_kill", IrType.Void, IrType.Ptr), this.LowerStringExpr(file));
+        break;
+      // The directory statements are KILL's shape exactly: one path, one runtime call, no answer.
+      case CommandStmt { Keyword: "MKDIR" or "RMDIR" or "CHDIR", Arguments: [{ } dirPath] } dirCmd:
+        this._b.Call(IrType.Void,
+          this.RuntimeFn("rt_" + dirCmd.Keyword.ToLowerInvariant(), IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(dirPath));
+        break;
+      // NAME old$ AS new$ - two handles rather than one, and otherwise KILL again
+      case CommandStmt { Keyword: "NAME", Arguments: [{ } oldName, { } newName] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_rename", IrType.Void, IrType.Ptr, IrType.Ptr),
+          this.LowerStringExpr(oldName), this.LowerStringExpr(newName));
+        break;
+      // SHELL cmd$ hands the line to COMMAND.COM and comes back; EXECUTE is the same call written as
+      // the program's last statement, so it is that call and the exit the direct emitter jumps to.
+      case CommandStmt { Keyword: "SHELL" or "EXECUTE", Arguments: [{ } shellCommand] } shellCmd:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_shell", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(shellCommand));
+        if (shellCmd.Keyword == "EXECUTE")
+          this.LowerEnd(null);
+        break;
+      // BEEP is SOUND with the numbers written down - 880 Hz for four ticks - and not a routine of its
+      // own on either path, so the constants belong here rather than in the runtime.
+      case CommandStmt { Keyword: "BEEP" }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_sound", IrType.Void, IrType.I16, IrType.I16),
+          new IrConstantInt(IrType.I16, 880), new IrConstantInt(IrType.I16, 4));
+        break;
+      case CommandStmt { Keyword: "SOUND", Arguments: [{ } frequency, { } duration] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_sound", IrType.Void, IrType.I16, IrType.I16),
+          this.WordArg(frequency), this.WordArg(duration));
+        break;
+      // DELAY takes its count as a DOUBLE, which is how the direct emitter coerces it too - a delay of
+      // half a second is a delay the statement can express
+      case CommandStmt { Keyword: "DELAY", Arguments: [{ } seconds] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_delay", IrType.Void, IrType.F64),
+          this.Coerce(this.LowerExpr(seconds), this._model.TypeOf(seconds), PbType.Double));
+        break;
+      // POKE$ address, s$ writes the string's bytes into DEF SEG at the offset - the string half of
+      // POKE, and the same shape: an offset and a value, no answer
+      case CommandStmt { Keyword: "POKE$", Arguments: [{ } pokeStrAddress, { } pokeStrValue] }:
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_poke_str", IrType.Void, IrType.I16, IrType.Ptr),
+          this.WordArg(pokeStrAddress), this.LowerStringExpr(pokeStrValue));
+        break;
+      // TIMER/KEY/COM/PEN/STRIG ON|OFF|STOP and their ON <event> GOSUB handlers. This runtime has no
+      // event dispatch at all, so the direct emitter reaches a bare `break` for both - and the BINDER
+      // has already warned that they do nothing, which is where that belongs. A program hooking the
+      // timer does it the way TIMER.SUB does, with an interrupt vector and inline assembly.
+      case OnEventStmt or EventControlStmt:
+        break;
+      // The statements this runtime accepts and does nothing for. That is not a gap in the lowering:
+      // the direct emitter reaches the same `break` for exactly this list, and a routed program that
+      // declined over one would be refusing to compile something the other path compiles to nothing.
+      // The binder has already warned where a warning is owed.
+      case CommandStmt {
+        Keyword: "COLOR" or "WIDTH" or "KEY" or "VIEW" or "VIEW TEXT" or "VIEW PRINT" or "VIEW SCREEN"
+          or "WINDOW" or "PALETTE" or "PALETTE USING" or "OPTION BASE",
+      }:
         break;
       // DEF SEG = n stores the word; bare DEF SEG puts DS back, which only the runtime can say
       case DefSegStmt { Segment: { } segment }:
@@ -1335,6 +1802,12 @@ public sealed partial class IrLowering {
         break;
       case WriteStmt write:
         this.LowerWrite(write);
+        break;
+      case StdOutStmt stdOut:
+        this.LowerStdOut(stdOut);
+        break;
+      case StdInStmt stdIn:
+        this.LowerStdIn(stdIn);
         break;
       case ChainStmt chain:
         this.LowerChain(chain);
@@ -1416,7 +1889,7 @@ public sealed partial class IrLowering {
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), derefTarget), derefAddress);
       return;
     }
-    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var strSym) && strSym.Type is StringType) {
+    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var strSym) && strSym.Type is StringType or FlexType) {
       // the value FIRST, so `t = t + "x"` has taken its own copy before the old handle goes
       var strSlot = this.SlotFor(strSym);
       var strValue = this.LowerStringExpr(a.Value);
@@ -1446,6 +1919,15 @@ public sealed partial class IrLowering {
       // and agreeing with it is the point. HUGE needs none of this: it steps a segment and maps
       // nothing, so its address survives anything the value does.
       if (arrSym.ArrayClass is ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+        // A RECORD element is copied whole and has no value to load, so the ordering argument reads
+        // differently for it: what has to come first is the SOURCE address, because forming it may
+        // map a different page over the one the destination needs.
+        if (arrTargetType.Element is UdtType pagedRecord) {
+          var pagedSource = this.UdtAddress(a.Value);
+          var (pagedInto, _) = this.ElementDataAddress(indexed);
+          this.CopyBlock(pagedInto, pagedSource, pagedRecord.Size);
+          return;
+        }
         var pagedValue = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), arrTargetType.Element);
         var (pagedAddress, _) = this.ElementDataAddress(indexed);
         this._b.Store(pagedValue, pagedAddress);
@@ -1491,6 +1973,22 @@ public sealed partial class IrLowering {
       }
       var (address, fieldType) = this.MemberLValue(member);
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), fieldType), address);
+      return;
+    }
+    // a delegate takes a whole closure, never a number - the eight bytes are written as eight bytes
+    if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var closureSym)
+        && closureSym.Type is ProcPtrType) {
+      this.StoreClosure(a.Value, this.SlotFor(closureSym));
+      return;
+    }
+    // ...and a wide integer is a run of words rather than a value, in both directions - see
+    // IrLowering.WideIntegers
+    if (this.IsWideAssignment(a, out var wideTarget)) {
+      this.LowerWideAssign(a, wideTarget);
+      return;
+    }
+    if (this._model.TypeOf(a.Value) is WideIntType && this.TargetTypeOf(a.Target) is ScalarType { IsFloat: false } narrowed) {
+      this._b.Store(this.LowerWideTruncation(a.Value, narrowed), this.SlotFor(this.SymbolOf(a.Target)));
       return;
     }
     var symbol = this.SymbolOf(a.Target);
@@ -1725,8 +2223,26 @@ public sealed partial class IrLowering {
   /// </param>
   private (IrValue Address, UdtField Field) MemberFieldAddress(MemberExpr m, bool arrayFieldAllowed = false) {
     var (recordBase, field) = this.MemberFieldBase(m, arrayFieldAllowed);
-    var address = field.Offset == 0 ? recordBase : this._b.Gep(recordBase, new IrConstantInt(IrType.I32, field.Offset));
-    return (address, field);
+    return (this.OffsetWithin(recordBase, field.Offset), field);
+  }
+
+  /// <summary>
+  /// A fixed byte offset from a base address, in the base's OWN memory.
+  ///
+  /// <para>
+  /// A GEP would be wrong over a far one. <see cref="IrFarPtr"/> is typed as an ordinary pointer -
+  /// its segment travels on the instruction, not in the type - so a GEP built over it produces a
+  /// plain near address and the segment is simply lost. A record in EMS read through that would be
+  /// read out of the program's own data instead. So the offset moves the far pointer's OFFSET and the
+  /// segment is carried across unchanged, which is what "a field of this record" means either way.
+  /// </para>
+  /// </summary>
+  private IrValue OffsetWithin(IrValue basePtr, int bytes) {
+    if (bytes == 0)
+      return basePtr;
+    return basePtr is IrFarPtr far
+      ? this._b.FarPtr(far.Segment, this._b.Add(far.Offset, new IrConstantInt(IrType.I16, (short)bytes)))
+      : this._b.Gep(basePtr, new IrConstantInt(IrType.I32, bytes));
   }
 
   /// <summary>
@@ -1748,7 +2264,10 @@ public sealed partial class IrLowering {
       basePtr = this.SlotFor(baseSym);
       udt = nameUdt;
     } else if (m.Target is CallOrIndexExpr ce && this._model.VariableBindings.TryGetValue(ce, out var arrSym) && arrSym.Type is ArrayType { Element: UdtType elemUdt }) {
-      basePtr = this.ElementAddress(ce).Address;
+      // ...far included. A record in a HUGE/EMS/XMS array is reached through a segment computed per
+      // access, and a field of it is that same far pointer moved by the field's offset - which
+      // OffsetWithin does without flattening it to a near one.
+      basePtr = this.ElementAddress(ce, farAllowed: true).Address;
       udt = elemUdt;
     } else if (m.Target is PtrDerefExpr deref && this._model.TypeOf(deref) is UdtType derefUdt) {   // @q.Field - the record the pointer names
       basePtr = this.DerefAddress(deref);
@@ -1856,7 +2375,19 @@ public sealed partial class IrLowering {
       return this._b.Load(IrType.Ptr, this.SlotFor(symbol));
     if (e is PtrDerefExpr indirect)
       return this._b.Load(IrType.Ptr, this.DerefAddress(indirect));
-    throw new IrLoweringException("unsupported pointer value");
+    // pb36 scaled pointer arithmetic: `p +* i` steps the pointer by i TARGETS, which is the same
+    // scaling `@p[i]` performs and is why plain `p + n` keeps its unscaled pb35 meaning. A GEP over a
+    // byte offset is exactly that step, and the offset arithmetic is 16-bit because a real-mode near
+    // pointer is - the direct emitter wraps at 64K here too.
+    if (e is BinaryExpr { Op: BinaryOp.PointerAdd or BinaryOp.PointerSub } arith
+        && this._model.TypeOf(arith.Left) is PointerType pointer) {
+      var stride = Math.Max(pointer.Target.Size, 1);
+      var index = this.Coerce(this.LowerExpr(arith.Right), this._model.TypeOf(arith.Right), PbType.Integer);
+      var scaled = this._b.Mul(index, new IrConstantInt(IrType.I16, stride));
+      return this._b.Gep(this.PointerValue(arith.Left),
+        arith.Op == BinaryOp.PointerAdd ? scaled : this._b.Binary(IrBinaryOp.Sub, new IrConstantInt(IrType.I16, 0), scaled));
+    }
+    throw new IrLoweringException($"unsupported pointer value ({e.GetType().Name})");
   }
 
   /// <summary>
@@ -1902,16 +2433,20 @@ public sealed partial class IrLowering {
   /// happen. The address itself is discarded and the pure half of it dies with DCE.
   /// </para>
   /// <para>
-  /// The paged classes decline: their segment is recomputed per element from the byte offset or from
-  /// the EMS window, so there is no one answer to give and inventing one would be the same defect
-  /// again. They decline BEFORE the address is formed, which is what a decline is for.
+  /// A paged class has no ONE segment - it is recomputed per element from the byte offset or from the
+  /// EMS window - but the question was never about the array. <c>VARSEG(h(1))</c> names an ELEMENT,
+  /// and the far pointer the access itself forms carries that element's segment; answering with it is
+  /// the same address the read of <c>h(1)</c> would use, formed the same way and including the EMS
+  /// remap, which is what the direct emitter does by building the place first.
   /// </para>
   /// </summary>
   private IrValue SegmentOfStorage(Expression e) {
     if (e is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var array)
         && array.Type is ArrayType element) {
       if (array.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
-        throw new IrLoweringException($"VARSEG of an element of the {array.ArrayClass} array {array.Name}");
+        return this.ElementAddress(indexed, farAllowed: true).Address is IrFarPtr paged
+          ? paged.Segment
+          : throw new IrLoweringException($"VARSEG of an element of the {array.ArrayClass} array {array.Name}");
       this.ElementAddress(indexed, farAllowed: true);
       if (array.ArrayClass == ArrayClass.Absolute)
         return this._absoluteSegments.TryGetValue(array, out var segmentCell)
@@ -2068,7 +2603,7 @@ public sealed partial class IrLowering {
 
       // a string in a numeric field prints as itself: PB's '&' approximation, and what the direct
       // emitter does with it
-      if (this._model.TypeOf(value) is StringType or FixedStringType or AsciizType) {
+      if (this._model.TypeOf(value) is StringType or FlexType or FixedStringType or AsciizType) {
         this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(value));
         continue;
       }
@@ -2109,13 +2644,23 @@ public sealed partial class IrLowering {
   /// </para>
   ///
   /// <para>
-  /// A non-literal format declines, as it does for <c>PRINT USING</c> and for the same reason - the
-  /// format is read at COMPILE time into fields, and there is nothing to read. The direct emitter
-  /// has a single-field runtime fallback (<c>rt_usingdyn</c>) for the two-argument case; answering
-  /// only that shape here would leave every other one silently unformatted, so this declines whole.
+  /// A non-literal format cannot go through that machinery at all: the format is read at COMPILE time
+  /// into fields, and there is nothing to read. The runtime parses one itself - <c>rt_usingdyn</c> -
+  /// for a SINGLE numeric field, and that is the whole of what either path offers. Every other shape
+  /// declines here exactly as it does on the other side, so answering this one is matching the direct
+  /// emitter rather than inventing a second behaviour.
   /// </para>
   /// </summary>
   private IrValue LowerUsingString(CallOrIndexExpr ci) {
+    if (ci.Arguments.Count > 0 && ci.Arguments[0] is not StringLiteralExpr) {
+      if (ci.Arguments.Count != 2)
+        throw new IrLoweringException("non-literal USING$ format with multiple values");
+      // the value first, because the format is a STRING expression and evaluating one never touches
+      // the x87 - which is where the value has to still be when the call happens
+      var rendered = this.Coerce(this.LowerExpr(ci.Arguments[1]), this._model.TypeOf(ci.Arguments[1]), PbType.Double);
+      return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_using_dynamic", IrType.Ptr, IrType.F64, IrType.Ptr),
+        rendered, this.LowerStringExpr(ci.Arguments[0]));
+    }
     if (ci.Arguments.Count == 0 || ci.Arguments[0] is not StringLiteralExpr format)
       throw new IrLoweringException("non-literal USING$ format");
     this._b.Call(IrType.Void, this.RuntimeFn("rt_capture_begin", IrType.Void));
@@ -2152,7 +2697,7 @@ public sealed partial class IrLowering {
       if (i > 0)
         this.WritePunctuation(file, ",");
       var item = write.Items[i];
-      if (this._model.TypeOf(item) is StringType or FixedStringType or AsciizType) {
+      if (this._model.TypeOf(item) is StringType or FlexType or FixedStringType or AsciizType) {
         this.WritePunctuation(file, "\"");
         this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(item));
         this.WritePunctuation(file, "\"");
@@ -2200,6 +2745,112 @@ public sealed partial class IrLowering {
       this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
   }
 
+  /// <summary>
+  /// <c>SLEEP [n]</c>: delay n seconds, or - when n is zero or was not written - block until a key.
+  ///
+  /// <para>
+  /// The two are alternatives rather than a sequence, which is worth stating because the statement
+  /// reads like "sleep, then wake on a key": a non-zero SLEEP returns when the time is up and no key
+  /// will shorten it, and a zero SLEEP waits for the key with no timeout. The direct emitter decides
+  /// with an <c>FTST</c> on the value it has already pushed, so the test is on the DOUBLE and a count
+  /// like 0.4 sleeps rather than waiting for a key.
+  /// </para>
+  /// <para>
+  /// <c>SLEEP</c> with no argument at all needs no test and lowers to the key wait directly, which is
+  /// also what the direct emitter does - it marks the wait label instead of emitting the comparison.
+  /// </para>
+  /// </summary>
+  private void LowerSleep(Expression? seconds) {
+    if (seconds is null) {
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_sleep_key", IrType.Void));
+      return;
+    }
+
+    var count = this.Coerce(this.LowerExpr(seconds), this._model.TypeOf(seconds), PbType.Double);
+    var delay = this.NewBlock("sleep.delay");
+    var key = this.NewBlock("sleep.key");
+    var done = this.NewBlock("sleep.done");
+    this._b.CondBr(this._b.Cmp(IrCmpPred.Fone, count, IrBuilder.ConstFloat(IrType.F64, 0)), delay, key);
+
+    this._b.Position(delay);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_delay", IrType.Void, IrType.F64), count);
+    this._b.Br(done);
+
+    this._b.Position(key);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_sleep_key", IrType.Void));
+    this._b.Br(done);
+
+    this._b.Position(done);
+  }
+
+  /// <summary>
+  /// <c>WAIT port, mask [, xor]</c>: read the port until a bit the caller names comes up.
+  ///
+  /// <para>
+  /// The XOR argument is what lets one statement wait for either edge - without it the test is "any of
+  /// these bits set", and with <c>xor</c> equal to the mask it becomes "any of them clear". It
+  /// defaults to zero, which is the plain form.
+  /// </para>
+  /// <para>
+  /// Everything is byte-wide because the port is: <c>IN AL, DX</c> reads eight bits, and the direct
+  /// emitter puts the mask in CL and the XOR value in CH for exactly that reason. Masking to a byte
+  /// here keeps the routed test asking the same question - a 16-bit AND against a mask above 255 would
+  /// wait for a bit the port cannot deliver, and wait forever.
+  /// </para>
+  /// </summary>
+  private void LowerWait(Expression port, Expression mask, Expression? flip) {
+    var byteMask = new IrConstantInt(IrType.I16, 0xFF);
+    var wanted = this._b.And(this.WordArg(mask), byteMask);
+    var inverted = this._b.And(flip is null ? new IrConstantInt(IrType.I16, 0) : this.WordArg(flip), byteMask);
+    var address = this.WordArg(port);
+
+    var poll = this.NewBlock("wait.poll");
+    var done = this.NewBlock("wait.done");
+    this._b.Br(poll);
+
+    this._b.Position(poll);
+    var sample = this._b.And(
+      this._b.Call(IrType.I16, this.RuntimeFn("rt_inp", IrType.I16, IrType.I16), address), byteMask);
+    var tested = this._b.And(this._b.Xor(sample, inverted), wanted);
+    this._b.CondBr(this._b.Cmp(IrCmpPred.Ne, tested, new IrConstantInt(IrType.I16, 0)), done, poll);
+
+    this._b.Position(done);
+  }
+
+  /// <summary>
+  /// <c>STDOUT expr [;]</c>: an ordinary console PRINT, with the console pointed back at itself first.
+  ///
+  /// <para>
+  /// Those two stores are the whole of what STDOUT adds, and they are the same two the routed path
+  /// already emits after a <c>PRINT #n</c> - the file number and the print COLUMN the console keeps,
+  /// since each open file carries its own. Writing them again here rather than assuming the console is
+  /// already selected is what the direct emitter does, and the assumption would be one statement away
+  /// from wrong: STDOUT exists precisely to be reachable when output has been sent somewhere else.
+  /// </para>
+  /// </summary>
+  private void LowerStdOut(StdOutStmt stdOut) {
+    this._b.Store(new IrConstantInt(IrType.I16, 1), this.RuntimeCell("rt_curout", IrType.I16));
+    this._b.Store(this.RuntimeCell("rt_col", IrType.I16), this.RuntimeCell("rt_colptr", IrType.Ptr));
+    if (stdOut.Value is { } value)
+      this.LowerPrintItem(null, value);
+    if (!stdOut.NoNewline)
+      this.EmitIo(null, "print", "nl", IrType.Void, []);
+  }
+
+  /// <summary>
+  /// <c>STDIN LINE, s$</c> / <c>STDIN n, s$</c>: a read from PB file number 0, which is the console.
+  /// The two forms are the two routines LINE INPUT and <c>INPUT$(n, #f)</c> already use, asked for
+  /// file zero - so nothing here is a second implementation of either.
+  /// </summary>
+  private void LowerStdIn(StdInStmt stdIn) {
+    var zero = new IrConstantInt(IrType.I32, 0);
+    var line = stdIn.Line
+      ? this._b.Call(IrType.Ptr, this.RuntimeFn("rt_finput_line", IrType.Ptr, IrType.I32), zero)
+      : this._b.Call(IrType.Ptr, this.RuntimeFn("rt_fget_str", IrType.Ptr, IrType.I32, IrType.I32),
+        zero, this.WordArg(stdIn.Count ?? throw new IrLoweringException("STDIN with neither LINE nor a count")));
+    this._b.Store(line, this.StringTargetAddress(stdIn.Target));
+  }
+
   private void LowerPrintItem(IrValue? file, Expression expr) {
     if (expr is CallOrIndexExpr ts && this._model.IntrinsicBindings.TryGetValue(ts, out var tsi) && tsi.Name is "TAB" or "SPC") {
       var n = this.Coerce(this.LowerExpr(ts.Arguments[0]), this._model.TypeOf(ts.Arguments[0]), PbType.Long);
@@ -2212,7 +2863,7 @@ public sealed partial class IrLowering {
       this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
       return;
     }
-    if (this._model.TypeOf(expr) is StringType or FixedStringType or AsciizType) {
+    if (this._model.TypeOf(expr) is StringType or FlexType or FixedStringType or AsciizType) {
       this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerStringExpr(expr));
       return;
     }
@@ -2325,6 +2976,21 @@ public sealed partial class IrLowering {
     if (s.Variable is NameExpr && this._model.VariableBindings.TryGetValue(s.Variable, out var sym) && sym.Type is UdtType udt) {
       address = this.SlotFor(sym);                    // a whole-record GET/PUT of a UDT buffer
       recordSize = udt.Size;
+    } else if (s.Variable is MemberExpr member && !this._model.VariableBindings.ContainsKey(member)
+        && this._model.TypeOf(member) is FixedStringType or AsciizType or UdtType) {
+      // A record's FIXED-WIDTH field is a record of its own size. A STRING * 3 keeps its characters
+      // IN the record rather than on the heap, so this is the address-and-size form above and NOT the
+      // handle form: it is the same LEA-and-move the direct emitter performs for every non-string
+      // variable, over a member rather than a name.
+      //
+      // Reading a file header one field at a time is how DRAW_GIF.SUB parses one, and refusing it
+      // declined DrawGif_ParseFile. That is worth more than one row: a shared dynamic array whose
+      // users are SPLIT across the two paths has its descriptor handed back to the direct emitter
+      // whole, so one declining user denied the routed side every array the GIF code touches - eight
+      // further procedures, the module body among them.
+      var (memberAddress, _) = this.MemberFieldAddress(member);
+      address = memberAddress;
+      recordSize = this._model.TypeOf(member).Size;
     } else {
       var (addr, type) = this.LValue(s.Variable, "GET/PUT");
       if (type is not ScalarType scalar)
@@ -2392,6 +3058,13 @@ public sealed partial class IrLowering {
   private IrValue LowerStringExpr(Expression expr) {
     if (this._module is null)
       throw new IrLoweringException("strings require whole-module lowering");
+    // A bind-time rewrite is lowered through its DESUGARED form, which is where the meaning is. An
+    // interpolated string is the shape that needs it: $"a{n}b" is bound as the concatenation of the
+    // pieces, with a numeric hole already wrapped in STR$ and a formatted one in USING$, so there is
+    // nothing left here to interpret. The direct emitter's expression entry does the same first
+    // thing, and OptReachability walks it too.
+    if (this._model.Desugared.TryGetValue(expr, out var rewritten))
+      return this.LowerStringExpr(rewritten);
     switch (expr) {
       case StringLiteralExpr lit: {
         var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
@@ -2404,7 +3077,7 @@ public sealed partial class IrLowering {
       // consumes what it prints. Handing them the variable's handle destroys the variable: PRINT a$
       // twice printed "hello" and then nothing, and a$ + b$ emptied both. The direct emitter
       // duplicates here for the same reason.
-      case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var sym) && sym.Type is StringType:
+      case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var sym) && sym.Type is StringType or FlexType:
         return this.BorrowString(this._b.Load(IrType.Ptr, this.SlotFor(sym)));
       case NameExpr when this._model.VariableBindings.TryGetValue(expr, out var fsym) && fsym.Type is FixedStringType fixedStr:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
@@ -2430,16 +3103,68 @@ public sealed partial class IrLowering {
       // a user FUNCTION whose result is a string - its IR result already IS the handle
       case CallOrIndexExpr uc when this._model.CallBindings.TryGetValue(uc, out var proc) && proc.IsFunction:
         return this._procMap is not null && this._procMap.TryGetValue(proc, out var callee)
-          ? this.EmitCall(callee, proc, uc.Arguments)
+          ? this.EmitCall(callee, proc, this.PositionalArguments(uc, uc.Arguments))
           : throw new IrLoweringException($"call to {proc.Name} outside the modelled subset");
       case NameExpr bare when this._model.CallBindings.TryGetValue(bare, out var bareProc) && bareProc.IsFunction:
         return this._procMap is not null && this._procMap.TryGetValue(bareProc, out var bareCallee)
           ? this.EmitCall(bareCallee, bareProc, [])
           : throw new IrLoweringException($"call to {bareProc.Name} outside the modelled subset");
+      // The same branching ternary the numeric side lowers, over a string HANDLE. It has to be here
+      // as well as there because a string is not a value this lowering loads with LowerExpr - the arms
+      // are string EXPRESSIONS, and only LowerStringExpr knows how to produce one.
+      case IfExpr ternary: {
+        var slot = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Name = "iif.s" });
+        var whenTrue = this.NewBlock("iif.s.true");
+        var whenFalse = this.NewBlock("iif.s.false");
+        var done = this.NewBlock("iif.s.done");
+        this._b.CondBr(this.LowerCondition(ternary.Condition), whenTrue, whenFalse);
+
+        this._b.Position(whenTrue);
+        this._b.Store(this.LowerStringExpr(ternary.WhenTrue), slot);
+        this._b.Br(done);
+
+        this._b.Position(whenFalse);
+        this._b.Store(this.LowerStringExpr(ternary.WhenFalse), slot);
+        this._b.Br(done);
+
+        this._b.Position(done);
+        return this._b.Load(IrType.Ptr, slot);
+      }
+      // ...and a string intrinsic written WITHOUT parentheses. The binder does not turn a bare name
+      // into a call, so DATE$ arrives here as an ordinary name bound to nothing - the same route the
+      // numeric nullary intrinsics take into LowerNullaryIntrinsicName, and for the same reason.
+      // ERDEV$ reports a DEVICE error, and this runtime has no device-error reporting: the direct
+      // emitter answers with a null handle, which is the empty string, and there is nothing else to
+      // answer with. Agreeing explicitly is not a stub now that declining means the program does not
+      // compile at all.
+      case NameExpr device when (device.Name + device.Suffix.KeyText()).Equals("ERDEV$", StringComparison.OrdinalIgnoreCase):
+        return new IrNullPtr();
+      case NameExpr nullary when NullaryStringIntrinsic(nullary.Name + nullary.Suffix.KeyText()) is { } routine:
+        return this._b.Call(IrType.Ptr, this.RuntimeFn(routine, IrType.Ptr));
+      // DIR$ without a mask is the find-NEXT half of the pair, which is the same routine with a null
+      // mask handle and no attribute. Written with one it is a call and goes through the intrinsic
+      // table; written bare it can only be the continuation.
+      case NameExpr dirNext when (dirNext.Name + dirNext.Suffix.KeyText()).Equals("DIR$", StringComparison.OrdinalIgnoreCase):
+        return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_dir", IrType.Ptr, IrType.Ptr, IrType.I16),
+          new IrNullPtr(), new IrConstantInt(IrType.I16, 0));
       default:
         throw new IrLoweringException($"unsupported string expression: {expr.GetType().Name}");
     }
   }
+
+  /// <summary>
+  /// The runtime routine a parenthesis-less string intrinsic answers with, or null when the name is
+  /// not one. Each reads the MACHINE rather than an argument - the clock, the keyboard buffer, the
+  /// PSP's command tail, the current directory - which is why none of them takes one.
+  /// </summary>
+  private static string? NullaryStringIntrinsic(string name) => name.ToUpperInvariant() switch {
+    "DATE$" => "rt_date_str",
+    "TIME$" => "rt_time_str",
+    "INKEY$" => "rt_inkey",
+    "COMMAND$" => "rt_command",
+    "CURDIR$" => "rt_curdir",
+    _ => null,
+  };
 
   /// <summary>
   /// A copy of a string that lives in STORAGE, so the value handed on is an owned temporary the
@@ -2501,6 +3226,99 @@ public sealed partial class IrLowering {
     if (!this._labels.TryGetValue(oe.Target, out var handler))
       throw new IrLoweringException($"ON ERROR GOTO unknown label {oe.Target}");
     this._b.Call(IrType.Void, this.RuntimeFn("rt_onerr_arm", IrType.Void, IrType.Ptr), new IrBlockAddress(handler));
+  }
+
+  /// <summary>
+  /// <c>TRY … CATCH … FINALLY … END TRY</c>, which is <c>ON ERROR</c> with a scope.
+  ///
+  /// <para>
+  /// The arming is the same <c>rt_onerr_arm</c> every handler uses, so a fault inside the body is
+  /// delivered exactly as one inside an <c>ON ERROR</c> region: the runtime restores <c>BP</c> and
+  /// <c>SP</c> to the armed frame and jumps to the block whose address was armed.
+  /// </para>
+  /// <para>
+  /// The previous handler is saved to FRAME SLOTS rather than to the stack. The direct emitter pushes
+  /// the triple and pops it, which works because the arming records an <c>SP</c> below the pushes -
+  /// but a value in a register would not survive the non-local jump, and a slot does: <c>BP</c> is
+  /// restored before the handler runs, so the frame is addressable again the moment it is entered.
+  /// Nested TRYs each allocate their own three, which is what makes them nest.
+  /// </para>
+  /// <para>
+  /// Without a CATCH both edges carry a PENDING ERROR CODE through the FINALLY - nought from the
+  /// normal one, <c>ERR</c> from the faulting one - and re-raise it afterwards if it is not nought.
+  /// That is what makes <c>TRY … FINALLY</c> run its cleanup and still fault: swallowing the error
+  /// would be a different statement.
+  /// </para>
+  /// </summary>
+  private void LowerTry(TryStmt stmt) {
+    this._fn.HasErrorHandler = true;
+    var onerr = this.RuntimeCell("rt_onerr", IrType.I16);
+    var onerrBp = this.RuntimeCell("rt_onerr_bp", IrType.I16);
+    var onerrSp = this.RuntimeCell("rt_onerr_sp", IrType.I16);
+    IrAlloca Slot(string name) =>
+      this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I16) { Name = name });
+    var savedHandler = Slot("try.onerr");
+    var savedBp = Slot("try.bp");
+    var savedSp = Slot("try.sp");
+    var pending = stmt.Catch is null ? Slot("try.err") : null;   // only TRY/FINALLY carries one
+
+    void Restore() {
+      this._b.Store(this._b.Load(IrType.I16, savedHandler), onerr);
+      this._b.Store(this._b.Load(IrType.I16, savedBp), onerrBp);
+      this._b.Store(this._b.Load(IrType.I16, savedSp), onerrSp);
+    }
+
+    this._b.Store(this._b.Load(IrType.I16, onerr), savedHandler);
+    this._b.Store(this._b.Load(IrType.I16, onerrBp), savedBp);
+    this._b.Store(this._b.Load(IrType.I16, onerrSp), savedSp);
+
+    var dispatch = this.NewBlock("try.dispatch");
+    var cleanup = this.NewBlock("try.cleanup");
+    var end = this.NewBlock("try.end");
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_onerr_arm", IrType.Void, IrType.Ptr),
+      new IrBlockAddress(dispatch));
+
+    this.LowerStatements(stmt.Body);
+    if (!this.Terminated) {
+      Restore();
+      if (pending is not null)
+        this._b.Store(new IrConstantInt(IrType.I16, 0), pending);
+      this._b.Br(cleanup);
+    }
+
+    // the caught edge: rt_raise arrives here with the frame restored and ERR set
+    this._b.Position(dispatch);
+    Restore();
+    if (stmt.Catch is { } caught) {
+      this.LowerStatements(caught);
+      if (!this.Terminated)
+        this._b.Br(cleanup);
+    } else {
+      this._b.Store(this._b.Load(IrType.I16, this.RuntimeCell("rt_err", IrType.I16)), pending!);
+      this._b.Br(cleanup);
+    }
+
+    this._b.Position(cleanup);
+    if (stmt.Finally is { } cleanupBody)
+      this.LowerStatements(cleanupBody);
+    if (this.Terminated) {
+      this._b.Position(end);
+      return;
+    }
+    if (pending is null) {
+      this._b.Br(end);
+      this._b.Position(end);
+      return;
+    }
+    // TRY ... FINALLY with no CATCH: the cleanup has run, and the error it was hiding is raised now
+    var reraise = this.NewBlock("try.reraise");
+    var code = this._b.Load(IrType.I16, pending);
+    this._b.CondBr(this._b.Cmp(IrCmpPred.Ne, code, new IrConstantInt(IrType.I16, 0)), reraise, end);
+    this._b.Position(reraise);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32),
+      this._b.ZExt(code, IrType.I32));
+    this._b.Br(end);
+    this._b.Position(end);
   }
 
   private void LowerResume(ResumeStmt rs) {
@@ -2605,18 +3423,25 @@ public sealed partial class IrLowering {
   /// Every block a computed jump in this function could land on: its labels.
   ///
   /// <para>
-  /// A superset of the truth, and deliberately so - <c>CODEPTR32</c> of a label can only name a label
-  /// of the function it is written in, so listing them all cannot miss one, and missing one is the
-  /// only error that matters here. The list does not steer the branch; it is what keeps the CFG from
-  /// claiming those blocks are unreachable, which is what reachability, liveness and phi placement all
-  /// read. A function with no labels has nowhere a computed jump could go and declines.
+  /// A superset of the truth, and deliberately so. The list does not steer the branch - the selector
+  /// jumps through the address register whatever is listed - it is what keeps the CFG from claiming
+  /// those blocks are unreachable, which is what reachability, liveness and phi placement all read.
+  /// Listing every label cannot miss one, and missing one is the only error that matters.
+  /// </para>
+  /// <para>
+  /// A function with NO labels used to decline here, on the reasoning that a computed jump had nowhere
+  /// to go. It has somewhere to go; it just is not in this function. <c>CODEPTR32</c> of a PROCEDURE
+  /// is the case the fixture uses and the reasoning missed, and an address arriving in a DWORD at run
+  /// time need not name anything in this function either. What the empty list says is exactly that: no
+  /// block HERE is a successor.
+  /// </para>
+  /// <para>
+  /// It is sound precisely because the function has no labels. The danger an empty list would pose -
+  /// a label block the jump can reach being marked unreachable and deleted - needs a label block to
+  /// exist, and in this case there are none. Where labels do exist they are all still listed.
   /// </para>
   /// </summary>
-  private IReadOnlyList<IrBasicBlock> ComputedJumpTargets() {
-    if (this._labels.Count == 0)
-      throw new IrLoweringException("GOTO/GOSUB DWORD in a function with no labels to reach");
-    return [.. this._labels.Values];
-  }
+  private IReadOnlyList<IrBasicBlock> ComputedJumpTargets() => [.. this._labels.Values];
 
   private void LowerGotoPtr(GotoPtrStmt g)
     => this._b.IndirectBr(this.CodeAddress(g.Pointer), this.ComputedJumpTargets());
@@ -2803,12 +3628,36 @@ public sealed partial class IrLowering {
     this._b.Store(new IrConstantInt(IrType.I32, offset), cursor);
   }
 
-  private void LowerEnd() {
-    // END terminates the whole program. In main that is simply a return; inside a
-    // procedure it would need a program-exit primitive the IR does not model yet.
-    if (!this._isMain)
-      throw new IrLoweringException("END inside a procedure");
-    this.ReturnFromFunction();
+  /// <summary>
+  /// <c>END [n]</c> terminates the whole PROGRAM, wherever it is written and whatever is on the stack.
+  ///
+  /// <para>
+  /// In main with no exit code that is simply a return, because main's own epilogue is the exit - it
+  /// ends in <c>MOV AL, 0</c> and a jump to <c>rt_exit</c>. Every other case needs to reach that
+  /// routine directly, which is what the direct emitter does from anywhere: it loads the code and
+  /// jumps. A CALL rather than a jump costs a return address that is never popped, on a stack the
+  /// next instruction abandons.
+  /// </para>
+  /// <para>
+  /// Two things were wrong before, and they were the same thing. <c>END</c> inside a PROCEDURE
+  /// declined - "a program-exit primitive the IR does not model yet" - and <c>END n</c> anywhere threw
+  /// its exit code away, because this read neither the argument nor anything but <c>_isMain</c>. The
+  /// second was the quieter of the two: <c>END 3</c> routed exits 0 where the direct emitter exits 3,
+  /// on the DEFAULT path, and no gate sees it - the differential harness compares RESULT.TXT, and a
+  /// program's exit code is not in it.
+  /// </para>
+  /// </summary>
+  private void LowerEnd(Expression? exitCode) {
+    if (this._isMain && exitCode is null) {
+      this.ReturnFromFunction();
+      return;
+    }
+    // rt_exit reads AL, so the code travels in the word register that contains it
+    var code = exitCode is null
+      ? new IrConstantInt(IrType.I16, 0)
+      : this.Coerce(this.LowerExpr(exitCode), this._model.TypeOf(exitCode), PbType.Integer);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_end", IrType.Void, IrType.I16), code);
+    this._b.Unreachable();
   }
 
   /// <summary>
@@ -3410,7 +4259,24 @@ public sealed partial class IrLowering {
       this.LowerPagedDim(d);
       return;
     }
-    if (d.Class != ArrayClass.Default)
+    // A pb36 STACK array is a FRAME array, and a frame array is what SlotFor already mints for a local
+    // one: an alloca of the element count. That is the whole of what the class means - each call, and
+    // each level of a recursion, gets its own copy, and there is no data-segment cell to share - so it
+    // needs no declaration code and no separate path, only permission to reach the one below.
+    //
+    // A SHARED or STATIC one would need that cell, and NeedsSharedStorage is what would hand it one,
+    // so it declines rather than quietly becoming a global that outlives the call.
+    if (d.Class == ArrayClass.Stack) {
+      foreach (var v in d.Variables)
+        if (this.ArrayVariable(v) is { } stackSymbol && this.NeedsSharedStorage(stackSymbol))
+          throw new IrLoweringException("a STACK array with shared storage");
+      return;
+    }
+    // DIM DYNAMIC and DIM STATIC say which HEAP the array lives in, and the binder has already read
+    // them: it marks the symbol's ArrayType IsDynamic or not, and every path below asks the SYMBOL.
+    // So the class needs permission to reach that path rather than a path of its own - written out,
+    // the two spellings of `DIM a%(7)` and `DIM DYNAMIC a%(7)` differ in nothing this lowering does.
+    if (d.Class is not (ArrayClass.Default or ArrayClass.Dynamic or ArrayClass.Static))
       throw new IrLoweringException($"DIM {d.Class} array class");
 
     // A STATIC array is laid out at compile time and the declaration emits nothing. A DYNAMIC one -
@@ -3562,8 +4428,11 @@ public sealed partial class IrLowering {
       cmd.Arguments.Count > index && cmd.Arguments[index] is { } e
         ? this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer)
         : new IrConstantInt(IrType.I16, 0);
-    if (cmd.Arguments.Count > 2)
-      throw new IrLoweringException("LOCATE with a cursor-shape argument");
+    // The cursor-shape arguments - visibility, and the two scan lines bounding the block - are
+    // IGNORED, exactly as the direct emitter ignores them: rt_locate moves the cursor and this
+    // runtime has no cursor shape to set. Declining instead kept the gap visible while there was a
+    // second path to fall back to; with routing mandatory it only means `LOCATE 1, 1, 0` does not
+    // compile, which is worse than the behaviour the other emitter has always had.
     this._b.Call(IrType.Void, this.RuntimeFn("rt_locate", IrType.Void, IrType.I16, IrType.I16),
       Argument(0), Argument(1));
   }
@@ -3860,10 +4729,61 @@ public sealed partial class IrLowering {
     throw new IrLoweringException($"ITERATE {it.Kind} outside a matching loop");
   }
 
+  /// <summary>
+  /// A pb36 contract - <c>REQUIRE</c> / <c>ENSURE</c>. A violation prints the message, when one was
+  /// written, and raises Error 5.
+  ///
+  /// <para>
+  /// <c>$OPTIMIZE SPEED</c> is the release mode and compiles the check out entirely, which is not an
+  /// optimization this path may decide for itself: the direct emitter drops it on exactly that flag,
+  /// and a contract that survived in one build and not the other would be a program that stops in one
+  /// and not the other.
+  /// </para>
+  /// </summary>
+  private void LowerRequire(RequireStmt rq) {
+    if (CompilesContractsOut(this._model))
+      return;
+    var violated = this.NewBlock("contract.violated");
+    var ok = this.NewBlock("contract.ok");
+    this._b.CondBr(this.LowerCondition(rq.Condition), ok, violated);
+
+    this._b.Position(violated);
+    if (rq.Message is { Length: > 0 } message) {
+      var bytes = System.Text.Encoding.ASCII.GetBytes(message);
+      this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
+        this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
+      this.EmitIo(null, "print", "nl", IrType.Void, []);
+    }
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), new IrConstantInt(IrType.I32, 5));
+    this._b.Br(ok);
+    this._b.Position(ok);
+  }
+
+  /// <summary>
+  /// Whether <c>$OPTIMIZE SPEED</c> is in force for this module, which is the release mode contracts
+  /// disappear in. It is read from the METASTATEMENT rather than taken as a flag because that is the
+  /// only form the question has by the time the lowering runs: the code generator resolves SPEED from
+  /// the directive after its Tier 1 pre-passes, and one of those pre-passes is what first asks whether
+  /// a procedure routes - so the flag it would hand over is not yet set.
+  /// </summary>
+  private static bool CompilesContractsOut(SemanticModel model)
+    => model.MetaStatements.Any(m => m.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase)
+      && m.Arguments is [{ } mode, ..] && mode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase));
+
   private void LowerCallStatement(CallStmt c) {
+    // a delegate invoked as a statement - `x 15`, `CALL x(15)`. The binder synthesized the invocation
+    // expression this is a statement wrapper around; a FUNCTION delegate's result is discarded here
+    // exactly as CALL of a FUNCTION discards one.
+    if (this._model.ProcPtrStatementCalls.TryGetValue(c, out var invoke)
+        && this._model.ProcPtrCalls.TryGetValue(invoke, out var invokeSignature)) {
+      var invoked = this.LowerClosureCall(invoke, invokeSignature);
+      if (invokeSignature.ReturnType is StringType)
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), invoked);
+      return;
+    }
     if (this._procMap is null || !this._model.CallBindings.TryGetValue(c, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
       throw new IrLoweringException($"call to unsupported procedure {c.Name}");
-    var result = this.EmitCall(callee, proc, c.Arguments);
+    var result = this.EmitCall(callee, proc, this.PositionalArguments(c, c.Arguments));
     if (proc is { IsFunction: true, ReturnType: StringType })
       this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), result);
   }
@@ -3989,6 +4909,28 @@ public sealed partial class IrLowering {
   }
 
   private IrValue LowerExpr(Expression expr) {
+    // A bind-time rewrite or a compile-time resolution is answered first, exactly as the direct
+    // emitter's expression entry answers them: an interpolated string is the concatenation it was
+    // bound as, and an ENUM member is the integer the binder worked out. Neither has a NameExpr the
+    // rest of this switch could find a variable for - "unbound name Red" was an ENUM member being
+    // looked for in the symbol table it was never going to be in.
+    if (this._model.Desugared.TryGetValue(expr, out var rewritten))
+      return this.LowerExpr(rewritten);
+    // ...and a from-end subscript is the arithmetic the binder worked out for it, UBOUND(a) - n + 1.
+    // It is a separate table from Desugared because it is bound against the ARRAY the subscript
+    // belongs to, which only the array path knows; by the time the index is an expression the answer
+    // is already recorded.
+    // ...coerced back to the subscript's own type, which the rewrite does not share: the binder types
+    // the from-end node INTEGER while UBOUND(a) - n + 1 is bound at whatever DEF says an unsuffixed
+    // name is, and handing the array path an x87 value where it expects an index is a cast nothing
+    // downstream can make sense of.
+    if (this._model.RewrittenIndex.TryGetValue(expr, out var fromEnd))
+      return this.Coerce(this.LowerExpr(fromEnd), this._model.TypeOf(fromEnd), this._model.TypeOf(expr));
+    if (this._model.ResolvedConstants.TryGetValue(expr, out var resolved)
+        && this._model.TypeOf(expr) is ScalarType constantType)
+      return this.Coerce(
+        new IrConstantInt(MapType(constantType), CodeGen.CodeGenerator.WrapToType(resolved, constantType)),
+        constantType, this._model.TypeOf(expr));
     switch (expr) {
       case IntegerLiteralExpr lit when this._model.TypeOf(lit) is BcdType bcdInt:
         return this.Coerce(new IrConstantFloat(IrType.F80, lit.Value), PbType.Ext, bcdInt);
@@ -4033,6 +4975,39 @@ public sealed partial class IrLowering {
       // those arrive here as a MemberExpr - so it declines rather than reading the first word of one.
       case PtrDerefExpr deref when this._model.TypeOf(deref) is ScalarType target:
         return this._b.Load(MapType(target), this.DerefAddress(deref));
+      // IIF(c, a, b) - a ternary, and a BRANCHING one rather than a select: PowerBASIC evaluates only
+      // the arm it takes, so an untaken IIF(n <> 0, x \\ n, 0) must not divide. The result travels
+      // through a frame slot rather than a phi because that is how every value in this lowering
+      // crosses a block boundary; the SSA construction pass promotes it out again.
+      case IfExpr ternary: {
+        var ternaryType = this._model.TypeOf(ternary);
+        var slot = this._entry.InsertAt(this._entryAllocaCount++,
+          new IrAlloca(MapType(ternaryType)) { Name = "iif" });
+        var whenTrue = this.NewBlock("iif.true");
+        var whenFalse = this.NewBlock("iif.false");
+        var done = this.NewBlock("iif.done");
+        this._b.CondBr(this.LowerCondition(ternary.Condition), whenTrue, whenFalse);
+
+        this._b.Position(whenTrue);
+        this._b.Store(this.Coerce(this.LowerExpr(ternary.WhenTrue),
+          this._model.TypeOf(ternary.WhenTrue), ternaryType), slot);
+        this._b.Br(done);
+
+        this._b.Position(whenFalse);
+        this._b.Store(this.Coerce(this.LowerExpr(ternary.WhenFalse),
+          this._model.TypeOf(ternary.WhenFalse), ternaryType), slot);
+        this._b.Br(done);
+
+        this._b.Position(done);
+        return this._b.Load(MapType(ternaryType), slot);
+      }
+      // A lambda in a NUMERIC position is its far code pointer and nothing else: the thunk's offset
+      // paired with CS, which is what CODEPTR32 of a named procedure answers with and what CALL DWORD
+      // can reach. The environment half of the closure has nowhere to go in a DWORD and is dropped -
+      // the direct emitter drops it here too, which is why only a NON-capturing lambda may be written
+      // this way and why a capturing one declines instead.
+      case LambdaExpr numericLambda when this._model.LambdaProcs.TryGetValue(numericLambda, out var lifted):
+        return this.LowerLambdaCodePointer(lifted, this._model.TypeOf(expr));
       default:
         throw new IrLoweringException($"unsupported expression: {expr.GetType().Name}");
     }
@@ -4093,8 +5068,17 @@ public sealed partial class IrLowering {
     // "FREEFILE: no arguments -> AX = the lowest unused file number" - it raises an I/O error itself
     // when all fifteen are taken, so there is nothing to check here
     "FREEFILE" => this._b.Call(IrType.I16, this.RuntimeFn("rt_freefile", IrType.I16)),
+    // ERDEV is a DEVICE error code and this runtime has none: the direct emitter answers zero, and
+    // agreeing explicitly is what routing being mandatory turns from a pointless stub into the only
+    // way the program compiles. ERRCLEAR is the pending code and the cell cleared behind it.
+    "ERDEV" => this.Coerce(new IrConstantInt(IrType.I16, 0), PbType.Integer, this._model.TypeOf(name)),
+    "ERRCLEAR" => this.Coerce(this.LowerErrClear(), PbType.Integer, this._model.TypeOf(name)),
+    // FRE written bare is the free-memory advisory with no argument to weigh - the same large stable
+    // figure the direct emitter answers, because memory management is not modelled on either path.
+    "FRE" => this.Coerce(new IrConstantInt(IrType.I32, 0x7FFF), PbType.Long, this._model.TypeOf(name)),
     "CSRLIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_csrlin", IrType.I16)),
     "CONSIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consin", IrType.I16)),
+    "INSTAT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_instat", IrType.I16)),
     "CONSOUT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consout", IrType.I16)),
     // RND written without parentheses is the same routine RND(n) calls - one generator on one seed
     // cell, so a program that writes both spellings still draws ONE sequence. It answers on the x87
@@ -4131,6 +5115,18 @@ public sealed partial class IrLowering {
   /// error triple was the first of them and gave this its old name; the random seed, the segment
   /// registers and the array-primitive parameter block all reach the same storage the same way.
   /// </summary>
+  /// <summary>A graphics coordinate: an INTEGER, which is the width the runtime's cells and registers hold.</summary>
+  private IrValue GraphicsWord(Expression e)
+    => this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer);
+
+  /// <summary>One of CIRCLE's optional angles as a double, or the default that makes the arc a whole circle.</summary>
+  private void GraphicsAngle(Expression? value, string cell, double fallback)
+    => this._b.Store(
+      value is null
+        ? new IrConstantFloat(IrType.F64, fallback)
+        : this.Coerce(this.LowerExpr(value), this._model.TypeOf(value), PbType.Double),
+      this.RuntimeCell(cell, IrType.F64));
+
   private IrGlobalVariable RuntimeCell(string name, IrType type) {
     if (this._module is null)
       throw new IrLoweringException($"{name} requires whole-module lowering");
@@ -4230,21 +5226,24 @@ public sealed partial class IrLowering {
       return this.Coerce(this._b.Or(segment, this._b.ZExt(offset, IrType.U32)),
         PbType.Dword, this._model.TypeOf(call));
     }
-    // ...and of a PROCEDURE, which is its entry offset. The selector has always been able to name
-    // one - PtrToInt of an IrFunction becomes MOperand.LabelRef, which the emitter resolves through
-    // the same callee lookup a CALL uses - so the only thing missing was saying so here. It was 15
-    // declines over the SVGA corpus, each taking a module body.
+    // ...and of a PROCEDURE. The selector has always been able to name one - PtrToInt of an IrFunction
+    // becomes MOperand.LabelRef, which the emitter resolves through the same callee lookup a CALL
+    // uses - so the only thing missing was saying so here. It was 15 declines over the SVGA corpus,
+    // each taking a module body.
     //
-    // The far ENTRY THUNK the direct emitter synthesizes is not this and is not needed for it: the
-    // thunk exists so a FAR call can reach a near procedure, while CODEPTR asks for the offset, which
-    // is the procedure's own label either way. CODEPTR32 pairs that offset with CS, exactly as the
-    // label form below does.
+    // The two spellings answer with DIFFERENT addresses, and must. CODEPTR is the procedure's own
+    // entry, which is what a NEAR transfer needs. CODEPTR32 is a far pointer, and the only thing a FAR
+    // call may land on is the entry THUNK: a near procedure's RET pops one word where the far call
+    // pushed two. Answering both with the procedure's own label produced a number that looked right
+    // and returned to nowhere the moment CALL DWORD used it - and it disagreed with the direct
+    // emitter, which has always synthesized the thunk here.
     if (name.ToUpperInvariant() is "CODEPTR" or "CODEPTR32" && call.Arguments is [NameExpr procRef]
         && this._model.CallBindings.TryGetValue(procRef, out var codeProc)
         && this._procMap is not null && this._procMap.TryGetValue(codeProc, out var codeFn)) {
-      var entry = this._b.Cast(IrCastOp.PtrToInt, codeFn, IrType.U16);
       if (name.Equals("CODEPTR", StringComparison.OrdinalIgnoreCase))
-        return this.Coerce(entry, PbType.Word, this._model.TypeOf(call));
+        return this.Coerce(this._b.Cast(IrCastOp.PtrToInt, codeFn, IrType.U16),
+          PbType.Word, this._model.TypeOf(call));
+      var entry = this._b.Cast(IrCastOp.PtrToInt, new IrFarEntry(codeFn), IrType.U16);
       var codeSegment = this._b.Shl(
         this._b.ZExt(this._b.Call(IrType.I16, this.RuntimeFn("rt_codeseg", IrType.I16)), IrType.U32),
         new IrConstantInt(IrType.U32, 16));
@@ -4259,10 +5258,15 @@ public sealed partial class IrLowering {
     // reaches the bytes without the runtime copying them. Declining it cost 19 module bodies.
     if (name.Equals("STRPTR", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1
         && this._model.TypeOf(call.Arguments[0]) is StringType or FlexType)
+      return this.Coerce(this.StringDataOffset(call.Arguments[0]), PbType.Word, this._model.TypeOf(call));
+    // STRPTR32 pairs that offset with the heap segment, exactly as CODEPTR32 pairs a code offset with
+    // CS - one DWORD naming the characters, which is what a program POKEs through.
+    if (name.Equals("STRPTR32", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1
+        && this._model.TypeOf(call.Arguments[0]) is StringType or FlexType)
       return this.Coerce(
-        this._b.Call(IrType.I16, this.RuntimeFn("rt_str_ptr", IrType.I16, IrType.Ptr),
-          this.LowerStringExpr(call.Arguments[0])),
-        PbType.Word, this._model.TypeOf(call));
+        this.FarValue(this.StringDataOffset(call.Arguments[0]),
+          this._b.Load(IrType.I16, this.RuntimeCell("rt_strseg", IrType.I16))),
+        PbType.Dword, this._model.TypeOf(call));
     if (name.Equals("STRSEG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this.Coerce(this._b.Load(IrType.I16, this.RuntimeCell("rt_strseg", IrType.I16)),
         PbType.Integer, this._model.TypeOf(call));
@@ -4277,6 +5281,86 @@ public sealed partial class IrLowering {
     if (name.Equals("REG", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1)
       return this._b.Call(IrType.I16, this.RuntimeFn("rt_reg_get", IrType.I16, IrType.I16),
         this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), PbType.Integer));
+    // PLAY(n) asks how much of the tune is still queued, and this runtime has no queue - so the
+    // answer is nought whatever is asked, which is what the direct emitter emits too. The ARGUMENT is
+    // still evaluated: it may have side effects, and dropping those would be a difference between the
+    // paths rather than a shared limitation.
+    if (name.Equals("PLAY", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 1) {
+      _ = this.LowerExpr(call.Arguments[0]);
+      return this.Coerce(new IrConstantInt(IrType.I16, 0), PbType.Integer, this._model.TypeOf(call));
+    }
+    // FILEATTR(n, 1) is the mode the file was opened in and FILEATTR(n, 2) its DOS handle. The
+    // attribute has to be WRITTEN DOWN, as it does on the direct path: the two answers come from
+    // different places and there is nowhere to put a runtime choice between them.
+    if (name.Equals("FILEATTR", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2) {
+      if (call.Arguments[1] is not IntegerLiteralExpr { Value: 1 or 2 } attribute)
+        throw new IrLoweringException("FILEATTR attribute (1 = mode, 2 = DOS handle)");
+      var handle = this.FileNum(call.Arguments[0]);
+      var number = this.Coerce(handle, PbType.Long, PbType.Integer);
+      if (attribute.Value == 2)
+        return this.Coerce(
+          this._b.Call(IrType.I16, this.RuntimeFn("rt_file_handle", IrType.I16, IrType.I16), number),
+          PbType.Integer, this._model.TypeOf(call));
+
+      // The mode table holds this runtime's OWN numbering - 0 INPUT, 1 OUTPUT, 2 APPEND, 3 RANDOM,
+      // 4 BINARY - and the answer is the one BASIC gives: 1, 2, 8, 4, 32. The two orders differ,
+      // which is the entire reason this is a translation and not a load; anything the table does not
+      // name answers 32, exactly as the direct emitter's fallthrough does.
+      var internalMode = this._b.Load(IrType.I16,
+        this._b.Gep(this.RuntimeCell("rt_fmode", IrType.I16),
+          this._b.Binary(IrBinaryOp.Mul, number, new IrConstantInt(IrType.I16, 2))));
+      var answer = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I16) { Name = "fileattr" });
+      var done = this.NewBlock("fileattr.done");
+      this._b.Store(new IrConstantInt(IrType.I16, 32), answer);      // BINARY, and the fallthrough
+      foreach (var (runtimeMode, basicMode) in new[] { (0, 1), (1, 2), (2, 8), (3, 4) }) {
+        var hit = this.NewBlock("fileattr.is");
+        var next = this.NewBlock("fileattr.next");
+        this._b.CondBr(this._b.Cmp(IrCmpPred.Eq, internalMode, new IrConstantInt(IrType.I16, runtimeMode)), hit, next);
+        this._b.Position(hit);
+        this._b.Store(new IrConstantInt(IrType.I16, basicMode), answer);
+        this._b.Br(done);
+        this._b.Position(next);
+      }
+      this._b.Br(done);
+      this._b.Position(done);
+      return this.Coerce(this._b.Load(IrType.I16, answer), PbType.Integer, this._model.TypeOf(call));
+    }
+    // SCREEN(row, col [, attribute]) reads the TEXT page back - the character at that cell, or its
+    // colour attribute when the third argument is a non-zero constant. It is a far load rather than a
+    // call because there is nothing to call: the direct emitter computes the same offset into B800h
+    // inline, and the page is ordinary memory this back end can already name.
+    if (name.Equals("SCREEN", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count is 2 or 3) {
+      var row = this.GraphicsWord(call.Arguments[0]);
+      var col = this.GraphicsWord(call.Arguments[1]);
+      // (row - 1) * 160 + (col - 1) * 2, eighty columns of two bytes each
+      var offset = this._b.Binary(IrBinaryOp.Add,
+        this._b.Binary(IrBinaryOp.Mul, this._b.Binary(IrBinaryOp.Sub, row, new IrConstantInt(IrType.I16, 1)),
+          new IrConstantInt(IrType.I16, 160)),
+        this._b.Binary(IrBinaryOp.Mul, this._b.Binary(IrBinaryOp.Sub, col, new IrConstantInt(IrType.I16, 1)),
+          new IrConstantInt(IrType.I16, 2)));
+      // the attribute sits in the byte AFTER the character. Only a constant selects it, which is what
+      // the direct emitter accepts too - it folds the argument and adds one when it is not zero.
+      if (call.Arguments.Count == 3) {
+        if (call.Arguments[2] is not IntegerLiteralExpr wantsAttribute)
+          throw new IrLoweringException("SCREEN with a non-constant attribute selector");
+        if (wantsAttribute.Value != 0)
+          offset = this._b.Binary(IrBinaryOp.Add, offset, new IrConstantInt(IrType.I16, 1));
+      }
+      return this.Coerce(
+        this._b.ZExt(this._b.Load(IrType.I8,
+          this._b.FarPtr(new IrConstantInt(IrType.I16, unchecked((short)0xB800)), offset)), IrType.I16),
+        PbType.Integer, this._model.TypeOf(call));
+    }
+    // POINT(x, y) reads a pixel back, and takes its pair in the same registers PSET writes with.
+    if (name.Equals("POINT", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count == 2)
+      return this.Coerce(
+        this._b.Call(IrType.I32, this.RuntimeFn("rt_point", IrType.I32, IrType.I16, IrType.I16),
+          this.GraphicsWord(call.Arguments[0]), this.GraphicsWord(call.Arguments[1])),
+        PbType.Long, this._model.TypeOf(call));
+    // ROUND takes an optional decimal PLACE COUNT, so it is settled before the one-argument gate
+    // rather than inside the switch behind it - the second spelling is the same intrinsic.
+    if (name.Equals("ROUND", StringComparison.OrdinalIgnoreCase) && call.Arguments.Count is 1 or 2)
+      return this.LowerRound(call);
     if (call.Arguments.Count != 1)
       throw new IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments");
     return name.ToUpperInvariant() switch {
@@ -4284,6 +5368,8 @@ public sealed partial class IrLowering {
       "SGN" => this.LowerSgn(call),
       "FIX" => this.LowerFix(call),
       "INT" => this.LowerInt(call),
+      "CEIL" => this.LowerCeil(call),
+      "FRAC" => this.LowerFrac(call),
       "CDBL" or "CSNG" or "CEXT" => this.LowerConvert(call),
       // CINT/CLNG and the unsigned spellings are the ordinary assignment conversion written out: the
       // result type carries the width, and Coerce rounds into it
@@ -4304,6 +5390,7 @@ public sealed partial class IrLowering {
       "CVD" => this.LowerCv(call, "rt_str_cvd", IrType.F64, 8),
       "CVE" => this.LowerCv(call, "rt_str_cve", IrType.F80, 8),
       "POS" => this.LowerPos(call),
+      "LPOS" => this.LowerLPos(call),
       // RND and RND(n): the next value in [0, 1). A reseed argument is EVALUATED and then dropped,
       // which is what the direct emitter does with it - the reseed semantics are not modelled on
       // either path, and evaluating it keeps any side effect it carries.
@@ -4319,6 +5406,7 @@ public sealed partial class IrLowering {
       "FRE" => this.LowerFre(call),
       "CSRLIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_csrlin", IrType.I16)),
       "CONSIN" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consin", IrType.I16)),
+      "INSTAT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_instat", IrType.I16)),
       "CONSOUT" => this._b.Call(IrType.I16, this.RuntimeFn("rt_consout", IrType.I16)),
       // LOF(n) is the file's length and SEEK(n)/LOC(n) the current position - all LONG, all reached
       // by the file number alone. SEEK and LOC share a routine: PB reports the same number for a
@@ -4340,6 +5428,37 @@ public sealed partial class IrLowering {
       "LOG" => this.LowerMath(call, "log"),
       "TAN" => this.LowerMath(call, "tan"),
       "ATN" => this.LowerMath(call, "atan"),
+      // ...and the based ones, which the selector has always known how to emit - FYL2X against a
+      // different loaded constant, and the same rt_pow2 with a different multiplier in front of it.
+      // Only the mapping from the source name was missing.
+      "LOG2" => this.LowerMath(call, "log2"),
+      "LOG10" => this.LowerMath(call, "log10"),
+      "EXP2" => this.LowerMath(call, "exp2"),
+      "EXP10" => this.LowerMath(call, "exp10"),
+      // ERDEV / ERDEV$ report a DEVICE error, and this runtime has no device-error reporting: the
+      // direct emitter answers both with zero and nothing else exists to answer with. Agreeing
+      // explicitly is not the stub it would have been when there was a fallback - with routing
+      // mandatory, declining means the program does not compile at all.
+      "ERDEV" => this.Coerce(new IrConstantInt(IrType.I16, 0), PbType.Integer, this._model.TypeOf(call)),
+      // ERRCLEAR yields the pending error code and clears it - the read and the write of one runtime
+      // cell, in that order, which is exactly what the direct emitter emits.
+      "ERRCLEAR" => this.LowerErrClear(),
+      // SETMEM resizes the string heap, which is not modelled on either path: the direct emitter
+      // evaluates the argument for its effects and answers a large stable figure. The argument still
+      // has to be evaluated - a call inside it happens.
+      "SETMEM" => this.LowerSetMem(call),
+      // VARPTR32 / STRPTR32 pair an offset with its segment in one DWORD, which is what CODEPTR32
+      // does for code. The halves already exist: VARPTR's address and VARSEG's segment for the
+      // first, and STRPTR's heap offset with rt_strseg for the second.
+      "VARPTR32" => this.Coerce(
+        this.FarValue(this._b.Cast(IrCastOp.PtrToInt, this.AddressOfStorage(call.Arguments[0]), IrType.U16),
+          this.SegmentOfStorage(call.Arguments[0])),
+        PbType.Dword, this._model.TypeOf(call)),
+      // STRPTR32 is deliberately absent. Its halves exist - STRPTR's heap offset and rt_strseg - but
+      // every string READ here yields an owned copy, so STRPTR(s) and STRPTR32(s) would name two
+      // different copies at two different offsets where the direct emitter names the variable's own
+      // handle twice. Each answer would be valid for its own copy and the two would not agree, which
+      // is a quieter wrong than a decline.
       _ => throw new IrLoweringException($"intrinsic {name}"),
     };
   }
@@ -4357,13 +5476,71 @@ public sealed partial class IrLowering {
       PbType.Double, this._model.TypeOf(call));
   }
 
-  private IrValue LowerPos(CallOrIndexExpr call) {
+  /// <summary>
+  /// The heap offset of a string's characters, asked of the handle the ARGUMENT already holds.
+  ///
+  /// <para>
+  /// Reading a string variable normally yields an owned copy, and for every routine that consumes one
+  /// that is exactly right. <c>rt_strptr</c> consumes nothing - it reads the descriptor and returns -
+  /// so a copy would be both a wrong answer and a leak: the offset named a duplicate the program
+  /// cannot reach any other way, and nothing ever freed it. A plain variable therefore hands over its
+  /// own handle, and an EXPRESSION, which has no other storage to name, keeps the copy and frees it
+  /// once the offset is out.
+  /// </para>
+  /// </summary>
+  private IrValue StringDataOffset(Expression e) {
+    if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var owner) && owner.Type is StringType)
+      return this._b.Call(IrType.I16, this.RuntimeFn("rt_str_ptr", IrType.I16, IrType.Ptr),
+        this._b.Load(IrType.Ptr, this.SlotFor(owner)));
+    var temporary = this.LowerStringExpr(e);
+    var offset = this._b.Call(IrType.I16, this.RuntimeFn("rt_str_ptr", IrType.I16, IrType.Ptr), temporary);
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), temporary);
+    return offset;
+  }
+
+  /// <summary>A segment and an offset as the one DWORD a far pointer is - segment high, offset low.</summary>
+  private IrValue FarValue(IrValue offset, IrValue segment)
+    => this._b.Or(
+      this._b.Shl(this._b.ZExt(segment, IrType.U32), new IrConstantInt(IrType.U32, 16)),
+      this._b.ZExt(offset, IrType.U32));
+
+  /// <summary>
+  /// <c>ERRCLEAR</c>: the pending error code, and the cell cleared behind it. The read comes first
+  /// and the answer is what it read - writing first would answer zero, always.
+  /// </summary>
+  private IrValue LowerErrClear() {
+    var cell = this.RuntimeCell("rt_err", IrType.I16);
+    var pending = this._b.Load(IrType.I16, cell);
+    this._b.Store(new IrConstantInt(IrType.I16, 0), cell);
+    return pending;
+  }
+
+  /// <summary>
+  /// <c>SETMEM(n)</c>: the string heap is not resizable on either path, so the argument is evaluated
+  /// for whatever it does and the answer is the same large stable figure the direct emitter gives.
+  /// </summary>
+  private IrValue LowerSetMem(CallOrIndexExpr call) {
+    foreach (var argument in call.Arguments)
+      this.LowerExpr(argument);
+    return this.Coerce(new IrConstantInt(IrType.I32, 0x7FFF), PbType.Long, this._model.TypeOf(call));
+  }
+
+  private IrValue LowerPos(CallOrIndexExpr call) => this.LowerColumn(call, "rt_col");
+
+  /// <summary>
+  /// <c>LPOS</c> is <c>POS</c> over the PRINTER's column instead of the screen's - a different cell
+  /// and nothing else, which is why they share this. Both are one-based and both evaluate the
+  /// argument they are handed and then ignore it, exactly as the direct emitter does.
+  /// </summary>
+  private IrValue LowerLPos(CallOrIndexExpr call) => this.LowerColumn(call, "rt_lcol");
+
+  private IrValue LowerColumn(CallOrIndexExpr call, string cell) {
     if (this._module is null)
       throw new IrLoweringException("POS requires whole-module lowering");
     foreach (var argument in call.Arguments)
       this.LowerExpr(argument);
-    var column = this._module.FindGlobal("rt_col")
-      ?? this._module.AddGlobal(new IrGlobalVariable("rt_col", IrType.I16) { IsZeroInitialized = true });
+    var column = this._module.FindGlobal(cell)
+      ?? this._module.AddGlobal(new IrGlobalVariable(cell, IrType.I16) { IsZeroInitialized = true });
     return this._b.Add(this._b.Load(IrType.I16, column), new IrConstantInt(IrType.I16, 1));
   }
 
@@ -4671,9 +5848,38 @@ public sealed partial class IrLowering {
               Num(0), new IrConstantInt(IrType.I32,
                 (Math.Clamp((int)digits.Value, 1, 32) << 8) | (name == "HEX$" ? 4 : name == "OCT$" ? 3 : 1)))
           : throw new IrLoweringException($"{name} with a non-constant digit count"),
+      // ENVIRON$("NAME") reads one variable back; the runtime answers a fresh string handle.
+      "ENVIRON$" when ci.Arguments.Count == 1 =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_environ", IrType.Ptr, IrType.Ptr), Str(0)),
       "HEX$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_hex", IrType.Ptr, IrType.I32), Num(0)),
       "OCT$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_oct", IrType.Ptr, IrType.I32), Num(0)),
       "BIN$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_bin", IrType.Ptr, IrType.I32), Num(0)),
+      // MIN$/MAX$ answer whichever of two strings compares lower or higher, and REMOVE$ deletes every
+      // occurrence of one from the other. All three take the pair the way concatenation does and are
+      // the runtime's own routines on both paths - comparing and editing strings is not something two
+      // emitters should each have a version of.
+      "MIN$" or "MAX$" or "REMOVE$" when ci.Arguments.Count == 2 =>
+        this._b.Call(IrType.Ptr,
+          this.RuntimeFn(name.ToUpperInvariant() switch {
+            "MIN$" => "rt_str_min", "MAX$" => "rt_str_max", _ => "rt_str_remove",
+          }, IrType.Ptr, IrType.Ptr, IrType.Ptr), Str(0), Str(1)),
+      // INPUT$(n) reads n characters from the KEYBOARD without echo; INPUT$(n, #f) reads them from a
+      // file. Two routines because they are two different sources, which is the same split the direct
+      // emitter makes on the argument count.
+      "INPUT$" when ci.Arguments.Count == 1 =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_key_input", IrType.Ptr, IrType.I16), this.WordArg(ci.Arguments[0])),
+      "INPUT$" when ci.Arguments.Count == 2 =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_fget_str", IrType.Ptr, IrType.I16, IrType.I16),
+          this.WordArg(ci.Arguments[1] is FileNumberExpr f ? f.Number : ci.Arguments[1]),
+          this.WordArg(ci.Arguments[0])),
+      // PEEK$(offset, count): the bytes at DEF SEG:offset, as a string. That is exactly the routine a
+      // fixed-width buffer is read through - the same rt_strmem, taking an offset AND a segment -
+      // with the segment coming from the DEF SEG cell rather than from the frame.
+      "PEEK$" when ci.Arguments.Count == 2 =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
+          this._b.FarPtr(this._b.Load(IrType.I16, this.RuntimeCell("rt_defseg", IrType.I16)),
+            this.WordArg(ci.Arguments[0])),
+          Count(1)),
       _ => throw new IrLoweringException($"string intrinsic {name}"),
     };
   }
@@ -4767,7 +5973,7 @@ public sealed partial class IrLowering {
     var argument = call.Arguments[0];
     var resultType = this._model.TypeOf(call);
     switch (this._model.TypeOf(argument)) {
-      case StringType: {
+      case StringType or FlexType: {
         var length = this._b.Call(IrType.I32, this.RuntimeFn("rt_str_len", IrType.I32, IrType.Ptr), this.LowerStringExpr(argument));
         return this.Coerce(length, PbType.Long, resultType);   // LEN result narrows to its bound type
       }
@@ -4839,7 +6045,7 @@ public sealed partial class IrLowering {
     // an ARRAY ELEMENT of record type is storage in exactly the same way, one stride along
     if (e is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var arr)
         && arr.Type is ArrayType { Element: UdtType })
-      return this.ElementAddress(indexed).Address;
+      return this.ElementDataAddress(indexed).Address;   // far included: the copy carries its segment
     // and so is a record-typed FIELD of another record
     if (e is MemberExpr member && !this._model.VariableBindings.ContainsKey(member)
         && this.MemberFieldAddress(member) is { Field.Type: UdtType } field)
@@ -4874,6 +6080,58 @@ public sealed partial class IrLowering {
     var roundedUp = this._b.Cmp(IrCmpPred.Folt, v, trunc);              // v < trunc(v) => was negative non-integer
     var one = this._b.Cast(IrCastOp.SIToFP, this._b.ZExt(roundedUp, IrType.I32), ty);
     return this._b.Binary(IrBinaryOp.FSub, trunc, one);
+  }
+
+  /// <summary>
+  /// <c>CEIL</c>: <see cref="LowerInt"/>'s mirror. Truncate toward zero, then add one where the
+  /// truncation rounded a POSITIVE non-integer down - which is the same shape as INT's correction and
+  /// the opposite sign of it.
+  /// </summary>
+  private IrValue LowerCeil(CallOrIndexExpr call) {
+    var resultPb = this._model.TypeOf(call);
+    var ty = MapType(resultPb);
+    var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    if (ty.IsInteger)
+      return v;                                       // an integer is already whole, either way
+
+    var trunc = this._b.Cast(IrCastOp.SIToFP, this._b.Cast(IrCastOp.FPToSI, v, IrType.I64), ty);
+    var roundedDown = this._b.Cmp(IrCmpPred.Fogt, v, trunc);           // v > trunc(v) => was positive non-integer
+    var one = this._b.Cast(IrCastOp.SIToFP, this._b.ZExt(roundedDown, IrType.I32), ty);
+    return this._b.Binary(IrBinaryOp.FAdd, trunc, one);
+  }
+
+  /// <summary>
+  /// <c>FRAC</c> is what <c>FIX</c> leaves behind - <c>x - FIX(x)</c> - so it keeps the sign of x and
+  /// an integer has none of it. The direct emitter computes it on the x87 stack with a duplicate and a
+  /// subtract; this is the same subtraction, written where the optimizer can see both halves.
+  /// </summary>
+  private IrValue LowerFrac(CallOrIndexExpr call) {
+    var resultPb = this._model.TypeOf(call);
+    var ty = MapType(resultPb);
+    var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    if (ty.IsInteger)
+      return new IrConstantInt(ty, 0);
+
+    var trunc = this._b.Cast(IrCastOp.SIToFP, this._b.Cast(IrCastOp.FPToSI, v, IrType.I64), ty);
+    return this._b.Binary(IrBinaryOp.FSub, v, trunc);
+  }
+
+  /// <summary>
+  /// <c>ROUND(x [, places])</c>. Unlike its neighbours this one IS a call: the rounding is decimal
+  /// rather than binary - it scales by ten to the place count, rounds, and scales back - and the two
+  /// emitters must not each write their own version of that. An integer is already round.
+  /// </summary>
+  private IrValue LowerRound(CallOrIndexExpr call) {
+    var resultPb = this._model.TypeOf(call);
+    var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    if (MapType(resultPb).IsInteger)
+      return v;
+
+    var places = call.Arguments.Count > 1
+      ? this.Coerce(this.LowerExpr(call.Arguments[1]), this._model.TypeOf(call.Arguments[1]), PbType.Integer)
+      : new IrConstantInt(IrType.I16, 0);
+    return this._b.Call(MapType(resultPb),
+      this.RuntimeFn("rt_round_places", MapType(resultPb), MapType(resultPb), IrType.I16), v, places);
   }
 
   private IrValue LowerAbs(CallOrIndexExpr call) {
@@ -4943,11 +6201,41 @@ public sealed partial class IrLowering {
   }
 
   private IrValue LowerCallExpr(CallOrIndexExpr call) {
+    if (this._model.ProcPtrCalls.TryGetValue(call, out var signature))
+      return this.LowerClosureCall(call, signature);   // f(args) through a delegate
     if (this._procMap is null || !this._model.CallBindings.TryGetValue(call, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
       throw new IrLoweringException($"unsupported call/index {call.Name}");   // array index / intrinsic
     if (!proc.IsFunction)
       throw new IrLoweringException("SUB used in expression position");
-    return this.EmitCall(callee, proc, call.Arguments);
+    return this.EmitCall(callee, proc, this.PositionalArguments(call, call.Arguments));
+  }
+
+  /// <summary>
+  /// The arguments of a call in PARAMETER order, with every default filled in.
+  ///
+  /// <para>
+  /// pb36 named arguments and default values are resolved by the binder, not by either back end: it
+  /// records the complete positional list against the call node, and every consumer - the direct
+  /// emitter, the inliner, the constant propagator, the decompiler - reads it from there. This path
+  /// did not, so a call that named its arguments passed them in the order they were WRITTEN, and one
+  /// that omitted a defaulted argument passed one fewer than the callee takes. The second failed
+  /// loudly ("argument count mismatch"); the first would not have.
+  /// </para>
+  /// </summary>
+  private IReadOnlyList<Expression> PositionalArguments(object callSite, IReadOnlyList<Expression> written) {
+    if (this._model.ReorderedArguments.GetValueOrDefault(callSite) is { } reordered)
+      return reordered;
+    // A call that named no argument gets no entry, so a trailing DEFAULT is still missing here. The
+    // binder leaves that fill to the call site - the default is an expression evaluated there, not a
+    // value baked into the callee - and the direct emitter does it in EmitCall for the same reason.
+    if (!this._model.CallBindings.TryGetValue(callSite, out var proc)
+        || written.Count >= proc.Parameters.Count || proc.IsCdecl
+        || proc.Parameters[written.Count].DefaultValue is null)
+      return written;
+    var filled = new List<Expression>(written);
+    for (var i = written.Count; i < proc.Parameters.Count && proc.Parameters[i].DefaultValue is { } value; ++i)
+      filled.Add(value);
+    return filled;
   }
 
   /// <summary>
@@ -4990,6 +6278,10 @@ public sealed partial class IrLowering {
     var arrayArguments = new List<(IrValue Block, VariableSymbol Symbol, ArrayType Array)>();
     for (var i = 0; i < arguments.Count; ++i) {
       var p = proc.Parameters[i];
+      if (p.Type is ProcPtrType) {
+        this.AddClosureArgument(arguments[i], args);   // a delegate crosses as its four words
+        continue;
+      }
       args.Add(p.Type is UdtType
         ? this.UdtAddress(arguments[i])                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
         : p.Type is ArrayType
@@ -5142,11 +6434,14 @@ public sealed partial class IrLowering {
         && this._model.VariableBindings.TryGetValue(indexed, out var arrSym)
         && arrSym.Type is ArrayType) {
       var (address, element) = this.ElementAddress(indexed);
-      if (element.Equals(paramType)) {
-        if (address.Type.IsFarPointer)
-          throw new IrLoweringException("far pointer passed BYREF to a near parameter");
+      // A FAR element - a dynamic array's storage lives in the far heap - cannot be the address a
+      // near-pointer parameter receives: the callee would read the offset through DS and reach the
+      // program's own data. It falls to the temp copy below, which is not a compromise but the DIRECT
+      // emitter's own answer: its BYREF push takes the address only of a NEAR lvalue, and copies
+      // anything else into a hidden stack temp, copy-in only. So a callee's write to such a parameter
+      // is discarded on both paths, and `Bump values%(2)` leaves values%(2) alone on both.
+      if (element.Equals(paramType) && !address.Type.IsFarPointer)
         return address;
-      }
     }
     // A record MEMBER is storage like any other, and the callee writes THROUGH it. Falling to the
     // temp copy below turned a BYREF parameter into a BYVAL one without saying so: `CALL Neg(r.A)`
@@ -5179,6 +6474,32 @@ public sealed partial class IrLowering {
     return udt?.FindField(m.Member) is { ElementCount: 1, Type: ScalarType field } && field.Equals(paramType);
   }
 
+  /// <summary>
+  /// The value of a shift count that is known here, looking THROUGH the widening the operand pair was
+  /// brought to a common type with. <c>m &amp;&lt;&gt;&gt; 1</c> over a LONG coerces its INTEGER literal
+  /// with a sign extension, and a literal wearing a cast is still a literal - asking only whether the
+  /// operand is a constant answered no for every rotate over anything wider than the count's own type.
+  /// </summary>
+  private static long? KnownCount(IrValue value) => value switch {
+    IrConstantInt constant => constant.Value,
+    IrCast { Op: IrCastOp.SExt or IrCastOp.ZExt or IrCastOp.Trunc, Value: IrConstantInt widened } => widened.Value,
+    _ => null,
+  };
+
+  /// <summary>
+  /// A rotate by a known number of places, as the two shifts it is: the bits that move up, ORed with
+  /// the bits that wrap round. <paramref name="places"/> has already been reduced modulo the width,
+  /// so both shift counts are strictly inside it and neither is the undefined shift-by-width.
+  /// </summary>
+  private IrValue LowerRotate(IrValue value, int places, IrType type, bool left) {
+    if (places == 0)
+      return value;                                    // a whole turn is no turn
+    var up = left ? places : type.Bits - places;
+    return this._b.Or(
+      this._b.Binary(IrBinaryOp.Shl, value, new IrConstantInt(type, up)),
+      this._b.Binary(IrBinaryOp.LShr, value, new IrConstantInt(type, type.Bits - up)));
+  }
+
   private IrValue LowerUnary(UnaryExpr u) {
     var pb = this._model.TypeOf(u);
     var ty = MapType(pb);
@@ -5197,7 +6518,7 @@ public sealed partial class IrLowering {
     var resultPb = this._model.TypeOf(expr);
     return expr.Op switch {
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
-        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType or FixedStringType or AsciizType
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType or FlexType or FixedStringType or AsciizType
           ? this.LowerStringComparison(expr, resultPb)
           : leftPb is UdtType
             ? this.LowerUdtComparison(expr, resultPb)
@@ -5230,6 +6551,15 @@ public sealed partial class IrLowering {
         if (!resultTy.IsFloat)
           throw new IrLoweringException("integer exponentiation");   // PB ^ yields a floating result
         return this._b.Call(resultTy, this.RuntimeFn($"llvm.pow.f{resultTy.Bits}", resultTy, resultTy, resultTy), l, r);
+      // The pb36 ROTATE operators. The IR has no rotate instruction and does not need one: by a KNOWN
+      // amount a rotate is a pair of shifts ORed together, which is what a target without the
+      // instruction would decompose it to anyway and what the x87-less 32-bit path already does by
+      // hand. A VARIABLE amount still declines - the second shift is width-minus-count, which is a
+      // shift by the whole width when the count is zero, and that is the one case no two targets agree
+      // about (the 8086 does not mask its count; a 186 and later mask it to five bits).
+      case BinaryOp.RotateLeft or BinaryOp.RotateRight when resultTy.IsInteger && KnownCount(r) is { } places:
+        return this.LowerRotate(l, (int)(((places % resultTy.Bits) + resultTy.Bits) % resultTy.Bits),
+          resultTy, expr.Op == BinaryOp.RotateLeft);
     }
 
     var op = expr.Op switch {
@@ -5242,6 +6572,12 @@ public sealed partial class IrLowering {
       BinaryOp.And => IrBinaryOp.And,
       BinaryOp.Or => IrBinaryOp.Or,
       BinaryOp.Xor => IrBinaryOp.Xor,
+      // The pb36 shift OPERATORS, which are the SHIFT statement written as an expression. Arithmetic
+      // or logical is the operand's own signedness, exactly as the direct emitter picks SAR or SHR:
+      // a right shift of a signed value keeps its sign, and of an unsigned one does not.
+      BinaryOp.ShiftLeft => IrBinaryOp.Shl,
+      BinaryOp.ShiftRightArith => IrBinaryOp.AShr,
+      BinaryOp.ShiftRightLogical => IrBinaryOp.LShr,
       _ => throw new IrLoweringException($"unsupported binary op {expr.Op}"),
     };
     // A zero divisor raises Error 11, and that guard belongs to the LANGUAGE rather than to an
@@ -5397,6 +6733,12 @@ public sealed partial class IrLowering {
       // as the class it was bound to.
       case "DYNAMIC":
       case "STATIC":
+      // $ISA picks what happens to an instruction the declared CPU cannot execute - native, emulated,
+      // or an error. It is policy the CODE GENERATOR holds, read out of model.MetaStatements by
+      // RuntimeIsaPolicyForRuntime in a pre-pass, which is the same argument $STRING above is ignored
+      // on: a routed module body never executes the statement list, so a directive applied during
+      // emission would be lost - and this one is not, because it was never applied there.
+      case "ISA":
       // $OPTION is four arms and not one of them is a statement. SIGNED changes the RESULT TYPE the
       // binder gives VARPTR/VARSEG and their relatives; VIDEO sets model.FastVideo, which the codegen
       // reads off the MODEL; CNTLBREAK installs an INT 23h handler from a codegen PRE-PASS over
@@ -5412,6 +6754,13 @@ public sealed partial class IrLowering {
       // and the direct emitter emits nothing for it, so ignoring it here is the direct path's own
       // behaviour rather than a new claim.
       case "DIM":
+      // $FLOAT NPX / EMULATE / PROCEDURE chooses how floating point is REACHED, which is a property of
+      // the target rather than of a statement: RuntimeTargetForRuntime reads it out of
+      // model.MetaStatements in a pre-pass and folds X87 into the feature set. That is the same
+      // pre-pass $CPU and $ISA go through, and the same reason ignoring it here loses nothing - a
+      // routed module body never executes the statement list, and this directive was never applied
+      // there to begin with.
+      case "FLOAT":
         return;
       // $ERROR BOUNDS ON: every subscript is checked against its dimension and Error 9 raised when it
       // falls outside - the same guard CodeGenerator.Arrays emits when CheckBounds is set

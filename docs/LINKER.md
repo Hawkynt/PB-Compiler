@@ -131,9 +131,10 @@ constrains what foreign code can be linked and is the crux of the whole feature.
   evaluates the leading args and loads the registers (pushing then popping so they
   survive arg evaluation); a defined `SUB/FUNCTION WATCALL|FASTCALL` spills the incoming
   AX,DX,BX(,CX) into its parameter slots in the prologue and `RET n`s the overflow.
-  The experimental x86 back end now also routes external call sites, with physical
-  register uses kept live through the call; routed register-convention definitions
-  still decline until their prologue can consume those physical inputs. Scope is the common
+  The experimental x86 back end routes both halves too: external call sites keep their
+  physical register uses live through the call, and a routed definition's prologue pushes
+  the incoming AX,DX,BX(,CX) into the negative frame cells `LayoutFrame` assigns them, so
+  the body reads ordinary frame parameters from there on. Scope is the common
   16-bit case: every register-passed parameter must be a single word (BYVAL ≤ 2 bytes
   or a BYREF near pointer); multiword LONG/float/aggregate/far-pointer values need
   the full per-compiler size rules and are rejected with a diagnostic rather than miscompiled.

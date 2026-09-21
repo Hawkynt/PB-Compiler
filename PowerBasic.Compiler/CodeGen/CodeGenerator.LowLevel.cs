@@ -320,7 +320,10 @@ public sealed partial class CodeGenerator {
 
   private Label ThunkOf(ProcedureSymbol proc) {
     if (!this._farThunks.TryGetValue(proc, out var label))
-      this._farThunks[proc] = label = this._asm.DefineLabel($"thk_{proc.Name}");
+      // ...named by the IR name rather than the source one, so two OVERLOADS get two thunks that can
+      // be told apart. A label is an object and the assembler never collided them, but a routed
+      // delegate names its thunk by string, and one string cannot mean both.
+      this._farThunks[proc] = label = this._asm.DefineLabel($"thk_{Ir.IrLowering.IrNameOf(proc)}");
     return label;
   }
 

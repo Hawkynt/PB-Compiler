@@ -444,6 +444,84 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
+  /// A second asm run opened with <c>! XOR DI, DI</c>, a <c>CALL</c> behind it, and the first run
+  /// ending in <c>! POP DI</c>. Every <c>Vesa*_HLine</c> in the SVGA corpus is this shape, and the
+  /// literal reading declined all sixteen: the <c>XOR</c> "reads" <c>DI</c>, so the value the earlier
+  /// <c>POP</c> restored looked wanted, and the call in between destroys it.
+  ///
+  /// <para>
+  /// The zeroing idiom names a register that is not an input. What makes this a test rather than a
+  /// shape is the <c>CALL</c>: without one the window is empty and any model of the <c>XOR</c> passes.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenTheZeroingIdiomAfterACall_ThenNoPromiseReachesBackAcrossIt() {
+    const string source = """
+      DECLARE FUNCTION Op%(BYVAL v%)
+      DIM v AS INTEGER, w AS INTEGER
+      v = 6
+      ! PUSH DI
+      ! MOV DI, v
+      ! MOV w, DI
+      ! POP DI
+      v = Op%(w) + 1
+      ! PUSH DI
+      ! XOR DI, DI
+      ! ADD DI, v
+      ! MOV w, DI
+      ! POP DI
+      PRINT v; w
+
+      FUNCTION Op%(BYVAL v%) NOINLINE
+        Op% = v% * 2
+      END FUNCTION
+      """;
+
+    var routed = Run(source, routed: true, out var ownsMain);
+    Assert.That(ownsMain, Is.True, "the zeroing idiom consumes nothing, so nothing crosses the call");
+    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
+    Assert.That(routed, Is.EqualTo("13  13"), "6 doubled plus one, then zero plus that");
+  }
+
+  /// <summary>
+  /// A <c>BYREF</c> parameter written AFTER an inline-asm block. The pointer arrives live at entry and
+  /// is a memory base, which cannot spill, so it has to be reloaded from its own incoming cell at the
+  /// use - and the spiller does exactly that. What stopped it was the reload it inserted claiming the
+  /// whole register file: the scan for a pending call's argument staging collects clobber lists
+  /// backwards, and an asm block declares every register, so walking past one reported all six as
+  /// already filled. This is <c>Vga_GetPixel</c> in the SVGA corpus, reduced.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAByRefResultWrittenAfterAnAsmBlock_ThenTheProcedureRoutes() {
+    const string source = """
+      DECLARE SUB GetPix(x_a AS WORD, y_a AS WORD, resultVal AS BYTE)
+      DIM r AS BYTE
+      CALL GetPix(10, 20, r)
+      PRINT r
+
+      SUB GetPix(x_a AS WORD, y_a AS WORD, resultVal AS BYTE)
+        DIM x AS WORD, y AS WORD, PixelValue AS BYTE
+        x = x_a : y = y_a
+        ! MOV BX, y
+        ! MOV CX, x
+        ! ADD BX, CX
+        ! MOV PixelValue, BL
+        resultVal = PixelValue
+      END SUB
+      """;
+
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+    cg.EmitExecutable();
+
+    Assert.That(cg.BackendRoutedNames, Does.Contain("GetPix").IgnoreCase,
+      "the reload of the BYREF pointer must not claim the registers the asm block declares");
+    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    Assert.That(Run(source, routed: true), Is.EqualTo("30"), "10 + 20, read back through the pointer");
+  }
+
+  /// <summary>
   /// <c>! MOV AL, 4</c> makes a promise about <c>AL</c> and about nothing else. Tracking both halves
   /// as <c>AX</c> - one resource, which is true of ALLOCATION and false of the text - turned the
   /// following <c>! MOV DX, AL</c> into a word-wide claim that reached back past the BASIC statement
@@ -504,5 +582,245 @@ public sealed class BackendInlineAsmTests {
     Assert.That(ownsMain, Is.True, "the run spans a label, and is still one run");
     Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
     Assert.That(routed, Is.EqualTo("202"), "66, then 67 rounded up to 68, then 68");
+  }
+  /// <summary>
+  /// Whether a PROCEDURE routed, unoptimized. The fixture's other tests run the optimizer, which is
+  /// what hid the defect below for as long as it did: the optimizer's own rewriting happened to move
+  /// the block boundary out from between the save and its restore.
+  /// </summary>
+  private static (string Output, bool Routed) RunProcedure(string source, string procedure, bool routed) {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var cg = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = routed };
+    var image = cg.EmitExecutable();
+    Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
+    return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"),
+      cg.BackendRoutedNames.Contains(procedure, StringComparer.OrdinalIgnoreCase));
+  }
+
+  /// <summary>
+  /// An asm run whose own label splits it across machine BLOCKS, with a BASIC <c>CALL</c> between that
+  /// run and the next one. Every <c>Vesa*_HLine</c> in the SVGA corpus is this shape - thirty-three
+  /// declines, the largest single row in the mandatory-routing measurement.
+  ///
+  /// <para>
+  /// The label ends a block, the block ends with a compiler <c>JMP</c>, and the <c>JMP</c> sat between
+  /// <c>! PUSH DI</c> and <c>! POP DI</c> and ended the run - so the pair never cancelled, the
+  /// <c>POP</c> read as a definition, the next <c>PUSH</c> read as a use of it, and the <c>CALL</c>
+  /// between them destroyed the register. A branch moves no data and leaves <c>SP</c> where it found
+  /// it; where it goes is the closed-region question, asked separately.
+  /// </para>
+  /// <para>
+  /// The <c>CALL</c> is what makes this a test rather than a shape: without one the window between the
+  /// pop and the next push is empty and any model of the pair passes.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenARunSplitByItsOwnLabel_ThenTheSaveStillPairsAcrossTheBlock() {
+    const string source = """
+      DECLARE SUB Bump()
+      DIM hits AS SHARED WORD
+      DIM a(0 TO 7) AS SHARED BYTE
+      CALL Fill(2, 3)
+      PRINT a(0); a(1); a(2); a(4); a(5); a(6); hits
+      END
+      SUB Bump()
+        hits = hits + 1
+      END SUB
+      SUB Fill(n AS WORD, m AS WORD)
+        DIM p AS WORD, q AS WORD, lo AS WORD, hi AS WORD
+        p = VARPTR(a(0))
+        q = p + 4
+        lo = n
+        hi = m
+        ! PUSH ES
+        ! PUSH DI
+        ! MOV AX, DS
+        ! MOV ES, AX
+        ! MOV DI, p
+        ! MOV CX, lo
+        ! MOV AL, 7
+        ! CLD
+        ! TEST DI, 1
+        ! JZ FillAligned
+        ! STOSB
+        ! DEC CX
+        ! JZ FillDone
+        FillAligned:
+        ! REP STOSB
+        FillDone:
+        ! POP DI
+        ! POP ES
+        CALL Bump
+        ! PUSH ES
+        ! PUSH DI
+        ! MOV AX, DS
+        ! MOV ES, AX
+        ! MOV DI, q
+        ! MOV CX, hi
+        ! MOV AL, 9
+        ! CLD
+        ! REP STOSB
+        ! POP DI
+        ! POP ES
+      END SUB
+      """;
+
+    var (routed, tookIt) = RunProcedure(source, "Fill", routed: true);
+    Assert.That(tookIt, Is.True, "a label inside the run must not end it");
+    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Fill", routed: false).Output));
+    Assert.That(routed, Is.EqualTo("7  7  0  9  9  9  1"));
+  }
+  /// <summary>
+  /// <c>! REP MOVSB</c> inside a FOR loop. The prefix counts <c>CX</c> down to zero and reads no flag
+  /// this pass models - the flag a string move really consumes is the DIRECTION flag, which nothing
+  /// here writes and nothing here tracks.
+  ///
+  /// <para>
+  /// Saying it read the arithmetic flags made every <c>REP MOVSB</c> the consumer of whatever last set
+  /// them. Around a loop that is the loop's own increment, so the body's own <c>! ADD DI, n</c> became
+  /// a promise the increment destroyed, and <c>Scroll_HardwareHorizontal</c> declined for it. Only the
+  /// CONDITIONAL forms re-test <c>ZF</c>, and those still say so.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenARepeatedMoveInALoop_ThenTheLoopIncrementIsNotADestroyer() {
+    const string source = """
+      DECLARE SUB Slide()
+      DIM src(0 TO 7) AS SHARED BYTE
+      DIM dst(0 TO 7) AS SHARED BYTE
+      src(0) = 3 : src(1) = 5 : src(2) = 9
+      Slide
+      PRINT dst(0); dst(1); dst(2); dst(3)
+      END
+      SUB Slide()
+        DIM i AS INTEGER, from AS WORD, into AS WORD
+        FOR i = 0 TO 1
+          from = VARPTR(src(0))
+          into = VARPTR(dst(0))
+          ! PUSH ES
+          ! PUSH SI
+          ! PUSH DI
+          ! MOV AX, DS
+          ! MOV ES, AX
+          ! MOV SI, from
+          ! MOV DI, into
+          ! ADD DI, 1
+          ! MOV CX, 3
+          ! CLD
+          ! REP MOVSB
+          ! POP DI
+          ! POP SI
+          ! POP ES
+        NEXT i
+      END SUB
+      """;
+
+    var (routed, tookIt) = RunProcedure(source, "Slide", routed: true);
+    Assert.That(tookIt, Is.True, "a repeated move in a loop must not read the increment's flags");
+    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Slide", routed: false).Output));
+    Assert.That(routed, Is.EqualTo("0  3  5  9"));
+  }
+  /// <summary>
+  /// <c>! PUSH BP</c> ... <c>! POP BP</c>, which is how a body that needs every register borrows the
+  /// frame pointer too. The selector refused any asm writing <c>BP</c> or <c>SP</c>, and a POP of BP
+  /// is a write by that reading.
+  ///
+  /// <para>
+  /// It is not a write in the sense the check protects. The pop puts back what the push took, and
+  /// nothing between them writes BP AT ALL - which is the condition, and is why `! MOV BP, v` still
+  /// declines: while BP is borrowed the frame is unreachable, and every asm line naming a local is
+  /// addressed through it. Here BP holds the frame at every instruction boundary. The
+  /// direct emitter addresses its frame through BP as well and accepts the pair - refusing it here was
+  /// stricter than the path being replaced. An unbalanced pop would destroy either emitter's frame, so
+  /// such a program is broken rather than broken by this decision; what still declines is a write that
+  /// is not a restore, <c>MOV BP, AX</c> and <c>ADD SP, n</c>.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenASavedFramePointer_ThenTheFunctionStillRoutes() {
+    const string source = """
+      DECLARE SUB Borrow()
+      DIM seen AS SHARED WORD
+      Borrow
+      PRINT seen
+      END
+      SUB Borrow()
+        DIM v AS WORD
+        v = 7
+        ! PUSH BP
+        ! PUSH ES
+        ! MOV AX, DS
+        ! MOV ES, AX
+        ! POP ES
+        ! POP BP
+        v = v + 1
+        seen = seen + v
+      END SUB
+      """;
+
+    var (routed, tookIt) = RunProcedure(source, "Borrow", routed: true);
+    Assert.That(tookIt, Is.True, "a saved and restored frame pointer must not decline the function");
+    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Borrow", routed: false).Output));
+    Assert.That(routed, Is.EqualTo("8"), "v is still reachable through BP after the pair");
+  }
+
+  /// <summary>
+  /// A BASIC statement standing between a row of <c>! POP</c>s and a statement the assembler cannot
+  /// read. This is <c>Timer_InterruptHandler</c> in the SVGA corpus, and it declined with "a value is
+  /// live across an instruction that clobbers every register, and cannot move to memory".
+  ///
+  /// <para>
+  /// Nothing about the program is hard. The pops restore the caller's registers, the opaque statement
+  /// afterwards is assumed to read every one of them, and backward liveness therefore carries a claim
+  /// on the WHOLE allocatable file across the two moves in between - leaving the allocator no register
+  /// for a load and an add. The claim is a guess: what an <c>INT</c> or a <c>CALL DWORD PTR</c> reads
+  /// is exactly what the compiler does not know. The pushes cannot cancel the pops here either, because
+  /// the opaque statement between them moves the stack by an unknown amount.
+  /// </para>
+  /// <para>
+  /// A guess is worth a preference and not a refusal, so it is given up at the one point where the
+  /// alternative is not a worse allocation but none - after the spiller has run out of moves. The
+  /// reservations the text NAMES are unaffected, and the direct emitter holds neither kind: it loads
+  /// this statement through <c>AX</c> and <c>DX</c> without asking.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenABasicStatementBetweenRestoresAndAnOpaqueRead_ThenTheFunctionStillRoutes() {
+    const string source = """
+      DECLARE SUB Relay()
+      DIM seed AS SHARED WORD
+      DIM seen AS SHARED WORD
+      seed = 40
+      Relay
+      PRINT seen
+      END
+      SUB Relay()
+        DIM v AS WORD
+        ! PUSH AX
+        ! PUSH BX
+        ! PUSH CX
+        ! PUSH DX
+        ! PUSH SI
+        ! PUSH DI
+        ! MOV AH, &H30
+        ! INT &H21
+        ! POP DI
+        ! POP SI
+        ! POP DX
+        ! POP CX
+        ! POP BX
+        ! POP AX
+        v = seed + 2
+        ! MOV AH, &H30
+        ! INT &H21
+        seen = v
+      END SUB
+      """;
+
+    var (routed, tookIt) = RunProcedure(source, "Relay", routed: true);
+    Assert.That(tookIt, Is.True, "an inferred read of the whole file must not refuse the function");
+    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Relay", routed: false).Output));
+    Assert.That(routed, Is.EqualTo("42"), "the statement between the two runs still computed");
   }
 }

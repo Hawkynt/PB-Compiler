@@ -239,6 +239,9 @@ internal static class RuntimeAbi {
     // rt_locate(row, col) -> AX = row, CX = column, a zero meaning "keep the current one"
     ["rt_locate"] = new("rt_locate",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved),
+    // SCREEN n -> AX = the PB screen number, which the routine maps onto a BIOS video mode. The
+    // mapping belongs to the runtime and not to either emitter, so both paths reach the same table.
+    ["rt_screen_mode"] = new("rt_screenmode", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     // rt_shl32/rt_shr32(value, count) -> DX:AX = the value, CX = the count, answer in DX:AX. The
     // registers ARE the loop's operands, so the routine is the loop and a return.
     ["rt_shl32"] = new("rt_shl32",
@@ -262,9 +265,46 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.DX), new(ArgKind.Word, Reg.AX)], _callerSaved),
     // rt_kill(handle) -> AX = filename handle, consumed
     ["rt_kill"] = new("rt_kill", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // MKDIR / RMDIR / CHDIR take a path the same way KILL takes a filename: one string handle in AX.
+    ["rt_mkdir"] = new("rt_mkdir", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_rmdir"] = new("rt_rmdir", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_chdir"] = new("rt_chdir", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // NAME old AS new -> the two handles in AX and DX, the order the direct emitter pushes them in.
+    ["rt_rename"] = new("rt_rename",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // SHELL cmd$ -> the command line's handle in AX. EXECUTE is the same call and then an exit, which
+    // the lowering writes as the two statements it is.
+    ["rt_shell"] = new("rt_shell", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // SOUND freq, ticks -> AX = frequency, DX = duration. BEEP is this call with 880 and 4, which is
+    // what the direct emitter emits for it rather than a routine of its own.
+    ["rt_sound"] = new("rt_sound",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // DELAY seconds -> the count on the x87 stack, as every other floating argument travels.
+    ["rt_delay"] = new("rt_delay", [new(ArgKind.St0, default)], _callerSaved),
+    // SLEEP's key wait: no arguments, no answer, and it preserves everything - the whole routine is a
+    // blocking BIOS read between a push and a pop.
+    ["rt_sleep_key"] = new("rt_sleepkey", [], []),
+    // END [n] -> AL holds the code DOS reports, which rt_exit hands to INT 21h AH=4Ch. It does not
+    // return, so the clobber list is a formality; it is the caller-saved file because saying less
+    // would be a claim nobody needs.
+    ["rt_end"] = new("rt_exit", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // POKE$ address, s$ -> DI = the offset, AX = the string handle. DI rather than the usual second
+    // word because the routine stores through it, which is the whole of what it does.
+    ["rt_poke_str"] = new("rt_pokestr",
+      [new(ArgKind.Word, Reg.DI), new(ArgKind.Word, Reg.AX)], _callerSaved),
 
     // rt_str_concat(ptr,ptr) -> ptr is the runtime's StrCat: AX=left, DX=right -> AX, consuming both
     ["rt_str_concat"] = new("rt_strcat",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+
+    // MIN$/MAX$/REMOVE$ take their pair exactly as concat does - left in AX, right in DX - and hand
+    // one string back having consumed both. Comparing or editing strings is the runtime's business on
+    // either path, so these are calls and not patterns.
+    ["rt_str_min"] = new("rt_strmin",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_max"] = new("rt_strmax",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
+    ["rt_str_remove"] = new("rt_str_remove",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved, Result: Reg.AX),
 
     // "StrCatVar: AX=target handle, DX=source handle -> AX". It grows the TARGET in place when the
@@ -695,6 +735,58 @@ internal static class RuntimeAbi {
     // so the two paths cannot disagree about where the cursor ends up.
     ["rt_cls"] = new("rt_cls", [], _callerSaved),
 
+    // The graphics statements. PSET takes its point in registers - AX = x, BX = y, DX = colour - and
+    // preserves both coordinate registers, which is what lets the caller record the last point
+    // referenced from the values it already had.
+    ["rt_pset"] = new("rt_pset",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.BX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // LINE and CIRCLE take everything through the runtime's own cells instead (rt_gx1 and friends),
+    // because the same cells ARE the graphics cursor: LINE with no start point reads where the last
+    // statement finished, and DRAW's whole notion of position is that pair. Passing the arguments in
+    // registers would leave the cursor to be written separately and the two could disagree.
+    // POINT(x, y) reads the pixel back: the same register pair PSET writes with, answered as a LONG.
+    ["rt_point"] = new("rt_point",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.BX)], _callerSaved,
+      Result: Reg.AX, Answer: ResultKind.Pair),
+    // PAINT floods from the point in rt_gx1/rt_gy1 with rt_gcolor up to rt_gpbord, so it takes its
+    // arguments the way LINE does and for the same reason - the point IS the graphics cursor.
+    ["rt_paint"] = new("rt_paint", [], _callerSaved),
+    // PCOPY from, to -> AX = source page, DX = destination page
+    ["rt_pcopy"] = new("rt_pcopy",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    // BSAVE / BLOAD take the filename in AX; the offset and length travel in cells because the
+    // string handle wants the register. rt_bhasofs is how BLOAD says whether an offset was given at
+    // all - with none, the block goes back where BSAVE recorded it.
+    ["rt_bsave"] = new("rt_bsave", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_bload"] = new("rt_bload", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // ENVIRON "NAME=VALUE" sets one, ENVIRON$("NAME") reads one back
+    ["rt_set_environ"] = new("rt_setenv", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_environ"] = new("rt_environ", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
+    // The string intrinsics written WITHOUT parentheses: each reads the machine rather than an
+    // argument, and each answers with a fresh handle in AX. DATE$ and TIME$ are the clock, INKEY$ the
+    // keyboard buffer, COMMAND$ the PSP's tail, CURDIR$ the current directory.
+    ["rt_date_str"] = new("rt_datestr", [], _callerSaved, Result: Reg.AX),
+    ["rt_time_str"] = new("rt_timestr", [], _callerSaved, Result: Reg.AX),
+    ["rt_inkey"] = new("rt_inkey", [], _callerSaved, Result: Reg.AX),
+    ["rt_command"] = new("rt_command", [], _callerSaved, Result: Reg.AX),
+    ["rt_curdir"] = new("rt_curdir", [], _callerSaved, Result: Reg.AX),
+    // DIR$ is the DOS find-first/find-next pair behind one name: a mask handle in AX opens a search
+    // and a null one continues it, with the attribute mask in CX.
+    ["rt_dir"] = new("rt_dir", [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    // GET / PUT of a screen rectangle: corners in the graphics cells, the buffer's offset and segment
+    // in two more, and PUT's combining verb in a third.
+    // FILEATTR(n, 2): the DOS handle behind a PB file number. AX in, BX out - which is the same
+    // routine every file transfer resolves its handle with, so the two paths cannot disagree about
+    // which handle a number means.
+    ["rt_file_handle"] = new("rt_fhandle", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.BX),
+    ["rt_gget"] = new("rt_gget", [], _callerSaved),
+    ["rt_gput"] = new("rt_gput", [], _callerSaved),
+    ["rt_line"] = new("rt_line", [], _callerSaved),
+    ["rt_line_box"] = new("rt_linebox", [], _callerSaved),
+    ["rt_line_fill"] = new("rt_linefill", [], _callerSaved),
+    ["rt_circle"] = new("rt_circle", [], _callerSaved),
+    ["rt_arc"] = new("rt_arc", [], _callerSaved),
+
     // "RND(a, z): DX:AX=lower, CX:BX=upper -> DX:AX = lower + trunc(rnd * (upper-lower+1))"
     ["rt_rnd_range"] = new("rt_rndrange",
       [new(ArgKind.Pair, Reg.AX, Reg.DX), new(ArgKind.Pair, Reg.BX, Reg.CX)],
@@ -720,6 +812,8 @@ internal static class RuntimeAbi {
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
     ["rt_fget_str"] = new("rt_fgetstr",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    // INPUT$(n) with no file: the KEYBOARD form, which blocking-reads CX characters without echo.
+    ["rt_key_input"] = new("rt_keyinput", [new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
 
     // EOF(n): AX = the file number -> AX = PB's -1/0 truth
     ["rt_eof"] = new("rt_eof", [new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
@@ -729,6 +823,10 @@ internal static class RuntimeAbi {
     // CSRLIN -> AX = the 1-based cursor row; CONSIN / CONSOUT -> AX = -1 for a console, 0 redirected
     ["rt_csrlin"] = new("rt_csrlin", [], _callerSaved, Result: Reg.AX),
     ["rt_consin"] = new("rt_consin", [], _callerSaved, Result: Reg.AX),
+    // INSTAT: no arguments, PB's -1/0 truth in AX
+    ["rt_instat"] = new("rt_instat", [], _callerSaved, Result: Reg.AX),
+    // the stack segment: a pb36 stack closure's environment is the enclosing frame's capture record
+    ["rt_stack_seg"] = new("rt_stackseg", [], _callerSaved, Result: Reg.AX),
     ["rt_consout"] = new("rt_consout", [], _callerSaved, Result: Reg.AX),
     // DEF SEG: the argument form stores the word, the bare form puts DS back
     ["rt_defseg_reset"] = new("rt_defsegreset", [], _callerSaved),
@@ -945,6 +1043,12 @@ internal static class RuntimeAbi {
     // program must not round two ways.
     ["rt_round_half_away"] = new("rt_rndaway", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
 
+    // ROUND(x, places): the value on the x87 stack and the decimal place count in CX, answered on the
+    // stack. It is a CALL rather than an inline pattern for the reason rt_rndaway above it is - the
+    // scaling by ten to the place count is arithmetic both emitters must do identically.
+    ["rt_round_places"] = new("rt_round",
+      [new(ArgKind.St0, default), new(ArgKind.Word, Reg.CX)], _callerSaved, Answer: ResultKind.St0),
+
     ["rt_fix_down"] = new("rt_fixdn", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
     ["rt_fix_up"] = new("rt_fixup", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
 
@@ -964,6 +1068,11 @@ internal static class RuntimeAbi {
     // rt_capbuf instead of at a file handle. Neither takes an argument; rt_capoff answers the
     // captured bytes as a string handle in AX, which is what makes USING$ a string expression rather
     // than a statement (DosRuntime.Capture.cs).
+    // ...and the RUNTIME-format form, which the capture machinery cannot serve: the field layout is
+    // only known when the format string is, so the routine parses it itself. The value arrives on the
+    // x87 at DOUBLE width and the format as an ordinary string handle; the answer is a handle too.
+    ["rt_using_dynamic"] = new("rt_usingdyn",
+      [new(ArgKind.St0, default), new(ArgKind.Word, Reg.AX)], _callerSaved, Result: Reg.AX),
     ["rt_capture_begin"] = new("rt_capon", [], _callerSaved),
     ["rt_capture_end"] = new("rt_capoff", [], _callerSaved, Result: Reg.AX),
 

@@ -111,6 +111,10 @@ public static class Mem2Reg {
     // any particular use of it.
     if (a.Allocated.IsMbf)
       return false;
+    // A closure environment cell is initialized by the generated prologue rather than an IR store.
+    // Promoting it as an ordinary load-only alloca would replace the incoming environment with zero.
+    if (a.EnvRole != ClosureEnvRole.None)
+      return false;
     foreach (var user in a.Users)
       switch (user) {
         case IrLoad load when ReferenceEquals(load.Pointer, a) && load.Type.SameStorage(a.Allocated):

@@ -43,7 +43,12 @@ public sealed partial class CodeGenerator {
     return meta;
   }
 
-  /// <summary>Applies SPEED/SIZE after AST optimization but before backend selection and emission.</summary>
+  /// <summary>
+  /// Applies SPEED/SIZE after AST optimization but before backend selection and emission - and
+  /// "before selection" is load-bearing rather than descriptive: <c>SelectionCost</c> reads
+  /// <see cref="OptimizeSpeed"/> to decide whether the instruction selector gets a cost model at all,
+  /// so a selection that runs first is a selection that makes none of the byte-for-cycles trades.
+  /// </summary>
   private void ResolveOptimizeObjective(MetaStmt? meta) {
     if (meta?.Arguments is not [{ } mode, ..])
       return;

@@ -105,7 +105,7 @@ public sealed partial class CodeGenerator {
     // O0284 helpers: they clone the pre-thunk source body, so their user is always a source entry.
     foreach (var name in helpers.Keys.ToList())
       if (this._backendProcs is null || !this._backendProcs.Keys
-          .Select(proc => this._backendModule?.FindFunction(proc.Name))
+          .Select(proc => this._backendModule?.FindFunction(Ir.IrLowering.IrNameOf(proc)))
           .OfType<IrFunction>()
           .Any(function => CalleeNames(function).Contains(name, StringComparer.OrdinalIgnoreCase))) {
         helpers.Remove(name);

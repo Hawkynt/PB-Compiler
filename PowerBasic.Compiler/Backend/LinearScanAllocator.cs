@@ -170,8 +170,18 @@ public sealed partial class LinearScanAllocator {
     return null;
   }
 
-  /// <summary>How many moves the allocator may make in total, however large the function is.</summary>
-  private const int _MOVE_CEILING = 512;
+  /// <summary>
+  /// How many moves the allocator may make in total, however large the function is.
+  ///
+  /// <para>
+  /// It was 512, and that number was taken when far less of the corpus routed. Measured again with the
+  /// bound lifted, exactly two functions in the whole of PB-SvgaLibrary pass 400 rounds and both
+  /// converge: Graphics_TexTriangle at 525 over 1477 virtual registers, and MakeGifLarge at 446 over
+  /// 893. The first is well inside its OWN allowance of 1541 and was being declined by the absolute
+  /// cap alone - which is the one bound that says nothing about the function it is refusing.
+  /// </para>
+  /// </summary>
+  private const int _MOVE_CEILING = 2048;
 
   /// <summary>
   /// How many spiller moves one function may cost before the back end gives it back.
@@ -179,9 +189,9 @@ public sealed partial class LinearScanAllocator {
   /// <para>
   /// Every round removes at most one value from the register file, so a converging allocation needs
   /// well under one move per virtual register the function started with. Measured over the whole corpus
-  /// with this bound lifted out of the way, the worst function takes 174 rounds with the optimizer on
-  /// and 174 with it off, well inside its own allowance; the constant term is for the small function
-  /// whose ratio is worst rather than whose count is.
+  /// with this bound lifted out of the way, the worst function takes 525 rounds over 1477 virtual
+  /// registers, a third of its own allowance; the constant term is for the small function whose ratio
+  /// is worst rather than whose count is.
   /// </para>
   /// <para>
   /// It is a BACKSTOP and no longer the thing that makes the loop stop: <see cref="AdvanceSpiller"/>
@@ -201,7 +211,7 @@ public sealed partial class LinearScanAllocator {
     var progress = Spiller.Progress.Of(function);
     for (var budget = moveBudget ?? BudgetFor(function); budget > 0; --budget) {
       // recomputed each round, because spilling renumbers the instructions the windows are measured in
-      var asmHeld = AsmHeldByIndex(function, out var asmConflict);
+      var asmHeld = AsmHeldByIndex(function, out var asmConflict, out var asmNamed);
       if (asmConflict is not null) {
         // a register an inline-asm statement left for a later one, destroyed in between by something
         // no allocation can move: there is nothing to choose, so the whole function goes back
@@ -213,7 +223,15 @@ public sealed partial class LinearScanAllocator {
         return assignment;
       }
       if (!AdvanceSpiller(function, ref progress)) {
-        reason = Blocker(function, asmHeld, target);
+        // nothing left to move, so the choice is no longer between a better allocation and a worse one
+        // but between an allocation and none. The reservations the asm text NAMED still stand; the ones
+        // merely inferred from a statement nobody could read are given up, because the alternative is
+        // giving up the function - and the path this one replaces holds none of them at all.
+        if (TryAllocate(function, asmNamed, target) is { } relaxed) {
+          reason = null;
+          return relaxed;
+        }
+        reason = Blocker(function, asmNamed, target);
         return null;
       }
       ++rounds;

@@ -35,9 +35,22 @@ public sealed class EmitLlvmTests {
     Assert.That(output, Does.Not.Contain("@sq"));        // sq() inlined away (INPUT's runtime calls remain)
   }
 
+  /// <summary>
+  /// The subject is a placeholder for "something the lowering has no answer for", and which construct
+  /// that is moves as the subset grows - it was <c>BEEP</c> until BEEP became a call to rt_sound, and
+  /// <c>WAIT</c> until the port spin became blocks over rt_inp.
+  ///
+  /// <para>
+  /// <c>GOTO DWORD</c> is the one least likely to move next. The lowering models a computed jump as an
+  /// indirect branch over the labels of the function it is IN, and this one jumps to a PROCEDURE
+  /// address - which is not in that set and cannot be put there. <c>Compile_GivenEveryStatementForm</c>
+  /// is the list that tracks the rest.
+  /// </para>
+  /// </summary>
   [Test]
   public void EmitLlvm_ForAnUnsupportedProgram_FailsWithADiagnostic() {
-    var (code, _, err) = RunEmit("BEEP");   // hardware command, not in the subset
+    var (code, _, err) = RunEmit(
+      "DIM gp AS DWORD\ngp = CODEPTR32(S6)\nGOTO DWORD gp\nEND\nSUB S6()\nEND SUB");
 
     Assert.That(code, Is.EqualTo(1));
     Assert.That(err, Does.Contain("--emit-llvm"));

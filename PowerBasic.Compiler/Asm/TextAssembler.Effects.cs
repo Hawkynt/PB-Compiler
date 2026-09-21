@@ -65,10 +65,16 @@ public sealed partial class TextAssembler {
     /// </summary>
     private static bool Describe(string mnemonic, List<Operand> operands, bool repeated, EffectBuilder e) {
       if (repeated) {
-        // the prefix counts CX down to zero, and REPE/REPNE also re-test ZF each iteration
+        // The prefix counts CX down to zero. Only the CONDITIONAL forms re-test ZF each iteration:
+        // a plain REP reads no flag this pass models, and saying it did made every `REP MOVSB` look
+        // like the consumer of whatever last set the flags. Around a FOR loop that is the loop's own
+        // increment, so the body's arithmetic became a promise the increment destroyed and
+        // Scroll_HardwareHorizontal declined for it. The flag a string move really does read is the
+        // DIRECTION flag, which nothing here writes and nothing here tracks.
         e.Read(Reg.CX);
         e.Define(Reg.CX);
-        e.ReadsFlags = true;
+        e.ReadsFlags = mnemonic is not ("MOVSB" or "MOVSW" or "MOVSD" or "STOSB" or "STOSW" or "STOSD"
+          or "LODSB" or "LODSW" or "LODSD" or "INSB" or "INSW" or "OUTSB" or "OUTSW");
       }
 
       switch (mnemonic) {
@@ -125,13 +131,17 @@ public sealed partial class TextAssembler {
           e.Define(Reg.DI);
           e.WritesFlags = true;
           return operands.Count == 0;
+        // the BYTE forms move AL and say nothing about AH - which LODSB below already knew, and these
+        // two did not because until the halves were tracked apart it made no difference. It makes one
+        // now: ! MOV AL, fillColor followed by ! STOSB inside a loop claimed the whole word, so the
+        // BASIC half of the loop was destroying a register nothing wanted.
         case "STOSB" or "STOSW" or "STOSD":
-          e.Read(Reg.AX);
+          e.Read(mnemonic == "STOSB" ? Reg.AL : Reg.AX);
           e.Read(Reg.DI);
           e.Define(Reg.DI);
           return operands.Count == 0;
         case "SCASB" or "SCASW" or "SCASD":
-          e.Read(Reg.AX);
+          e.Read(mnemonic == "SCASB" ? Reg.AL : Reg.AX);
           e.Read(Reg.DI);
           e.Define(Reg.DI);
           e.WritesFlags = true;
@@ -175,6 +185,16 @@ public sealed partial class TextAssembler {
           return true;
 
         // ---- arithmetic and logic --------------------------------------------------------------
+        // XOR r, r and SUB r, r are the ZEROING IDIOM, and the register they name is not an input:
+        // the answer is nought whatever it held. Reading them literally is the same mistake the
+        // PUSH/POP pair is - a use that consumes nobody's value - and it declined every Vesa*_HLine
+        // in the SVGA corpus, where ! XOR DI, DI opens the second asm run of a body whose first run
+        // ended in a POP and whose middle is a CALL.
+        case "XOR" or "SUB" when operands is [RegisterOperand first, RegisterOperand second]
+            && first.Register == second.Register:
+          e.Write(operands[0]);
+          e.WritesFlags = true;
+          return true;
         case "ADD" or "SUB" or "AND" or "OR" or "XOR":
           if (operands.Count != 2)
             return false;

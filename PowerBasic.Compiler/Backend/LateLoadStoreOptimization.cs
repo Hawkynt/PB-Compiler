@@ -69,7 +69,7 @@ public static class LateLoadStoreOptimization {
         foreach (var slot in original.Operands.OfType<MOperand.StackSlot>())
           MarkOverlappingReads(known, SlotKey.Of(slot));
 
-        if (original.Opcode is MOpcode.Call or MOpcode.InlineAsm || original.IsTerminator)
+        if (original.Opcode is MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm || original.IsTerminator)
           known.Clear();
         else if (original.Effect.WritesMemory)
           known.Clear();
