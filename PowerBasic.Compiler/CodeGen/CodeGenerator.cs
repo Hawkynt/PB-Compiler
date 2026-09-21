@@ -883,6 +883,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     if (model.Dialect.IsGwBasica())
       this._unreachableDeferred = UnreachableDeferredSource(model.MainBody, this.OptFolder);
 
+    // $CPU is target legality, not an optimization. Backend routing consults SelectionTarget before
+    // normal image emission reaches the later runtime setup, so initialize it before any routing query.
+    this._rt.Target = this.RuntimeTargetForRuntime();
+
     // Legacy bound-AST optimizations belong only to the direct-emitter oracle. Production compilation
     // lowers the bound program first and performs optimization in IrMiddleEndPipeline; letting these
     // mutate the model beforehand would retain a second middle end whose results the IR path inherits.

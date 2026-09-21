@@ -25,10 +25,6 @@ public sealed partial class CodeGenerator {
   /// caveat: removing/reordering an instruction must not be observable through a fault's resume point).
   /// </summary>
   private void ScheduleInlineAsmBlocks() {
-    // Target legality is a compile contract, not an optimization. Runtime specialization therefore
-    // sees $CPU even at $OPTIMIZE OFF; only canonicalization/scheduling remain optimization-gated.
-    this._rt.Target = this.RuntimeTargetForRuntime();
-
     if (!this.Optimize || !this.OptimizeSpeed || model.Dialect != Dialect.Pb36)
       return;
 
