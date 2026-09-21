@@ -246,8 +246,6 @@ public static class Driver {
         CheckOverflow = checkOverflow,
         CheckStack = checkStack,
         OptimizeSpeed = optimizeSpeed,
-        UseExperimentalBackend = true,
-        RequireBackend = true,
       };
       if (optimize is { } opt)
         generator.Optimize = opt;
