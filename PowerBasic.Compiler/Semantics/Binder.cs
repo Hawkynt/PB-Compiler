@@ -2086,15 +2086,26 @@ public sealed class Binder {
     : e.Builtin.ToString();
 
   /// <summary>
-  /// BASICA / GW-BASIC store SINGLE in Microsoft Binary Format, so map the IEEE
-  /// single scalar to <see cref="MbfType"/> in those dialects (QBasic and the rest
-  /// keep IEEE). DOUBLE (MBF 8-byte, 55-bit mantissa) is a later increment - it
-  /// stays IEEE for now.
+  /// BASICA / GW-BASIC store SINGLE and DOUBLE in Microsoft Binary Format, so map
+  /// both IEEE scalar types to their MBF storage widths in those dialects. QBasic
+  /// and the other dialects keep IEEE storage.
   /// </summary>
-  private PbType? AsMbfIfInterpreter(PbType? type)
-    => this._dialect.IsGwBasica() && type is ScalarType { Kind: ScalarKind.Single }
-      ? new MbfType(IsDouble: false)
-      : type;
+  private PbType? AsMbfIfInterpreter(PbType? type) {
+    if (!this._dialect.IsGwBasica())
+      return type;
+    return type switch {
+      ScalarType { Kind: ScalarKind.Single } => new MbfType(IsDouble: false),
+      ScalarType { Kind: ScalarKind.Double } => new MbfType(IsDouble: true),
+      _ => type,
+    };
+  }
+
+  private static PbType NumericValueType(PbType type) => type switch {
+    MbfType { IsDouble: false } => PbType.Single,
+    MbfType { IsDouble: true } => PbType.Double,
+    BcdType => PbType.Ext,
+    _ => type,
+  };
 
   /// <summary>
   /// PB 3.6: a DECLAREd (or defined) SUB/FUNCTION name used in a type position
@@ -3885,9 +3896,7 @@ public sealed class Binder {
         return this.BindExpression(byVal.Value, scope);
 
       case UnaryExpr u: {
-        var operand = this.BindExpression(u.Operand, scope);
-        if (operand is BcdType)
-          operand = PbType.Ext; // FIX/BCD compute as EXT on the x87 stack
+        var operand = NumericValueType(this.BindExpression(u.Operand, scope));
         if (operand is not ScalarType)
           this.Error(u.Position, "unary operator needs a numeric operand");
         if (u.Op == UnaryOp.Not)
@@ -4030,7 +4039,7 @@ public sealed class Binder {
       return PbType.String;
     if (IsStringLike(whenTrue) || IsStringLike(whenFalse))
       return this.ErrorType(t.Position, "ternary IF() branches must be both numeric or both string");
-    return Widest(whenTrue, whenFalse);
+    return Widest(NumericValueType(whenTrue), NumericValueType(whenFalse));
   }
 
   private static bool IsStringLike(PbType t) => t is StringType or FixedStringType or FlexType or AsciizType;
@@ -4101,11 +4110,11 @@ public sealed class Binder {
       return PbType.Integer;
     }
 
-    // FIX/BCD operands compute as EXT on the x87 stack
-    if (left is BcdType)
-      left = PbType.Ext;
-    if (right is BcdType)
-      right = PbType.Ext;
+    // Foreign numeric cell encodings are storage types, not arithmetic types. FIX/BCD and MBF all
+    // compute on the x87; letting MbfType reach Widest made it look non-numeric and silently typed
+    // `A# + B#` as INTEGER in BASICA/GW-BASIC.
+    left = NumericValueType(left);
+    right = NumericValueType(right);
 
     // pointers participate in arithmetic/comparison as raw 32-bit values
     if (left is PointerType)

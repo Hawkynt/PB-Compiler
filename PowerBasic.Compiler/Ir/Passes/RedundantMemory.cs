@@ -22,6 +22,11 @@ public static class RedundantMemory {
       foreach (var inst in block.Instructions.ToList()) {
         switch (inst) {
           case IrLoad load: {
+            // MBF is a storage encoding, not a register value. Forwarding an FPToMbf store into an
+            // MbfToFP load erases the cell address the target conversion routine requires, and the
+            // two casts cannot cancel because their composition performs the format's quantization.
+            if (load.Type.IsMbf)
+              break;
             var p = load.Pointer;
             if (stored.TryGetValue(p, out var sv) && sv.Type.Equals(load.Type)) {
               load.ReplaceAllUsesWith(sv);
@@ -40,7 +45,8 @@ public static class RedundantMemory {
             var p = store.Pointer;
             Invalidate(stored, p, store.Value.Type);
             Invalidate(loaded, p, store.Value.Type);
-            stored[p] = store.Value;
+            if (!store.Value.Type.IsMbf)
+              stored[p] = store.Value;
             break;
           }
           case IrCall:

@@ -247,6 +247,10 @@ public sealed partial class CodeGenerator {
         this.EmitMbfSingleLoad(place.Cell);
         break;
 
+      case MbfType { IsDouble: true }: // BASICA/GW-BASIC DOUBLE: widen the exact 56-bit MBF value to x87
+        this.EmitMbfDoubleLoad(place.Cell);
+        break;
+
       case ScalarType { ByteSize: 4 }:
         asm.Fld(Adjust(place.Cell, 0, OperandSize.Dword));
         break;
@@ -329,6 +333,10 @@ public sealed partial class CodeGenerator {
 
       case MbfType { IsDouble: false }: // BASICA/GW-BASIC SINGLE: narrow to IEEE32, convert to MBF32, store
         this.EmitMbfSingleStore(place);
+        break;
+
+      case MbfType { IsDouble: true }: // BASICA/GW-BASIC DOUBLE: round x87 to MBF's 56-bit significand
+        this.EmitMbfDoubleStore(place);
         break;
 
       case ScalarType { ByteSize: 4 }:
@@ -448,6 +456,120 @@ public sealed partial class CodeGenerator {
       asm.Pop(Reg.BX);
     asm.Mov(Adjust(place.Cell, 0, OperandSize.Word), Reg.AX);
     asm.Mov(Adjust(place.Cell, 2, OperandSize.Word), Reg.DX);
+  }
+
+  // MBF64 stores 55 explicit fraction bits in bytes 0..6, with the sign in byte 6 and the
+  // biased-128 exponent in byte 7. The x87's explicit 64-bit significand represents every MBF64
+  // value exactly: the MBF fraction occupies x87 bits 62..8 and the low eight bits are zero.
+  private void EmitMbfDoubleLoad(Mem cell) {
+    var asm = this._asm;
+    var zero = asm.DefineLabel();
+    var noSign = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    asm.Mov(Reg.AL, Adjust(cell, 7, OperandSize.Byte));
+    asm.Or(Reg.AL, Reg.AL);
+    asm.Jz(zero);
+    asm.Mov(Reg.AX, Adjust(cell, 0, OperandSize.Word));
+    asm.Mov(Mem.Word(this._scratch, 1), Reg.AX);
+    asm.Mov(Reg.AX, Adjust(cell, 2, OperandSize.Word));
+    asm.Mov(Mem.Word(this._scratch, 3), Reg.AX);
+    asm.Mov(Reg.AX, Adjust(cell, 4, OperandSize.Word));
+    asm.Mov(Mem.Word(this._scratch, 5), Reg.AX);
+    asm.Mov(Reg.AL, Adjust(cell, 6, OperandSize.Byte));
+    asm.Mov(Reg.DL, Reg.AL);
+    asm.And(Reg.AL, (Imm)0x7F);
+    asm.Or(Reg.AL, (Imm)0x80);
+    asm.Mov(Mem.Byte(this._scratch, 7), Reg.AL);
+    asm.Mov(Mem.Byte(this._scratch), (Imm)0);
+    asm.Mov(Reg.AL, Adjust(cell, 7, OperandSize.Byte));
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.Add(Reg.AX, (Imm)0x3F7E);                       // MBF exponent -> x87 biased exponent
+    asm.Test(Reg.DL, (Imm)0x80);
+    asm.Jz(noSign);
+    asm.Or(Reg.AH, (Imm)0x80);
+    asm.MarkLabel(noSign);
+    asm.Mov(Mem.Word(this._scratch, 8), Reg.AX);
+    asm.Fld(Mem.Tbyte(this._scratch));
+    asm.Jmp(done);
+    asm.MarkLabel(zero);
+    asm.Fldz();
+    asm.MarkLabel(done);
+  }
+
+  private void EmitMbfDoubleStore(Place place) {
+    var asm = this._asm;
+    var zero = asm.DefineLabel();
+    var overflow = asm.DefineLabel();
+    var noSign = asm.DefineLabel();
+    var packed = asm.DefineLabel();
+    var bxBased = place.Cell.Base == Reg.BX;
+    asm.Fstp(Mem.Tbyte(this._scratch));
+    if (bxBased)
+      asm.Push(Reg.BX);
+    this.EmitRoundMbfDoubleScratch(zero, overflow);
+    asm.Mov(Reg.AX, Mem.Word(this._scratch, 1));
+    asm.Mov(Mem.Word(this._scratch), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(this._scratch, 3));
+    asm.Mov(Mem.Word(this._scratch, 2), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(this._scratch, 5));
+    asm.Mov(Mem.Word(this._scratch, 4), Reg.AX);
+    asm.Mov(Reg.AL, Mem.Byte(this._scratch, 7));
+    asm.And(Reg.AL, (Imm)0x7F);
+    asm.Test(Reg.DH, (Imm)0x80);
+    asm.Jz(noSign);
+    asm.Or(Reg.AL, (Imm)0x80);
+    asm.MarkLabel(noSign);
+    asm.Mov(Mem.Byte(this._scratch, 6), Reg.AL);
+    asm.Mov(Mem.Byte(this._scratch, 7), Reg.BL);
+    asm.Jmp(packed);
+    asm.MarkLabel(overflow);
+    asm.Mov(Reg.AX, (Imm)6);                             // BASIC Overflow
+    asm.Call(asm.Lbl("rt_raise"));
+    asm.MarkLabel(zero);
+    asm.Xor(Reg.AX, Reg.AX);
+    for (var offset = 0; offset < 8; offset += 2)
+      asm.Mov(Mem.Word(this._scratch, offset), Reg.AX);
+    asm.MarkLabel(packed);
+    if (bxBased)
+      asm.Pop(Reg.BX);
+    for (var offset = 0; offset < 8; offset += 2) {
+      asm.Mov(Reg.AX, Mem.Word(this._scratch, offset));
+      asm.Mov(Adjust(place.Cell, offset, OperandSize.Word), Reg.AX);
+    }
+  }
+
+  /// <summary>
+  /// Rounds the extended significand in scratch to MBF64's 56 bits using nearest-even, translating
+  /// the exponent into BX and retaining the sign in DX. Values below MBF's range become zero; values
+  /// above it take the caller's Overflow path.
+  /// </summary>
+  private void EmitRoundMbfDoubleScratch(Label zero, Label overflow) {
+    var asm = this._asm;
+    var rounded = asm.DefineLabel();
+    var notTie = asm.DefineLabel();
+    asm.Mov(Reg.DX, Mem.Word(this._scratch, 8));
+    asm.Mov(Reg.BX, Reg.DX);
+    asm.And(Reg.BX, (Imm)0x7FFF);
+    asm.Or(Reg.BX, Reg.BX);
+    asm.Jz(zero);
+    asm.Add(Mem.Word(this._scratch), (Imm)0x80);          // discard 8 bits, round at their high bit
+    asm.Jnc(rounded);
+    foreach (var offset in new[] { 2, 4, 6 }) {
+      asm.Inc(Mem.Word(this._scratch, offset));
+      asm.Jnz(rounded);
+    }
+    asm.Mov(Mem.Word(this._scratch, 6), (Imm)0x8000);    // significand rounded through 2.0
+    asm.Inc(Reg.BX);
+    asm.MarkLabel(rounded);
+    asm.Cmp(Mem.Byte(this._scratch), (Imm)0);
+    asm.Jnz(notTie);
+    asm.And(Mem.Byte(this._scratch, 1), (Imm)0xFE);       // exact half: make the retained value even
+    asm.MarkLabel(notTie);
+    asm.Cmp(Reg.BX, (Imm)0x3F7E);
+    asm.Jbe(zero);
+    asm.Sub(Reg.BX, (Imm)0x3F7E);
+    asm.Cmp(Reg.BX, (Imm)0xFF);
+    asm.Ja(overflow);
   }
 
   /// <summary>
