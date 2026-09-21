@@ -46,7 +46,7 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("ownershipbatch", (fn, _) => Conservative(() => OwnershipBatching.Run(fn)))
     .AddAnalyzed("unroll", (fn, _) => Conservative(() => LoopUnroll.Run(fn)))
     .AddAnalyzed("instcombine", (fn, _) => Conservative(() => InstCombine.Run(fn)))
-    .AddAnalyzedWhen(optimizeForSpeed, "demandedbits", (fn, _) => Conservative(() => DemandedBits.Run(fn)))
+    .AddAnalyzedWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
     .AddAnalyzed("sccp", (fn, _) => Conservative(() => Sccp.Run(fn)))
     .AddAnalyzed("correlate", CorrelatedValueProp.Run)
     .AddAnalyzed("bbversion", (fn, _) => Conservative(() => BasicBlockVersioning.Run(fn)))
