@@ -366,21 +366,24 @@ public sealed class BackendWordNarrowingTests {
   }
 
   /// <summary>
-  /// <see cref="IrPassManager.Legalize"/> with its canonicalizer removed - the one pass whose absence
+  /// <see cref="IrMiddleEndPipeline.Legalize"/> with its canonicalizer removed - the one pass whose absence
   /// leaves the widened constant standing for the selector to reason about.
   /// </summary>
   private static IrPassManager LegalizeWithoutCombining() => new IrPassManager()
-    .Add("mem2reg", Mem2Reg.Run)
-    .Add("dce", Dce.Run)
-    .Add("simplifycfg", SimplifyCfg.Run);
+    .AddAnalyzed("mem2reg", Mem2Reg.Run)
+    .AddAnalyzed("dce", Dce.Run)
+    .AddAnalyzed("simplifycfg", (fn, _) => Changed(SimplifyCfg.Run(fn)));
 
   /// <summary>The optimizer with everything that rewrites loops or reassociates arithmetic taken out.</summary>
   private static IrPassManager Reduced() => new IrPassManager()
-    .Add("mem2reg", Mem2Reg.Run)
-    .Add("instcombine", InstCombine.Run)
-    .Add("sccp", Sccp.Run)
-    .Add("dce", Dce.Run)
-    .Add("simplifycfg", SimplifyCfg.Run);
+    .AddAnalyzed("mem2reg", Mem2Reg.Run)
+    .AddAnalyzed("instcombine", (fn, _) => Changed(InstCombine.Run(fn)))
+    .AddAnalyzed("sccp", (fn, _) => Changed(Sccp.Run(fn)))
+    .AddAnalyzed("dce", Dce.Run)
+    .AddAnalyzed("simplifycfg", (fn, _) => Changed(SimplifyCfg.Run(fn)));
+
+  private static IrPassResult Changed(int changes)
+    => changes == 0 ? IrPassResult.Unchanged : IrPassResult.Changed(changes);
 
   private static SemanticModel Bind(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);

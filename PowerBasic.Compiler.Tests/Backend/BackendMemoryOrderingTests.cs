@@ -117,7 +117,7 @@ public sealed class BackendMemoryOrderingTests {
   public void Select_GivenAWideGlobalAccess_ThenEveryMemoryOperandIsDeclaredAsOne() {
     var module = IrLowering.TryLowerModule(Bind(_staticLongProgram));
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset");
-    IrPassManager.Legalize().RunOnModule(module!);
+    IrMiddleEndPipeline.Legalize().RunOnModule(module!);
     var fn = module!.Functions.First(f => f.Name.Equals("Bump", StringComparison.OrdinalIgnoreCase));
 
     var machine = InstructionSelector.TrySelect(fn, out var reason);
