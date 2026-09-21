@@ -252,7 +252,7 @@ public sealed partial class CodeGenerator {
     // decision. A 386 keeps a LONG in a dword register, so narrowing it to a word costs a partial
     // register there rather than saving anything; only a 16-bit target profits from word storage.
     var narrowestStorageBits = this.Has32BitCpu ? 32 : 16;
-    var pipeline = this.Optimize
+    Func<IrPassManager> pipeline = this.Optimize
       ? () => IrMiddleEndPipeline.Standard(this.OptimizeSpeed, arithmeticCostModel: this.SelectionCost,
           minimumIntegerStorageBits: narrowestStorageBits, recoverIntegerArithmetic: true)
       : () => IrMiddleEndPipeline.Legalize(recoverIntegerArithmetic: true);
@@ -1199,6 +1199,8 @@ public sealed partial class CodeGenerator {
                     && !f.Name.StartsWith("llvm.", System.StringComparison.Ordinal))) {
       var external = model.ProcedureList.FirstOrDefault(p => p.IsExternal
         && p.Name.Equals(callee.Name, System.StringComparison.OrdinalIgnoreCase));
+      if (external is not null && !this._allowExternalCalls)
+        return $"routing: external procedure {external.Name} (no $LINK provides it)";
       if (external is not null && BackendCallAbiReason(external) is { } abiReason)
         return $"routing: external callee '{callee.Name}' {abiReason["filter: ".Length..]}";
       if (this.CalleeLabel(callee.Name) is null)

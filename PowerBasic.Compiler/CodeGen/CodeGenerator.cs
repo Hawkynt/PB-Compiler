@@ -880,8 +880,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // BASICA/GW dead interpreter text, decided before anything rewrites the body: which
     // DeferredSourceStmt nodes control cannot reach. Not gated on the optimizer - whether a program
     // COMPILES must not depend on it.
-    if (model.Dialect.IsGwBasica())
+    if (model.Dialect.IsGwBasica()) {
       this._unreachableDeferred = UnreachableDeferredSource(model.MainBody, this.OptFolder);
+      if (this.UseExperimentalBackend && !this.ValidateDeferredInterpreterSource())
+        return [];
+    }
 
     // $CPU is target legality, not an optimization. Backend routing consults SelectionTarget before
     // normal image emission reaches the later runtime setup, so initialize it before any routing query.
@@ -2981,6 +2984,83 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         && folder.TryFold(i.Condition) is { Integer: { } c } && c != 0 => Transfers(i.Then[^1]),
       _ => false,
     };
+  }
+
+  private bool ValidateDeferredInterpreterSource() {
+    var before = this.Errors.Count;
+    ValidateStatements(model.MainBody, this._unreachableDeferred);
+    return this.Errors.Count == before;
+
+    void ValidateStatements(IReadOnlyList<Statement> body, IReadOnlySet<DeferredSourceStmt>? unreachable = null) {
+      foreach (var statement in body)
+        switch (statement) {
+          case DeferredSourceStmt deferred when unreachable?.Contains(deferred) == true:
+            break;
+          case DeferredSourceStmt deferred:
+            this.Unsupported(deferred.Position,
+              $"deferred {model.Dialect.DisplayName()} source whose path is not provably unreachable: {deferred.Text}");
+            break;
+          case IfStmt conditional:
+            ValidateIf(conditional);
+            break;
+          case GroupStmt group:
+            ValidateStatements(group.Body);
+            break;
+          case SelectStmt select:
+            foreach (var arm in select.Arms)
+              ValidateStatements(arm.Body);
+            break;
+          case ForStmt loop:
+            ValidateStatements(loop.Body);
+            break;
+          case DoLoopStmt loop:
+            ValidateStatements(loop.Body);
+            break;
+          case ForEachStmt loop:
+            ValidateStatements(loop.Body);
+            break;
+          case TryStmt @try:
+            ValidateStatements(@try.Body);
+            if (@try.Catch is { } @catch)
+              ValidateStatements(@catch);
+            if (@try.Finally is { } @finally)
+              ValidateStatements(@finally);
+            break;
+          case DeferStmt defer:
+            ValidateStatements([defer.Deferred]);
+            break;
+        }
+    }
+
+    void ValidateIf(IfStmt conditional) {
+      if (this.OptFolder.TryFold(conditional.Condition)?.Integer is not { } first) {
+        ValidateStatements(conditional.Then);
+        foreach (var (_, body) in conditional.ElseIfs)
+          ValidateStatements(body);
+        if (conditional.Else is { } unknownElse)
+          ValidateStatements(unknownElse);
+        return;
+      }
+
+      if (first != 0) {
+        ValidateStatements(conditional.Then);
+        return;
+      }
+
+      foreach (var (condition, body) in conditional.ElseIfs) {
+        if (this.OptFolder.TryFold(condition)?.Integer is not { } folded) {
+          ValidateStatements(body);
+          continue;
+        }
+        if (folded == 0)
+          continue;
+        ValidateStatements(body);
+        return;
+      }
+
+      if (conditional.Else is { } selectedElse)
+        ValidateStatements(selectedElse);
+    }
   }
 
   private static bool ContainsDeferredSource(IfStmt statement) =>

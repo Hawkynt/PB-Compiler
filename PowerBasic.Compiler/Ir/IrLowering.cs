@@ -1867,6 +1867,9 @@ public sealed partial class IrLowering {
       // decline over. Reaching one that IS reachable still declines, below.
       case DeferredSourceStmt dead when this._unreachableDeferred?.Contains(dead) == true:
         break;
+      case DeferredSourceStmt deferred:
+        throw new IrLoweringException(
+          $"deferred {this._model.Dialect.DisplayName()} source whose path is not provably unreachable: {deferred.Text}");
 
       default: throw new IrLoweringException(statement is CommandStmt command
         ? $"unsupported statement: {command.Keyword}"
