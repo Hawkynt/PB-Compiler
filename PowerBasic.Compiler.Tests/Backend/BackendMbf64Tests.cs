@@ -171,4 +171,36 @@ public sealed class BackendMbf64Tests {
     90 PRINT PEEK(PY%)
     100 END
     """, dialect, optimize, "0|2");
+
+  /// <summary>
+  /// Given an interpreter-dialect DOUBLE array, when an element is written and read through array
+  /// addressing, then the element cell keeps the full MBF64 significand rather than IEEE64 bits.
+  /// </summary>
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void StaticArray_GivenAValueThatNeedsAllFiftySixSignificantBits_ThenEachElementUsesMbf64(
+      Dialect dialect, bool optimize) => BothPathsAgree("""
+    10 DIM A#(0 TO 1)
+    20 A#(0) = 1#
+    30 A#(1) = A#(0) + A#(0) / 36028797018963968#
+    40 P% = VARPTR(A#(1))
+    50 PRINT PEEK(P%)
+    60 PRINT PEEK(P% + 7)
+    70 END
+    """, dialect, optimize, "1|129");
+
+  /// <summary>
+  /// Given adjacent SINGLE array elements, when the second element is inspected, then the four-byte
+  /// stride reaches its own MBF32 sign and exponent bytes rather than an IEEE cell or its neighbour.
+  /// </summary>
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void StaticArray_GivenAdjacentSingles_ThenEachElementUsesMbf32(
+      Dialect dialect, bool optimize) => BothPathsAgree("""
+    10 DIM A!(0 TO 1)
+    20 A!(0) = 1!
+    30 A!(1) = -.5!
+    40 P% = VARPTR(A!(1))
+    50 PRINT PEEK(P% + 2)
+    60 PRINT PEEK(P% + 3)
+    70 END
+    """, dialect, optimize, "128|128");
 }

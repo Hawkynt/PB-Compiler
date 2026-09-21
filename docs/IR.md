@@ -89,8 +89,9 @@ The `LlvmEmitter` and `CEmitter` render an unsigned type as the same integer
 an MBF type rather than silently emitting it as IEEE. `IrLowering` emits the
 load/store casts and the x86-16 selector implements them with the width-specific
 `rt_mbfld`/`rt_mbfst` and `rt_mbfld8`/`rt_mbfst8` routines. Those routines take a
-near cell address, so global scalar cells route today; local-frame addresses, arrays
-and procedure ABI crossings still decline rather than lose their format.
+near cell address, so scalar cells and near static-array elements route through globals,
+frame allocas and computed element pointers. Dynamic/far-array elements and procedure
+ABI crossings still decline rather than lose their format.
 
 ## Core data model
 
