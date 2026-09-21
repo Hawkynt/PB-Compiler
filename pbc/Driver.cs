@@ -189,9 +189,9 @@ public static class Driver {
         }
 
         var pipeline = hostedOptimize
-          ? IrPassManager.Standard(optimizeForSpeed: hostedSpeed,
+          ? IrMiddleEndPipeline.Standard(optimizeForSpeed: hostedSpeed,
               enableFpLookupTables: dumpStage == "--emit-llvm")
-          : IrPassManager.Legalize();
+          : IrMiddleEndPipeline.Legalize();
 
         if (parallelLoops)
           foreach (var f in module.Functions)
