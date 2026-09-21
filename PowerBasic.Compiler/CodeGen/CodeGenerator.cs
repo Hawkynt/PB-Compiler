@@ -806,8 +806,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// whole image for a marker every epilogue carries.
   /// </para>
   /// </summary>
-  public bool UseExperimentalBackend { get; set; }
-    = System.Environment.GetEnvironmentVariable("PBC_X_BACKEND") is not "0";
+  internal bool UseExperimentalBackend { get; set; } = true;
 
   /// <summary>
   /// Routing is MANDATORY: a body the back end does not take is a compile error rather than a quiet
@@ -825,7 +824,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// no code to emit on either path, so it is nobody's coverage. Everything else counts.
   /// </para>
   /// </summary>
-  public bool RequireBackend { get; set; } = System.Environment.GetEnvironmentVariable("PBC_X_BACKEND_STRICT") != null;
+  internal bool RequireBackend { get; set; } = true;
 
 
   /// <summary>
