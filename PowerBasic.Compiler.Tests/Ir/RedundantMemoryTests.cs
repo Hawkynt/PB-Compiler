@@ -107,6 +107,28 @@ public sealed class RedundantMemoryTests {
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
+  /// <summary>
+  /// Given a foreign-format MBF cell, when a stored value is loaded in the same block, then the load
+  /// must remain address-bound: FPToMbf followed by MbfToFP is a quantization, not an identity, and
+  /// the x86-16 conversion routines require the cell address.
+  /// </summary>
+  [Test]
+  public void StoreThenLoad_GivenMbfStorage_DoesNotForwardAcrossTheEncodingBoundary() {
+    var value = new IrArgument(IrType.F64, 0, "value");
+    var fn = new IrFunction("f", IrType.F64, [value]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var slot = b.Alloca(IrType.Mbf64);
+    b.Store(b.Cast(IrCastOp.FPToMbf, value, IrType.Mbf64), slot);
+    var encoded = b.Load(IrType.Mbf64, slot);
+    b.Ret(b.Cast(IrCastOp.MbfToFP, encoded, IrType.F64));
+
+    var removed = RedundantMemory.Run(fn);
+
+    Assert.That(removed, Is.Zero);
+    Assert.That(fn.AllInstructions.OfType<IrLoad>(), Has.Exactly(1).Items);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
   [Test]
   public void Pipeline_ArrayStoreThenRead_FoldsThroughMemory() {
     var unit = Parser.Parse(Lexer.Tokenize("DIM a%(0 TO 3)\na%(1) = 5\nx% = a%(1)\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);

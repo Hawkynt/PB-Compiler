@@ -86,10 +86,38 @@ public sealed class IrDialectCarryTests {
   [Test]
   public void Lower_GivenAGwBasicSingle_ThenTheIrCarriesTheMbfFormat() {
     var module = Lower(_gwSingle, Dialect.Gw);
+    var instructions = module.Functions.SelectMany(f => f.Blocks).SelectMany(b => b.Instructions).ToList();
 
-    var mbf = module.Functions.SelectMany(f => f.Blocks).SelectMany(b => b.Instructions)
-      .Any(i => i.Type.IsMbf || i.Operands.Any(o => o.Type.IsMbf));
-    Assert.That(mbf, "the MBF storage format has to survive lowering, not be silently read as IEEE");
+    Assert.Multiple(() => {
+      Assert.That(instructions.Any(i => i.Type.IsMbf || i.Operands.Any(o => o.Type.IsMbf)),
+        "the MBF storage format has to survive lowering, not be silently read as IEEE");
+      Assert.That(instructions.OfType<IrBinary>().Select(i => i.Op), Does.Contain(IrBinaryOp.FMul),
+        "an MBF cell is numeric storage, not an integer expression");
+      Assert.That(instructions.OfType<IrCast>().Select(i => i.Op), Does.Not.Contain(IrCastOp.FPToSIRound));
+    });
+  }
+
+  /// <summary>
+  /// MBF64 carries 56 significant bits, three more than IEEE64. Its storage conversions therefore
+  /// use x87 extended as the compute-side type; an f64 bridge would lose bits before the MBF store
+  /// had a chance to apply its own rounding.
+  /// </summary>
+  [Test]
+  public void Lower_GivenAGwBasicDouble_ThenItsMbfConversionsPreserveTheFullPrecision() {
+    var module = Lower("10 A# = 1#\n20 B# = 36028797018963968#\n30 X# = A# + A# / B#\n40 END\n", Dialect.Gw);
+    var instructions = module.Functions.SelectMany(f => f.Blocks).SelectMany(b => b.Instructions).ToList();
+    var casts = instructions.OfType<IrCast>().ToList();
+    var arithmetic = instructions.OfType<IrBinary>().Where(i => i.Type.IsFloat).ToList();
+
+    Assert.Multiple(() => {
+      Assert.That(casts.Where(c => c.Op == IrCastOp.MbfToFP).Select(c => c.Type),
+        Is.Not.Empty.And.All.EqualTo(IrType.F80));
+      Assert.That(casts.Where(c => c.Op == IrCastOp.FPToMbf).Select(c => c.Value.Type),
+        Is.Not.Empty.And.All.EqualTo(IrType.F80));
+      Assert.That(arithmetic.Select(i => i.Type), Is.Not.Empty.And.All.EqualTo(IrType.F80));
+      Assert.That(arithmetic.Select(i => i.Op), Does.Contain(IrBinaryOp.FAdd).And.Contain(IrBinaryOp.FDiv));
+      Assert.That(casts.Select(c => c.Op), Does.Not.Contain(IrCastOp.FPToSIRound));
+    });
   }
 
   /// <summary>The same program under a dialect with IEEE floats must NOT be marked MBF.</summary>
@@ -170,16 +198,23 @@ public sealed class IrDialectCarryTests {
   }
 
   /// <summary>
-  /// The x86-16 back end must REFUSE the MBF value rather than compute on it: the x87 cannot read
-  /// those bits, and treating mbf32 as f32 reads a different number entirely.
+  /// The x86-16 back end must convert MBF at the cell boundary rather than compute on its bits: the
+  /// x87 cannot read the storage encoding, and treating mbf32 as f32 reads another number entirely.
   /// </summary>
   [Test]
-  public void Select_GivenMbfStorage_ThenTheBackEndDeclinesRatherThanMisreadIt() {
+  public void Select_GivenMbfStorage_ThenTheBackEndUsesTheConversionRoutines() {
     var module = Lower(_gwSingle, Dialect.Gw);
     IrPassManager.Standard().RunOnModule(module);
 
     var machine = PowerBasic.Compiler.Backend.InstructionSelector.TrySelect(module.FindFunction("main")!, out var why);
-    Assert.That(machine, Is.Null, "an MBF value must not reach the x87");
-    Assert.That(why, Does.Contain("Microsoft Binary Format"));
+    Assert.That(machine, Is.Not.Null, why);
+    var calls = machine!.AllInstructions.Where(i => i.Opcode == PowerBasic.Compiler.Backend.MOpcode.Call)
+      .Select(i => ((PowerBasic.Compiler.Backend.MOperand.LabelRef)i.Operands[0]).Name).ToList();
+
+    Assert.Multiple(() => {
+      Assert.That(why, Is.Null);
+      Assert.That(calls, Does.Contain("rt_mbfst"));
+      Assert.That(calls, Does.Contain("rt_mbfld"));
+    });
   }
 }

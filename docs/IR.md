@@ -74,20 +74,23 @@ family, and a back end reading *only* the IR has to be able to tell:
   binary operand pair, and the instruction carries the reading (`sdiv`/`udiv`,
   `slt`/`ult`, `sext`/`zext`). The verifier checks agreement by storage, not by
   exact type.
-- **Microsoft Binary Format.** BASICA, GW-BASIC and the BASCOM-heritage
-  QuickBASIC releases store SINGLE and DOUBLE in MBF — a different exponent bias
-  and layout, with no infinities or NaNs. MBF is *storage only*: the x87 cannot
-  compute on it, so a load converts to IEEE and a store converts back, through the
-  `MbfToFP`/`FPToMbf` casts. The verifier rejects arithmetic or a comparison on an
-  MBF operand, and `SameStorage` treats `mbf32` and `f32` as different encodings —
-  moving between them is a conversion, never a reinterpretation.
+- **Microsoft Binary Format.** BASICA and GW-BASIC store SINGLE and DOUBLE in MBF —
+  a different exponent bias and layout, with no infinities or NaNs. MBF is *storage
+  only*: the x87 cannot compute on it, so a load converts to a compute type and a
+  store converts back, through the `MbfToFP`/`FPToMbf` casts. MBF32 crosses that
+  boundary as `f32`; MBF64 crosses as `f80`, because its 56 significant bits do not
+  fit in binary64's 53. Arithmetic then runs at x87 width. The verifier rejects an
+  arithmetic operation or comparison on the MBF storage type itself,
+  and `SameStorage` treats `mbf32` and `f32` as different encodings — moving between
+  them is a conversion, never a reinterpretation.
 
 The `LlvmEmitter` and `CEmitter` render an unsigned type as the same integer
 (correct: the signedness is on the op by the time it reaches them) and **refuse**
-an MBF type rather than silently emitting it as IEEE. `IrLowering` maps MBF
-storage but declines a program that uses it until it emits the load/store
-conversions — the DOS emitter's `EmitMbfSingleLoad`/`EmitMbfSingleStore` are the
-model.
+an MBF type rather than silently emitting it as IEEE. `IrLowering` emits the
+load/store casts and the x86-16 selector implements them with the width-specific
+`rt_mbfld`/`rt_mbfst` and `rt_mbfld8`/`rt_mbfst8` routines. Those routines take a
+near cell address, so global scalar cells route today; local-frame addresses, arrays
+and procedure ABI crossings still decline rather than lose their format.
 
 ## Core data model
 

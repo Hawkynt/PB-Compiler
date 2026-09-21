@@ -3021,11 +3021,10 @@ public sealed partial class InstructionSelector {
   /// spilling yet - declines such a function rather than miscompiling it.
   /// </summary>
   /// <summary>
-  /// Microsoft Binary Format never reaches an instruction here. The x87 cannot compute on those bits
-  /// - they are a storage encoding with a different exponent bias and layout - so a value carrying
-  /// one has to be converted on load and back on store, which this back end does not emit. The IR now
-  /// CARRIES the format rather than refusing to lower it, which makes checking for it the back end's
-  /// job; treating mbf32 as f32 would read a different number.
+  /// Microsoft Binary Format reaches selection only in a load/conversion or conversion/store pair.
+  /// The x87 cannot compute on those bits - they are a storage encoding with another exponent bias
+  /// and layout - so the pair is emitted as an address-bound conversion routine. Any MBF value that
+  /// escapes that shape still declines; treating mbf32 as f32 or mbf64 as f64 reads another number.
   /// </summary>
 
   /// <summary>
@@ -4482,23 +4481,23 @@ public sealed partial class InstructionSelector {
   /// </para>
   /// </summary>
   /// <summary>
-  /// <c>MbfToFP</c>: the cell's near offset into AX, <c>rt_mbfld</c>, and the converted value comes
-  /// back on the x87 where every other float in this back end lives. The LOAD feeding this emitted
-  /// nothing - see IsMbfConversionShape - because the address is what the routine wants, not the
-  /// bits, and only here are both the cell and its consumer known.
+  /// <c>MbfToFP</c>: the cell's near offset into AX, the width-specific MBF load routine, and the
+  /// converted value comes back on the x87 where every other float in this back end lives. The LOAD
+  /// feeding this emitted nothing - see IsMbfConversionShape - because the address is what the
+  /// routine wants, not the bits, and only here are both the cell and its consumer known.
   /// </summary>
   private bool SelectMbfLoad(IrCast cast) {
     if (cast.Value is not IrLoad load || !this.TryNearAddress(load.Pointer, out var address))
       return false;
-    this.EmitMbfCall("rt_mbfld", address);
+    this.EmitMbfCall(load.Type.Bits == 64 ? "rt_mbfld8" : "rt_mbfld", address);
     this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
     return true;
   }
 
   /// <summary>
   /// <c>FPToMbf</c> and the store that consumes it: the value onto the x87, the cell's near offset
-  /// into AX, and <c>rt_mbfst</c> writes the four bytes where they belong. The cast itself emitted
-  /// nothing, for the reason the load did.
+  /// into AX, and the width-specific routine writes the MBF bytes where they belong. The cast itself
+  /// emitted nothing, for the reason the load did.
   /// </summary>
   private bool SelectMbfStore(IrStore store) {
     if (store.Value is not IrCast { Op: IrCastOp.FPToMbf } cast
@@ -4506,7 +4505,7 @@ public sealed partial class InstructionSelector {
         || !this.TryNearAddress(store.Pointer, out var address))
       return false;
     this.EmitX87(MOpcode.Fld, source, reads: true);
-    this.EmitMbfCall("rt_mbfst", address);
+    this.EmitMbfCall(cast.Type.Bits == 64 ? "rt_mbfst8" : "rt_mbfst", address);
     return true;
   }
 
