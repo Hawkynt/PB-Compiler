@@ -242,9 +242,9 @@ public sealed partial class CodeGenerator {
     // register there rather than saving anything; only a 16-bit target profits from word storage.
     var narrowestStorageBits = this.Has32BitCpu ? 32 : 16;
     var pipeline = this.Optimize
-      ? () => IrPassManager.Standard(this.OptimizeSpeed, arithmeticCostModel: this.SelectionCost,
+      ? () => IrMiddleEndPipeline.Standard(this.OptimizeSpeed, arithmeticCostModel: this.SelectionCost,
           minimumIntegerStorageBits: narrowestStorageBits)
-      : (Func<IrPassManager>)IrPassManager.Legalize;
+      : (Func<IrPassManager>)IrMiddleEndPipeline.Legalize;
     // Recovery runs BEFORE the optimizer as well as after. PB's integral arithmetic is float-shaped
     // in the IR, and constant folding on a float tree is lossy where the integer answer is not:
     // 32767 * 32767 is 1073676289, which an f32's 24-bit mantissa cannot hold, so folding it as a
