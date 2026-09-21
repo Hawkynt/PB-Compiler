@@ -8,4 +8,8 @@
     <PackageReference Include="FrameworkExtensions.Backports" Version="*" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="PowerBasic.Compiler.Tests" />
+  </ItemGroup>
+
 </Project>
