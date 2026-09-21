@@ -70,14 +70,15 @@ public sealed class IrPassManagerTests {
   }
 
   [Test]
-  public void PassManager_PublicSurface_HasNoLegacyFunctionRegistrationOrPipelinePolicy() {
-    var publicMethods = typeof(IrPassManager).GetMethods(System.Reflection.BindingFlags.Public
-      | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);
+  public void PassManager_Surface_HasNoLegacyFunctionRegistrationOrPipelinePolicy() {
+    var methods = typeof(IrPassManager).GetMethods(System.Reflection.BindingFlags.Public
+      | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance
+      | System.Reflection.BindingFlags.Static);
 
     Assert.Multiple(() => {
-      Assert.That(publicMethods.Any(m => m.Name == "Add"), Is.False,
+      Assert.That(methods.Any(m => m.Name == "Add"), Is.False,
         "function transforms must enter through AddAnalyzed and report preservation");
-      Assert.That(publicMethods.Any(m => m.Name is "Standard" or "Legalize"), Is.False,
+      Assert.That(methods.Any(m => m.Name is "Standard" or "Legalize"), Is.False,
         "pipeline policy belongs exclusively to IrMiddleEndPipeline");
     });
   }
