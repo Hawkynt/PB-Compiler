@@ -79,10 +79,8 @@ public static class Driver {
         case "--parallel-loops":
           parallelLoops = true;
           break;
-        case "--x-backend" or "--x-backend-strict":
-          break; // compatibility no-op: the IR/native backend is now mandatory
-        case "--no-x-backend":
-          stderr.WriteLine("pbc: --no-x-backend was removed; the IR/native backend is mandatory");
+        case "--x-backend" or "--x-backend-strict" or "--no-x-backend":
+          stderr.WriteLine($"pbc: {args[i]} was removed; the IR/native backend is mandatory");
           return 1;
         case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-c" or "--emit-obj" or "--emit-basic":
           dumpStage = args[i];
