@@ -837,15 +837,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// express reads differently from a body the allocator ran out of registers on.
   /// </para>
   /// </summary>
-  private void RaiseWhenRoutingIsMandatoryAndSomethingDeclined() {
+  private bool RaiseWhenRoutingIsMandatoryAndSomethingDeclined() {
     if (!this.RequireBackend || !this.UseExperimentalBackend)
-      return;
+      return false;
+
+    var declined = false;
     foreach (var (name, reason) in this.BackendDeclines) {
       if (reason.StartsWith("filter: external declaration", StringComparison.Ordinal))
         continue;
+      declined = true;
       this.Errors.Add(new(new("", 0, 0),
         $"routing is mandatory and '{name}' was not taken by the x86-16 back end: {reason}"));
     }
+    return declined;
   }
 
   /// <summary>Raises trappable runtime error <paramref name="code"/> when the preceding Jcc falls through.</summary>
@@ -915,10 +919,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.ResolveOptimizeObjective(optimizeMeta);
 
     // Asked HERE, after the optimizer has had its say about calling conventions and before a single
-    // byte is emitted, because the routing's answer depends on both. RequireBackend is off in every
-    // ordinary build; when it is on, a decline is the program failing to compile, which is what the
-    // program would do if CodeGen/ were already gone.
-    this.RaiseWhenRoutingIsMandatoryAndSomethingDeclined();
+    // byte is emitted, because the routing's answer depends on both. Production routing is mandatory:
+    // a decline is a compile failure and MUST NOT fall through to the legacy direct emitter. Tests may
+    // still opt into that emitter explicitly as a behavioural oracle.
+    if (this.RaiseWhenRoutingIsMandatoryAndSomethingDeclined())
+      return [];
 
     // P7: programs whose only effect is printing compile-time text lower to a
     // raw COM-style image of a few dozen bytes (docs/PB36.md) - a lean-output

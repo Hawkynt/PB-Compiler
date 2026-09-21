@@ -35,6 +35,24 @@ public sealed class ProductionBackendRetirementTests {
     });
   }
 
+  [Test]
+  public void CodeGenerator_GivenMandatoryRoutingDecline_ThenDoesNotEmitWithDirectFallback() {
+    var model = Binder.Bind(
+      Parser.Parse(Lexer.Tokenize("DECLARE SUB Missing()\nCALL Missing\nEND", "T.BAS", Dialect.Pb35),
+        "T.BAS", Dialect.Pb35),
+      Dialect.Pb35);
+    var generator = new CodeGenerator(model);
+
+    var image = generator.EmitExecutable();
+
+    Assert.Multiple(() => {
+      Assert.That(image, Is.Empty, "a mandatory routing decline must not produce a legacy-emitter image");
+      Assert.That(generator.BackendRoutedNames, Does.Not.Contain("main"));
+      Assert.That(generator.Errors.Select(e => e.Message),
+        Has.Some.Contains("routing is mandatory").Or.Some.Contains("external procedure"));
+    });
+  }
+
   [TestCase("--x-backend")]
   [TestCase("--x-backend-strict")]
   [TestCase("--no-x-backend")]
