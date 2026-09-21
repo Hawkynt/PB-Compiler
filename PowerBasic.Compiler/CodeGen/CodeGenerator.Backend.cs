@@ -254,21 +254,12 @@ public sealed partial class CodeGenerator {
     var narrowestStorageBits = this.Has32BitCpu ? 32 : 16;
     var pipeline = this.Optimize
       ? () => IrMiddleEndPipeline.Standard(this.OptimizeSpeed, arithmeticCostModel: this.SelectionCost,
-          minimumIntegerStorageBits: narrowestStorageBits)
-      : (Func<IrPassManager>)IrMiddleEndPipeline.Legalize;
-    // Recovery runs BEFORE the optimizer as well as after. PB's integral arithmetic is float-shaped
-    // in the IR, and constant folding on a float tree is lossy where the integer answer is not:
-    // 32767 * 32767 is 1073676289, which an f32's 24-bit mantissa cannot hold, so folding it as a
-    // float answered 1073676288. Recovering first lets the folding happen in integers, exactly as the
-    // direct emitter's x87 temporary (64 bits of mantissa) computes it.
-    foreach (var f in module.Functions)
-      if (!f.IsDeclaration)
-        IntegerRecovery.Run(f);
+          minimumIntegerStorageBits: narrowestStorageBits, recoverIntegerArithmetic: true)
+      : () => IrMiddleEndPipeline.Legalize(recoverIntegerArithmetic: true);
+    // Integer recovery is now the first analysis-aware function transform. Fixed-point execution
+    // naturally revisits it after later passes expose another float-shaped integer tree.
     pipeline().RunOnModule(module);
-    foreach (var f in module.Functions)
-      if (!f.IsDeclaration)
-        IntegerRecovery.Run(f);                  // again: the optimizer can expose trees the first pass could not see
-    pipeline().RunOnModule(module);              // clean up the now-dead float ops
+    pipeline().RunOnModule(module);
 
     // O0006 inlining. It runs LAST of the module-level steps and is followed by another full pass
     // sweep, because the point of inlining is not the call overhead - it is that the callee's body
@@ -282,9 +273,6 @@ public sealed partial class CodeGenerator {
     // program compiled to two objectives.
     if (this.Optimize && !this.OptimizeSize && Inliner.Run(module) > 0) {
       pipeline().RunOnModule(module);
-      foreach (var f in module.Functions)
-        if (!f.IsDeclaration)
-          IntegerRecovery.Run(f);
       pipeline().RunOnModule(module);
     }
     // GlobalDce deliberately does NOT run here, though inlining leaves callees unreferenced and it

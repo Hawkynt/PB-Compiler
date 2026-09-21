@@ -8,7 +8,8 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class IrMiddleEndPipeline {
 
   /// <summary>Builds the representation-only pipeline required even when source optimization is disabled.</summary>
-  public static IrPassManager Legalize() => new IrPassManager()
+  public static IrPassManager Legalize(bool recoverIntegerArithmetic = false) => new IrPassManager()
+    .AddAnalyzedWhen(recoverIntegerArithmetic, "integer-recovery", IntegerRecovery.Run)
     .AddAnalyzed("mem2reg-faithful", Mem2Reg.RunForFaithfulSelection)
     .AddAnalyzed("instcombine-faithful", (fn, _) => Conservative(() => InstCombine.RunForFaithfulSelection(fn)))
     .AddAnalyzed("dce", Dce.Run)
@@ -18,9 +19,11 @@ public static class IrMiddleEndPipeline {
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
       IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false,
       IIrArithmeticCostModel? arithmeticCostModel = null,
-      int minimumIntegerStorageBits = 16)
+      int minimumIntegerStorageBits = 16,
+      bool recoverIntegerArithmetic = false)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     .AddEarlyModulePassWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
+    .AddAnalyzedWhen(recoverIntegerArithmetic, "integer-recovery", IntegerRecovery.Run)
     .AddAnalyzed("storagenarrow", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
     .AddAnalyzed("mem2reg", Mem2Reg.Run)
     .AddAnalyzed("storagenarrow-ssa", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))

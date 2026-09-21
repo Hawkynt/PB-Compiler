@@ -188,7 +188,7 @@ public static class Driver {
 
         var pipeline = hostedOptimize
           ? IrMiddleEndPipeline.Standard(optimizeForSpeed: hostedSpeed,
-              enableFpLookupTables: dumpStage == "--emit-llvm")
+              enableFpLookupTables: dumpStage == "--emit-llvm", recoverIntegerArithmetic: true)
           : IrMiddleEndPipeline.Legalize();
 
         if (parallelLoops)
@@ -200,15 +200,9 @@ public static class Driver {
         pipeline.RunOnModule(module);
 
         if (hostedOptimize) {
-          foreach (var f in module.Functions)
-            if (!f.IsDeclaration)
-              IntegerRecovery.Run(f);
           pipeline.RunOnModule(module);
           Inliner.Run(module);
           pipeline.RunOnModule(module);
-          foreach (var f in module.Functions)
-            if (!f.IsDeclaration)
-              IntegerRecovery.Run(f);
           pipeline.RunOnModule(module);
           GlobalDce.Run(module);
         }

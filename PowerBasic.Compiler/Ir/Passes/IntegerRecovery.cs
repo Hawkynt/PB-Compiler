@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -14,10 +16,26 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </summary>
 public static class IntegerRecovery {
 
-  /// <summary>Rewrites integer-typed fptosi(float-tree) chains to integer arithmetic; returns how many were recovered.</summary>
-  public static int Run(IrFunction fn) {
-    // this one is called directly by the routing rather than through IrPassManager, so it carries the
-    // hands-off rule itself - see IrFunction.HasErrorHandler
+  /// <summary>Compatibility entry point for direct pass tests.</summary>
+  public static int Run(IrFunction fn) => RunCore(fn);
+
+  /// <summary>Runs integer recovery inside the shared analysis-aware function pipeline.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
+
+    var recovered = RunCore(fn);
+    return recovered == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(recovered, IrAnalysisSets.Cfg);
+  }
+
+  private static int RunCore(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    // Direct compatibility callers still need the hidden-control-flow guard. The production function
+    // pipeline also refuses error-handler/inline-asm bodies before dispatching any pass.
     if (fn.HasErrorHandler)
       return 0;
     var recovered = 0;
