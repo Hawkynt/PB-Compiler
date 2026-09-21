@@ -217,7 +217,9 @@ public sealed class BackendSpillTerminationTests {
     if (module is null)
       yield break;
 
-    var pipeline = optimize ? () => IrMiddleEndPipeline.Standard() : (Func<IrPassManager>)IrMiddleEndPipeline.Legalize;
+    Func<IrPassManager> pipeline = optimize
+      ? () => IrMiddleEndPipeline.Standard()
+      : () => IrMiddleEndPipeline.Legalize();
     foreach (var function in module.Functions)
       if (!function.IsDeclaration)
         IntegerRecovery.Run(function);
