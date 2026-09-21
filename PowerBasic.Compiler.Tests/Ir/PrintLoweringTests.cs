@@ -31,7 +31,7 @@ public sealed class PrintLoweringTests {
     var module = LowerModule("x% = 21 * 2\nPRINT x%\ny& = 100000\nPRINT y&\nPRINT\nEND");
 
     Assert.That(module, Is.Not.Null);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
     var text = LlvmEmitter.Emit(module!);
     Assert.That(text, Does.Contain("call void @rt_print_i16(i16 42)"));    // 21*2 folded, printed as INTEGER
@@ -46,7 +46,7 @@ public sealed class PrintLoweringTests {
     var module = LowerModule("s% = 0\nFOR i% = 1 TO 10\n s% = s% + i%\nNEXT i%\nPRINT s%\nEND");
 
     Assert.That(module, Is.Not.Null);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
     var main = module!.FindFunction("main")!;
     Assert.That(main.AllInstructions.OfType<IrCall>().Any(), Is.True);   // the print survives

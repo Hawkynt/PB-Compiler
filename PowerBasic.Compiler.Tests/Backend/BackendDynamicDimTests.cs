@@ -125,7 +125,7 @@ public sealed class BackendDynamicDimTests {
   [Test]
   public void Lower_GivenADimWithARuntimeBound_ThenItAllocatesRatherThanIndexingNull() {
     var module = IrLowering.TryLowerModule(Bind(_dimWithARuntimeBound))!;
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     var llvm = LlvmEmitter.Emit(module);
 
     Assert.Multiple(() => {

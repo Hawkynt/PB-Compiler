@@ -34,7 +34,7 @@ public sealed class RuntimeStepForTests {
   public void RuntimeStep_StaysVerifiableThroughTheFullPipeline() {
     var fn = Lower("d% = 2\ns% = 0\nFOR i% = 0 TO 9 STEP d%\n  s% = s% + i%\nNEXT i%\nEND")!;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     Assert.That(fn.AllInstructions.OfType<IrAlloca>(), Is.Empty);   // fully promoted

@@ -39,11 +39,11 @@ public sealed class BackendUnsignedPrintTests {
       PRINT d
       """), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var main = module.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     var m = InstructionSelector.TrySelect(main, out var reason);

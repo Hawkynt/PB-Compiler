@@ -100,11 +100,11 @@ public sealed class BackendGlobalAccessTests {
   private static IrModule Optimized(SemanticModel model) {
     var module = IrLowering.TryLowerModule(model);
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     return module;
   }
 

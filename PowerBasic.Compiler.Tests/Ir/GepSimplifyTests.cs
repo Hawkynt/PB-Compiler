@@ -31,7 +31,7 @@ public sealed class GepSimplifyTests {
     var unit = Parser.Parse(Lexer.Tokenize("DIM a%(0 TO 3)\na%(0) = 7\nx% = a%(0)\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);   // still well-formed after folding the zero gep
   }

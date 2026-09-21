@@ -230,7 +230,7 @@ public sealed class BackendOnGosubTests {
   public void Emit_GivenTheInlinedDispatchAndGosub_WhenRendered_ThenBothEmittersProduceIt() {
     var model = Bind(DispatchesThenGosubsInsideAnInlinedProcedure(1));
     var module = IrLowering.TryLowerModule(model)!;
-    var pipeline = IrPassManager.Standard();
+    var pipeline = IrMiddleEndPipeline.Standard();
     pipeline.RunOnModule(module);
     Inliner.Run(module);
     pipeline.RunOnModule(module);

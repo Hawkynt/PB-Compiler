@@ -181,7 +181,7 @@ public sealed class DeadStoreElimTests {
     var unit = Parser.Parse(Lexer.Tokenize("DIM a%(0 TO 3)\na%(1) = 1\na%(1) = 2\nx% = a%(1)\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     Assert.That(fn.AllInstructions.OfType<IrStore>().Count(), Is.LessThanOrEqualTo(1));  // the a%(1)=1 store is dead

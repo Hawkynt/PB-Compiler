@@ -175,7 +175,7 @@ public sealed class ReturnStructureReductionTests {
 
     AddCaller(module, "caller", callee, 8, 0);
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.Multiple(() => {
       Assert.That(secondStore.Parent, Is.Null, "O0281 is part of the standard whole-module pipeline");

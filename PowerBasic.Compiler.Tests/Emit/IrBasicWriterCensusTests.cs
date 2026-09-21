@@ -41,7 +41,7 @@ public sealed class IrBasicWriterCensusTests {
         module = IrLowering.TryLowerModule(model, out _);
         if (module is null)
           continue;
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
       } catch (Exception) {
         continue;
       }
@@ -110,7 +110,7 @@ public sealed class IrBasicWriterCensusTests {
           skipped.Add($"{dialect.CanonicalName()}/{name}: not lowered - {why}");
           continue;
         }
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
         rendered = IrBasicWriter.Write(module);
       } catch (Exception e) {
         // a module the writer declines is measured above, but WHICH module stopped counting is not,

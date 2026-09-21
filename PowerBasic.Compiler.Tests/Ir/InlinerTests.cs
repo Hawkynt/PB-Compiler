@@ -77,7 +77,7 @@ public sealed class InlinerTests {
     var unit = Parser.Parse(Lexer.Tokenize(
       "DECLARE FUNCTION sq%(BYVAL n%)\nr% = sq%(5)\n\nFUNCTION sq%(BYVAL n%)\n  sq% = n% OR n%\nEND FUNCTION", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var module = IrLowering.TryLowerModule(Binder.Bind(unit, Dialect.Pb35))!;
-    var pm = IrPassManager.Standard();
+    var pm = IrMiddleEndPipeline.Standard();
 
     pm.RunOnModule(module);                 // make the callee a clean single block
     Inliner.Run(module);

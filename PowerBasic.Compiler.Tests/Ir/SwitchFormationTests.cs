@@ -26,7 +26,7 @@ public sealed class SwitchFormationTests {
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var module = IrLowering.TryLowerModule(model);
     Assert.That(module, Is.Not.Null, "the program must lower");
-    IrPassManager.Standard(true).RunOnModule(module!);
+    IrMiddleEndPipeline.Standard(true).RunOnModule(module!);
     var main = module!.FindFunction("main");
     Assert.That(main, Is.Not.Null);
     return main!;

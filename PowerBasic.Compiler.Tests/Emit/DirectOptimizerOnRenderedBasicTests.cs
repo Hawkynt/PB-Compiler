@@ -81,7 +81,7 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
       var module = IrLowering.TryLowerModule(model, out _);
       if (module is null)
         return null;
-      IrPassManager.Standard().RunOnModule(module);
+      IrMiddleEndPipeline.Standard().RunOnModule(module);
       return IrBasicWriter.Write(module);
     } catch (Exception) {
       return null;

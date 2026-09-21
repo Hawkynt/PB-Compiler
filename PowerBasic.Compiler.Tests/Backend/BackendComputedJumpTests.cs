@@ -91,7 +91,7 @@ public sealed class BackendComputedJumpTests {
       """);
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     var jump = main.Blocks.Select(b => b.Terminator).OfType<IrIndirectBr>().Single();

@@ -162,7 +162,7 @@ public sealed class IndirectCallPromotionTests {
     var (module, target, caller, handler, call, _) = Program();
     call.SetIndirectTargetProfile(new IrIndirectCallProfile(100, new IrIndirectCallTarget(target, 90)));
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.Multiple(() => {
       Assert.That(caller.AllInstructions.OfType<IrCall>().Any(item => ReferenceEquals(item.Callee, target)), Is.True);

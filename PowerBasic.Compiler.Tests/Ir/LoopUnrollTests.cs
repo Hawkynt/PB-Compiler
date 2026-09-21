@@ -198,7 +198,7 @@ public sealed class LoopUnrollTests {
       END
       """), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     var main = module!.FindFunction("main")!;
     Assert.That(main.Blocks.SelectMany(b => b.Instructions).OfType<IrBinary>(), Is.Empty,
@@ -275,7 +275,7 @@ public sealed class LoopUnrollTests {
       END
       """), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     var main = module!.FindFunction("main")!;
     Assert.That(main.Blocks.Any(b => b.Label.StartsWith("unroll4.", StringComparison.Ordinal)),

@@ -40,7 +40,7 @@ public sealed class BackendFloatPhiTests {
   public void Phi_GivenAFloatCarriedRoundALoop_ThenItSelectsThroughAFrameCell() {
     var module = IrLowering.TryLowerModule(Bind(_carriesAFloat), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     Assert.That(main.AllInstructions.OfType<IrPhi>().Any(p => p.Type.IsFloat), Is.True,

@@ -50,11 +50,11 @@ public sealed class BackendResidencyTests {
     // 386 keeps a LONG in a dword register, so narrowing its storage to a word would cost the very
     // residency this fixture measures.
     var narrowestStorageBits = target.CpuLevel >= 386 ? 32 : 16;
-    IrPassManager.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
+    IrMiddleEndPipeline.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
+    IrMiddleEndPipeline.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
     var main = module.FindFunction("main");
     Assert.That(main, Is.Not.Null);
     var machine = InstructionSelector.TrySelect(main!, out var reason, target);
@@ -311,11 +311,11 @@ public sealed class BackendResidencyTests {
         module = IrLowering.TryLowerModule(model);
         if (module is null)
           continue;
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
         foreach (var f in module.Functions)
           if (!f.IsDeclaration)
             IntegerRecovery.Run(f);
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
       } catch (Exception) {
         continue;                                  // the census owns the decline histogram; this owns allocation
       }

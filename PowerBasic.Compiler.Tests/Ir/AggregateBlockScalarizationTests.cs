@@ -15,7 +15,7 @@ public sealed class AggregateBlockScalarizationTests {
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
 
-    var pipeline = IrPassManager.Standard();
+    var pipeline = IrMiddleEndPipeline.Standard();
     pipeline.VerifyEachPass = true;
     pipeline.RunOnModule(module!);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);

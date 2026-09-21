@@ -130,7 +130,7 @@ public sealed class BackendFieldTests {
   [Test]
   public void Select_GivenAFieldRegistration_ThenTheCellAddressIsAnImmediateOffsetInBx() {
     var module = IrLowering.TryLowerModule(Bind(_fieldRoundTrip));
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     var main = module!.Functions.First(f => f.Name == "main");
     var m = InstructionSelector.TrySelect(main, out var reason);
     Assert.That(m, Is.Not.Null, $"main declined: {reason}");

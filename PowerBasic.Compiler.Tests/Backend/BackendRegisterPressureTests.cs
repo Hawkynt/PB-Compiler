@@ -93,11 +93,11 @@ public sealed class BackendRegisterPressureTests {
   private static MFunction Select(string source, string function) {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset: " + why);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     var fn = module.Functions.First(f => f.Name.Equals(function, StringComparison.OrdinalIgnoreCase));
     var machine = InstructionSelector.TrySelect(fn, out var reason);
     Assert.That(machine, Is.Not.Null, $"{function} declined at selection: {reason}");

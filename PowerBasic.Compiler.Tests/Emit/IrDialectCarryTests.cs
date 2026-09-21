@@ -176,7 +176,7 @@ public sealed class IrDialectCarryTests {
   [Test]
   public void Select_GivenMbfStorage_ThenTheBackEndDeclinesRatherThanMisreadIt() {
     var module = Lower(_gwSingle, Dialect.Gw);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var machine = PowerBasic.Compiler.Backend.InstructionSelector.TrySelect(module.FindFunction("main")!, out var why);
     Assert.That(machine, Is.Null, "an MBF value must not reach the x87");

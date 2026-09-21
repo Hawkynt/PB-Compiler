@@ -34,11 +34,11 @@ public sealed class BackendQuadPrintTests {
   private static MFunction Select(string source) {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var fn in module!.Functions)
       if (!fn.IsDeclaration)
         IntegerRecovery.Run(fn);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var main = module.Functions.First(fn => fn.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     var machine = InstructionSelector.TrySelect(main, out var reason);

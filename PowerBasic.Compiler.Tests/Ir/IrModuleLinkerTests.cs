@@ -47,7 +47,7 @@ public sealed class IrModuleLinkerTests {
       Assert.That(scale.IsDeclaration, Is.False, "linking must not consume the input definition");
     });
 
-    IrPassManager.Standard().RunOnModule(linked);
+    IrMiddleEndPipeline.Standard().RunOnModule(linked);
 
     var ret = linkedScale.AllInstructions.OfType<IrRet>().Single();
     Assert.Multiple(() => {

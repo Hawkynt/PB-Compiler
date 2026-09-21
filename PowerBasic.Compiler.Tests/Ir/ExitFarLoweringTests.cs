@@ -85,7 +85,7 @@ public sealed class ExitFarLoweringTests {
     Assert.That(main.HasErrorHandler, Is.True, "arming an unwind point has to mark the function");
 
     var before = main.Blocks.Select(b => (b.Label, Count: b.Instructions.Count)).ToList();
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.That(module.FindFunction("main")!.Blocks.Select(b => (b.Label, Count: b.Instructions.Count)),
       Is.EqualTo(before), "the optimizer changed a function whose control flow it cannot see");
@@ -109,7 +109,7 @@ public sealed class ExitFarLoweringTests {
         EXIT FAR
       END SUB
       """);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var main = module.FindFunction("main")!;
     var arm = Calls(main).First(c => (c.Callee as IrFunction)?.Name == "rt_efar_arm");

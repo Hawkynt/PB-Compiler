@@ -84,6 +84,17 @@ public sealed class IrPassManagerTests {
   }
 
   [Test]
+  public void Standard_SourceContainsNoLegacyFunctionRegistrations() {
+    var root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
+    var source = File.ReadAllLines(Path.Combine(root, "PowerBasic.Compiler", "Ir", "Passes", "IrMiddleEndPipeline.cs"));
+    var legacy = source.Where(line => System.Text.RegularExpressions.Regex.IsMatch(
+      line, @"^\s*\.Add(?:When)?\s*\("));
+
+    Assert.That(legacy, Is.Empty,
+      "production function optimizers must register through AddAnalyzed/AddAnalyzedWhen only");
+  }
+
+  [Test]
   public void FunctionPipeline_PublicSurface_HasNoLegacyAdapter() {
     var publicMethods = typeof(IrFunctionPassPipeline).GetMethods(System.Reflection.BindingFlags.Public
       | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);

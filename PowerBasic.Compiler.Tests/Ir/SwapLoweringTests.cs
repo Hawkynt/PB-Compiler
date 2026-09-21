@@ -33,7 +33,7 @@ public sealed class SwapLoweringTests {
   public void Swap_ThroughPipeline_ExchangesTheConstants() {
     // after SWAP, a holds 2 and b holds 1; with a use we can observe the exchange
     var fn = Lower("a% = 1\nb% = 2\nSWAP a%, b%\nc% = a% - b%\nEND")!;
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);   // a-b = 2-1 = 1, fully foldable and verifiable
   }

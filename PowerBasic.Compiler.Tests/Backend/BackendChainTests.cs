@@ -200,7 +200,7 @@ public sealed class BackendChainTests {
   [Test]
   public void Select_GivenAChainWrite_ThenTheBufferOffsetIsInDxAndTheCountInCx() {
     var module = IrLowering.TryLowerModule(Bind(_chainToSelf));
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     var main = module!.Functions.First(f => f.Name == "main");
     var m = InstructionSelector.TrySelect(main, out var reason);
     Assert.That(m, Is.Not.Null, $"main declined: {reason}");

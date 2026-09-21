@@ -66,7 +66,7 @@ public sealed class O0325ArrayPaddingAlignmentTests {
     var element = entry.Append(new IrGep(array, index, IrType.I16));
     var value = entry.Append(new IrLoad(IrType.I16, element));
     entry.Append(new IrRet(value));
-    var passes = IrPassManager.Standard(
+    var passes = IrMiddleEndPipeline.Standard(
       optimizeForSpeed: false,
       includeModulePasses: false,
       dataLayoutTarget: new IrDataLayoutTarget(PointerBits: 16, VectorBytes: 8));

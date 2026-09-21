@@ -45,7 +45,7 @@ public sealed class InlinerErrorHandlerTests {
   public void Inline_GivenACalleeWithAnArmedHandler_ThenItIsNotInlined() {
     var module = IrLowering.TryLowerModule(Bind(_handlerInAProcedure), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     Assert.That(Inliner.Run(module!), Is.Zero, "a function whose blocks a fault can jump to cannot be copied");
   }

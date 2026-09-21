@@ -57,7 +57,7 @@ public sealed class InlineAsmLoweringTests {
     Assert.That(main.HasInlineAsm, Is.True);
 
     var before = IrPrinter.Print(main);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.That(IrPrinter.Print(main), Is.EqualTo(before),
       "a function whose asm the IR cannot read must not be rewritten around it");
@@ -89,7 +89,7 @@ public sealed class InlineAsmLoweringTests {
     Assert.That(clean.HasInlineAsm, Is.False);
     Assert.That(dirty.HasInlineAsm, Is.True);
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     Assert.That(clean.AllInstructions.OfType<IrAlloca>().ToList(), Is.Empty,
       "the clean procedure should still have been promoted to SSA");
   }

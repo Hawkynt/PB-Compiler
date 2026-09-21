@@ -33,9 +33,9 @@ public sealed class DeadLoopEliminationTests {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
     Recover();
-    IrPassManager.Standard(forSpeed).RunOnModule(module!);
+    IrMiddleEndPipeline.Standard(forSpeed).RunOnModule(module!);
     Recover();
-    IrPassManager.Standard(forSpeed).RunOnModule(module!);
+    IrMiddleEndPipeline.Standard(forSpeed).RunOnModule(module!);
     return module!.Functions.Single(fn => fn.Name == "main");
 
     void Recover() {
@@ -306,7 +306,7 @@ public sealed class DeadLoopEliminationTests {
     foreach (var fn in module!.Functions)
       if (!fn.IsDeclaration)
         IntegerRecovery.Run(fn);
-    IrPassManager.Standard(optimizeForSpeed: true).RunOnModule(module);
+    IrMiddleEndPipeline.Standard(optimizeForSpeed: true).RunOnModule(module);
     Assert.That(Run(IrBasicWriter.Write(module)), Is.EqualTo(Run(source)));
   }
 

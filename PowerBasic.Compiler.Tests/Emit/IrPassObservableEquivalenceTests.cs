@@ -241,7 +241,7 @@ public sealed class IrPassObservableEquivalenceTests {
     var failures = new StringBuilder();
     foreach (var (program, source) in _programs) {
       var expected = Run(source);
-      var got = RunThrough(source, m => IrPassManager.Standard().RunOnModule(m));
+      var got = RunThrough(source, m => IrMiddleEndPipeline.Standard().RunOnModule(m));
       if (got != expected)
         failures.AppendLine($"  '{program}': expected <{expected}> got <{got}>");
     }
@@ -256,10 +256,10 @@ public sealed class IrPassObservableEquivalenceTests {
   [Test]
   public void Pipeline_GivenItRunsTwice_ThenTheSecondRunChangesNothingObservable() {
     foreach (var (program, source) in _programs) {
-      var once = RunThrough(source, m => IrPassManager.Standard().RunOnModule(m));
+      var once = RunThrough(source, m => IrMiddleEndPipeline.Standard().RunOnModule(m));
       var twice = RunThrough(source, m => {
-        IrPassManager.Standard().RunOnModule(m);
-        IrPassManager.Standard().RunOnModule(m);
+        IrMiddleEndPipeline.Standard().RunOnModule(m);
+        IrMiddleEndPipeline.Standard().RunOnModule(m);
       });
       Assert.That(twice, Is.EqualTo(once), $"program '{program}' differs when the pipeline runs twice");
     }

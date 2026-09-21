@@ -170,7 +170,7 @@ public sealed class WholeProgramDevirtualizationTests {
     entry.Append(new IrCall(IrType.I16, invoke, [target, Const(2)]));
     entry.Append(new IrRet());
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.That(indirect.Callee, Is.SameAs(target));
     Assert.That(IrVerifier.Verify(module), Is.Empty);

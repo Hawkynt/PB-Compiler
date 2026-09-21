@@ -214,7 +214,7 @@ public sealed class ModuleLoweringTests {
       "  poly% = n% * n% OR 1\n" +
       "END FUNCTION");
     Assert.That(module, Is.Not.Null);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
 
     RequireTool("llvm-as");

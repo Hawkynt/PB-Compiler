@@ -136,7 +136,7 @@ public sealed class IrAnalysisManagerTests {
   }
 
   [Test]
-  public void Run_GivenAChangingLegacyPass_ThenConservativelyRecomputesAnalyses() {
+  public void Run_GivenAChangingConservativePass_ThenRecomputesAnalyses() {
     var function = new IrFunction("test", IrType.Void);
     var computations = 0;
     var analysis = new IrAnalysisKey<int>("probe", (_, _) => ++computations);
@@ -145,7 +145,7 @@ public sealed class IrAnalysisManagerTests {
         analyses.Get(analysis);
         return IrPassResult.Unchanged;
       })
-      .AddLegacy("legacy", _ => 1)
+      .Add("conservative", (_, _) => IrPassResult.Changed(1))
       .Add("read-after", (_, analyses) => {
         analyses.Get(analysis);
         return IrPassResult.Unchanged;

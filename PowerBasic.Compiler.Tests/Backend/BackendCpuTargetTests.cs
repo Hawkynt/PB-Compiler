@@ -184,11 +184,11 @@ public sealed class BackendCpuTargetTests {
 
     var module = IrLowering.TryLowerModule(model);
     Assert.That(module, Is.Not.Null);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var fn in module!.Functions)
       if (!fn.IsDeclaration)
         IntegerRecovery.Run(fn);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var offenders = new List<string>();
     var shifts = 0;

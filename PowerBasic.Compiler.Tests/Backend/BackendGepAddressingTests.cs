@@ -29,7 +29,7 @@ public sealed class BackendGepAddressingTests {
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     var fn = module!.Functions.First(f => f.Name.Equals(procedure, StringComparison.OrdinalIgnoreCase));
     var machine = InstructionSelector.TrySelect(fn, out var reason);
     Assert.That(machine, Is.Not.Null, $"{procedure} declined: {reason}");

@@ -242,11 +242,11 @@ public sealed class BackendCoverageTests {
       }
 
       try {
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
         foreach (var f in module.Functions)
           if (!f.IsDeclaration)
             IntegerRecovery.Run(f);
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
       } catch (Exception) {
         continue;
       }

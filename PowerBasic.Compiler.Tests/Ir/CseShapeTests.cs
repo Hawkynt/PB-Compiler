@@ -25,7 +25,7 @@ public sealed class CseShapeTests {
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     return module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
   }
 
