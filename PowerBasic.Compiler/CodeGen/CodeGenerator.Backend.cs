@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 20008)
-Total output lines: 1339
-
 using System.Linq;
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
@@ -660,7 +657,8 @@ public sealed partial class CodeGenerator {
   /// <summary>
   /// Emits the IR's DATA pool and read cursor, when a routed function asked for them. The cursor is
   /// a DWORD because the IR types it i32 and reads it back at that width; it starts at zero, which
-  /// is the INDEX of the first item ra…8 tokens truncated…/summary>
+  /// is the INDEX of the first item rather than an address.
+  /// </summary>
   private void EmitBackendDataPool(Asm.Assembler asm) {
     // One dword per shared dynamic-array descriptor field: the far pointer is a segment/offset pair
     // and both the lower bound and the extent are 32-bit, which is what the IR loads and stores
