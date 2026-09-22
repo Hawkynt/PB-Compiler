@@ -187,8 +187,8 @@ public sealed class IrBasicWriter {
   /// after the blocks that read them. Reverse post-order fixes that for everything except a phi's
   /// back-edge input, which is why phis are named up front instead.
   ///
-  /// Unreachable blocks keep their original relative order at the end: they cannot be ordered by a
-  /// walk that never reaches them, and dropping them would silently lose code.
+  /// Unreachable blocks are deliberately omitted. This is a target emitter, not an IR dump: dead
+  /// IF/ELSE and SELECT/CASE arms must not reappear as labelled PB3.5 code after CFG simplification.
   /// </summary>
   private static IEnumerable<IrBasicBlock> Ordered(IrFunction function) {
     var visited = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
@@ -196,7 +196,7 @@ public sealed class IrBasicWriter {
     if (function.Entry is { } entry)
       Walk(entry);
     post.Reverse();
-    return post.Concat(function.Blocks.Where(b => !visited.Contains(b)));
+    return post;
 
     void Walk(IrBasicBlock block) {
       if (!visited.Add(block))
