@@ -44,6 +44,10 @@ public sealed class IrBackendModule {
     }
 
     module.RepresentationStage = IrRepresentationStage.OptimizedSsa;
+    if (!IrLowIrLegalization.TryLegalize(module, out var legalizationErrors)) {
+      declinedBecause = "optimized IR failed Low IR legalization: " + string.Join("; ", legalizationErrors);
+      return null;
+    }
     if (module.RepresentationStage < IrBackendTargetContract.RequiredInputStage(options.Target))
       throw new InvalidOperationException($"target '{options.Target}' requires {IrBackendTargetContract.RequiredInputStage(options.Target)}");
 

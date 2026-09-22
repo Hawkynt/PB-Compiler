@@ -531,13 +531,13 @@ registers it defines"). What still declines is a register something in between D
 the whole caller-saved file, and no allocation can answer that.
 
 **Routing now honours the optimizer flag, and the thing that made that hard was not what this
-document said it was.** `CodeGenerator.Backend.cs` used to run `IrPassManager.Standard(...)` whenever
+document said it was.** `CodeGenerator.Backend.cs` used to run `IrMiddleEndPipeline.Standard(...)` whenever
 a function routed, so a `--no-optimize` build of a routed function was still fully optimized. That
 was defensible while the gate was observational - `tests/diff` compiles pb35 with the optimizer OFF
 and passed routed either way - but it made the battery's two builds of a routed scenario ONE build,
 and it made `--no-optimize` a false statement about a routed function.
 
-`IrPassManager.Legalize()` is the set that survives the flag, and each member is present because the
+`IrMiddleEndPipeline.Legalize()` is the set that survives the flag, and each member is present because the
 selector consumes the form it produces. Its faithful `mem2reg` variant builds SSA for compiler
 temporaries while retaining BASIC source variables whose observable storage must survive. Its
 faithful `instcombine` variant canonicalizes address and arithmetic shapes without folding a
@@ -1013,7 +1013,7 @@ inherit them.
   arriving from the other direction.
 
 * **`smaller-than-unoptimized` now holds for a routed function - CLOSED.** Routing used to run
-  `IrPassManager.Standard` whatever `Optimize` said, so the battery's two builds of a routed scenario
+  `IrMiddleEndPipeline.Standard` whatever `Optimize` said, so the battery's two builds of a routed scenario
   were the same build; 15 of the 23 rows failed routed for that reason alone. Gating the pipeline on
   the flag is the repair (above), and 13 of the 15 close with it. The two that do not are the two
   things this back end does whatever the flag says: `UnreachableCodeDropped` (a block nothing reaches

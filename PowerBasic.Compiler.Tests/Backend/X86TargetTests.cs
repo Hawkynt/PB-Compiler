@@ -1,6 +1,7 @@
 using PowerBasic.Compiler.Backend.Targets;
 using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -71,5 +72,13 @@ public sealed class X86TargetTests {
       Is.EqualTo(IrRepresentationStage.OptimizedSsa));
     Assert.That(IrBackendTargetContract.RequiredInputStage(IrBackendTarget.X86_16),
       Is.EqualTo(IrRepresentationStage.OptimizedSsa));
+  }
+
+  [Test]
+  public void LowIrBoundaryRequiresIndependentVerification() {
+    var module = new IrModule("test");
+    Assert.That(IrLowIrLegalization.TryLegalize(module, out var errors), Is.True);
+    Assert.That(errors, Is.Empty);
+    Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.LowIr));
   }
 }
