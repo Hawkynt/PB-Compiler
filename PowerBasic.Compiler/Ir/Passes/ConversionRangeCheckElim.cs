@@ -20,7 +20,7 @@ public static class ConversionRangeCheckElim {
   /// <summary>Folds provably decided ordered float comparisons; returns how many were replaced.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "conversion-rangefold", Run);
   }
 
   /// <summary>Runs conversion-range folding using the shared floating-point domain analysis.</summary>

@@ -13,7 +13,7 @@ public static class DemandedBits {
   /// <summary>Runs demanded-bit simplification over one function; returns the number of rewrites.</summary>
   public static int Run(IrFunction function) {
     ArgumentNullException.ThrowIfNull(function);
-    return Run(function, new IrAnalysisManager(function)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(function, "demandedbits", Run);
   }
 
   /// <summary>Runs demanded-bit simplification using the shared known-bit query domain.</summary>

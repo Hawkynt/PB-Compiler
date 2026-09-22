@@ -25,7 +25,7 @@ public static class PointerCheckElim {
   /// <summary>Replaces decided pointer-null comparisons; returns how many comparisons were decided.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "ptrcheck", Run);
   }
 
   /// <summary>Runs null-check elimination using the shared dominator analysis.</summary>

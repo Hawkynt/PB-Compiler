@@ -18,7 +18,7 @@ public static class Gvn {
   /// <summary>Eliminates redundant computations and unchanged loads; returns how many instructions were removed.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "gvn", Run);
   }
 
   /// <summary>Runs GVN using shared dominator and Memory SSA analyses.</summary>

@@ -46,7 +46,7 @@ public static class RangeCheckElim {
 
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "rangefold", Run);
   }
 
   /// <summary>Runs range-based comparison folding using the shared branch-refined range analysis.</summary>

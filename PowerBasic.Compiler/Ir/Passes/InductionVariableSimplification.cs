@@ -40,7 +40,7 @@ public static class InductionVariableSimplification {
   /// <summary>Simplifies profitable affine derived induction values in <paramref name="fn"/>.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "ivsimplify", Run);
   }
 
   /// <summary>Simplifies derived induction values using cached loop/scalar-evolution facts.</summary>

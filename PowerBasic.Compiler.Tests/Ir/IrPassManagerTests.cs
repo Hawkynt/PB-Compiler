@@ -118,6 +118,21 @@ public sealed class IrPassManagerTests {
   }
 
   [Test]
+  public void MigratedPasses_DoNotConstructPrivateAnalysisManagers() {
+    var root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
+    var passDir = Path.Combine(root, "PowerBasic.Compiler", "Ir", "Passes");
+    var offenders = Directory.EnumerateFiles(passDir, "*.cs")
+      .Where(file => !Path.GetFileName(file).Equals("IrFunctionPassPipeline.cs", StringComparison.Ordinal))
+      .Where(file => File.ReadAllText(file).Contains("new IrAnalysisManager(", StringComparison.Ordinal))
+      .Select(Path.GetFileName)
+      .Order()
+      .ToArray();
+
+    Assert.That(offenders, Is.Empty,
+      "analysis caches are owned by IrFunctionPassPipeline, never by individual optimization passes");
+  }
+
+  [Test]
   public void ModulePipeline_PublicSurface_HasNoLegacyAdapter() {
     var publicMethods = typeof(IrModulePassPipeline).GetMethods(System.Reflection.BindingFlags.Public
       | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);

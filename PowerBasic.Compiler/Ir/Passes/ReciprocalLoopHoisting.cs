@@ -21,7 +21,7 @@ internal static class ReciprocalLoopHoisting {
   /// <summary>Hoists guarded reciprocal values and returns how many reciprocal divisions moved.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "reciprocal-loop-hoist", Run);
   }
 
   /// <summary>

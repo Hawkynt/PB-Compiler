@@ -22,6 +22,16 @@ public sealed class IrFunctionPassPipeline {
     return this;
   }
 
+  /// <summary>
+  /// Runs one analysis-aware pass outside a composed pipeline. Compatibility entry points use this
+  /// instead of constructing their own analysis manager, keeping cache ownership in the executor.
+  /// </summary>
+  internal static int RunStandalone(
+      IrFunction function,
+      string name,
+      Func<IrFunction, IrAnalysisManager, IrPassResult> pass)
+    => new IrFunctionPassPipeline().Add(name, pass).Run(function);
+
   /// <summary>Runs the pipeline once with a fresh analysis cache.</summary>
   public int Run(IrFunction function) {
     ArgumentNullException.ThrowIfNull(function);

@@ -24,7 +24,8 @@ public static class FpSimplify {
 
   internal static int Run(IrFunction function, IrFastMathFlags assumptions) {
     ArgumentNullException.ThrowIfNull(function);
-    return Run(function, assumptions, new IrAnalysisManager(function)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(function, "fpsimplify",
+      (fn, analyses) => Run(fn, assumptions, analyses));
   }
 
   internal static IrPassResult Run(IrFunction function, IrFastMathFlags assumptions, IrAnalysisManager analyses) {

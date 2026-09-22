@@ -14,7 +14,7 @@ public static class Licm {
   /// <summary>Hoists loop-invariant computations to unique loop-entry predecessors; returns how many were hoisted.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "licm", Run);
   }
 
   /// <summary>Runs LICM using the shared loop-forest analysis.</summary>

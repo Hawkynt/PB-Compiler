@@ -13,7 +13,8 @@ public static class ReciprocalSequenceReuse {
   /// <summary>Rewrites profitable reciprocal groups; returns the number of divisions replaced or hoisted.</summary>
   public static int Run(IrFunction fn, IIrArithmeticCostModel? costModel = null) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, costModel, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "reciprocal-reuse",
+      (function, analyses) => Run(function, costModel, analyses));
   }
 
   /// <summary>Runs reciprocal reuse using shared function analyses.</summary>

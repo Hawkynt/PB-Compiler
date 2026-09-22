@@ -14,7 +14,7 @@ public static class CorrelatedValueProp {
   /// <summary>Compatibility entry point for the existing production pipeline.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "correlate", Run);
   }
 
   /// <summary>Runs correlated propagation using shared cached analyses.</summary>
