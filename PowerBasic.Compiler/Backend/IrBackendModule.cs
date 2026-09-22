@@ -44,6 +44,8 @@ public sealed class IrBackendModule {
     }
 
     module.RepresentationStage = IrRepresentationStage.OptimizedSsa;
+    if (module.RepresentationStage < IrBackendTargetContract.RequiredInputStage(options.Target))
+      throw new InvalidOperationException($"target '{options.Target}' requires {IrBackendTargetContract.RequiredInputStage(options.Target)}");
 
     return new(module, options);
   }
