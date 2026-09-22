@@ -17,7 +17,7 @@ public sealed class IrBasicWriterDeadArmTests {
     Assert.That(module, Is.Not.Null);
 
     IrMiddleEndPipeline.RunHostedModule(module!, optimize: true, optimizeForSpeed: false,
-      enableFpLookupTables: false, recoverIntegerArithmetic: true, prepareParallelLoops: false);
+      enableFpLookupTables: false, recoverIntegerArithmetic: true, parallelLoops: false);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
 
     var text = IrBasicWriter.Write(module!);
