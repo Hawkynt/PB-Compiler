@@ -27,6 +27,15 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return [0x49, (byte)(0xB8 + (register.Encoding & 7)), .. BitConverter.GetBytes(value)];
   }
 
+  public byte[] AdjustStack(int bytes, bool allocate) {
+    if (bytes is <= 0 or > 127)
+      throw new ArgumentOutOfRangeException(nameof(bytes), bytes, "The compact stack adjustment supports 1..127 bytes.");
+    var opcode = allocate ? (byte)0xEC : (byte)0xC4;
+    return mode == X86Mode.Bit64
+      ? [0x48, 0x83, opcode, (byte)bytes]
+      : [0x83, opcode, (byte)bytes];
+  }
+
   private void Validate(MachineRegister register) {
     if (register.Bits != (mode == X86Mode.Bit64 ? 64 : 32))
       throw new ArgumentException("Register width does not match the target mode.", nameof(register));
