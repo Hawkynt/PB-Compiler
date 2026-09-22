@@ -16,7 +16,10 @@ public sealed class X86TargetTests {
   public void X86_64_WindowsUsesShadowSpaceAndFrameShell() {
     var target = new X86MachineTarget(X86Mode.Bit64, X86Abi.Windows64);
     var code = target.Emitter.EmitFunction([]).Bytes;
-    Assert.That(code, Is.EqualTo(new byte[] { 0x55, 0x48, 0x89, 0xE5, 0x5D, 0xC3 }));
+    Assert.That(code, Is.EqualTo(new byte[] {
+      0x55, 0x48, 0x89, 0xE5, 0x48, 0x83, 0xEC, 0x20,
+      0x48, 0x83, 0xC4, 0x20, 0x5D, 0xC3
+    }));
     Assert.That(target.Abi.ShadowSpaceBytes, Is.EqualTo(32));
     Assert.That(target.Abi.ArgumentRegisters.Select(r => r.Name),
       Is.EqualTo(new[] { "rcx", "rdx", "r8", "r9" }));
@@ -27,6 +30,13 @@ public sealed class X86TargetTests {
     var encoder = new X86InstructionEncoder(X86Mode.Bit64);
     Assert.That(encoder.MoveImmediate(X86RegisterFile.Gpr64[8], 0x1122334455667788UL),
       Is.EqualTo(new byte[] { 0x49, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 }));
+  }
+
+  [Test]
+  public void X86_64_EncodesStackAdjustment() {
+    var encoder = new X86InstructionEncoder(X86Mode.Bit64);
+    Assert.That(encoder.AdjustStack(32, allocate: true), Is.EqualTo(new byte[] { 0x48, 0x83, 0xEC, 0x20 }));
+    Assert.That(encoder.AdjustStack(32, allocate: false), Is.EqualTo(new byte[] { 0x48, 0x83, 0xC4, 0x20 }));
   }
 
   [Test]
