@@ -43,6 +43,8 @@ public sealed class IrBackendModule {
       return null;
     }
 
+    module.RepresentationStage = IrRepresentationStage.OptimizedSsa;
+
     return new(module, options);
   }
 }
