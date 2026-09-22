@@ -88,5 +88,8 @@ public sealed class X86TargetTests {
     Assert.That(target.Description.PointerBits, Is.EqualTo(16));
     Assert.That(target.Abi.ReturnRegister, Is.EqualTo(Mos6502RegisterFile.Accumulator));
     Assert.That(target.Emitter.EmitFunction([0xA9, 0x00]).Bytes, Is.EqualTo(new byte[] { 0xA9, 0x00, 0x60 }));
+    Assert.That(IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.Mos6502), Is.TypeOf<Mos6502MachineTarget>());
+    Assert.That(IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.X86_32), Is.TypeOf<X86MachineTarget>());
+    Assert.That(IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.X86_64), Is.TypeOf<X86MachineTarget>());
   }
 }
