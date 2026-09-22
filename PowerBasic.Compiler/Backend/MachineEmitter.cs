@@ -202,6 +202,16 @@ public sealed class MachineEmitter {
     }
   }
 
+  /// <summary>Emits a machine function from the shared machine compilation product.</summary>
+  public static void EmitFunction(Assembler asm, IrMachineFunction function,
+      int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
+      Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null,
+      bool alignLoops = false, bool allowFrameElision = false,
+      IReadOnlyList<Asm.Reg>? registerSpills = null,
+      Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null)
+    => EmitFunction(asm, function.Function, function.Allocation, paramOffsets, paramBytes,
+      resolveCallee, resolveData, onReturn, alignLoops, allowFrameElision, registerSpills, emitInlineAsm);
+
   /// <summary>
   /// Whether the machine function still satisfies the middle-end frame-free proof after instruction
   /// selection and register allocation. Incoming stack parameters are not persistent frame state:
