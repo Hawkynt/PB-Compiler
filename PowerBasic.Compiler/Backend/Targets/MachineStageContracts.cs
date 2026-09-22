@@ -19,6 +19,11 @@ public interface IMachineCodeEmitter<in TMachineFunction, in TAllocation> {
   MachineCode Emit(TMachineFunction function, TAllocation allocation);
 }
 
+/// <summary>Emission stage for backends whose object/image sink is supplied by the host.</summary>
+public interface IMachineEmitterStage<in TMachineFunction, in TAllocation, in TContext> {
+  void Emit(TMachineFunction function, TAllocation allocation, TContext context);
+}
+
 /// <summary>Explicit ownership of the three target-specific stages after optimized IR.</summary>
 public readonly record struct MachineStageSet<TMachineFunction, TAllocation>(
     IMachineSelector<TMachineFunction> Selector,
