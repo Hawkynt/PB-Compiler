@@ -119,27 +119,29 @@ constrains what foreign code can be linked and is the crux of the whole feature.
   C compiler we ship emits it, so it is supported but not validated against a real object.)
 
 - **fastcall / watcall (register conventions).** Args go in registers, not (only) on
-  the stack — matched empirically to the genuine compilers:
-  - **fastcall** (Microsoft `_fastcall` / Borland `__fastcall`): first three word args
-    in **AX, DX, BX**, overflow on the stack left-to-right, callee cleans (`RET n` over
-    the overflow only), public `@name`.
-  - **watcall** (Watcom's default register convention): first four word args in
-    **AX, DX, BX, CX**, overflow right-to-left, callee cleans the overflow, public
-    `name_` (trailing underscore).
+  the stack:
+  - **fastcall** is currently the repository's common Microsoft/Borland **word-only**
+    subset: leading word args use **AX, DX, BX**, overflow is left-to-right and the
+    callee cleans it. The vendors' typed allocation and cleanup rules diverge, so a
+    LONG is rejected until separate ABI identities replace this compatibility surface.
+  - **watcall** follows Watcom's documented 16-bit allocator. Word args take the first
+    free register from **AX, DX, BX, CX**. A LONG takes **DX:AX** or **CX:BX**
+    (high:low); if neither pair is free, that argument and every later one use the stack.
+    Overflow is pushed right-to-left and removed by the **caller**; the public name has
+    a trailing underscore (`name_`).
 
-  Both are emitted for **calling and defining** by the direct emitter: the call site
-  evaluates the leading args and loads the registers (pushing then popping so they
-  survive arg evaluation); a defined `SUB/FUNCTION WATCALL|FASTCALL` spills the incoming
-  AX,DX,BX(,CX) into its parameter slots in the prologue and `RET n`s the overflow.
+  Both are emitted for **calling and defining** by the direct emitter. The call site
+  evaluates register args through temporary pushes so they survive later evaluation; a
+  defined `SUB/FUNCTION WATCALL|FASTCALL` spills the incoming registers into its frame.
+  FASTCALL returns with `RET n`; WATCALL returns with `RET` and its caller restores SP.
   The experimental x86 back end routes both halves too: external call sites keep their
   physical register uses live through the call, and a routed definition's prologue pushes
-  the incoming AX,DX,BX(,CX) into the negative frame cells `LayoutFrame` assigns them, so
-  the body reads ordinary frame parameters from there on. Scope is the common
-  16-bit case: every register-passed parameter must be a single word (BYVAL ≤ 2 bytes
-  or a BYREF near pointer); multiword LONG/float/aggregate/far-pointer values need
-  the full per-compiler size rules and are rejected with a diagnostic rather than miscompiled.
-  `CInteropTests` calls genuine watcall/fastcall/pascal objects; `CallingConventionTests`
-  round-trips define+call (incl. stack overflow) for watcall and fastcall.
+  the incoming words into the negative frame cells `LayoutFrame` assigns them, so the
+  body reads ordinary frame parameters from there on. WATCALL LONG cells remain contiguous
+  and little-endian because the prologue spills each pair high-to-low. Float, aggregate and
+  far-pointer register classes remain diagnostic rather than guessed. `CInteropTests` calls
+  genuine watcall/fastcall/pascal objects, including Watcom's mixed word/LONG allocation;
+  `CallingConventionTests` round-trips direct and routed definitions plus stack overflow.
 
 - **PowerBASIC.** A 3rd-party PB `.LIB` (genuine PBC output) uses PB's BYREF
   convention and PB's string/runtime entry points. We already *emulate* PB's runtime

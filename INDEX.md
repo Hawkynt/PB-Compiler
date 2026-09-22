@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-09-21 10:53 UTC by index_codebase.py.
+Generated 2026-09-22 05:20 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1119 files, 10689 symbols.
+1119 files, 10708 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -261,18 +261,19 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `BackendCallAbiDocumentationTests` — docs/BACKENDS.md states, per calling convention, which registers carry the leading arguments, — PowerBasic.Compiler.Tests/Backend/BackendCallAbiDocumentationTests.cs:22
 - method `if(actual != expected)` — PowerBasic.Compiler.Tests/Backend/BackendCallAbiDocumentationTests.cs:77
 
-### BackendCallRoutingTests.cs  `C#, 537 lines`
+### BackendCallRoutingTests.cs  `C#, 575 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:9
 - class `BackendCallRoutingTests` — A back-end-compiled function that calls another one. Until calls were selectable the — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:25
 - method `IrConstantInt(IrType.I32, 0x11112222)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:180
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:357
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:388
-- method `Touch(v%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:389
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:417
-- method `CountDown(v%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:418
-- method `F` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:464
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:507
-- method `Sum(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:508
+- method `IrConstantInt(IrType.I16, 3)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:282
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:395
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:426
+- method `Touch(v%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:427
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:455
+- method `CountDown(v%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:456
+- method `F` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:502
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:545
+- method `Sum(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/BackendCallRoutingTests.cs:546
 
 ### BackendChainTests.cs  `C#, 295 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendChainTests.cs:9
@@ -1156,7 +1157,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/ByteCounterLimitFoldTests.cs:5
 - class `ByteCounterLimitFoldTests` — O0113 on a BYTE counter: a constant FOR limit folds into the compare as an immediate. — PowerBasic.Compiler.Tests/CodeGen/ByteCounterLimitFoldTests.cs:34
 
-### CInteropTests.cs  `C#, 703 lines`
+### CInteropTests.cs  `C#, 738 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:7
 - class `CInteropTests` — Cross-compiler OMF interop (docs/LINKER.md): prove that our object — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:33
 - record `ForeignCc` — A staged foreign C toolchain and how to drive it under DOSBox (slot mounted as C:, scratch as D:, c… — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:41
@@ -1171,17 +1172,18 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(slot == 0)` — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:409
 - record `ConvCase` — A foreign object exporting sub2(a,b)=a-b under a convention, and how BASIC declares it. — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:447
 - method `ToString()` — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:448
-- field `mangled` — the mangled public must be present exactly as Borland decorates a free int square(int) — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:518
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:568
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:512
+- field `mangled` — the mangled public must be present exactly as Borland decorates a free int square(int) — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:553
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/CInteropTests.cs:603
 
-### CallingConventionTests.cs  `C#, 320 lines`
+### CallingConventionTests.cs  `C#, 345 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:5
-- class `CallingConventionTests` — Register calling conventions (docs/LINKER.md): WATCALL (Watcom: args in AX,DX,BX,CX, — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:16
+- class `CallingConventionTests` — Register calling conventions (docs/LINKER.md): WATCALL uses Watcom's typed AX,DX,BX,CX — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:16
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:32
 - method `WATCALL(BYVAL a AS INTEGER, BYVAL b AS INTEGER)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:33
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:44
 - method `FASTCALL(BYVAL a AS INTEGER, BYVAL b AS INTEGER)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:45
-- field `source` — a,b,c,d -> AX,DX,BX,CX ; e -> stack ; callee cleans the one overflow word (RET 2) — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:57
+- field `source` — a,b,c,d -> AX,DX,BX,CX ; e -> stack ; caller cleans the one overflow word — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:57
 - method `WATCALL(BYVAL a AS INTEGER, BYVAL b AS INTEGER, BYVAL c AS INTEGER, BYVAL d …` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:58
 - field `source` — a,b,c -> AX,DX,BX ; d,e -> stack ; callee cleans the two overflow words (RET 4) — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:70
 - method `FASTCALL(BYVAL a AS INTEGER, BYVAL b AS INTEGER, BYVAL c AS INTEGER, BYVAL d …` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:71
@@ -1195,11 +1197,13 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `fact(BYVAL n AS INTEGER)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:174
 - field `source` — a multi-statement body keeps the proc out of the trivial inliner so the real — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:191
 - method `calc(BYVAL a AS INTEGER, BYVAL b AS INTEGER, BYVAL c AS INTEGER, BYVAL d …` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:192
-- field `source` — a LONG does not fit the common-case word model; reject rather than silently miscompile — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:219
-- method `WATCALL(BYVAL x AS LONG)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:220
-- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:247
+- field `source` — FASTCALL still combines incompatible vendor identities; reject LONG until those are split. — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:219
+- method `FASTCALL(BYVAL x AS LONG)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:220
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:238
+- method `WATCALL(BYVAL a AS INTEGER, BYVAL b AS LONG, BYVAL c AS INTEGER, BYVAL d AS …` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:239
 - method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:272
-- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:302
+- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:297
+- method `sub2(20, 7)` — PowerBasic.Compiler.Tests/CodeGen/CallingConventionTests.cs:327
 
 ### CeilFracTests.cs  `C#, 69 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/CeilFracTests.cs:5
@@ -1448,12 +1452,13 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `InlineByRefBindingTests` — How the inliner binds a BYREF parameter, and the one shape it got wrong. — PowerBasic.Compiler.Tests/CodeGen/InlineByRefBindingTests.cs:34
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/InlineByRefBindingTests.cs:87
 
-### InternalCallingConventionSpecializationTests.cs  `C#, 86 lines`
+### InternalCallingConventionSpecializationTests.cs  `C#, 108 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:5
 - class `InternalCallingConventionSpecializationTests` — O0282: whole-program selection of a private calling convention. — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:9
 - method `escaped(BYVAL a AS INTEGER)` — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:23
 - method `unused(BYVAL a AS INTEGER)` — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:50
 - method `bump(value AS INTEGER)` — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:64
+- method `bump(BYVAL value AS LONG)` — PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs:89
 
 ### IntervalRangeTests.cs  `C#, 429 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/IntervalRangeTests.cs:4
@@ -1560,7 +1565,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `O0308ArrayPreflightTests` — O0308's direct-emitter consumer: checked signed INTEGER add/sub array loops may pay one — PowerBasic.Compiler.Tests/CodeGen/O0308ArrayPreflightTests.cs:13
 - method `if(image[i + k] != pattern[k])` — PowerBasic.Compiler.Tests/CodeGen/O0308ArrayPreflightTests.cs:31
 
-### OmfLinkTests.cs  `C#, 249 lines`
+### OmfLinkTests.cs  `C#, 250 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:7
 - class `OmfLinkTests` — End-to-end external OMF object linking (docs/LINKER.md, M1): a BASIC program — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:17
 - method `Record(0x80, Str(moduleName))` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:54
@@ -1572,7 +1577,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `identity(200)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:176
 - method `load(value)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:207
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:233
-- method `wide(1)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:235
+- method `wide(70000)` — PowerBasic.Compiler.Tests/CodeGen/OmfLinkTests.cs:235
 
 ### OptDeadGlobalsTests.cs  `C#, 267 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/OptDeadGlobalsTests.cs:5
@@ -4294,7 +4299,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `InstructionSelector` — PowerBasic.Compiler/Backend/InstructionSelector.ReciprocalDivision.cs:5
 - method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.ReciprocalDivision.cs:38
 
-### InstructionSelector.cs  `C#, 5304 lines`
+### InstructionSelector.cs  `C#, 5341 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3
 - class `InstructionSelector` — Stage 2 of the x86-16 back end (docs/X86-BACKEND.md): selects the typed-SSA IR into the — PowerBasic.Compiler/Backend/InstructionSelector.cs:16
 - method `if(this.UsesNativeDwordRegisters)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:166
@@ -4422,57 +4427,59 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `IsWide(from)` — ...and a dword down to a BYTE is those same two renames composed: the low word holds the low — PowerBasic.Compiler/Backend/InstructionSelector.cs:2953
 - method `if(lo is not MOperand.Register low)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:2956
 - method `IsQuad(to)` — ...and when the i64 is a value the program KEEPS - a FIX cell is a scaled int64, so the — PowerBasic.Compiler/Backend/InstructionSelector.cs:2971
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: callReadRegs, ReadsFlags: false, WritesFl…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3168
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3176
-- method `new(MReg.Physical_(Reg.AX, MRegSize.Word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3193
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3202
-- method `MovEffect(destination, source)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3255
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: source is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3355
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3375
-- method `if(call.Args.FirstOrDefault() is not IrBlockAddress unwind)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3384
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3399
-- method `if(call.Args.FirstOrDefault() is not IrBlockAddress handler)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3404
-- method `if(call.Args.ToList() is not [IrBlockAddress start, IrBlockAddress next…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3425
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3439
-- method `if(!arg.Type.IsIeeeFloat)` — the print routines take a float on ST(0) and pop it themselves — PowerBasic.Compiler/Backend/InstructionSelector.cs:3518
-- method `if(!this.TryFloatOperand(arg, out var loaded))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3520
-- method `if(arg is not IrGlobalVariable global)` — the address of the data object, not its contents - a string literal the codegen pools — PowerBasic.Compiler/Backend/InstructionSelector.cs:3527
-- method `if(!this.TryRuntimePointer(arg, callee.Name, out var source, out var se…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3536
-- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 1 }, Value…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3547
-- method `if(!this.TryWordOperand(arg, $"{callee.Name} takes a 32-bit value in a …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3551
-- method `if(!IsWide(arg.Type))` — the row claims the high half does not matter; see ArgKind.LowWord for what backs the claim — PowerBasic.Compiler/Backend/InstructionSelector.cs:3560
-- method `if(!this.TryOperandPair(arg, out var low, out _))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3562
-- method `if(!IsWide(arg.Type))` — four words into one qword cell - the value's own two, then two zeroes - and FILD it. The — PowerBasic.Compiler/Backend/InstructionSelector.cs:3572
-- method `if(!this.TryOperandPair(arg, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3574
-- method `if(IsQuad(arg.Type) && this._qslots.TryGetValue(arg, out var loaded))` — A QUAD read out of storage is already in a qword cell of its own (SelectQwordLoad), so — PowerBasic.Compiler/Backend/InstructionSelector.cs:3590
-- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 64 }, Valu…` — The machine IR does not yet carry a general four-register i64 value. An optimized QUAD — PowerBasic.Compiler/Backend/InstructionSelector.cs:3597
-- method `if(IsWide(arg.Type))` — the word into the low register, the high one cleared - "XOR DX,DX" in the direct emitter — PowerBasic.Compiler/Backend/InstructionSelector.cs:3609
-- method `if(!this.TryOperand(arg, out var word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3611
-- method `if(!IsWide(arg.Type))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3623
-- method `if(!this.TryOperandPair(arg, out var lo, out var hi))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3625
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3658
-- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3869
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3943
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: handle is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3998
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4008
-- method `return(c.Value, c.Value)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4150
-- method `IsWide(bin.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4156
-- method `if(bin.Op == IrBinaryOp.And)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4161
-- method `MaskedRange(lhs, rhs)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4162
-- method `if(lhs is not { } left || rhs is not { } right)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4163
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4263
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4518
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4547
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4578
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4696
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4721
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4794
-- method `new(MReg.Physical_(Reg.AX, MRegSize.Word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4888
-- method `if(value.Type.Signed)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4944
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4951
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [.. Enumerable.Range(0, registers.Length)…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4986
-- method `IsAddressableGlobal(g)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5118
-- method `if(this._vregs.TryGetValue(value, out var reg))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5125
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: callReadRegs, ReadsFlags: false, WritesFl…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3182
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3190
+- method `new(MReg.Physical_(Reg.AX, MRegSize.Word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3207
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3216
+- method `if(!this.TryWordOperand(argument, $"{calleeName} register argument {pla…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3268
+- method `if(!this.TryOperandPair(argument, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3273
+- method `for` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3278
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: source is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3392
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3412
+- method `if(call.Args.FirstOrDefault() is not IrBlockAddress unwind)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3421
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3436
+- method `if(call.Args.FirstOrDefault() is not IrBlockAddress handler)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3441
+- method `if(call.Args.ToList() is not [IrBlockAddress start, IrBlockAddress next…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3462
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3476
+- method `if(!arg.Type.IsIeeeFloat)` — the print routines take a float on ST(0) and pop it themselves — PowerBasic.Compiler/Backend/InstructionSelector.cs:3555
+- method `if(!this.TryFloatOperand(arg, out var loaded))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3557
+- method `if(arg is not IrGlobalVariable global)` — the address of the data object, not its contents - a string literal the codegen pools — PowerBasic.Compiler/Backend/InstructionSelector.cs:3564
+- method `if(!this.TryRuntimePointer(arg, callee.Name, out var source, out var se…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3573
+- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 1 }, Value…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3584
+- method `if(!this.TryWordOperand(arg, $"{callee.Name} takes a 32-bit value in a …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3588
+- method `if(!IsWide(arg.Type))` — the row claims the high half does not matter; see ArgKind.LowWord for what backs the claim — PowerBasic.Compiler/Backend/InstructionSelector.cs:3597
+- method `if(!this.TryOperandPair(arg, out var low, out _))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3599
+- method `if(!IsWide(arg.Type))` — four words into one qword cell - the value's own two, then two zeroes - and FILD it. The — PowerBasic.Compiler/Backend/InstructionSelector.cs:3609
+- method `if(!this.TryOperandPair(arg, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3611
+- method `if(IsQuad(arg.Type) && this._qslots.TryGetValue(arg, out var loaded))` — A QUAD read out of storage is already in a qword cell of its own (SelectQwordLoad), so — PowerBasic.Compiler/Backend/InstructionSelector.cs:3627
+- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 64 }, Valu…` — The machine IR does not yet carry a general four-register i64 value. An optimized QUAD — PowerBasic.Compiler/Backend/InstructionSelector.cs:3634
+- method `if(IsWide(arg.Type))` — the word into the low register, the high one cleared - "XOR DX,DX" in the direct emitter — PowerBasic.Compiler/Backend/InstructionSelector.cs:3646
+- method `if(!this.TryOperand(arg, out var word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3648
+- method `if(!IsWide(arg.Type))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3660
+- method `if(!this.TryOperandPair(arg, out var lo, out var hi))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3662
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3695
+- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3906
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3980
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: handle is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4035
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4045
+- method `return(c.Value, c.Value)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4187
+- method `IsWide(bin.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4193
+- method `if(bin.Op == IrBinaryOp.And)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4198
+- method `MaskedRange(lhs, rhs)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4199
+- method `if(lhs is not { } left || rhs is not { } right)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4200
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4300
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4555
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4584
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4615
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4733
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4758
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4831
+- method `new(MReg.Physical_(Reg.AX, MRegSize.Word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4925
+- method `if(value.Type.Signed)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4981
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4988
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [.. Enumerable.Range(0, registers.Length)…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5023
+- method `IsAddressableGlobal(g)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5155
+- method `if(this._vregs.TryGetValue(value, out var reg))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5162
 
 ### LateLoadStoreOptimization.cs  `C#, 239 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/LateLoadStoreOptimization.cs:2
@@ -4832,13 +4839,24 @@ with unrelated edits, so treat them as anchors, not gospel.
 - enum `SourcePattern` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:149
 - enum `Candidate` — PowerBasic.Compiler/Backend/SuperoptimizedPeepholes.cs:151
 
-### X86CallAbi.cs  `C#, 120 lines`
+### X86CallAbi.cs  `C#, 168 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/X86CallAbi.cs:3
 - enum `X86StackArgumentOrder` — The order in which argument groups are placed on the 16-bit x86 stack. — PowerBasic.Compiler/Backend/X86CallAbi.cs:7
 - enum `X86StackCleanup` — Which side restores SP after a 16-bit x86 stack call. — PowerBasic.Compiler/Backend/X86CallAbi.cs:10
 - enum `X86CallDistance` — The return-address width used by a 16-bit x86 call. — PowerBasic.Compiler/Backend/X86CallAbi.cs:13
 - record `X86DefinitionStackLayout` — The BP-relative incoming-parameter layout of a stack-only x86-16 function definition. — PowerBasic.Compiler/Backend/X86CallAbi.cs:16
-- record `X86CallAbi` — The concrete x86-16 rules selected from a source-level calling-convention identity. Register — PowerBasic.Compiler/Backend/X86CallAbi.cs:24
+- record `X86RegisterArgumentPlacement` — One register-carried argument and its little-endian word registers (low word first). — PowerBasic.Compiler/Backend/X86CallAbi.cs:19
+- record `X86RegisterArgumentLayout` — The register prefix and first stack argument selected for a WATCALL signature. — PowerBasic.Compiler/Backend/X86CallAbi.cs:22
+- record `X86CallAbi` — The concrete x86-16 rules selected from a source-level calling-convention identity. Register — PowerBasic.Compiler/Backend/X86CallAbi.cs:33
+- method `new(placements, i, i)` — PowerBasic.Compiler/Backend/X86CallAbi.cs:87
+- method `if(register >= 0)` — PowerBasic.Compiler/Backend/X86CallAbi.cs:92
+- method `if(available[0] && available[1])` — PowerBasic.Compiler/Backend/X86CallAbi.cs:95
+- method `if(available[2] && available[3])` — PowerBasic.Compiler/Backend/X86CallAbi.cs:97
+- method `new(placements, i, i)` — PowerBasic.Compiler/Backend/X86CallAbi.cs:100
+- method `if` — PowerBasic.Compiler/Backend/X86CallAbi.cs:101
+- method `new(placements, i)` — PowerBasic.Compiler/Backend/X86CallAbi.cs:103
+- method `foreach` — PowerBasic.Compiler/Backend/X86CallAbi.cs:104
+- method `new` — PowerBasic.Compiler/Backend/X86CallAbi.cs:109
 
 ### X87StackOptimizer.cs  `C#, 569 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/X87StackOptimizer.cs:2
@@ -4892,27 +4910,27 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(d > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:762
 - method `if(d < bounds.Count - 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Arrays.cs:766
 
-### CodeGenerator.Backend.cs  `C#, 1385 lines`
+### CodeGenerator.Backend.cs  `C#, 1383 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:8
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:10
-- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:286
-- method `if(!f.IsDeclaration && SwitchFormation.Run(f) > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:305
-- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:328
-- method `if(!X86CallAbi.TryDefinitionStackLayout(irFn, out var rewrittenLayout, …` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:392
-- method `for(var i = set.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:432
-- method `if(CalleeNames(fnOf(set[i])) .FirstOrDefault(name => !routable.Contains…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:433
-- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:480
-- method `if(this._backendMain is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:812
-- method `if(proc.Body is not { } body || (!ReferencesVariable(body, symbol.Name)…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:825
-- method `if(this._backendProcs.ContainsKey(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:827
-- method `var(arguments, site)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:879
-- method `if(arguments is null || !model.CallBindings.TryGetValue(site, out var c…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:884
-- method `foreach(var argument in arguments)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:886
-- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1083
-- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1091
-- method `foreach(var name in CalleeNames(fn))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1245
-- method `foreach(var callee in CalleeNames(generated))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1256
-- method `if(operand is IrFarEntry { Target.IsDeclaration: false } farEntry)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1270
+- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:285
+- method `if(!f.IsDeclaration && SwitchFormation.Run(f) > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:304
+- method `if(!f.IsDeclaration)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:327
+- method `if(!X86CallAbi.TryDefinitionStackLayout(irFn, out var rewrittenLayout, …` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:391
+- method `for(var i = set.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:431
+- method `if(CalleeNames(fnOf(set[i])) .FirstOrDefault(name => !routable.Contains…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:432
+- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:479
+- method `if(this._backendMain is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:811
+- method `if(proc.Body is not { } body || (!ReferencesVariable(body, symbol.Name)…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:824
+- method `if(this._backendProcs.ContainsKey(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:826
+- method `var(arguments, site)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:878
+- method `if(arguments is null || !model.CallBindings.TryGetValue(site, out var c…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:883
+- method `foreach(var argument in arguments)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:885
+- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1082
+- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1090
+- method `foreach(var name in CalleeNames(fn))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1244
+- method `foreach(var callee in CalleeNames(generated))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1255
+- method `if(operand is IrFarEntry { Target.IsDeclaration: false } farEntry)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1269
 
 ### CodeGenerator.BackendGenerated.cs  `C#, 243 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendGenerated.cs:6
@@ -5424,43 +5442,44 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLinkProfile.cs:2
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.PostLinkProfile.cs:4
 
-### CodeGenerator.Procs.cs  `C#, 1248 lines`
-- namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:5
-- class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:7
-- method `if(general.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:281
-- method `if(local.Type is StringType or FlexType)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:298
-- method `if(sig.ReturnType is StringType or FlexType)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:420
-- method `Visit` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:527
-- method `Visit(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:537
-- method `foreach(var (_, armBody) in i.ElseIfs)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:538
-- method `Visit(armBody)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:539
-- method `if(i.Else != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:540
-- method `Visit(i.Else)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:541
-- method `foreach(var arm in s.Arms)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:544
-- method `Visit(arm.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:545
-- method `Visit` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:562
-- method `Visit(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:576
-- method `foreach(var (_, armBody) in i.ElseIfs)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:577
-- method `Visit(armBody)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:578
-- method `if(i.Else != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:579
-- method `Visit(i.Else)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:580
-- method `foreach(var arm in s.Arms)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:583
-- method `Visit(arm.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:584
-- record `InlinableLeaf` — Emits a SUB/FUNCTION invocation: arguments pushed left to right (BYREF = — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:632
-- field `maxStatements` — every body statement must be a scalar assignment whose target is a parameter, — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:672
-- method `if(dim.Storage != StorageClass.Local || dim.SharedFlag || dim.StaticFla…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:686
-- method `foreach(var decl in dim.Variables)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:689
-- method `if(local is not { Storage: VariableStorage.Local, Type: ScalarType } ||…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:693
-- method `if(!locals.Contains(local))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:695
-- method `InlinableLeaf` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:725
-- method `ReserveSlot` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:763
-- method `if(this.EmitPlace(args[i]) is not { Far: false } refPlace)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:776
-- method `if(resultKind == ValueKind.Int32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:964
-- method `if(resultKind == ValueKind.Int32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:974
-- method `if(parameterType is BcdType { IsFixedPoint: true })` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1200
-- method `switch(size)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1204
-- method `if(type is BcdType { IsFixedPoint: true })` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1227
-- method `switch(type.Size)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1232
+### CodeGenerator.Procs.cs  `C#, 1279 lines`
+- namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:6
+- class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:8
+- method `if(general.Count > 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:311
+- method `if(local.Type is StringType or FlexType)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:328
+- method `if(sig.ReturnType is StringType or FlexType)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:450
+- method `Visit` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:557
+- method `Visit(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:567
+- method `foreach(var (_, armBody) in i.ElseIfs)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:568
+- method `Visit(armBody)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:569
+- method `if(i.Else != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:570
+- method `Visit(i.Else)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:571
+- method `foreach(var arm in s.Arms)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:574
+- method `Visit(arm.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:575
+- method `Visit` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:592
+- method `Visit(i.Then)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:606
+- method `foreach(var (_, armBody) in i.ElseIfs)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:607
+- method `Visit(armBody)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:608
+- method `if(i.Else != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:609
+- method `Visit(i.Else)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:610
+- method `foreach(var arm in s.Arms)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:613
+- method `Visit(arm.Body)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:614
+- record `InlinableLeaf` — Emits a SUB/FUNCTION invocation: arguments pushed left to right (BYREF = — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:662
+- field `maxStatements` — every body statement must be a scalar assignment whose target is a parameter, — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:702
+- method `if(dim.Storage != StorageClass.Local || dim.SharedFlag || dim.StaticFla…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:716
+- method `foreach(var decl in dim.Variables)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:719
+- method `if(local is not { Storage: VariableStorage.Local, Type: ScalarType } ||…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:723
+- method `if(!locals.Contains(local))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:725
+- method `InlinableLeaf` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:755
+- method `ReserveSlot` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:793
+- method `if(this.EmitPlace(args[i]) is not { Far: false } refPlace)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:806
+- method `foreach(var register in argument.WordRegisters)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:976
+- method `if(resultKind == ValueKind.Int32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:995
+- method `if(resultKind == ValueKind.Int32)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1005
+- method `if(parameterType is BcdType { IsFixedPoint: true })` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1231
+- method `switch(size)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1235
+- method `if(type is BcdType { IsFixedPoint: true })` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1258
+- method `switch(type.Size)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Procs.cs:1263
 
 ### CodeGenerator.RuntimeTarget.cs  `C#, 97 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.RuntimeTarget.cs:2
@@ -6048,9 +6067,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `foreach(var item in items)` — PowerBasic.Compiler/CodeGen/OptReachability.cs:104
 - method `PushFlattened(stack, item)` — PowerBasic.Compiler/CodeGen/OptReachability.cs:105
 
-### OptRegParm.cs  `C#, 105 lines`
+### OptRegParm.cs  `C#, 106 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/OptRegParm.cs:3
-- class `OptRegParm` — pb36 $OPTIMIZE SPEED - private calling-convention specialization for procedures whose complete — PowerBasic.Compiler/CodeGen/OptRegParm.cs:28
+- class `OptRegParm` — pb36 $OPTIMIZE SPEED - private calling-convention specialization for procedures whose complete — PowerBasic.Compiler/CodeGen/OptRegParm.cs:29
 
 ### RuntimeTrimmer.cs  `C#, 100 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/RuntimeTrimmer.cs:3

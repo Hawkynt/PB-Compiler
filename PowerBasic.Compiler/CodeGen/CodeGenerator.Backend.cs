@@ -104,27 +104,26 @@ public sealed partial class CodeGenerator {
   /// routed prologue pushes into the negative frame cells LayoutFrame assigned them.
   ///
   /// <para>
-  /// A register convention keeps the same word-sized restriction the CALL side has. That is not a
-  /// routing limitation: the direct emitter refuses a multiword register argument too, because the
-  /// per-compiler rules for splitting one across a register pair differ between FASTCALL and WATCALL
-  /// and neither is modelled. Sharing <see cref="HasUnsupportedRegisterParam"/> with the call side is
-  /// what keeps a definition and its call sites from disagreeing about which shapes exist.
+  /// WATCALL models Watcom's LONG pairs as well as its word arguments. FASTCALL stays word-only until
+  /// its Microsoft and Borland identities are distinct; their typed allocation and cleanup rules are
+  /// not interchangeable. Sharing <see cref="HasUnsupportedRegisterParam"/> with the call side keeps
+  /// a definition and its call sites from disagreeing about which shapes exist.
   /// </para>
   /// </summary>
   private static string? BackendAbiReason(ProcedureSymbol proc) {
     if (HasUnsupportedRegisterParam(proc))
-      return $"filter: {proc.CallConv} register-convention arguments must be word-sized";
+      return $"filter: {proc.CallConv} register-convention argument shape is not modelled";
     return BackendAbiShapeReason(proc);
   }
 
   /// <summary>
   /// Why a call site cannot use a declared external ABI. Every near convention is selectable for
-  /// its implemented value shapes; register conventions deliberately remain limited to one-word
-  /// arguments until their compiler-specific pair/float allocation rules are modelled.
+  /// its implemented value shapes. WATCALL includes word and LONG register values; FASTCALL remains
+  /// limited to words until its vendor-specific identities and typed allocation rules are modelled.
   /// </summary>
   private static string? BackendCallAbiReason(ProcedureSymbol proc) {
     if (HasUnsupportedRegisterParam(proc))
-      return $"filter: {proc.CallConv} register-convention arguments must be word-sized";
+      return $"filter: {proc.CallConv} register-convention argument shape is not modelled";
     return BackendAbiShapeReason(proc);
   }
 
@@ -1371,10 +1370,9 @@ public sealed partial class CodeGenerator {
       paramBytes = rewritten.ParameterBytes;
     }
     var calleeCleanupBytes = CallerCleansStack(proc) ? 0 : paramBytes;
-    // paramBytes counts only the STACK parameters, so a register convention's RET n is already right:
-    // its leading arguments never reached the stack, and the pushes that spilled them are discarded by
-    // the epilogue's MOV SP,BP rather than popped.
-    var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
+    // paramBytes counts only STACK parameters. FASTCALL consumes those in RET n; WATCALL leaves them
+    // for its caller. Register spills are frame storage discarded by MOV SP,BP in either convention.
+    var spillRegs = RegisterSpillOrder(proc);
     MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
       alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame, registerSpills: spillRegs,
       emitInlineAsm: this.EmitRoutedInlineAsm);
