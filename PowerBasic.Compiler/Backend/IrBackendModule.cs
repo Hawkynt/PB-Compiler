@@ -13,6 +13,16 @@ public sealed class IrBackendModule {
 
   public IrModule Module { get; }
   public IrBackendOptions Options { get; }
+  public IrMachineModule? Machine { get; private set; }
+
+  /// <summary>Completes the explicit Low IR → Machine SSA → Machine IR boundary.</summary>
+  public bool TryLowerMachine(out IReadOnlyList<string> errors) {
+    var target = IrBackendTargetContract.SelectionTarget(Options);
+    if (!IrMachinePipeline.TryLower(this.Module, target, out var machine, out errors))
+      return false;
+    this.Machine = machine;
+    return true;
+  }
 
   public static IrBackendModule? TryCompile(
       SemanticModel model,

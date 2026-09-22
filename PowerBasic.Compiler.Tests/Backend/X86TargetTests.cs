@@ -95,6 +95,20 @@ public sealed class X86TargetTests {
   }
 
   [Test]
+  public void MachinePipelineAdvancesLowIrThroughSelectionAndAllocationBoundaries() {
+    var module = new IrModule("empty");
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
+    Assert.That(IrLowIrLegalization.TryLegalize(module, out _), Is.True);
+
+    Assert.That(IrMachinePipeline.TryLower(module, SelectionTarget.Baseline,
+      out var machine, out var errors), Is.True);
+    Assert.That(errors, Is.Empty);
+    Assert.That(machine, Is.Not.Null);
+    Assert.That(machine!.Functions, Is.Empty);
+    Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.MachineIr));
+  }
+
+  [Test]
   public void Mos6502MachineTargetHasExplicitAbiAndFunctionShell() {
     var target = new Mos6502MachineTarget();
     Assert.That(target.Description.PointerBits, Is.EqualTo(16));

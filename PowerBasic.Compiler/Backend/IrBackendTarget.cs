@@ -15,6 +15,13 @@ public enum IrBackendTarget {
 
 /// <summary>Input-stage contract for the shared target emitters.</summary>
 public static class IrBackendTargetContract {
+  public static SelectionTarget SelectionTarget(IrBackendOptions options) => options.Target switch {
+    IrBackendTarget.X86_16 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 86),
+    IrBackendTarget.X86_32 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 386),
+    IrBackendTarget.X86_64 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 686),
+    _ => SelectionTarget.Baseline,
+  };
+
   public static IMachineTarget? CreateMachineTarget(IrBackendTarget target) => target switch {
     IrBackendTarget.Mos6502 => new Mos6502MachineTarget(),
     IrBackendTarget.X86_32 => new X86MachineTarget(X86Mode.Bit32, X86Abi.I386Cdecl),
