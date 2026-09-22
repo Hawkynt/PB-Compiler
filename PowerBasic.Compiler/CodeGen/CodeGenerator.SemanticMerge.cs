@@ -10,8 +10,7 @@ public sealed partial class CodeGenerator {
 
   private sealed record BackendSemanticMerge(
     IrFunction Function,
-    MFunction Machine,
-    IReadOnlyDictionary<int, Reg> Allocation,
+    IrMachineFunction MachineProduct,
     int[] ParameterOffsets,
     int ParameterBytes,
     bool ElideFrame);
@@ -66,7 +65,7 @@ public sealed partial class CodeGenerator {
         continue;
 
       this._backendSemanticMerges[helper.Name] = new BackendSemanticMerge(
-        helper, machine, allocation, parameterOffsets, parameterBytes,
+        helper, new IrMachineFunction(helper, machine, allocation), parameterOffsets, parameterBytes,
         this.Optimize && FrameElision.IsCandidate(helper));
     }
   }
@@ -131,7 +130,7 @@ public sealed partial class CodeGenerator {
         this._asm.AlignCode(16);
       this._asm.MarkLabel(this._asm.Lbl(helper.Function.Name));
       MachineEmitter.EmitFunction(
-        this._asm, helper.Machine, helper.Allocation, helper.ParameterOffsets, helper.ParameterBytes,
+        this._asm, helper.MachineProduct, helper.ParameterOffsets, helper.ParameterBytes,
         this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops,
         allowFrameElision: helper.ElideFrame,

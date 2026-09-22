@@ -16,8 +16,7 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private sealed record BackendGeneratedFunction(
     IrFunction Ir,
-    MFunction Machine,
-    IReadOnlyDictionary<int, Reg> Allocation,
+    IrMachineFunction MachineProduct,
     bool ElideFrame,
     X86DefinitionStackLayout StackLayout);
 
@@ -141,7 +140,8 @@ public sealed partial class CodeGenerator {
     }
 
     this._backendGenerated![function.Name] = new BackendGeneratedFunction(
-      function, machine, allocation, this.Optimize && FrameElision.IsCandidate(function), layout);
+      function, new IrMachineFunction(function, machine, allocation),
+      this.Optimize && FrameElision.IsCandidate(function), layout);
     decline = string.Empty;
     return true;
   }
@@ -226,7 +226,7 @@ public sealed partial class CodeGenerator {
       this._asm.MarkLabel(this.GeneratedCalleeLabel(generated.Ir.Name)!);
       var abi = X86CallAbi.For(generated.Ir.Convention);
       var cleanupBytes = abi.StackCleanup == X86StackCleanup.Caller ? 0 : generated.StackLayout.ParameterBytes;
-      MachineEmitter.EmitFunction(this._asm, generated.Machine, generated.Allocation,
+      MachineEmitter.EmitFunction(this._asm, generated.MachineProduct,
         generated.StackLayout.ParameterOffsets, cleanupBytes, this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: generated.ElideFrame,
         emitInlineAsm: this.EmitRoutedInlineAsm);
