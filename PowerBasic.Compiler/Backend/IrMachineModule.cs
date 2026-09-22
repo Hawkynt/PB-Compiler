@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Asm;
+
 namespace PowerBasic.Compiler.Backend;
 
 /// <summary>The selected and allocated representation of one IR function.</summary>
