@@ -19,7 +19,7 @@ public static class IrBackendTargetContract {
     IrBackendTarget.X86_16 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 86),
     IrBackendTarget.X86_32 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 386),
     IrBackendTarget.X86_64 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 686),
-    _ => SelectionTarget.Baseline,
+    _ => global::PowerBasic.Compiler.Backend.SelectionTarget.Baseline,
   };
 
   public static IMachineTarget? CreateMachineTarget(IrBackendTarget target) => target switch {
