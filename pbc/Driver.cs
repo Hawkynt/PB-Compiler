@@ -145,12 +145,26 @@ public static class Driver {
       }
 
       if (dumpStage == "--emit-basic") {
-        Dictionary<Syntax.Ast.CallOrIndexExpr, Semantics.ConstantValue>? folds = null;
-        if (optimize ?? (dialect == Dialect.Pb36)) {
-          CodeGen.OptPruner.Prune(model);
-          folds = CodeGen.OptPureFold.Analyze(model);
+        var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+          Target = IrBackendTarget.PowerBasic35,
+          Optimize = optimize ?? true,
+          OptimizeForSpeed = optimizeSpeed,
+          RecoverIntegerArithmetic = optimize ?? true,
+        }, out var declined);
+        if (compiled is null) {
+          stderr.WriteLine($"pbc: --emit-basic: {declined ?? "unsupported construct"} - outside the IR lowering's subset (see docs/IR.md)");
+          return 1;
         }
-        var basic = Emit.PowerBasic35Emitter.Render(model, unit, folds);
+
+        string basic;
+        try {
+          basic = IrBasicWriter.Write(compiled.Module, out var warnings);
+          foreach (var warning in warnings)
+            stderr.WriteLine($"pbc: --emit-basic: warning: {warning}");
+        } catch (IrBasicWriterException ex) {
+          stderr.WriteLine($"pbc: --emit-basic: {ex.What} - outside the PB3.5 IR writer's subset");
+          return 1;
+        }
         if (output != null) {
           File.WriteAllText(output, basic);
           stdout.WriteLine($"{Path.GetFileName(output)}: {basic.Length} bytes of PowerBASIC");
@@ -439,7 +453,7 @@ public static class Driver {
     w.WriteLine("  --dump-ast     stop after parsing");
     w.WriteLine("  --dump-bind    stop after semantic analysis");
     w.WriteLine("  --emit-obj     compile to a linkable OMF .OBJ object instead of an EXE");
-    w.WriteLine("  --emit-basic   un-parse the bound (optimized) tree back to readable PowerBASIC");
+    w.WriteLine("  --emit-basic   render optimized IR back to readable PowerBASIC");
     w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");
     w.WriteLine("  --emit-c       optimize through the IR middle end and emit portable C99");
     w.WriteLine("  --list         write a human-readable .LST map of the compiled image");
