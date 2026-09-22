@@ -1,0 +1,49 @@
+namespace PowerBasic.Compiler.Backend.Targets;
+
+/// <summary>Target-independent stages shared by every machine backend.</summary>
+public interface IMachineTarget {
+  MachineTargetDescription Description { get; }
+  IMachineAbi Abi { get; }
+  IMachineInstructionEncoder Encoder { get; }
+  IMachineEmitter Emitter { get; }
+}
+
+public interface IMachineAbi {
+  int PointerBits { get; }
+  int StackAlignment { get; }
+  int ShadowSpaceBytes { get; }
+  IReadOnlyList<MachineRegister> ArgumentRegisters { get; }
+  MachineRegister ReturnRegister { get; }
+  IReadOnlySet<MachineRegister> CalleeSavedRegisters { get; }
+}
+
+public interface IMachineInstructionEncoder {
+  byte[] Ret();
+  byte[] Push(MachineRegister register);
+  byte[] Pop(MachineRegister register);
+  byte[] MoveImmediate(MachineRegister register, ulong value);
+}
+
+public interface IMachineEmitter {
+  MachineCode EmitFunction(ReadOnlySpan<byte> body, bool preserveFramePointer = true);
+}
+
+public readonly record struct MachineTargetDescription(string Name, int PointerBits, int RegisterBits);
+
+public readonly record struct MachineRegister(string Name, int Encoding, int Bits) {
+  public override string ToString() => this.Name;
+}
+
+public readonly record struct MachineCode(byte[] Bytes, IReadOnlyList<MachineRelocation> Relocations);
+
+public readonly record struct MachineRelocation(
+    int Offset,
+    MachineRelocationKind Kind,
+    string Symbol,
+    int Addend = 0);
+
+public enum MachineRelocationKind {
+  Relative32,
+  Absolute32,
+  Absolute64,
+}
