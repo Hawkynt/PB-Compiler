@@ -4522,9 +4522,9 @@ public sealed partial class InstructionSelector {
 
   /// <summary>
   /// The NEAR OFFSET of the storage <paramref name="pointer"/> names, for a routine that converts in
-  /// place. A module cell has one the codegen laid out and a computed pointer is already one; a frame
-  /// slot has none the selector can name, because its displacement is settled later, in the emitter -
-  /// so an MBF LOCAL declines rather than being handed an address that is not its own.
+  /// place. A module cell has one the codegen laid out; an alloca or computed element pointer has
+  /// already been materialized into a register by selection. A pointer with neither representation
+  /// declines rather than being handed an address that is not its own.
   /// </summary>
   private bool TryNearAddress(IrValue pointer, out MOperand address) {
     if (pointer is IrGlobalVariable global && IsAddressableGlobal(global)) {

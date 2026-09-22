@@ -816,7 +816,10 @@ public sealed partial class IrLowering {
         elem = IrType.Ptr; count = arr.ElementCount;   // an array of string handles
       } else if (arr.Element is UdtType ue) {
         elem = IrType.I8; count = arr.ElementCount * ue.Size;   // a packed buffer of records
-      } else if (IrTypeMapper.TryMap(arr.Element, out elem) && !elem.IsMbf) {
+      } else if (IrTypeMapper.TryMap(arr.Element, out elem)) {
+        // An MBF element is still scalar STORAGE. Its typed alloca fixes the 4/8-byte stride while
+        // each load/store keeps the computed element address for the MBF conversion routines; unlike
+        // a scalar alloca, an array cannot be promoted away from that address by Mem2Reg.
         count = arr.ElementCount;
       } else
         throw new IrLoweringException("non-scalar array element");
