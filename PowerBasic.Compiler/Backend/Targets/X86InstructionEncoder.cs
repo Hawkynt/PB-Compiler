@@ -20,7 +20,7 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
 
   public byte[] MoveImmediate(MachineRegister register, ulong value) {
     Validate(register);
-    if (this.mode == X86Mode.Bit32)
+    if (mode == X86Mode.Bit32)
       return [(byte)(0xB8 + register.Encoding), .. BitConverter.GetBytes((uint)value)];
     if (register.Encoding < 8)
       return [0x48, (byte)(0xB8 + register.Encoding), .. BitConverter.GetBytes(value)];
@@ -28,7 +28,7 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   }
 
   private void Validate(MachineRegister register) {
-    if (register.Bits != (this.mode == X86Mode.Bit64 ? 64 : 32))
+    if (register.Bits != (mode == X86Mode.Bit64 ? 64 : 32))
       throw new ArgumentException("Register width does not match the target mode.", nameof(register));
   }
 }

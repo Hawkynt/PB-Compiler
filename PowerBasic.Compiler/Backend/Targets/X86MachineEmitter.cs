@@ -5,13 +5,13 @@ public sealed class X86MachineEmitter(IMachineInstructionEncoder encoder, IMachi
   public MachineCode EmitFunction(ReadOnlySpan<byte> body, bool preserveFramePointer = true) {
     var bytes = new List<byte>();
     if (preserveFramePointer) {
-      bytes.AddRange(this.encoder.Push(this.abi.PointerBits == 64 ? X86RegisterFile.Gpr64[5] : X86RegisterFile.Gpr32[5]));
-      bytes.AddRange(this.abi.PointerBits == 64 ? [0x48, 0x89, 0xE5] : [0x89, 0xE5]);
+      bytes.AddRange(encoder.Push(abi.PointerBits == 64 ? X86RegisterFile.Gpr64[5] : X86RegisterFile.Gpr32[5]));
+      bytes.AddRange(abi.PointerBits == 64 ? [0x48, 0x89, 0xE5] : [0x89, 0xE5]);
     }
     bytes.AddRange(body.ToArray());
     if (preserveFramePointer)
-      bytes.AddRange(this.encoder.Pop(this.abi.PointerBits == 64 ? X86RegisterFile.Gpr64[5] : X86RegisterFile.Gpr32[5]));
-    bytes.AddRange(this.encoder.Ret());
+      bytes.AddRange(encoder.Pop(abi.PointerBits == 64 ? X86RegisterFile.Gpr64[5] : X86RegisterFile.Gpr32[5]));
+    bytes.AddRange(encoder.Ret());
     return new(bytes.ToArray(), []);
   }
 }
