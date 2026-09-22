@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.Emit;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
@@ -160,11 +161,20 @@ public static class Driver {
       }
 
       if (dumpStage is "--emit-llvm" or "--emit-c") {
-        var module = IrLowering.TryLowerModule(model, out var declined);
-        if (module is null) {
+        var target = dumpStage == "--emit-c" ? IrBackendTarget.C : IrBackendTarget.X86_64;
+        var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+          Target = target,
+          Optimize = optimize ?? true,
+          OptimizeForSpeed = optimizeSpeed,
+          EnableFpLookupTables = dumpStage == "--emit-llvm",
+          RecoverIntegerArithmetic = optimize ?? true,
+          PrepareParallelLoops = parallelLoops,
+        }, out var declined);
+        if (compiled is null) {
           stderr.WriteLine($"pbc: {dumpStage}: {declined ?? "unsupported construct"} - outside the IR lowering's subset (see docs/IR.md)");
           return 1;
         }
+        var module = compiled.Module;
         module.AsciiOnly = model.AsciiOnly;
 
         var optimizeMetas = model.MetaStatements
@@ -186,12 +196,21 @@ public static class Driver {
           return 1;
         }
 
-        IrMiddleEndPipeline.RunHostedModule(module,
-          optimize: hostedOptimize,
-          optimizeForSpeed: hostedSpeed,
-          enableFpLookupTables: dumpStage == "--emit-llvm",
-          recoverIntegerArithmetic: hostedOptimize,
-          parallelLoops: parallelLoops);
+        if (hostedOptimize != (optimize ?? true) || hostedSpeed != optimizeSpeed) {
+          compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+            Target = target,
+            Optimize = hostedOptimize,
+            OptimizeForSpeed = hostedSpeed,
+            EnableFpLookupTables = dumpStage == "--emit-llvm",
+            RecoverIntegerArithmetic = hostedOptimize,
+            PrepareParallelLoops = parallelLoops,
+          }, out declined);
+          if (compiled is null) {
+            stderr.WriteLine($"pbc: {dumpStage}: {declined ?? "unsupported construct"}");
+            return 1;
+          }
+          module = compiled.Module;
+        }
 
         var verifyErrors = IrVerifier.Verify(module);
         if (verifyErrors.Count > 0) {
