@@ -16,8 +16,8 @@ public sealed class IrVerificationException(string pass, IReadOnlyList<string> e
 public sealed class IrPassManager {
 
   private readonly IrFunctionPassPipeline _functionPasses = new();
-  private readonly List<(string Name, Func<IrModule, int> Run)> _earlyModulePasses = [];
-  private readonly List<(string Name, Func<IrModule, int> Run)> _modulePasses = [];
+  private readonly IrModulePassPipeline _earlyModulePasses = new();
+  private readonly IrModulePassPipeline _modulePasses = new();
 
   /// <summary>When true, verifies the function after each pass and throws on any error.</summary>
   public bool VerifyEachPass {
@@ -39,23 +39,60 @@ public sealed class IrPassManager {
       Func<IrFunction, IrAnalysisManager, IrPassResult> pass)
     => condition ? this.AddAnalyzed(name, pass) : this;
 
-  /// <summary>Adds a module pass that must run before function fixed points erase its proof shape.</summary>
-  public IrPassManager AddEarlyModulePass(string name, Func<IrModule, int> pass) {
-    this._earlyModulePasses.Add((name, pass));
+  /// <summary>Adds an analysis-aware module pass that must run before function fixed points erase its proof shape.</summary>
+  public IrPassManager AddEarlyModuleAnalyzed(
+      string name,
+      Func<IrModule, IrModuleAnalysisManager, IrModulePassResult> pass) {
+    this._earlyModulePasses.Add(name, pass);
     return this;
   }
 
-  public IrPassManager AddEarlyModulePassWhen(bool condition, string name, Func<IrModule, int> pass)
-    => condition ? this.AddEarlyModulePass(name, pass) : this;
+  public IrPassManager AddEarlyModuleAnalyzedWhen(
+      bool condition,
+      string name,
+      Func<IrModule, IrModuleAnalysisManager, IrModulePassResult> pass)
+    => condition ? this.AddEarlyModuleAnalyzed(name, pass) : this;
 
-  /// <summary>Adds an interprocedural pass run around function fixed points.</summary>
-  public IrPassManager AddModulePass(string name, Func<IrModule, int> pass) {
-    this._modulePasses.Add((name, pass));
+  /// <summary>
+  /// Adds an early module transform that has not yet adopted module analyses. A mutation conservatively
+  /// invalidates every cached module analysis; unchanged transforms preserve the complete cache.
+  /// </summary>
+  public IrPassManager AddEarlyModuleConservative(string name, Func<IrModule, int> pass) {
+    ArgumentNullException.ThrowIfNull(pass);
+    return this.AddEarlyModuleAnalyzed(name, (module, _) => ModuleResult(pass(module)));
+  }
+
+  public IrPassManager AddEarlyModuleConservativeWhen(bool condition, string name, Func<IrModule, int> pass)
+    => condition ? this.AddEarlyModuleConservative(name, pass) : this;
+
+  /// <summary>Adds an analysis-aware interprocedural pass run around function fixed points.</summary>
+  public IrPassManager AddModuleAnalyzed(
+      string name,
+      Func<IrModule, IrModuleAnalysisManager, IrModulePassResult> pass) {
+    this._modulePasses.Add(name, pass);
     return this;
   }
 
-  public IrPassManager AddModulePassWhen(bool condition, string name, Func<IrModule, int> pass)
-    => condition ? this.AddModulePass(name, pass) : this;
+  public IrPassManager AddModuleAnalyzedWhen(
+      bool condition,
+      string name,
+      Func<IrModule, IrModuleAnalysisManager, IrModulePassResult> pass)
+    => condition ? this.AddModuleAnalyzed(name, pass) : this;
+
+  /// <summary>
+  /// Adds an interprocedural transform that has not yet adopted module analyses. A mutation
+  /// conservatively invalidates every cached module analysis.
+  /// </summary>
+  public IrPassManager AddModuleConservative(string name, Func<IrModule, int> pass) {
+    ArgumentNullException.ThrowIfNull(pass);
+    return this.AddModuleAnalyzed(name, (module, _) => ModuleResult(pass(module)));
+  }
+
+  public IrPassManager AddModuleConservativeWhen(bool condition, string name, Func<IrModule, int> pass)
+    => condition ? this.AddModuleConservative(name, pass) : this;
+
+  private static IrModulePassResult ModuleResult(int changes)
+    => changes == 0 ? IrModulePassResult.Unchanged : IrModulePassResult.Changed(changes);
 
   /// <summary>Runs every function pass once.</summary>
   public int Run(IrFunction fn) => this._functionPasses.Run(fn);
@@ -71,12 +108,10 @@ public sealed class IrPassManager {
   public void RunOnModule(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
     module.OptimizeForSpeed = this.OptimizeForSpeed;
-    foreach (var (_, run) in this._earlyModulePasses)
-      run(module);
+    var moduleAnalyses = new IrModuleAnalysisManager(module);
+    this._earlyModulePasses.Run(module, moduleAnalyses);
     RunFunctions();
-    foreach (var (_, run) in this._modulePasses)
-      if (run(module) > 0)
-        RunFunctions();
+    this._modulePasses.Run(module, moduleAnalyses, RunFunctions);
     return;
 
     void RunFunctions() {

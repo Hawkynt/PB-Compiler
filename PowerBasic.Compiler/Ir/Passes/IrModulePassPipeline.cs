@@ -2,7 +2,7 @@ using PowerBasic.Compiler.Ir.Analysis;
 
 namespace PowerBasic.Compiler.Ir.Passes;
 
-/// <summary>Ordered module-pass executor with shared cached analyses and conservative legacy adapters.</summary>
+/// <summary>Ordered module-pass executor with one shared cached analysis manager.</summary>
 public sealed class IrModulePassPipeline {
   private readonly List<(string Name, Func<IrModule, IrModuleAnalysisManager, IrModulePassResult> Run)> _passes = [];
 
@@ -14,14 +14,6 @@ public sealed class IrModulePassPipeline {
     ArgumentNullException.ThrowIfNull(pass);
     this._passes.Add((name, pass));
     return this;
-  }
-
-  public IrModulePassPipeline AddLegacy(string name, Func<IrModule, int> pass) {
-    ArgumentNullException.ThrowIfNull(pass);
-    return this.Add(name, (module, _) => {
-      var changes = pass(module);
-      return changes == 0 ? IrModulePassResult.Unchanged : IrModulePassResult.Changed(changes);
-    });
   }
 
   /// <summary>

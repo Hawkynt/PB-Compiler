@@ -12,11 +12,11 @@ public sealed class IrPassManagerTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void AddModulePassWhen_GivenACondition_ThenRunsOnlyWhenEnabled(bool enabled) {
+  public void AddModuleConservativeWhen_GivenACondition_ThenRunsOnlyWhenEnabled(bool enabled) {
     var module = new IrModule("test");
     var calls = 0;
     var manager = new IrPassManager()
-      .AddModulePassWhen(enabled, "probe", _ => {
+      .AddModuleConservativeWhen(enabled, "probe", _ => {
         ++calls;
         return 0;
       });
@@ -24,6 +24,27 @@ public sealed class IrPassManagerTests {
     manager.RunOnModule(module);
 
     Assert.That(calls, Is.EqualTo(enabled ? 1 : 0));
+  }
+
+  [Test]
+  public void AddModuleAnalyzed_GivenPreservedAnalysis_ThenProductionRunnerReusesIt() {
+    var module = new IrModule("test");
+    var computations = 0;
+    var analysis = new IrModuleAnalysisKey<int>("probe", (_, _) => ++computations);
+    var manager = new IrPassManager()
+      .AddModuleAnalyzed("read-before", (_, analyses) => {
+        analyses.Get(analysis);
+        return IrModulePassResult.Unchanged;
+      })
+      .AddModuleAnalyzed("preserve", (_, _) => IrModulePassResult.ChangedPreserving(1, analysis))
+      .AddModuleAnalyzed("read-after", (_, analyses) => {
+        analyses.Get(analysis);
+        return IrModulePassResult.Unchanged;
+      });
+
+    manager.RunOnModule(module);
+
+    Assert.That(computations, Is.EqualTo(1));
   }
 
   [Test]
@@ -78,6 +99,8 @@ public sealed class IrPassManagerTests {
     Assert.Multiple(() => {
       Assert.That(methods.Any(m => m.Name == "Add"), Is.False,
         "function transforms must enter through AddAnalyzed and report preservation");
+      Assert.That(methods.Any(m => m.Name is "AddModulePass" or "AddModulePassWhen"), Is.False,
+        "module transforms must use analyzed or explicitly conservative registration");
       Assert.That(methods.Any(m => m.Name is "Standard" or "Legalize"), Is.False,
         "pipeline policy belongs exclusively to IrMiddleEndPipeline");
     });
@@ -92,6 +115,14 @@ public sealed class IrPassManagerTests {
 
     Assert.That(legacy, Is.Empty,
       "production function optimizers must register through AddAnalyzed/AddAnalyzedWhen only");
+  }
+
+  [Test]
+  public void ModulePipeline_PublicSurface_HasNoLegacyAdapter() {
+    var publicMethods = typeof(IrModulePassPipeline).GetMethods(System.Reflection.BindingFlags.Public
+      | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);
+
+    Assert.That(publicMethods.Any(m => m.Name == "AddLegacy"), Is.False);
   }
 
   [Test]

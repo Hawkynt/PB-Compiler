@@ -22,7 +22,7 @@ public static class IrMiddleEndPipeline {
       int minimumIntegerStorageBits = 16,
       bool recoverIntegerArithmetic = false)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
-    .AddEarlyModulePassWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
+    .AddEarlyModuleConservativeWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
     .AddAnalyzedWhen(recoverIntegerArithmetic, "integer-recovery", IntegerRecovery.Run)
     .AddAnalyzed("storagenarrow", (fn, analyses) => StorageNarrowing.Run(fn, minimumIntegerStorageBits, analyses))
     .AddAnalyzed("mem2reg", Mem2Reg.Run)
@@ -92,39 +92,39 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("simplifycfg", (fn, _) => Conservative(() => SimplifyCfg.Run(fn)))
     .AddAnalyzed("tailrec", (fn, _) => Conservative(() => TailRecursion.Run(fn)))
     .AddAnalyzed("switchform", (fn, _) => Conservative(() => SwitchFormation.Run(fn)))
-    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)
-    .AddModulePassWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
-    .AddModulePassWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
-    .AddModulePassWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
-    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
-    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
       module => Inliner.Run(module, optimizeForSpeed: true))
-    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "ctxclone", ContextSensitiveCloning.Run)
-    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "inline-context",
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "ctxclone", ContextSensitiveCloning.Run)
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "inline-context",
       module => Inliner.Run(module, optimizeForSpeed: true))
-    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "libcalls", LibraryCallRecognition.Run)
-    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "static-search", StaticSearchRecognition.Run)
-    .AddModulePassWhen(includeModulePasses, "bitsets", BitsetSubstitution.Run)
-    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "lutgen", LookupTableGeneration.Run)
-    .AddModulePassWhen(includeModulePasses && optimizeForSpeed, "fpdomain",
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "libcalls", LibraryCallRecognition.Run)
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "static-search", StaticSearchRecognition.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "bitsets", BitsetSubstitution.Run)
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "lutgen", LookupTableGeneration.Run)
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "fpdomain",
       module => FpDomainSpecialization.Run(module, enableFpLookupTables))
-    .AddModulePassWhen(includeModulePasses, "lutelim", LookupTableElimination.Run)
-    .AddModulePassWhen(includeModulePasses, "const-data-merge", ConstantDataMerging.Run)
-    .AddModulePassWhen(includeModulePasses, "strfold", StringConstantFold.Run)
-    .AddModulePassWhen(includeModulePasses, "strchain", StringConcatChain.Run)
-    .AddModulePassWhen(includeModulePasses, "strappend", StringAppendInPlace.Run)
-    .AddModulePassWhen(includeModulePasses, "strcapacity", StringCapacityHoisting.Run)
-    .AddModulePassWhen(includeModulePasses, "strcmpeq", StringCompareEquality.Run)
-    .AddModulePassWhen(includeModulePasses, "strempty", StringEmptinessTest.Run)
-    .AddModulePassWhen(includeModulePasses, "strslice", StringSliceLength.Run)
-    .AddModulePassWhen(includeModulePasses, "strbyte", StringByteRead.Run)
-    .AddModulePassWhen(includeModulePasses, "strview", StringSliceView.Run)
-    .AddModulePassWhen(includeModulePasses, "strcoalesce", StringAllocationCoalescing.Run)
-    .AddModulePassWhen(includeModulePasses, "readonly-globals", ReadOnlyGlobals.Run)
-    .AddModulePassWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
-    .AddModulePassWhen(includeModulePasses, "devirt", WholeProgramDevirtualization.Run)
-    .AddModulePassWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run)
-    .AddModulePassWhen(includeModulePasses && optimizeForSize, "semantic-merge", SemanticFunctionMerging.Run);
+    .AddModuleConservativeWhen(includeModulePasses, "lutelim", LookupTableElimination.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "const-data-merge", ConstantDataMerging.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strfold", StringConstantFold.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strchain", StringConcatChain.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strappend", StringAppendInPlace.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strcapacity", StringCapacityHoisting.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strcmpeq", StringCompareEquality.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strempty", StringEmptinessTest.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strslice", StringSliceLength.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strbyte", StringByteRead.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strview", StringSliceView.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "strcoalesce", StringAllocationCoalescing.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "readonly-globals", ReadOnlyGlobals.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "devirt", WholeProgramDevirtualization.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run)
+    .AddModuleConservativeWhen(includeModulePasses && optimizeForSize, "semantic-merge", SemanticFunctionMerging.Run);
 
   /// <summary>
   /// Adapts a transform that does not currently consume analyses to the analysis-aware execution contract.
