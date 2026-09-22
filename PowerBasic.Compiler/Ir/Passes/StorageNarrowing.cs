@@ -26,7 +26,8 @@ public static class StorageNarrowing {
   /// </summary>
   public static int Run(IrFunction fn, int minimumIntegerBits = 16) {
     ArgumentNullException.ThrowIfNull(fn);
-    return Run(fn, minimumIntegerBits, new IrAnalysisManager(fn)).Changes;
+    return IrFunctionPassPipeline.RunStandalone(fn, "storagenarrow",
+      (function, analyses) => Run(function, minimumIntegerBits, analyses));
   }
 
   /// <summary>
