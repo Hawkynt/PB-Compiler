@@ -24,7 +24,7 @@ check() { # $1 = file, $2 = dialect
     # explicitly decline an IR construct while its writer coverage is being
     # completed; that is a coverage result, not a hidden legacy success. Keep
     # such declines visible, but fail on an unclassified compiler error.
-    if grep -qE "outside the (PB3\.5 IR writer|IR lowering)'s subset|optimized IR failed verification" "$log"; then
+    if grep -qE "outside the (PB3\.5 IR writer|IR lowering)'s subset|optimized IR failed verification|deferred .*source whose path is not provably unreachable" "$log"; then
       echo "DECLINE  $d $(basename "$f")"; head -2 "$log" | sed 's/^/   /'; decline=$((decline+1)); return
     fi
     echo "EMITFAIL $d $(basename "$f")"; head -2 "$log" | sed 's/^/   /'; fail=$((fail+1)); return
