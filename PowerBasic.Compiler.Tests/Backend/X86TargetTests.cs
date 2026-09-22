@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Backend.Targets;
+using PowerBasic.Compiler.Backend;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
