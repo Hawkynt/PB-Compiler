@@ -209,7 +209,7 @@ public sealed class UnitLinkTests {
     Assert.Multiple(() => {
       Assert.That(generator.Errors.Select(e => e.Message), Has.Some.Contains("external procedure"));
       Assert.That(generator.BackendRoutedNames, Does.Not.Contain("main"));
-      Assert.That(generator.BackendDeclines.Any(d => d.Name == "main" && d.Reason.Contains("no link symbol")),
+      Assert.That(generator.BackendDeclines.Any(d => d.Name == "main" && d.Reason.Contains("external procedure Missing")),
         Is.True, string.Join("; ", generator.BackendDeclines));
     });
   }
