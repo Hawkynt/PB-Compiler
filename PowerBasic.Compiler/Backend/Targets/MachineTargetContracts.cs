@@ -22,6 +22,7 @@ public interface IMachineInstructionEncoder {
   byte[] Push(MachineRegister register);
   byte[] Pop(MachineRegister register);
   byte[] MoveImmediate(MachineRegister register, ulong value);
+  byte[] AdjustStack(int bytes, bool allocate);
 }
 
 public interface IMachineEmitter {
