@@ -192,7 +192,7 @@ The PR now has a production analysis substrate rather than only a sketch:
 1. `IrAnalysisManager` lazily computes typed function analyses and dynamically records analysis-to-analysis dependencies.
 2. `IrPreservedAnalyses` / `IrPassResult` carry exact preservation and named preservation sets; stale prerequisites invalidate dependents transitively.
 3. `IrFunctionPassPipeline` is the function-pass execution core behind `IrPassManager`; legacy delegates remain conservative.
-4. Shared CFG analyses include dominators/frontiers, post-dominators/frontiers and an explicit natural-loop forest.
+4. Shared CFG analyses include dominators/frontiers, post-dominators/frontiers and an explicit natural-loop forest; module passes execute through a shared module analysis manager.
 5. Shared value/memory analyses include MemorySSA, branch-refined integer ranges, FP domains, bootstrap scalar evolution and known bits.
 6. Scalar evolution exposes additive `{start,+,step}` recurrences and bounded exact trip-count proofs using fixed-width integer semantics; `CountedLoop` and migrated loop consumers reuse those facts.
 7. Migrated transforms include correlation, pointer-check elimination, GVN, LICM, integer/FP range folding, reciprocal loop reasoning and IV simplification. CFG-preserving transforms preserve `IrAnalysisSets.Cfg` rather than manually maintaining a key list.
@@ -200,7 +200,7 @@ The PR now has a production analysis substrate rather than only a sketch:
 9. Verification deliberately remains independent of the analysis cache: `VerifyEachPass` must catch an incorrect preservation claim instead of trusting it.
 10. No new external dependency has been introduced and the standard pass order has not been reordered.
 
-The next architectural boundary is module/call-graph analysis ownership. `FunctionSummaries` and several module transforms currently recompute inside mutation loops; caching them safely requires module passes to report invalidation first. After that, the large standard pipeline can move into named fixed-point groups. The representation split (`Bound AST -> HIR -> MIR/SSA`) follows once the analysis/pass substrate is stable enough that semantic lowering work is not mixed with cache mechanics.
+The next architectural boundary is phase naming below the target-neutral middle end. Production policy is centralized in `IrMiddleEndPipeline`, with `RunNativeModule` and `RunHostedModule` owning restart and inlining choreography; `IrPassManager` only executes registered passes and invalidates shared analyses. The remaining representation split (`Bound AST -> HIR -> MIR/SSA`) can proceed without reintroducing caller-owned optimizer schedules.
 
 ## Reference architecture
 

@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 28453)
+Total output lines: 953
+
 # PB-Compiler
 
 [![License](https://img.shields.io/github/license/Hawkynt/PB-Compiler)](https://github.com/Hawkynt/PB-Compiler/blob/main/LICENSE)
@@ -133,7 +136,7 @@ pbc --dialect pb36 HELLO.BAS  # pb36 syntax features (optimizer on by default)
 pbc --dialect qb45 OLD.BAS    # compile a QuickBASIC 4.5 source
 pbc --optimize OLD.BAS        # run the optimizer for any dialect
 pbc --no-optimize APP.BAS     # disable the optimizer (faithful codegen)
-pbc --no-x-backend OLD.BAS    # compile through the legacy direct emitter instead
+pbc --no-x-backend OLD.BAS    # rejected: the routed backend is mandatory
 pbc -G386 TEST.BAS            # allow 80386 instructions ($CPU 80386)
 pbc UNIT.BAS                  # $COMPILE UNIT inside -> UNIT.PBU
 pbc MAIN.BAS                  # $LINK "UNIT.PBU" / "MY.PBL" inside -> linked EXE
@@ -458,189 +461,7 @@ next free number rather than displacing anything.
 | ✅ | [O0080](docs/optimizations/O0080-division-special-cases.md) | Division special cases | `\ 1`, `MOD 1`, `\ -1`, and divisors beyond the proven dividend range fold away; `MOD 2^n` masks for any provably non-negative value. |
 | ✅ | [O0081](docs/optimizations/O0081-flag-reuse.md) | Flag reuse | `CMP x,0` becomes `TEST x,x` — or disappears entirely when the preceding ALU op already set the flags. |
 | ✅ | [O0082](docs/optimizations/O0082-memory-operand-folding.md) | Memory operand folding | `MOV AX,[x] / ADD DI,AX` becomes `ADD DI,[x]` as a general lowering rule, not per loop shape. |
-| ✅ | [O0083](docs/optimizations/O0083-store-to-load-forwarding.md) | Store-to-load forwarding | `MOV [n],AX / MOV AX,[n]` — the reload is dropped, the accumulator already holds the value. |
-| ⬜ | [O0084](docs/optimizations/O0084-cross-statement-register-caching.md) | Cross-statement register caching | A local read repeatedly across consecutive statements is loaded once into a register. |
-| 🟡 | [O0085](docs/optimizations/O0085-copy-coalescing.md) | Register copy coalescing | `MOV BX,AX` disappears when producer and consumer can share one register. |
-| 🟡 | [O0086](docs/optimizations/O0086-spill-slot-reuse.md) | Spill-slot reuse | Temporaries with disjoint live ranges share one frame cell, shrinking the frame and its zero fill. |
-| ⬜ | [O0087](docs/optimizations/O0087-rematerialization.md) | Rematerialization | Recompute a cheap constant or address instead of spilling and reloading it. |
-| ✅ | [O0088](docs/optimizations/O0088-boolean-materialization-sbb.md) | Branchless truth values | A genuinely needed −1/0 comes from `SBB AX,AX` / `SETcc` instead of a branch pair. |
-| 🟡 | [O0089](docs/optimizations/O0089-extension-elimination.md) | Extension elimination | A `CBW`/`CWD`/zero-extend whose result the known bits already guarantee is dropped. |
-| 🟡 | [O0090](docs/optimizations/O0090-demanded-bits.md) | Demanded bits | Compute only the bits consumers observe; a truncation pushes into its producer. |
-| ⬜ | [O0091](docs/optimizations/O0091-partial-register-hazards.md) | Partial-register hazards | Avoid byte/word write mixes and false dependencies on the targets where they stall. |
-| 🟡 | [O0092](docs/optimizations/O0092-encoding-selection.md) | Encoding selection | Choose encodings by bytes, micro-ops and decode width — per target, not universally. |
-| ✅ | [O0093](docs/optimizations/O0093-jump-threading.md) | Jump threading | A branch whose target is itself a jump goes straight to the final destination. |
-| ⬜ | [O0094](docs/optimizations/O0094-branch-inversion.md) | Branch inversion | Invert the condition and swap the arms where that removes the arm-closing `JMP`. |
-| ⬜ | [O0095](docs/optimizations/O0095-branch-tail-merging.md) | Branch-tail merging | Identical suffixes of `THEN`/`ELSE`/`CASE` arms are emitted once. |
-| ✅ | [O0096](docs/optimizations/O0096-condition-combining.md) | Nested condition combining | `IF a THEN IF b THEN` becomes one branch chain with no intermediate block. |
-| ✅ | [O0097](docs/optimizations/O0097-repeated-comparison-elimination.md) | Repeated comparison elimination | The same unchanged condition is not tested twice along a path. |
-| 🟡 | [O0098](docs/optimizations/O0098-balanced-decision-tree.md) | Balanced decision tree | A sparse `SELECT CASE` dispatches in O(log n) compares instead of a linear chain. |
-| 🟡 | [O0099](docs/optimizations/O0099-bit-test-dispatch.md) | Bit-test dispatch | Membership in a small constant set becomes a mask shift and a bit test. |
-| 🟡 | [O0100](docs/optimizations/O0100-perfect-hash-dispatch.md) | Perfect-hash dispatch | A sparse case set maps through a collision-free arithmetic hash plus one verifying compare. |
-| 🟡 | [O0101](docs/optimizations/O0101-jump-table-compression.md) | Jump-table sharing & compression | Nested dispatches share a range check; tables use byte offsets where the span allows. |
-| 🟡 | [O0102](docs/optimizations/O0102-return-value-forwarding.md) | Return-value forwarding | The final expression computes straight into the return register, with no result slot. |
-| 🟡 | [O0103](docs/optimizations/O0103-shared-epilogue.md) | Shared epilogue | Several exits route through one teardown — without a jump from the block already adjacent to it. |
-| ⬜ | [O0104](docs/optimizations/O0104-block-placement.md) | Block placement | Infer edge probabilities and lay the common path out as one fall-through run. |
-| ⬜ | [O0105](docs/optimizations/O0105-hot-cold-splitting.md) | Hot/cold splitting | Error and diagnostic arms move out of the hot instruction stream. |
-| ⬜ | [O0106](docs/optimizations/O0106-trace-formation.md) | Trace formation | Tail-duplicate small joins into superblocks so scheduling and CSE reach further. |
-| 🟡 | [O0107](docs/optimizations/O0107-branch-folding-through-phi.md) | Branch folding through phi | Specialize a join where the incoming edges already decide the branch. |
-| 🟡 | [O0108](docs/optimizations/O0108-branchless-select.md) | Branchless select / min / max / abs | Short data-dependent branches become mask arithmetic or `CMOV`. |
-| ⬜ | [O0109](docs/optimizations/O0109-macro-fusion-placement.md) | Macro-fusion placement | Keep `CMP`/`TEST` adjacent to its branch on cores that fuse them — the opposite of what an 8086 wants. |
-| ⬜ | [O0110](docs/optimizations/O0110-general-induction-variables.md) | General induction variables | Any `base + i*stride` becomes an incrementally stepped value, not only the recognized array shapes. |
-| 🟡 | [O0111](docs/optimizations/O0111-redundant-induction-variables.md) | Redundant IV elimination | Loop variables that advance in lockstep collapse to one. |
-| ✅ | [O0112](docs/optimizations/O0112-countdown-loop.md) | Countdown loops | A fixed-trip loop counts down with `DEC`/`JNZ`, dropping the compare entirely. |
-| 🟡 | [O0113](docs/optimizations/O0113-loop-bounds-hoisted.md) | Loop bounds in registers | The limit and step are held across the loop instead of reloaded per iteration. |
-| ✅ | [O0114](docs/optimizations/O0114-loop-unswitching.md) | Loop unswitching | An invariant conditional moves out of the loop and each cloned body is specialized. |
-| ⬜ | [O0115](docs/optimizations/O0115-loop-peeling.md) | Loop peeling | Peel the first iteration to remove its special-case branch from the rest. |
-| ✅ | [O0116](docs/optimizations/O0116-loop-guard-hoisting.md) | Loop guard hoisting | Test the zero-trip case once, then run a bottom-tested loop with no separate back-edge jump. |
-| ⬜ | [O0117](docs/optimizations/O0117-bounds-check-merging.md) | Bounds-check merging & hoisting | Several accesses on one index need one check; a loop-invariant check hoists to the preheader. |
-| ⬜ | [O0118](docs/optimizations/O0118-loop-dead-store-elimination.md) | Loop dead stores | A store the next iteration overwrites happens once, after the loop. |
-| ⬜ | [O0119](docs/optimizations/O0119-reduction-recognition.md) | Reduction recognition | Sum, product, min, max, `AND`, `OR`, `XOR` folds are classified as reductions, not arbitrary dependencies. |
-| ⬜ | [O0120](docs/optimizations/O0120-multiple-accumulators.md) | Multiple accumulators | Split a reduction into independent chains on pipelined targets (a loss on an 8086). |
-| ⬜ | [O0121](docs/optimizations/O0121-reduction-tree-balancing.md) | Reduction tree balancing | A long associative chain becomes a balanced tree, a third of the dependency depth. |
-| 🟡 | [O0122](docs/optimizations/O0122-loop-interchange.md) | Loop interchange | Swap the nesting so the inner loop walks contiguous memory. |
-| ⬜ | [O0123](docs/optimizations/O0123-loop-distribution.md) | Loop distribution / fission | Split a loop to enable vectorization or to relieve register pressure. |
-| ⬜ | [O0124](docs/optimizations/O0124-loop-tiling.md) | Loop tiling | Process multidimensional arrays in cache-sized blocks (386+ only — an 8086 has no cache). |
-| ⬜ | [O0125](docs/optimizations/O0125-loop-skewing.md) | Loop skewing | Reshape the iteration space so a diagonal dependence stops blocking the inner loop. |
-| ⬜ | [O0126](docs/optimizations/O0126-unroll-and-jam.md) | Unroll and jam | Unroll the outer loop and fuse the inner copies, so outer-loop values are reused. |
-| ⬜ | [O0127](docs/optimizations/O0127-loop-interleaving.md) | Loop interleaving | Separate each load from its consumer across unrolled copies to hide latency. |
-| ⬜ | [O0128](docs/optimizations/O0128-software-pipelining.md) | Software pipelining | Prologue/kernel/epilogue so different iterations occupy different pipeline stages; modulo scheduling. |
-| 🟡 | [O0129](docs/optimizations/O0129-unroll-factor-cost-model.md) | Unroll factor by cost model | Pick the factor from register pressure, code size, latency and trip count — not a constant 4. |
-| ✅ | [O0130](docs/optimizations/O0130-trip-count-versioning.md) | Trip-count versioning | Scalar, unrolled and vector variants of a loop, selected at run time by the count. |
-| ⬜ | [O0131](docs/optimizations/O0131-exact-trip-count.md) | Exact trip count | One analysis deriving the iteration count from start, end, step and PB's wrap semantics. |
-| ✅ | [O0132](docs/optimizations/O0132-compile-time-loop-evaluation.md) | Compile-time loop evaluation | A finite pure loop runs at compile time and becomes initialized data. |
-| ⬜ | [O0133](docs/optimizations/O0133-loop-prefix-evaluation.md) | Loop prefix evaluation | Evaluate the first iterations, then start the runtime loop from that state. |
-| ✅ | [O0134](docs/optimizations/O0134-recurrence-shortening.md) | Recurrence shortening & closed forms | Replace a loop-carried recurrence with its closed form where the wrap semantics permit. |
-| ⬜ | [O0135](docs/optimizations/O0135-loop-phi-constants.md) | Loop-phi constants | A loop-carried value that never actually changes folds; a decidable back edge collapses. |
-| ⬜ | [O0136](docs/optimizations/O0136-adjacent-access-merging.md) | Adjacent access merging | Contiguous byte/word loads and stores become one wider access. |
-| ⬜ | [O0137](docs/optimizations/O0137-load-widening.md) | Load widening across iterations | One wide load feeds several unrolled bodies — profitable only if the lanes stay packed. |
-| ⬜ | [O0138](docs/optimizations/O0138-overlapping-load-combining.md) | Overlapping loads combined | A sliding window carries the previous element forward instead of re-reading it. |
-| ⬜ | [O0139](docs/optimizations/O0139-alignment-versioning.md) | Alignment peeling & versioning | Peel to a vector boundary, and only over-read where padding is provably accessible. |
-| ⬜ | [O0140](docs/optimizations/O0140-load-store-motion.md) | Load hoisting & store sinking | Move memory operations across provably non-aliasing ones. |
-| ⬜ | [O0141](docs/optimizations/O0141-access-clustering.md) | Access clustering | Order memory operations by address for bus, cache-line and merge behavior. |
-| ⬜ | [O0142](docs/optimizations/O0142-non-temporal-stores.md) | Non-temporal stores | Large streaming writes bypass the cache on targets that have one. |
-| ⬜ | [O0143](docs/optimizations/O0143-slp-vectorization.md) | SLP vectorization | Pack isomorphic straight-line statements, including after unrolling. |
-| ⬜ | [O0144](docs/optimizations/O0144-interleaved-access-vectorization.md) | Interleaved-access vectorization | De-interleave RGB-style data with the unpack family, operate, re-interleave. |
-| ⬜ | [O0145](docs/optimizations/O0145-vector-reduction.md) | Vector reduction | Packed accumulators plus one horizontal combine — the commonest loop shape there is. |
-| ⬜ | [O0146](docs/optimizations/O0146-vector-tail.md) | Vector tails | A runtime remainder, masked lanes, or an overlapping final vector. |
-| ⬜ | [O0147](docs/optimizations/O0147-vector-width-cost-model.md) | Vector width by cost model | Choose MMX/SSE/AVX width by trip count, transition cost and register pressure — not just by `$CPU`. |
-| ⬜ | [O0148](docs/optimizations/O0148-packed-width-selection.md) | Packed vs widening lanes | Stay in byte lanes when the ranges prove no lane can overflow. |
-| ⬜ | [O0149](docs/optimizations/O0149-saturating-pack.md) | Saturating pack recognition | Clamp-then-narrow becomes `PACKUSWB` / a saturating add. |
-| ⬜ | [O0150](docs/optimizations/O0150-vector-compare-select.md) | Vector compare & select | Per-lane conditionals become masks, packed min/max and blends. |
-| ⬜ | [O0151](docs/optimizations/O0151-gather-scatter.md) | Gather / scatter | Indirect indexing vectorizes where the target has the instruction and the cost model agrees. |
-| ⬜ | [O0152](docs/optimizations/O0152-vector-alias-versioning.md) | Runtime dependence checks | A pointer-range test at run time selects the vector path over the scalar one. |
-| ⬜ | [O0153](docs/optimizations/O0153-swar-arithmetic.md) | SWAR packed arithmetic | Use ordinary registers as packed byte lanes — vectorization for the 8086, which has no SIMD. |
-| ⬜ | [O0154](docs/optimizations/O0154-swar-search.md) | SWAR search idioms | Zero-byte detection and parallel compare for `INSTR`-class scans. |
-| ⬜ | [O0155](docs/optimizations/O0155-bit-plane-transformation.md) | Bit planes / bit slicing | Boolean element arrays become wide bitwise operations, 16 or 32 elements at a time. |
-| ⬜ | [O0156](docs/optimizations/O0156-path-sensitive-propagation.md) | Path-sensitive propagation | Keep per-path value states instead of joining everything away at each merge. |
-| ⬜ | [O0157](docs/optimizations/O0157-relational-range-propagation.md) | Relational ranges | Track `x < y`, not only independent intervals per variable. |
-| ⬜ | [O0158](docs/optimizations/O0158-interprocedural-range-propagation.md) | Interprocedural ranges | Join the argument ranges over all call sites and optimize the callee with them. |
-| ✅ | [O0159](docs/optimizations/O0159-return-value-propagation.md) | Return-value propagation | A callee's constant, range and known bits flow back into its callers. |
-| ⬜ | [O0160](docs/optimizations/O0160-call-site-cloning.md) | Call-site cloning | Specialize by range, alignment or aliasing instead of merging into a weak common fact. |
-| 🟡 | [O0161](docs/optimizations/O0161-function-summaries.md) | Function summaries | Purity, mod/ref, escape, return facts and termination recorded per procedure. |
-| ⬜ | [O0162](docs/optimizations/O0162-interprocedural-dead-store.md) | Interprocedural dead stores | A store every reachable callee overwrites before reading is dead. |
-| ⬜ | [O0163](docs/optimizations/O0163-dead-field-elimination.md) | Dead field elimination | An unread field of an internal TYPE loses its storage in every instance and every store to it. |
-| ⬜ | [O0164](docs/optimizations/O0164-partial-evaluation.md) | Partial evaluation | Specialize on the arguments that are known and pre-compute the static part of the body. |
-| ✅ | [O0165](docs/optimizations/O0165-readonly-global-propagation.md) | Read-only global propagation | A global with one constant initializer and no writes is a compile-time constant. |
-| ⬜ | [O0166](docs/optimizations/O0166-dead-call-result-elimination.md) | Dead call results | A pure call whose result nobody uses is removed, arguments and all. |
-| ⬜ | [O0167](docs/optimizations/O0167-tail-call-fact-propagation.md) | Tail-call fact propagation | Facts flow into a tail call, and the resulting loop is optimized as a loop. |
-| ⬜ | [O0168](docs/optimizations/O0168-recursive-argument-evolution.md) | Recursive argument evolution | Recognize `n-1`, `acc+n`, `ptr+stride` recurrences and their depth bounds. |
-| ⬜ | [O0169](docs/optimizations/O0169-returned-condition-propagation.md) | Returned conditions | A Boolean-returning function leaves its answer in the flags instead of materializing −1/0. |
-| ⬜ | [O0170](docs/optimizations/O0170-leaf-register-save-elision.md) | Leaf save/restore elision | Do not save callee-stable registers the selected code demonstrably never writes. |
-| 🟡 | [O0171](docs/optimizations/O0171-alias-analysis.md) | Alias analysis | One oracle over storage kinds, types and allocation sites — PB's aliasing entry points are few and explicit. |
-| 🟡 | [O0172](docs/optimizations/O0172-loop-dependence-analysis.md) | Loop dependence analysis | The direction vectors that gate every loop restructuring and vectorization decision. |
-| ⬜ | [O0173](docs/optimizations/O0173-speculative-load-hoisting.md) | Speculative load hoisting | Hoist a load past a store under a runtime guard or a no-fault proof. |
-| 🟡 | [O0174](docs/optimizations/O0174-target-cost-models.md) | Per-target cost models | The prerequisite for most of the above: 8086 instruction bytes and P6 micro-ops are opposite objectives. |
-| ⬜ | [O0175](docs/optimizations/O0175-critical-path-scheduling.md) | Latency & port scheduling | Order by dependency depth and port pressure instead of one fixed heuristic. |
-| ⬜ | [O0176](docs/optimizations/O0176-register-pressure-scheduling.md) | Pressure-aware scheduling | Negotiate live ranges with the allocator; split a range around a call rather than spilling it whole. |
-| ⬜ | [O0177](docs/optimizations/O0177-cycle-estimate-battery.md) | Cycle-estimate assertions | Test infrastructure: the battery must be able to express "larger but faster". |
-| ✅ | [O0178](docs/optimizations/O0178-empty-string-simplification.md) | Empty-string identities | `s$ + ""`, `LEFT$(s$,0)` and friends stop going through the heap. |
-| ⬜ | [O0179](docs/optimizations/O0179-string-self-assignment.md) | String self-assignment | `s$ = s$` is elided without disturbing handle ownership. |
-| ✅ | [O0180](docs/optimizations/O0180-string-length-caching.md) | `LEN` caching | A repeated `LEN(s$)` over an unmodified string reloads a slot instead of re-reading the descriptor. |
-| ✅ | [O0181](docs/optimizations/O0181-empty-string-comparison.md) | Empty-string comparison | `s$ = ""` becomes a handle/length test rather than a `StrCmp` call. |
-| ✅ | [O0182](docs/optimizations/O0182-small-array-scalar-replacement.md) | Small array scalar replacement | A tiny constant-indexed local array becomes independent scalars that fold and register-allocate. |
-
-### O — implemented sub-passes (dissected from the entries above)
-
-| | # | Optimization | What it does |
-|---|---|---|---|
-| ✅ | [O0183](docs/optimizations/O0183-ssa-dead-store.md) | SSA dead-store elimination | An SSA mark-sweep removes assignments whose version is never really read — including values kept alive only by a chain of dead copies. |
-| ✅ | [O0184](docs/optimizations/O0184-cse-branch-inheritance.md) | CSE inheritance into dominated branches | The live value cache from before an `IF`/`SELECT` is inherited into the arms, which the condition dominates. |
-| ✅ | [O0185](docs/optimizations/O0185-cse-past-merge.md) | CSE retention past a merge | A cached value normally dies at a control-flow merge, because either arm might have written its inputs. |
-| ✅ | [O0186](docs/optimizations/O0186-cse-loop-preheader.md) | CSE reuse through loop preheaders | A value computed before a `FOR`/`DO` loop whose body never writes its inputs is inherited *into* the body — every iteration reloads the pre-loop slot. |
-| ✅ | [O0187](docs/optimizations/O0187-redundant-array-load.md) | Redundant array-element load caching | A repeated array-element read `a%(i%)` with no intervening write reloads the first read's stashed value instead of re-reading memory. |
-| ✅ | [O0188](docs/optimizations/O0188-cse-if-condition.md) | `IF`-condition subexpression caching | The condition of an `IF` is evaluated unconditionally and dominates every arm, so its subexpressions are cacheable like any others. |
-| ✅ | [O0189](docs/optimizations/O0189-multiply-shift-add-shapes.md) | Multiply by `2^a ± 2^b` | Multipliers beyond a single power of two:. |
-| ✅ | [O0190](docs/optimizations/O0190-divide-power-of-two.md) | Integer divide by a power of two | `x \ 2^n` becomes an arithmetic shift — with PB's truncation fix-up, because `SAR` rounds toward negative infinity while `\` truncates toward zero. |
-| ✅ | [O0191](docs/optimizations/O0191-modulo-power-of-two.md) | Modulo by a power of two | `x MOD 2^n` becomes a mask — but PB's remainder takes the dividend's sign, so the signed form reconstructs it as `((x + b) AND mask) - b` where `b` is the sign bias. |
-| ✅ | [O0192](docs/optimizations/O0192-parity-mask.md) | Parity / zero-test modulo mask | The everyday even/odd test `IF n MOD 2 = 0` does not need the remainder's *value*, only whether it is zero. |
-| ✅ | [O0193](docs/optimizations/O0193-subscript-shift-scaling.md) | Subscript scaling by shift | A subscript is scaled by the element size before it is added to the base. |
-| ✅ | [O0194](docs/optimizations/O0194-accumulator-residency.md) | Hot accumulator in DI | One hot 2-byte INTEGER accumulator lives in DI across the loop, so its per-iteration load and store disappear. |
-| ✅ | [O0195](docs/optimizations/O0195-nested-counter-residency.md) | Nested FOR counter residency | An inner INTEGER `FOR` under an SI-resident outer loop keeps its counter in DI, instead of giving DI to an accumulator. |
-| ✅ | [O0196](docs/optimizations/O0196-do-loop-residency.md) | DO/WHILE loop accumulator residency | The first generalization past the `FOR`-loop shape: a `DO`/`WHILE`/`LOOP` has no counter, so SI is free. |
-| ✅ | [O0197](docs/optimizations/O0197-dual-accumulators.md) | Two resident accumulators | A `DO` loop has no counter, so both SI and DI are free: two hot INTEGER accumulators can be resident at once. |
-| ✅ | [O0198](docs/optimizations/O0198-resident-read-modify-write.md) | Resident read-modify-write | Even with an accumulator resident in DI, the naive emission of `acc = acc + a(i)` still routes through the accumulator register: load DI into AX, add, copy back. |
-| ✅ | [O0199](docs/optimizations/O0199-branch-tolerant-residency.md) | Residency across a conditional | The clean-body proof accepts a conditional (`IF`/`ELSEIF`/`ELSE`) whose test is SI-clean and whose arms are themselves SI-clean. |
-| ✅ | [O0200](docs/optimizations/O0200-trivial-method-inlining.md) | Trivial TYPE method and property inlining | Any trivial method body — an auto-generated property accessor or a hand-written one-expression method. |
-| ✅ | [O0201](docs/optimizations/O0201-inlined-procedure-purge.md) | Fully-inlined procedure purge | A procedure inlined at every call site has no surviving real `CALL`, so its body is dead weight in the image. |
-| ✅ | [O0202](docs/optimizations/O0202-int16-immediate-folding.md) | 16-bit immediate operand folding | A compile-time-constant operand becomes an immediate instead of being materialized in a register: `ADD/SUB/AND/OR/XOR AX,imm` and `CMP AX,imm`. |
-| ✅ | [O0203](docs/optimizations/O0203-int32-immediate-folding.md) | 32-bit immediate operand folding | The LONG/DWORD path folds a constant the same way as the 16-bit one, into immediate pair operations:. |
-| ✅ | [O0204](docs/optimizations/O0204-inc-dec-idiom.md) | `INC`/`DEC` for ±1 | An add or subtract of exactly 1 — modular or checked — becomes `INC` or `DEC`: one byte instead of three. |
-| ✅ | [O0205](docs/optimizations/O0205-or-self-zero-test.md) | Zero test as `OR reg,reg` | A comparison against zero collapses to `OR AX,AX` — two bytes instead of three, with the same ZF and SF. |
-| ✅ | [O0206](docs/optimizations/O0206-memory-incr-in-place.md) | In-place memory `INCR`/`DECR` | `INCR n%` on a non-resident 2-byte integer whose address costs no code updates the cell directly instead of loading it, incrementing the accumulator and storing it back. |
-| ✅ | [O0207](docs/optimizations/O0207-self-concat-handle-reuse.md) | Self-concat handle reuse | For `s$ = s$ + rhs` (append) or `s$ = lhs + s$` (prepend), where the other operand is a string literal or a bare variable, `s$`'s handle is passed straight to `StrCat`. |
-| ✅ | [O0208](docs/optimizations/O0208-inplace-literal-append.md) | In-place literal append | `s$ = s$ + "literal"` calls `rt_strcatlit`, which — when `s$` is the topmost heap block and there is room under the `$STRING` cap. |
-| ✅ | [O0209](docs/optimizations/O0209-inplace-variable-append.md) | In-place variable append | `s$ = s$ + v$` (with `v$` a bare string variable) reads `v$`'s raw handle — no `StrDup` temp, so `s$` stays topmost. |
-| ✅ | [O0210](docs/optimizations/O0210-concat-chain-temp-reuse.md) | Concat-chain dead-temp reuse | In a left-associative chain `a$ + b$ + c$` = `(a$ + b$) + c$`, the inner concat produces a fresh, dead, topmost temp. |
-| ✅ | [O0211](docs/optimizations/O0211-console-setter-elimination.md) | Redundant console-setter elimination | A console-state statement that sets the value already in effect changes nothing observable and is dropped. |
-| ✅ | [O0212](docs/optimizations/O0212-promotion-lowering-32.md) | 32-bit promotion lowering | `total& = total& + delta&` lowered faithfully is `FILD` / the x87 op / `FISTP` plus a memory staging cell at each end. |
-| ✅ | [O0213](docs/optimizations/O0213-cross-procedure-tail-call.md) | Cross-procedure tail call | A `SUB A` whose last action is `CALL B(args)` — B another in-module `SUB`. |
-| ✅ | [O0214](docs/optimizations/O0214-udt-compare-widening.md) | Whole-UDT compare widening | The PowerBASIC 3.1 whole-value `=`/`<>` comparison of two `TYPE` values is a memory compare. |
-| ✅ | [O0215](docs/optimizations/O0215-udt-self-copy-elision.md) | UDT self-copy elision | `rec = rec`, where both sides are the structurally identical non-string lvalue, copies a block onto itself. |
-| ✅ | [O0216](docs/optimizations/O0216-udt-self-compare-fold.md) | UDT self-compare folding | `rec = rec` as an expression folds to its constant truth: `-1` for `=`, `0` for `<>`. |
-| ✅ | [O0217](docs/optimizations/O0217-bounds-check-elimination.md) | Bounds-check elimination by range | An array index whose proven `[lo,hi]` lies inside the array's static bounds cannot raise Error 9, so its check is not emitted. |
-| ✅ | [O0218](docs/optimizations/O0218-range-comparison-folding.md) | Range-invariant comparison folding | A signed comparison against a constant whose answer is invariant over the proven range folds to that constant boolean — in ordinary code, not only in a branch condition. |
-| ✅ | [O0219](docs/optimizations/O0219-overflow-check-elimination.md) | Overflow-check elimination | An `INTEGER` add or subtract over an affine counter range that provably stays inside 16 bits cannot raise Error 6, so its `JNO` guard is not emitted. |
-| ✅ | [O0220](docs/optimizations/O0220-divide-guard-elimination.md) | Divide-by-zero guard elimination | The Error-11 guard before an `INTEGER` `\` or `MOD` is emitted unconditionally — it is not an `$ERROR` option but part of the language's behavior. |
-| ✅ | [O0221](docs/optimizations/O0221-operation-narrowing.md) | 32-bit operation narrowing | A 32-bit comparison or integral multiply whose operands the lattice proves both fit one 16-bit word runs on the 16-bit ALU:. |
-| ✅ | [O0222](docs/optimizations/O0222-identity-operation-removal.md) | Fact-proven identity removal | An operation whose facts prove it changes nothing is not emitted — only its operand is:. |
-| ✅ | [O0223](docs/optimizations/O0223-constant-result-folding.md) | Fact-proven constant result | An operation whose result the facts already know emits the constant — while still evaluating the operand for its effects:. |
-| ✅ | [O0224](docs/optimizations/O0224-bounded-multiply-off-fpu.md) | Bounded multiply stays off the FPU | PB promotes an integer multiply to floating point, so `p& = a% * b%` normally pays `FILD` for each operand, `FMUL`, and `FISTP`. |
-| ✅ | [O0225](docs/optimizations/O0225-ssa-construction.md) | SSA construction (CFG, dominators, phi placement) | The substrate every other SSA pass stands on:. |
-| ✅ | [O0226](docs/optimizations/O0226-proven-constant-reads.md) | Cross-block proven-constant reads | The emitter folds each read that O0017 proved constant — constant propagation across blocks, which the local folder (O0001) cannot do because it sees one expression at a time. |
-| ✅ | [O0227](docs/optimizations/O0227-constant-fill-stosw.md) | Constant array fill → `REP STOSW` | A constant-trip `FOR` loop whose body stores a constant into an array element indexed by the bare counter is a block fill, and the 8086 has an instruction for that. |
-| ✅ | [O0228](docs/optimizations/O0228-series-folding.md) | Arithmetic-series folding | A constant-trip loop whose body accumulates the counter (`s = s + i`) computes a closed-form total. |
-| ✅ | [O0229](docs/optimizations/O0229-copy-loop-movsw.md) | Array copy loop → `REP MOVSW` | `FOR i = lo TO hi : dst(i) = src(i) : NEXT` over two distinct 16-bit arrays becomes one `REP MOVSW`. |
-| ✅ | [O0230](docs/optimizations/O0230-jump-to-next-removal.md) | Jump-to-next removal | A `JMP` whose target is the immediately following instruction does nothing. |
-| ✅ | [O0231](docs/optimizations/O0231-loop-top-alignment.md) | Hot loop-top alignment | Loop tops are NOP-padded to a 16-byte boundary on every loop emitter — the general `FOR`/`DO`, the int16 fast `FOR`, and every register-resident. |
-| ✅ | [O0232](docs/optimizations/O0232-procedure-entry-alignment.md) | Procedure entry alignment | Procedure entry points are aligned to a 16-byte boundary. |
-| ✅ | [O0233](docs/optimizations/O0233-hardware-constant-divide.md) | Hardware divide for constant divisors | A `LONG` divide or modulo by a compile-time-constant divisor of magnitude ≥ 2 uses the hardware `IDIV`/`DIV` instead of the `rt_ldiv`/`rt_lmod` runtime routines. |
-| ✅ | [O0234](docs/optimizations/O0234-quad-bitwise-inline.md) | Inline 64-bit bitwise operations | `QUAD`/`QWORD` `AND`, `OR`, `XOR`, `EQV` and `IMP` run inline as two 32-bit halves in EAX, instead of calling the `QuadAnd`-family runtime routines. |
-| ✅ | [O0235](docs/optimizations/O0235-shld-shrd-shifts.md) | `SHLD`/`SHRD` 64-bit shifts | A 64-bit `SHIFT LEFT`/`SHIFT RIGHT` by a compile-time-constant count of 1..31 collapses the per-bit loop into `SHLD`/`SHRD` across the dword halves (EAX/EDX only). |
-| ✅ | [O0236](docs/optimizations/O0236-long-shift-rotate-collapse.md) | 32-bit shift/rotate collapse | A `LONG` `SHIFT`/`ROTATE` statement with a constant count of 1..31 becomes a single `SHL`/`SHR`/`ROL`/`ROR dword [cell], imm8`. |
-| ✅ | [O0237](docs/optimizations/O0237-movzx-movsx-loads.md) | `MOVZX`/`MOVSX` byte loads | A `BYTE`/`SBYTE` cell read widens in one instruction instead of a load plus a separate extension. |
-| ✅ | [O0238](docs/optimizations/O0238-setcc-relationals.md) | `SETcc` relational results | When a comparison's −1/0 value is genuinely needed, `SETcc` produces it branchlessly on a 386+, instead of the branch-and-load pair. |
-| ✅ | [O0239](docs/optimizations/O0239-stosd-array-zero.md) | `REP STOSD` array zero-fill | `ERASE` on a static array — and the zero-fill an array allocation performs — moves DWORDs instead of words, with the odd tail handled explicitly. |
-| ✅ | [O0240](docs/optimizations/O0240-stosd-loop-fill.md) | `REP STOSD` constant loop fill | The constant `FOR`-loop array fill that O0227 lowers to `REP STOSW` widens further to `REP STOSD` under `$CPU 80386`. |
-| ✅ | [O0241](docs/optimizations/O0241-dword-string-copy.md) | DWORD-wide string copy | The string runtime's literal and concat copy moves DWORDs plus a ≤ 3-byte tail instead of `REP MOVSB` — roughly 4× on long strings. |
-| ✅ | [O0242](docs/optimizations/O0242-movsd-block-copy.md) | DWORD block copy for TYPE and `LSET` | Whole-`TYPE` copies, `LSET` and BCD block moves run word-wide (`REP MOVSW`, 8086-safe) under the optimizer and DWORD-wide (`REP MOVSD`) under `$CPU 80386`. |
-
-| ✅ | [O0407](docs/optimizations/O0407-dead-loop-elimination.md) | Dead loop elimination | A loop whose body cannot be observed - no store, no call, no output - is deleted outright rather than left to spin (`deadloop`, `$OPTIMIZE SPEED`). |
-### O — planned sub-passes (dissected from the entries above)
-
-| | # | Optimization | What it does |
-|---|---|---|---|
-| ⬜ | [O0243](docs/optimizations/O0243-byte-register-packing.md) | 8-bit sub-register packing | Two non-escaping `BYTE` locals share one 16-bit register's halves — `DL`/`DH`, `BL`/`BH`. |
-| ⬜ | [O0244](docs/optimizations/O0244-microop-selection.md) | Micro-op count selection | On a decoded core, the unit of cost is the micro-op, not the instruction. |
-| ⬜ | [O0245](docs/optimizations/O0245-decode-width-scheduling.md) | Decode-width-aware scheduling | A superscalar front end decodes a limited number of instructions per cycle, and only in certain length and complexity combinations. |
-| ⬜ | [O0246](docs/optimizations/O0246-move-elimination-aware.md) | Move-elimination-aware allocation | Some cores resolve register-to-register moves in the rename stage, at zero execution cost. |
-| ⬜ | [O0247](docs/optimizations/O0247-jump-table-entry-compression.md) | Jump-table entry compression | A word per target is the general case. |
-| 🟡 | [O0248](docs/optimizations/O0248-branchless-minmax.md) | Branchless min/max | `IF a > b THEN m = a ELSE m = b` is a min/max, and every target has a cheaper form than a branch. |
-| ✅ | [O0249](docs/optimizations/O0249-branchless-abs.md) | Branchless absolute value | `IF x < 0 THEN x = -x` — and the `ABS()` intrinsic — lower to the classic three-instruction sequence with no branch at all:. |
-| ⬜ | [O0250](docs/optimizations/O0250-adjacent-store-merging.md) | Adjacent store merging | Consecutive stores to adjacent cells combine into one wider store. |
-| ⬜ | [O0251](docs/optimizations/O0251-misaligned-versioning.md) | Misaligned access versioning | When alignment cannot be established statically, emit two paths and choose at run time. |
-| ⬜ | [O0252](docs/optimizations/O0252-safe-overread-versioning.md) | Safe over-read versioning | A widened load past the last element is only permissible when there is provably accessible padding behind the data. |
-| ⬜ | [O0253](docs/optimizations/O0253-store-sinking.md) | Store sinking | Move a store later — past independent work, out of a conditional, or out of a loop. |
-| ⬜ | [O0254](docs/optimizations/O0254-masked-vector-tail.md) | Masked vector tail | Instead of a scalar remainder loop, run the tail in the vector unit with the out-of-range lanes masked off. |
+| ✅ | [O0083](docs/optimizations/O0083-store-to-load-forwarding.md)…8453 tokens truncated…f-range lanes masked off. |
 | ⬜ | [O0255](docs/optimizations/O0255-overlapping-vector-tail.md) | Overlapping final vector | Process the last full vector's worth of elements *including some already processed ones*, so one extra vector iteration replaces the entire tail. |
 | ⬜ | [O0256](docs/optimizations/O0256-vector-blend-select.md) | Vector select / blend | Per-lane conditional assignment — the vector form of `x = IF(c, a, b)` — lowers to `PAND`/`PANDN`/`POR` over a compare-generated mask on MMX/SSE2. |
 | ⬜ | [O0257](docs/optimizations/O0257-vector-minmax.md) | Packed min/max | `PMAXSW`/`PMINSW` (and the byte/unsigned variants) compute a per-lane min or max in one instruction. |

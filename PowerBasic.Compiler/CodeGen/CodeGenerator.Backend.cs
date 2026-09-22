@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 20008)
+Total output lines: 1339
+
 using System.Linq;
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
@@ -247,7 +250,7 @@ public sealed partial class CodeGenerator {
     // a --no-optimize build of a routed function was still fully optimized, which made the two builds
     // of a size comparison ONE build and made "optimizer off means vintage behaviour" - the promise
     // the historic dialects rest on - true only of the functions the back end happened not to take.
-    // IrPassManager.Legalize states which passes survive the flag and why each one is not a choice.
+    // IrMiddleEndPipeline.Legalize states which passes survive the flag and why each one is not a choice.
     // O0057 proves the narrower representation; the smallest cell worth materializing is a backend
     // decision. A 386 keeps a LONG in a dword register, so narrowing it to a word costs a partial
     // register there rather than saving anything; only a 16-bit target profits from word storage.
@@ -657,8 +660,7 @@ public sealed partial class CodeGenerator {
   /// <summary>
   /// Emits the IR's DATA pool and read cursor, when a routed function asked for them. The cursor is
   /// a DWORD because the IR types it i32 and reads it back at that width; it starts at zero, which
-  /// is the INDEX of the first item rather than an address.
-  /// </summary>
+  /// is the INDEX of the first item ra…8 tokens truncated…/summary>
   private void EmitBackendDataPool(Asm.Assembler asm) {
     // One dword per shared dynamic-array descriptor field: the far pointer is a segment/offset pair
     // and both the lower bound and the extent are 32-bit, which is what the IR loads and stores

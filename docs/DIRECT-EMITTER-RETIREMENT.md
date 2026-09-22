@@ -4,8 +4,7 @@
 
 The direct emitter is retired from the production compiler route. Normal `CodeGenerator` construction
 uses the IR/native backend and requires routing to succeed; the routing selector is internal test-oracle
-state rather than public product policy. `pbc --no-x-backend` is rejected, while `--x-backend` and
-`--x-backend-strict` remain compatibility no-ops.
+state rather than public product policy. `pbc --no-x-backend`, `--x-backend`, and `--x-backend-strict` are rejected as retired controls.
 
 The historical direct body emitter remains compiled temporarily only so the test assembly can use it as an
 independent behavioral oracle while those fixtures are converted to fixed expectations or vintage-compiler
