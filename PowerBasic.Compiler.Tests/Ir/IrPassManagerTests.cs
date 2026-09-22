@@ -153,6 +153,8 @@ public sealed class IrPassManagerTests {
       "ParallelLoopVersioning.Run(",
       "IntegerRecovery.Run(",
       "SwitchFormation.Run(",
+      "StringStackPromotion.Run(",
+      "MemoryRoutineSpecialization.Run(",
     };
 
     var violations = files

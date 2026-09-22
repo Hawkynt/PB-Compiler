@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.CodeGen;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -138,7 +140,8 @@ public static class IrMiddleEndPipeline {
       bool optimizeForSize = false,
       IIrArithmeticCostModel? arithmeticCostModel = null,
       int minimumIntegerStorageBits = 16,
-      bool recoverIntegerArithmetic = false) {
+      bool recoverIntegerArithmetic = false,
+      TargetCost? targetCost = null) {
     ArgumentNullException.ThrowIfNull(module);
 
     Func<IrPassManager> pipeline = optimize
@@ -153,6 +156,14 @@ public static class IrMiddleEndPipeline {
     if (optimize && !optimizeForSize && Inliner.Run(module) > 0) {
       pipeline().RunOnModule(module);
       pipeline().RunOnModule(module);
+    }
+
+    if (optimize) {
+      StringStackPromotion.Run(module);
+      foreach (var function in module.Functions)
+        if (!function.IsDeclaration)
+          MemoryRoutineSpecialization.Run(function,
+            targetCost ?? new TargetCost(CpuTier.I8086, CostObjective.Balanced));
     }
 
     // Kept as a separate final sweep for now: this is the pre-cutover native ordering. Once exact-head

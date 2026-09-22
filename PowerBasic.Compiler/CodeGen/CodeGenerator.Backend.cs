@@ -258,28 +258,8 @@ public sealed partial class CodeGenerator {
       optimizeForSize: this.OptimizeSize,
       arithmeticCostModel: this.SelectionCost,
       minimumIntegerStorageBits: narrowestStorageBits,
-      recoverIntegerArithmetic: true);
-
-    // O0287 runs here, not inside the standard pipeline, because what it produces is x86-16 shaped
-    // rather than target-neutral: a dynamic string is a runtime HANDLE, and the raw-print ABI this
-    // pass rewrites to takes a DS offset (RuntimeAbi's ArgKind.Offset), which is why it has to stage
-    // the SS frame object through a module-level buffer. On a hosted target that staging copy is pure
-    // cost, and in the IR->BASIC writer it is a frame object with no name in the language. It wants
-    // the canonical bounded builders, so it goes after the string canonicalizers have all run, and
-    // before O0339 so the two copies it mints are specialized like any other small transfer.
-    if (this.Optimize)
-      StringStackPromotion.Run(module);
-
-    // O0339 runs here rather than inside the standard pipeline for the same reason
-    // SwitchFormation does: it wants the FINAL shape. Expanding a tiny memcpy into byte
-    // loads and stores hides the aggregate behind it from scalar replacement, which would
-    // otherwise delete the copy and its storage outright - a strictly better answer than
-    // open-coding it. Once the optimizer has had every chance at the copy, whatever is left
-    // is a real transfer worth specializing.
-    if (this.Optimize)
-      foreach (var f in module.Functions)
-        if (!f.IsDeclaration)
-          MemoryRoutineSpecialization.Run(f, this.Cost);
+      recoverIntegerArithmetic: true,
+      targetCost: this.Cost);
 
     // O0284 on native x86 uses ABI-preserving entry thunks. The source-visible procedures keep their
     // original signatures while private helpers carry the one varying context parameter.
