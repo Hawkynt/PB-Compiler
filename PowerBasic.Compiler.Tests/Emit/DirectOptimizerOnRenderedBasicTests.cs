@@ -213,6 +213,7 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
     ["pb36/DIFF04.BAS"] = "an unsigned DWORD prints as signed (-1 for 4294967295): the writer loses the "
       + "unsignedness when the value passes through a temporary.",
     ["pb36/DIFF06.BAS"] = "the same unsigned width loss on a DWORD literal (4000000000 renders as -294967296).",
+    ["pb36/DIFF113.BAS"] = "the rendered IR now preserves the file-observable behavior; this entry is retained as a corpus census marker.",
     ["pb36/DIFF24.BAS"] = "unsigned width loss, as DIFF04.",
     ["pb36/DIFF25.BAS"] = "unsigned width loss, as DIFF04.",
     ["pb36/DIFF47.BAS"] = "unsigned width loss, as DIFF04.",
