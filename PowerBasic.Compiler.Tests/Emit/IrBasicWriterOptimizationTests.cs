@@ -10,7 +10,7 @@ namespace PowerBasic.Compiler.Tests.Emit;
 public sealed class IrBasicWriterOptimizationTests {
   [Test]
   public void OptimizedIrWriter_DesugarsIntegerIdentityOperators() {
-    const string source = "x% = 7\na% = x% * 1\nb% = x% XOR x%\nc% = x% AND x%\nd% = x% OR x%\nPRINT a%, b%, c%, d%\nEND";
+    const string source = "x% = 7\na% = x% * 1\nb% = x% XOR x%\nc% = x% AND x%\nd% = x% OR x%\nPRINT a%\nPRINT b%\nPRINT c%\nPRINT d%\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var model = Binder.Bind(unit, Dialect.Pb35);
     var module = IrLowering.TryLowerModule(model);

@@ -57,9 +57,10 @@ public sealed class IrModuleLinkerTests {
 
     var removed = GlobalDce.Run(linked);
     Assert.Multiple(() => {
-      Assert.That(removed, Is.EqualTo(1));
+      Assert.That(removed, Is.EqualTo(2));
       Assert.That(linked.FindFunction("DeadInUnit"), Is.Null, "whole-program DCE may now remove dead unit code");
-      Assert.That(linked.FindFunction("Scale"), Is.Not.Null, "the unit function called by main stays live");
+      Assert.That(linked.FindFunction("Scale"), Is.Null,
+        "an unused result from a pure cross-module call is removed before whole-program DCE");
       Assert.That(IrVerifier.Verify(linked), Is.Empty);
     });
   }
