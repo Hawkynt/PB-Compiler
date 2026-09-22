@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Backend.Targets;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.Ir;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -60,5 +61,15 @@ public sealed class X86TargetTests {
       new X86LegacyAllocator(SelectionTarget.Baseline));
     Assert.That(stages.Selector, Is.Not.Null);
     Assert.That(stages.Allocator, Is.Not.Null);
+  }
+
+  [Test]
+  public void ProductionTargetsConsumeOptimizedSsa() {
+    Assert.That(IrBackendTargetContract.RequiredInputStage(IrBackendTarget.C),
+      Is.EqualTo(IrRepresentationStage.OptimizedSsa));
+    Assert.That(IrBackendTargetContract.RequiredInputStage(IrBackendTarget.PowerBasic35),
+      Is.EqualTo(IrRepresentationStage.OptimizedSsa));
+    Assert.That(IrBackendTargetContract.RequiredInputStage(IrBackendTarget.X86_16),
+      Is.EqualTo(IrRepresentationStage.OptimizedSsa));
   }
 }
