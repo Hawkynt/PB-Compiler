@@ -6,9 +6,9 @@ using PowerBasic.Compiler.Syntax.Ast;
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
 /// <summary>
-/// Register calling conventions (docs/LINKER.md): WATCALL (Watcom: args in AX,DX,BX,CX,
-/// callee-clean overflow, name <c>name_</c>) and FASTCALL (Microsoft/Borland: AX,DX,BX,
-/// callee-clean overflow, name <c>@name</c>). These round-trip tests define a procedure
+/// Register calling conventions (docs/LINKER.md): WATCALL uses Watcom's typed AX,DX,BX,CX
+/// allocator with caller-clean overflow and <c>name_</c>. FASTCALL is the current common word-only
+/// AX,DX,BX surface with callee-clean overflow and <c>@name</c>. These round-trip tests define a procedure
 /// with the convention and call it - exercising both the call-site register loading and
 /// the define-side register-spill prologue in one program (run unoptimized so the call is
 /// real, not inlined). DOSBox-gated; the real-foreign-object proofs live in CInteropTests.
@@ -53,7 +53,7 @@ public sealed class CallingConventionTests {
 
   [Test]
   public void Execute_GivenWatcallRoundTrip_WhenFiveArgs_ThenFourRegistersPlusStackOverflow() {
-    // a,b,c,d -> AX,DX,BX,CX ; e -> stack ; callee cleans the one overflow word (RET 2)
+    // a,b,c,d -> AX,DX,BX,CX ; e -> stack ; caller cleans the one overflow word
     const string source = """
       DECLARE FUNCTION calc WATCALL (BYVAL a AS INTEGER, BYVAL b AS INTEGER, BYVAL c AS INTEGER, BYVAL d AS INTEGER, BYVAL e AS INTEGER) AS INTEGER
       PRINT calc(50, 8, 4, 2, 1)
@@ -114,7 +114,7 @@ public sealed class CallingConventionTests {
   }
 
   [Test]
-  public void RegParm_GivenLongParam_WhenApplied_ThenStaysStackConvention() {
+  public void RegParm_GivenLongParam_WhenApplied_ThenUsesWatcallRegisterPair() {
     var model = BindPb36("""
       DECLARE FUNCTION f(BYVAL x AS LONG) AS LONG
       PRINT f(1)
@@ -123,8 +123,8 @@ public sealed class CallingConventionTests {
       END FUNCTION
       """);
     OptRegParm.Apply(model);
-    Assert.That(model.Procedures["f"].CallConv, Is.EqualTo(CallConvention.Basic),
-      "a non-word parameter is outside the common-case register model - keep the stack convention");
+    Assert.That(model.Procedures["f"].CallConv, Is.EqualTo(CallConvention.Watcall),
+      "an owned LONG fits Watcom's documented DX:AX register pair");
   }
 
   [Test]
@@ -214,17 +214,42 @@ public sealed class CallingConventionTests {
   // both paths call.
   [TestCase(true)]
   [TestCase(false)]
-  public void Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic(bool routed) {
-    // a LONG does not fit the common-case word model; reject rather than silently miscompile
+  public void Compile_GivenFastcallWithLongParam_ThenDiagnostic(bool routed) {
+    // FASTCALL still combines incompatible vendor identities; reject LONG until those are split.
     const string source = """
-      DECLARE FUNCTION f WATCALL (BYVAL x AS LONG) AS LONG
+      DECLARE FUNCTION f FASTCALL (BYVAL x AS LONG) AS LONG
       PRINT f(1)
-      FUNCTION f WATCALL (BYVAL x AS LONG) AS LONG
+      FUNCTION f FASTCALL (BYVAL x AS LONG) AS LONG
         f = x
       END FUNCTION
       """;
     Assert.That(Compile(source, routed).Generator.Errors.Select(e => e.Message), Has.Some.Contains("word-sized"),
       "expected a diagnostic rejecting the non-word register-convention parameter");
+  }
+
+  /// <summary>
+  /// Given Watcom's exact 16-bit allocation sequence, the first word consumes AX, the LONG then uses
+  /// CX:BX (high:low), and the next word uses the still-free DX. The following LONG cannot fit either
+  /// legal pair, so it and every later argument travel right-to-left on the stack.
+  /// </summary>
+  [TestCase(true)]
+  [TestCase(false)]
+  public void Execute_GivenWatcallLongPairs_WhenRoutedOrDirect_ThenMatchesDocumentedAllocation(bool routed) {
+    const string source = """
+      DECLARE FUNCTION mix WATCALL (BYVAL a AS INTEGER, BYVAL b AS LONG, BYVAL c AS INTEGER, BYVAL d AS LONG, BYVAL e AS INTEGER) AS LONG
+      PRINT mix(3, 70000, 5, 900000, 7)
+      FUNCTION mix WATCALL (BYVAL a AS INTEGER, BYVAL b AS LONG, BYVAL c AS INTEGER, BYVAL d AS LONG, BYVAL e AS INTEGER) AS LONG
+        mix = b + d + a * 1000 + c * 100 + e
+      END FUNCTION
+      """;
+
+    var (generator, image) = Compile(source, routed);
+
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    if (routed)
+      Assert.That(generator.BackendRoutedNames, Does.Contain("mix"),
+        "the routed half of the test must not pass through direct-emitter fallback");
+    Assert.That(Exec.Cpu8086.Run(image).Output.Trim(), Is.EqualTo("973507"));
   }
 
   /// <summary>

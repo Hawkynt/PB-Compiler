@@ -317,17 +317,17 @@ PBU named by `$LINK`, so `LINKDEMO` is measured with the same `MATHUNIT.PBU` inp
 Its numeric, BYREF, nested-call and dynamic-string calls use the routed stack ABI in both optimizer
 modes, through either a PBU or a PBL. Routed calls to near CDECL and STDCALL declarations now preserve
 their IR convention identity, push argument groups right-to-left, and apply caller/callee cleanup as
-declared. Near FASTCALL/WATCALL calls stage their leading one-word values in the ABI registers, push
-the overflow in the declared direction and leave its cleanup to the callee; source-declared
+declared. Near FASTCALL calls stage leading one-word values and remain callee-clean. WATCALL also
+allocates LONGs to DX:AX or CX:BX, pushes overflow right-to-left and restores it in the caller;
+source-declared
 FASTCALL/WATCALL *definitions* route with them, because the routed prologue now pushes those same
 registers into the negative frame cells `LayoutFrame` had always assigned them. Merely having a link
 input no longer rejects the entire module.
 
-Two limits remain. A register-convention value wider than a word - LONG, float, far pointer, multiword
-aggregate - is refused on the routed and the direct path alike, because the per-compiler rules for
-splitting one across a register pair differ between FASTCALL and WATCALL and neither is modelled; the
-call side and the definition side share one predicate for it, which is what stops a definition and its
-call sites disagreeing about which shapes exist. And a GENERATED definition - a clone, or a procedure
+Two limits remain. WATCALL now models word values and Watcom's LONG pairs; float, far-pointer and
+aggregate register classes still decline, and FASTCALL remains word-only until its Microsoft and
+Borland identities are split. The call and definition sides share one placement plan, which stops
+them disagreeing about which shapes exist. A GENERATED definition - a clone, or a procedure
 whose signature an interprocedural pass rewrote - has no `ProcedureSymbol` carrying that spill plan, so
 `X86CallAbi.TryDefinitionStackLayout` derives the frame from the IR signature alone and declines a
 register convention outright.
@@ -343,7 +343,7 @@ The six near conventions and the rules each one selects:
 | `CDECL` | - | right-to-left | caller |
 | `STDCALL` | - | right-to-left | callee |
 | `FASTCALL` | AX, DX, BX | left-to-right | callee |
-| `WATCALL` | AX, DX, BX, CX | right-to-left | callee |
+| `WATCALL` | AX, DX, BX, CX | right-to-left | caller |
 
 Dynamic-string `SWAP` removes the former invisible lowering row. The IR loads the raw handle from
 each owner cell and crosses the stores; it neither borrows a duplicate nor frees a handle because the

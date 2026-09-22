@@ -3011,9 +3011,9 @@ public sealed partial class InstructionSelector {
   /// <summary>
   /// A direct near call using the convention recorded on <see cref="IrCall"/>. BASIC/PASCAL push
   /// argument groups left to right and let the callee clean; CDECL/STDCALL push them right to left,
-  /// with CDECL alone restoring SP in the caller. FASTCALL/WATCALL put their leading word arguments
-  /// in the descriptor's physical registers and push only the overflow. Integer results arrive in
-  /// AX or DX:AX and IEEE results in ST(0).
+  /// with CDECL restoring SP in the caller. FASTCALL/WATCALL put leading values in the descriptor's
+  /// physical registers and push only the overflow; Watcom also restores that overflow in the caller.
+  /// Integer results arrive in AX or DX:AX and IEEE results in ST(0).
   ///
   /// The call is marked as clobbering every allocatable register, which is the truth on this ABI
   /// (a callee owns AX-DX as scratch and may use SI/DI for loop residency without saving them).
@@ -3102,15 +3102,28 @@ public sealed partial class InstructionSelector {
       return this.Decline($"call: {calleeName} uses a far return address");
     var callArguments = call.Args.ToList();
 
-    var registerArgumentCount = Math.Min(abi.ArgumentRegisters.Count, callArguments.Count);
-    // ...and only of the arguments that ACTUALLY travel in a register. Asking it of all of them
-    // declined a FASTCALL whose fourth argument - long past the three registers, on the stack like any
-    // other - happened to be a LONG, which the stack path has always handled.
-    if (callArguments.Take(registerArgumentCount)
-        .FirstOrDefault(argument => !IsWordRegisterArgument(argument.Type)) is { } unsupported)
-      return this.Decline($"call: {calleeName} uses {call.Convention} register arguments "
-        + $"(word arguments only; got {unsupported.Type})");
-    var stackArguments = callArguments.Skip(registerArgumentCount);
+    X86RegisterArgumentLayout registerLayout;
+    if (call.Convention == IrCallConvention.Watcall) {
+      registerLayout = X86CallAbi.PlanWatcallArguments(
+        callArguments.Select(argument => WatcallRegisterWords(argument.Type)).ToArray());
+      if (registerLayout.UnsupportedRegisterArgumentIndex is { } unsupportedIndex)
+        return this.Decline($"call: {calleeName} uses {call.Convention} register arguments "
+          + $"(word or LONG arguments only; got {callArguments[unsupportedIndex].Type})");
+    } else {
+      var registerArgumentCount = Math.Min(abi.ArgumentRegisters.Count, callArguments.Count);
+      // ...and only of the arguments that ACTUALLY travel in a register. Asking it of all of them
+      // declined a FASTCALL whose fourth argument - long past the three registers, on the stack like
+      // any other - happened to be a LONG, which the stack path has always handled.
+      if (callArguments.Take(registerArgumentCount)
+          .FirstOrDefault(argument => !IsWordRegisterArgument(argument.Type)) is { } unsupported)
+        return this.Decline($"call: {calleeName} uses {call.Convention} register arguments "
+          + $"(word arguments only; got {unsupported.Type})");
+      var placements = Enumerable.Range(0, registerArgumentCount)
+        .Select(i => new X86RegisterArgumentPlacement(i, new[] { abi.ArgumentRegisters[i] }))
+        .ToArray();
+      registerLayout = new(placements, registerArgumentCount);
+    }
+    var stackArguments = callArguments.Skip(registerLayout.FirstStackArgument);
     var arguments = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
       ? stackArguments.Reverse()
       : stackArguments;
@@ -3148,14 +3161,15 @@ public sealed partial class InstructionSelector {
           or MOperand.DataCell or MOperand.ParamCell or MOperand.LabelRef))
         return this.Decline($"call: indirect target has unsupported operand {through.GetType().Name}");
 
-      var targetRegister = registerArgumentCount >= 3 ? Reg.SI : Reg.BX;
+      var targetRegister = registerLayout.RegisterArguments
+        .Any(argument => argument.WordRegisters.Contains(Reg.BX)) ? Reg.SI : Reg.BX;
       var target = new MOperand.Register(MReg.Physical_(targetRegister, MRegSize.Word));
       this._current.Instructions.Add(new MInstr(MOpcode.Mov, [target, through], MovEffect(target, through),
         condition: null, clobbers: [targetRegister]));
       callTarget = target;
     }
 
-    if (!this.TryStageRegisterCallArguments(callArguments, calleeName, abi, registerArgumentCount,
+    if (!this.TryStageRegisterCallArguments(callArguments, calleeName, registerLayout,
           out var registerOperands))
       return false;
     var callOperands = new List<MOperand> { callTarget };
@@ -3163,7 +3177,7 @@ public sealed partial class InstructionSelector {
     var callReadRegs = new List<int>();
     if (callTarget is MOperand.Register)
       callReadRegs.Add(0);
-    callReadRegs.AddRange(Enumerable.Range(1, registerArgumentCount));
+    callReadRegs.AddRange(Enumerable.Range(1, registerOperands.Count));
     this._current.Instructions.Add(new MInstr(closureCall ? MOpcode.CallFar : MOpcode.Call, callOperands,
       new MInstrEffect(WrittenRegs: [], ReadRegs: callReadRegs, ReadsFlags: false, WritesFlags: true,
         ReadsMemory: true, WritesMemory: true),
@@ -3243,17 +3257,33 @@ public sealed partial class InstructionSelector {
     return true;
   }
 
-  private bool TryStageRegisterCallArguments(IReadOnlyList<IrValue> arguments, string calleeName, X86CallAbi abi,
-      int count, out List<MOperand.Register> registerOperands) {
-    registerOperands = new(count);
-    for (var i = 0; i < count; ++i) {
-      if (!this.TryWordOperand(arguments[i], $"{calleeName} register argument {i + 1}", out var source))
-        return false;
-      var destination = new MOperand.Register(MReg.Physical_(abi.ArgumentRegisters[i], MRegSize.Word));
-      registerOperands.Add(destination);
-      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, source],
-        MovEffect(destination, source), condition: null,
-        clobbers: [.. abi.ArgumentRegisters.Take(i + 1)]));
+  private bool TryStageRegisterCallArguments(IReadOnlyList<IrValue> arguments, string calleeName,
+      X86RegisterArgumentLayout layout, out List<MOperand.Register> registerOperands) {
+    registerOperands = new(layout.RegisterArguments.Sum(argument => argument.WordRegisters.Count));
+    var filledRegisters = new List<Reg>();
+    foreach (var placement in layout.RegisterArguments) {
+      var argument = arguments[placement.ArgumentIndex];
+      MOperand[] sources;
+      if (placement.WordRegisters.Count == 1) {
+        if (!this.TryWordOperand(argument,
+              $"{calleeName} register argument {placement.ArgumentIndex + 1}", out var source))
+          return false;
+        sources = [source];
+      } else if (placement.WordRegisters.Count == 2) {
+        if (!this.TryOperandPair(argument, out var low, out var high))
+          return false;
+        sources = [low, high];
+      } else
+        return this.Decline($"call: {calleeName} has an invalid register placement");
+
+      for (var word = 0; word < placement.WordRegisters.Count; ++word) {
+        var register = placement.WordRegisters[word];
+        var destination = new MOperand.Register(MReg.Physical_(register, MRegSize.Word));
+        registerOperands.Add(destination);
+        filledRegisters.Add(register);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, sources[word]],
+          MovEffect(destination, sources[word]), condition: null, clobbers: [.. filledRegisters]));
+      }
     }
     return true;
   }
@@ -3261,6 +3291,13 @@ public sealed partial class InstructionSelector {
   private static bool IsWordRegisterArgument(IrType type)
     => type.IsInteger && type.Bits is 8 or 16
       || type.IsPointer && !type.IsFarPointer;
+
+  private static int? WatcallRegisterWords(IrType type) => type switch {
+    { IsInteger: true, Bits: 8 or 16 } => 1,
+    { IsPointer: true, IsFarPointer: false } => 1,
+    { IsInteger: true, Bits: 32 } => 2,
+    _ => null,
+  };
 
   private bool PushStackCallArgument(IrValue argument, string calleeName, out int bytes) {
     bytes = 0;

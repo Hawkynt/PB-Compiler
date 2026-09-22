@@ -496,6 +496,41 @@ public sealed class CInteropTests {
       $"{c.Cc.Display} {c.Convention}: sub2(20,7) should be 13 but got [{files["RESULT.TXT"].Replace("\r", "\\r").Replace("\n", "\\n")}]");
   }
 
+  [Test]
+  public void Link_GivenWatcomObjectWithLongPair_WhenCalled_ThenMatchesForeignAbi() {
+    var slot = EnsureToolchain(Wc10.Slot);
+    Assume.That(slot, Is.Not.Null, $"{Wc10.Display}: toolchain unavailable - skipped");
+    Assume.That(DosBoxRunner.Executable, Is.Not.Null, "DOSBox not found - skipped");
+
+    var cc = Wc10 with {
+      CSource = "int mix(int a,long b,int c){ return a+(int)(b>>16)+(int)b+c; }\n",
+      CompileCmd = "wcc -ms -0 -s LEAF.C > CC.LOG",
+    };
+    var unit = OmfToPbu.Convert(OmfReader.ReadObject(CompileLeaf(slot!, cc)));
+    Assert.That(unit.Exports.Any(e => e.Name == "mix_"), Is.True,
+      $"{Wc10.Display}: object did not export mix_");
+
+    const string source = """
+      DECLARE FUNCTION mix WATCALL ALIAS "mix_" (BYVAL a AS INTEGER, BYVAL b AS LONG, BYVAL c AS INTEGER) AS INTEGER
+      OPEN "RESULT.TXT" FOR OUTPUT AS #1
+      PRINT #1, mix(3, 70000, 5)
+      CLOSE #1
+      END
+      """;
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35),
+      "T.BAS", Dialect.Pb35), Dialect.Pb35);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable([unit], []);
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+
+    var (_, files) = DosBoxRunner.RunWithFiles(exe, ["RESULT.TXT"]);
+    Assert.That(files.ContainsKey("RESULT.TXT"), Is.True,
+      $"{Wc10.Display}: linked program wrote no RESULT.TXT");
+    Assert.That(files["RESULT.TXT"].Trim(), Is.EqualTo("4473"),
+      "Watcom must read a=AX, b=CX:BX (high:low), c=DX for this mixed signature");
+  }
+
   // ---- linking + calling a C++ function by its mangled name -----------------
 
   // Compiled as C++ (BCC -P), so the public is name-mangled. A free function still uses

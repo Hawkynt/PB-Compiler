@@ -15,6 +15,15 @@ public enum X86CallDistance { Near, Far }
 /// <summary>The BP-relative incoming-parameter layout of a stack-only x86-16 function definition.</summary>
 public readonly record struct X86DefinitionStackLayout(int[] ParameterOffsets, int ParameterBytes);
 
+/// <summary>One register-carried argument and its little-endian word registers (low word first).</summary>
+public readonly record struct X86RegisterArgumentPlacement(int ArgumentIndex, IReadOnlyList<Reg> WordRegisters);
+
+/// <summary>The register prefix and first stack argument selected for a WATCALL signature.</summary>
+public sealed record X86RegisterArgumentLayout(
+    IReadOnlyList<X86RegisterArgumentPlacement> RegisterArguments,
+    int FirstStackArgument,
+    int? UnsupportedRegisterArgumentIndex = null);
+
 /// <summary>
 /// The concrete x86-16 rules selected from a source-level calling-convention identity. Register
 /// lists describe the compiler's existing DOS convention in argument order; remaining arguments
@@ -44,7 +53,7 @@ public sealed record X86CallAbi(
   private static readonly X86CallAbi _FASTCALL = new(IrCallConvention.Fastcall,
     X86StackArgumentOrder.LeftToRight, X86StackCleanup.Callee, X86CallDistance.Near, _FASTCALL_REGISTERS);
   private static readonly X86CallAbi _WATCALL = new(IrCallConvention.Watcall,
-    X86StackArgumentOrder.RightToLeft, X86StackCleanup.Callee, X86CallDistance.Near, _WATCALL_REGISTERS);
+    X86StackArgumentOrder.RightToLeft, X86StackCleanup.Caller, X86CallDistance.Near, _WATCALL_REGISTERS);
   /// <summary>The environment far pointer a pb36 closure call hands its callee - offset, then segment.</summary>
   private static readonly IReadOnlyList<Reg> _CLOSURE_ENV_REGISTERS = Array.AsReadOnly(new[] { Reg.BX, Reg.CX });
   private static readonly X86CallAbi _BASIC_CLOSURE = new(IrCallConvention.BasicClosure,
@@ -61,6 +70,45 @@ public sealed record X86CallAbi(
     IrCallConvention.BasicClosure => _BASIC_CLOSURE,
     _ => throw new ArgumentOutOfRangeException(nameof(convention), convention, null),
   };
+
+  /// <summary>
+  /// Applies Watcom's documented 16-bit register allocator. One-word values take the first free
+  /// register from AX,DX,BX,CX. Two-word values take DX:AX or CX:BX (high:low); they never take an
+  /// arbitrary adjacent pair. Once a value cannot use a legal register or pair, it and every later
+  /// argument use the stack. A null word count marks a shape whose register rule is not modelled.
+  /// </summary>
+  public static X86RegisterArgumentLayout PlanWatcallArguments(IReadOnlyList<int?> argumentWordCounts) {
+    ArgumentNullException.ThrowIfNull(argumentWordCounts);
+
+    var placements = new List<X86RegisterArgumentPlacement>();
+    var available = new[] { true, true, true, true };
+    for (var i = 0; i < argumentWordCounts.Count; ++i) {
+      if (argumentWordCounts[i] is not { } wordCount)
+        return new(placements, i, i);
+
+      int[]? selected = null;
+      if (wordCount == 1) {
+        var register = Array.FindIndex(available, value => value);
+        if (register >= 0)
+          selected = [register];
+      } else if (wordCount == 2) {
+        if (available[0] && available[1])
+          selected = [0, 1];
+        else if (available[2] && available[3])
+          selected = [2, 3];
+      } else
+        return new(placements, i, i);
+
+      if (selected is null)
+        return new(placements, i);
+
+      foreach (var register in selected)
+        available[register] = false;
+      placements.Add(new(i, selected.Select(index => _WATCALL_REGISTERS[index]).ToArray()));
+    }
+
+    return new(placements, argumentWordCounts.Count);
+  }
 
   /// <summary>
   /// Derives the complete incoming stack layout of an IR function definition. This is deliberately
