@@ -126,6 +126,31 @@ public sealed class IrPassManagerTests {
   }
 
   [Test]
+  public void ProductionCallers_DoNotOwnMiddleEndOptimizationChoreography() {
+    var root = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
+    var files = new[] {
+      Path.Combine(root, "pbc", "Driver.cs"),
+      Path.Combine(root, "PowerBasic.Compiler", "CodeGen", "CodeGenerator.Backend.cs"),
+    };
+    var forbidden = new[] {
+      "Inliner.Run(",
+      "GlobalDce.Run(",
+      "ParallelLoopVersioning.Run(",
+      "IntegerRecovery.Run(",
+      "SwitchFormation.Run(",
+    };
+
+    var violations = files
+      .SelectMany(file => forbidden
+        .Where(token => File.ReadAllText(file).Contains(token, StringComparison.Ordinal))
+        .Select(token => $"{Path.GetFileName(file)}: {token}"))
+      .ToArray();
+
+    Assert.That(violations, Is.Empty,
+      "production callers must delegate middle-end policy to IrMiddleEndPipeline");
+  }
+
+  [Test]
   public void FunctionPipeline_PublicSurface_HasNoLegacyAdapter() {
     var publicMethods = typeof(IrFunctionPassPipeline).GetMethods(System.Reflection.BindingFlags.Public
       | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);

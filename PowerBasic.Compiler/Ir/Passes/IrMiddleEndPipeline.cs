@@ -127,6 +127,80 @@ public static class IrMiddleEndPipeline {
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSize, "semantic-merge", SemanticFunctionMerging.Run);
 
   /// <summary>
+  /// Runs the production native middle end with the historical sweep/restart order intact. Policy,
+  /// including the final ordinary inliner, lives here so backend routing cannot grow a second optimizer.
+  /// </summary>
+  public static void RunNativeModule(
+      IrModule module,
+      bool optimize,
+      bool optimizeForSpeed = false,
+      bool optimizeForSize = false,
+      IIrArithmeticCostModel? arithmeticCostModel = null,
+      int minimumIntegerStorageBits = 16,
+      bool recoverIntegerArithmetic = false) {
+    ArgumentNullException.ThrowIfNull(module);
+
+    Func<IrPassManager> pipeline = optimize
+      ? () => Standard(optimizeForSpeed, arithmeticCostModel: arithmeticCostModel,
+          minimumIntegerStorageBits: minimumIntegerStorageBits,
+          recoverIntegerArithmetic: recoverIntegerArithmetic)
+      : () => Legalize(recoverIntegerArithmetic);
+
+    pipeline().RunOnModule(module);
+    pipeline().RunOnModule(module);
+
+    if (optimize && !optimizeForSize && Inliner.Run(module) > 0) {
+      pipeline().RunOnModule(module);
+      pipeline().RunOnModule(module);
+    }
+
+    // Kept as a separate final sweep for now: this is the pre-cutover native ordering. Once exact-head
+    // validation proves the centralized runner equivalent, redundancy can be tested and removed alone.
+    if (optimize)
+      foreach (var function in module.Functions)
+        if (!function.IsDeclaration && SwitchFormation.Run(function) > 0) {
+          SimplifyCfg.Run(function);
+          Dce.Run(function);
+        }
+  }
+
+  /// <summary>
+  /// Runs the hosted C/LLVM middle end. Optional parallel-loop preparation stays ahead of Standard,
+  /// while final inlining and whole-program DCE stay after the same full-pipeline replay they had before.
+  /// </summary>
+  public static void RunHostedModule(
+      IrModule module,
+      bool optimize,
+      bool optimizeForSpeed = false,
+      bool enableFpLookupTables = false,
+      bool recoverIntegerArithmetic = false,
+      bool parallelLoops = false) {
+    ArgumentNullException.ThrowIfNull(module);
+
+    var pipeline = optimize
+      ? Standard(optimizeForSpeed: optimizeForSpeed, enableFpLookupTables: enableFpLookupTables,
+          recoverIntegerArithmetic: recoverIntegerArithmetic)
+      : Legalize();
+
+    if (parallelLoops) {
+      foreach (var function in module.Functions)
+        if (!function.IsDeclaration)
+          Mem2Reg.Run(function);
+      ParallelLoopVersioning.Run(module);
+    }
+
+    pipeline.RunOnModule(module);
+    if (!optimize)
+      return;
+
+    pipeline.RunOnModule(module);
+    Inliner.Run(module);
+    pipeline.RunOnModule(module);
+    pipeline.RunOnModule(module);
+    GlobalDce.Run(module);
+  }
+
+  /// <summary>
   /// Adapts a transform that does not currently consume analyses to the analysis-aware execution contract.
   /// Mutating transforms invalidate all cached facts; unchanged transforms preserve the complete cache.
   /// This is deliberately local to pipeline policy so no second legacy registration API can reappear.

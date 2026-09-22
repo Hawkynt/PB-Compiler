@@ -186,26 +186,12 @@ public static class Driver {
           return 1;
         }
 
-        var pipeline = hostedOptimize
-          ? IrMiddleEndPipeline.Standard(optimizeForSpeed: hostedSpeed,
-              enableFpLookupTables: dumpStage == "--emit-llvm", recoverIntegerArithmetic: true)
-          : IrMiddleEndPipeline.Legalize();
-
-        if (parallelLoops)
-          foreach (var f in module.Functions)
-            if (!f.IsDeclaration)
-              Mem2Reg.Run(f);
-        if (parallelLoops)
-          ParallelLoopVersioning.Run(module);
-        pipeline.RunOnModule(module);
-
-        if (hostedOptimize) {
-          pipeline.RunOnModule(module);
-          Inliner.Run(module);
-          pipeline.RunOnModule(module);
-          pipeline.RunOnModule(module);
-          GlobalDce.Run(module);
-        }
+        IrMiddleEndPipeline.RunHostedModule(module,
+          optimize: hostedOptimize,
+          optimizeForSpeed: hostedSpeed,
+          enableFpLookupTables: dumpStage == "--emit-llvm",
+          recoverIntegerArithmetic: hostedOptimize,
+          parallelLoops: parallelLoops);
 
         var verifyErrors = IrVerifier.Verify(module);
         if (verifyErrors.Count > 0) {

@@ -252,48 +252,13 @@ public sealed partial class CodeGenerator {
     // decision. A 386 keeps a LONG in a dword register, so narrowing it to a word costs a partial
     // register there rather than saving anything; only a 16-bit target profits from word storage.
     var narrowestStorageBits = this.Has32BitCpu ? 32 : 16;
-    Func<IrPassManager> pipeline = this.Optimize
-      ? () => IrMiddleEndPipeline.Standard(this.OptimizeSpeed, arithmeticCostModel: this.SelectionCost,
-          minimumIntegerStorageBits: narrowestStorageBits, recoverIntegerArithmetic: true)
-      : () => IrMiddleEndPipeline.Legalize(recoverIntegerArithmetic: true);
-    // Integer recovery is now the first analysis-aware function transform. Fixed-point execution
-    // naturally revisits it after later passes expose another float-shaped integer tree.
-    pipeline().RunOnModule(module);
-    pipeline().RunOnModule(module);
-
-    // O0006 inlining. It runs LAST of the module-level steps and is followed by another full pass
-    // sweep, because the point of inlining is not the call overhead - it is that the callee's body
-    // becomes visible to the caller's optimizer, and nothing sees it until the passes run again.
-    // A function whose only caller inlines it is then dead, which GlobalDce collects.
-    //
-    // $OPTIMIZE SIZE never inlines, and the routed half of an image may not answer the directive
-    // differently from the directly-emitted half: the direct emitter declines every call site under
-    // it (see the note on O6's purge in CodeGenerator.Optimize.cs, which had to stop purging a callee
-    // it would no longer absorb), so a routed caller that absorbed its callee anyway would be one
-    // program compiled to two objectives.
-    if (this.Optimize && !this.OptimizeSize && Inliner.Run(module) > 0) {
-      pipeline().RunOnModule(module);
-      pipeline().RunOnModule(module);
-    }
-    // GlobalDce deliberately does NOT run here, though inlining leaves callees unreferenced and it
-    // is the obvious next step. In this pipeline the IR module is not the whole program: anything
-    // not routed is still emitted by the direct path, so deleting an inlined-away function from the
-    // IR does not delete it from the image - it only stops it being ROUTED. Measured, it cost six
-    // corpus comparisons and saved nothing. It belongs where the IR IS the program, which is what
-    // pbc --emit-c and --emit-llvm are, and that is where it runs.
-
-    // LAST of all, and after every other pass has run: a SELECT CASE that survived as a chain of
-    // compares becomes one IrSwitch, which is the only form the selector can turn into a table, a hash
-    // or a mask. It runs here rather than inside the standard pipeline because it is the shape the
-    // x86-16 dispatch selection consumes, and because it wants the chain in its FINAL form - SCCP may
-    // have folded arms away and the inliner may have brought new ones in. SimplifyCfg then collects the
-    // now-unreachable remains of the chain and Dce the compares that fed it.
-    if (this.Optimize)
-      foreach (var f in module.Functions)
-        if (!f.IsDeclaration && SwitchFormation.Run(f) > 0) {
-          SimplifyCfg.Run(f);
-          Dce.Run(f);
-        }
+    IrMiddleEndPipeline.RunNativeModule(module,
+      optimize: this.Optimize,
+      optimizeForSpeed: this.OptimizeSpeed,
+      optimizeForSize: this.OptimizeSize,
+      arithmeticCostModel: this.SelectionCost,
+      minimumIntegerStorageBits: narrowestStorageBits,
+      recoverIntegerArithmetic: true);
 
     // O0287 runs here, not inside the standard pipeline, because what it produces is x86-16 shaped
     // rather than target-neutral: a dynamic string is a runtime HANDLE, and the raw-print ABI this
