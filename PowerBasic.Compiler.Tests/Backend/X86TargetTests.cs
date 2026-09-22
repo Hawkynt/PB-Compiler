@@ -81,4 +81,12 @@ public sealed class X86TargetTests {
     Assert.That(errors, Is.Empty);
     Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.LowIr));
   }
+
+  [Test]
+  public void Mos6502MachineTargetHasExplicitAbiAndFunctionShell() {
+    var target = new Mos6502MachineTarget();
+    Assert.That(target.Description.PointerBits, Is.EqualTo(16));
+    Assert.That(target.Abi.ReturnRegister, Is.EqualTo(Mos6502RegisterFile.Accumulator));
+    Assert.That(target.Emitter.EmitFunction([0xA9, 0x00]).Bytes, Is.EqualTo(new byte[] { 0xA9, 0x00, 0x60 }));
+  }
 }
