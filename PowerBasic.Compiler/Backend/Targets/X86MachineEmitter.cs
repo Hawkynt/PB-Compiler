@@ -8,7 +8,11 @@ public sealed class X86MachineEmitter(IMachineInstructionEncoder encoder, IMachi
       bytes.AddRange(encoder.Push(abi.PointerBits == 64 ? X86RegisterFile.Gpr64[5] : X86RegisterFile.Gpr32[5]));
       bytes.AddRange(abi.PointerBits == 64 ? [0x48, 0x89, 0xE5] : [0x89, 0xE5]);
     }
+    if (abi.ShadowSpaceBytes != 0)
+      bytes.AddRange(encoder.AdjustStack(abi.ShadowSpaceBytes, allocate: true));
     bytes.AddRange(body.ToArray());
+    if (abi.ShadowSpaceBytes != 0)
+      bytes.AddRange(encoder.AdjustStack(abi.ShadowSpaceBytes, allocate: false));
     if (preserveFramePointer)
       bytes.AddRange(encoder.Pop(abi.PointerBits == 64 ? X86RegisterFile.Gpr64[5] : X86RegisterFile.Gpr32[5]));
     bytes.AddRange(encoder.Ret());
