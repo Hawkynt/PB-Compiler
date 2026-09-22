@@ -32,8 +32,8 @@ public sealed class FunctionSummaries {
 
   /// <summary>What calling a function may do to memory.</summary>
   public readonly record struct Summary(bool ReadsMemory, bool WritesMemory) {
-    /// <summary>True when the call can be removed if its result is unused.</summary>
-    public bool IsPure => !this.WritesMemory;
+    /// <summary>True when the call has no memory observation or mutation and can be removed if its result is unused.</summary>
+    public bool IsPure => !this.ReadsMemory && !this.WritesMemory;
   }
 
   /// <summary>
