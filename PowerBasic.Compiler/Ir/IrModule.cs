@@ -37,7 +37,13 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   public bool AsciiOnly { get; set; }
 
   /// <summary>The strongest representation contract established for this module so far.</summary>
-  public IrRepresentationStage RepresentationStage { get; internal set; } = IrRepresentationStage.Lowered;
+  public IrRepresentationStage RepresentationStage { get; private set; } = IrRepresentationStage.Lowered;
+
+  internal void TrySetRepresentationStage(IrRepresentationStage next) => this.RepresentationStage = next;
+
+  /// <summary>Advances this module through one explicit representation boundary.</summary>
+  internal bool TryAdvanceRepresentationStage(IrRepresentationStage next, out string? error)
+    => IrRepresentationTransitions.TryAdvance(this, next, out error);
   /// Optional execution profile associated with this module. Optimizations must treat a missing entry
   /// exactly like a missing profile and fall back to their static heuristics rather than inventing heat.
   /// </summary>

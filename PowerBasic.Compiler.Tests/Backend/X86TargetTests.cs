@@ -65,21 +65,33 @@ public sealed class X86TargetTests {
   }
 
   [Test]
-  public void ProductionTargetsConsumeOptimizedSsa() {
+  public void ProductionTargetsConsumeLowIr() {
     Assert.That(IrBackendTargetContract.RequiredInputStage(IrBackendTarget.C),
-      Is.EqualTo(IrRepresentationStage.OptimizedSsa));
+      Is.EqualTo(IrRepresentationStage.LowIr));
     Assert.That(IrBackendTargetContract.RequiredInputStage(IrBackendTarget.PowerBasic35),
-      Is.EqualTo(IrRepresentationStage.OptimizedSsa));
+      Is.EqualTo(IrRepresentationStage.LowIr));
     Assert.That(IrBackendTargetContract.RequiredInputStage(IrBackendTarget.X86_16),
-      Is.EqualTo(IrRepresentationStage.OptimizedSsa));
+      Is.EqualTo(IrRepresentationStage.LowIr));
   }
 
   [Test]
   public void LowIrBoundaryRequiresIndependentVerification() {
     var module = new IrModule("test");
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
     Assert.That(IrLowIrLegalization.TryLegalize(module, out var errors), Is.True);
     Assert.That(errors, Is.Empty);
     Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.LowIr));
+  }
+
+  [Test]
+  public void RepresentationBoundariesAreMonotonicAndAdjacent() {
+    var module = new IrModule("test");
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.LowIr, out var skipped), Is.False);
+    Assert.That(skipped, Does.Contain("skip"));
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.LowIr, out _), Is.True);
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out var backwards), Is.False);
+    Assert.That(backwards, Does.Contain("backwards"));
   }
 
   [Test]

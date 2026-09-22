@@ -43,7 +43,10 @@ public sealed class IrBackendModule {
       return null;
     }
 
-    module.RepresentationStage = IrRepresentationStage.OptimizedSsa;
+    if (!module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out var stageError)) {
+      declinedBecause = stageError;
+      return null;
+    }
     if (!IrLowIrLegalization.TryLegalize(module, out var legalizationErrors)) {
       declinedBecause = "optimized IR failed Low IR legalization: " + string.Join("; ", legalizationErrors);
       return null;

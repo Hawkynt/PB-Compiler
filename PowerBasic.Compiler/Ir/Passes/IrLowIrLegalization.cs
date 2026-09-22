@@ -14,7 +14,10 @@ public static class IrLowIrLegalization {
       return false;
     }
 
-    module.RepresentationStage = IrRepresentationStage.LowIr;
+    if (!module.TryAdvanceRepresentationStage(IrRepresentationStage.LowIr, out var stageError)) {
+      errors = [stageError ?? "unable to advance to Low IR"];
+      return false;
+    }
     errors = [];
     return true;
   }
