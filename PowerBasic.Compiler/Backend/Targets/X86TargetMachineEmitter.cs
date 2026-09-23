@@ -17,11 +17,20 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
     foreach (var instruction in function.Instructions) {
       var offset = bytes.Count;
       switch (instruction.Opcode) {
-        case X86TargetOpcode.Mov when instruction.Registers.Count == 1:
+        case X86TargetOpcode.Mov when instruction.Address is { } loadAddress && instruction.Immediate == 0:
+          bytes.AddRange(encoder.MoveMemory(instruction.Registers[0], loadAddress, load: true));
+          break;
+        case X86TargetOpcode.Mov when instruction.Address is { } storeAddress && instruction.Immediate == 1:
+          bytes.AddRange(encoder.MoveMemory(instruction.Registers[0], storeAddress, load: false));
+          break;
+        case X86TargetOpcode.Mov when instruction.Registers.Count == 1 && instruction.Address is null:
           bytes.AddRange(encoder.MoveImmediate(instruction.Registers[0], unchecked((ulong)instruction.Immediate)));
           break;
         case X86TargetOpcode.Mov:
           bytes.AddRange(encoder.MoveRegister(instruction.Registers[0], instruction.Registers[1]));
+          break;
+        case X86TargetOpcode.Add when instruction.Address is { } addAddress:
+          bytes.AddRange(encoder.AluMemory(instruction.Registers[0], addAddress, 0x01, load: false));
           break;
         case X86TargetOpcode.Add when instruction.Registers.Count == 1:
           bytes.AddRange(encoder.AddImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));

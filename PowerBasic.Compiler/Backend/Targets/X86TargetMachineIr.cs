@@ -44,7 +44,16 @@ public sealed record X86TargetInstruction(
     IReadOnlyList<MachineRegister> Registers,
     long Immediate = 0,
     X86TargetAddress? Address = null,
-    string? Symbol = null);
+    string? Symbol = null,
+    IReadOnlyList<X86TargetOperand>? Operands = null);
+
+/// <summary>Explicit target operand kinds; register-only instructions use the compact fields above.</summary>
+public abstract record X86TargetOperand {
+  public sealed record Register(MachineRegister Value) : X86TargetOperand;
+  public sealed record Immediate(long Value) : X86TargetOperand;
+  public sealed record Memory(X86TargetAddress Value) : X86TargetOperand;
+  public sealed record Symbol(string Name) : X86TargetOperand;
+}
 
 public enum X86TargetOpcode {
   Mov, Xchg, Lea,

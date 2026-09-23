@@ -52,6 +52,81 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return [.. result];
   }
 
+  public byte[] MoveMemory(MachineRegister register, X86TargetAddress address, bool load) {
+    Validate(register);
+    var bytes = new List<byte>();
+    var rex = MemoryRex(register, address, w: mode == X86Mode.Bit64);
+    if (rex is { } prefix)
+      bytes.Add(prefix);
+    bytes.Add((byte)(load ? 0x8B : 0x89));
+    AppendAddress(bytes, register.Encoding, address);
+    return [.. bytes];
+  }
+
+  public byte[] AluMemory(MachineRegister register, X86TargetAddress address, int opcode, bool load) {
+    Validate(register);
+    var bytes = new List<byte>();
+    var rex = MemoryRex(register, address, w: mode == X86Mode.Bit64);
+    if (rex is { } prefix)
+      bytes.Add(prefix);
+    bytes.Add((byte)opcode);
+    AppendAddress(bytes, register.Encoding, address);
+    return [.. bytes];
+  }
+
+  private byte? MemoryRex(MachineRegister register, X86TargetAddress address, bool w) {
+    if (mode != X86Mode.Bit64)
+      return null;
+    var rex = (byte)(0x40 | (w ? 8 : 0) | (register.Encoding >= 8 ? 4 : 0)
+      | (address.Base is { Encoding: >= 8 } ? 1 : 0)
+      | (address.Index is { Encoding: >= 8 } ? 2 : 0));
+    return rex == 0x40 ? null : rex;
+  }
+
+  private void AppendAddress(List<byte> bytes, int reg, X86TargetAddress address) {
+    if (mode == X86Mode.Bit16) {
+      var rm = (address.Base?.Encoding, address.Index?.Encoding) switch {
+        (3, 6) or (6, 3) => 0,
+        (3, 7) or (7, 3) => 1,
+        (5, 6) or (6, 5) => 2,
+        (5, 7) or (7, 5) => 3,
+        (6, null) => 4,
+        (7, null) => 5,
+        (5, null) => 6,
+        (3, null) => 7,
+        _ => throw new NotSupportedException("x86-16 address requires BX/BP/SI/DI"),
+      };
+      AppendModRm(bytes, reg, rm, address.Displacement, address.Base?.Encoding == 5 && address.Index is null);
+      return;
+    }
+    var baseReg = address.Base?.Encoding ?? 5;
+    var indexReg = address.Index?.Encoding ?? 4;
+    var needsSib = address.Index is not null || (baseReg & 7) == 4;
+    var displacement = address.Displacement;
+    var mod = displacement == 0 && (baseReg & 7) != 5 ? 0 : displacement is >= sbyte.MinValue and <= sbyte.MaxValue ? 1 : 2;
+    if (address.Base is null)
+      mod = 0;
+    var rm = needsSib ? 4 : baseReg & 7;
+    bytes.Add((byte)((mod << 6) | ((reg & 7) << 3) | rm));
+    if (needsSib)
+      bytes.Add((byte)(0xC0 | (((ScaleBits(address.Scale)) & 3) << 6) | ((indexReg & 7) << 3) | (baseReg & 7)));
+    if (mod == 1)
+      bytes.Add((byte)displacement);
+    else if (mod == 2 || address.Base is null)
+      bytes.AddRange(BitConverter.GetBytes(displacement));
+  }
+
+  private static int ScaleBits(byte scale) => scale switch { 1 => 0, 2 => 1, 4 => 2, 8 => 3, _ => 0 };
+
+  private static void AppendModRm(List<byte> bytes, int reg, int rm, int displacement, bool forceDisp) {
+    var mod = forceDisp ? 1 : displacement == 0 ? 0 : displacement is >= sbyte.MinValue and <= sbyte.MaxValue ? 1 : 2;
+    bytes.Add((byte)((mod << 6) | ((reg & 7) << 3) | (rm & 7)));
+    if (mod == 1)
+      bytes.Add((byte)displacement);
+    else if (mod == 2)
+      bytes.AddRange(BitConverter.GetBytes((short)displacement));
+  }
+
   public byte[] AddImmediate(MachineRegister destination, int value)
     => AluImmediate(destination, value, extension: 0);
 

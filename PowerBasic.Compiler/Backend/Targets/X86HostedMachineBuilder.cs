@@ -57,12 +57,24 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Mov when instruction.Operands.Count == 2:
           if (instruction.Operands[1] is MOperand.Immediate immediate)
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);
+          else if (instruction.Operands[1] is MOperand.Memory memory
+                   && TryAddress(memory, registers, out var loadAddress))
+            target = new(X86TargetOpcode.Mov, [Register(instruction.Operands[0])], Address: loadAddress);
+          else if (instruction.Operands[0] is MOperand.Memory storeMemory
+                   && instruction.Operands[1] is MOperand.Register storeRegister
+                   && TryAddress(storeMemory, registers, out var storeAddress))
+            target = new(X86TargetOpcode.Mov, [Register(storeRegister.Reg)], Address: storeAddress,
+              Immediate: 1);
           else
             target = new(X86TargetOpcode.MoveRegister,
               [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
           return true;
         case MOpcode.Add when instruction.Operands[1] is MOperand.Immediate add:
           target = new(X86TargetOpcode.AddImmediate, [Register(instruction.Operands[0])], add.Value);
+          return true;
+        case MOpcode.Add when instruction.Operands.Count == 2 && instruction.Operands[0] is MOperand.Memory addMemory
+            && instruction.Operands[1] is MOperand.Register addRegister && TryAddress(addMemory, registers, out var addAddress):
+          target = new(X86TargetOpcode.Add, [Register(addRegister.Reg)], Address: addAddress);
           return true;
         case MOpcode.Sub when instruction.Operands[1] is MOperand.Immediate sub:
           target = new(X86TargetOpcode.SubImmediate, [Register(instruction.Operands[0])], sub.Value);
@@ -157,5 +169,22 @@ public static class X86HostedMachineBuilder {
     } catch (InvalidOperationException) {
       return false;
     }
+  }
+
+  private static bool TryAddress(MOperand.Memory memory, X86TargetRegisterFile registers,
+      out X86TargetAddress address) {
+    static MachineRegister? Convert(MReg? register, X86TargetRegisterFile file)
+      => register is { IsVirtual: false } value && (uint)value.Physical.Index() < (uint)file.Registers.Count
+        ? file.Registers[value.Physical.Index()]
+        : null;
+    address = new(Convert(memory.Base, registers), Convert(memory.Index, registers), (byte)memory.Scale,
+      memory.Disp, memory.Size switch {
+        MRegSize.Byte => 8,
+        MRegSize.Word => 16,
+        MRegSize.Dword => 32,
+        MRegSize.Qword => 64,
+        _ => 80,
+      });
+    return address.Base is not null || address.Index is not null;
   }
 }
