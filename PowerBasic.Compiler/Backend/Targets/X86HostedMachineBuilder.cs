@@ -96,6 +96,11 @@ public static class X86HostedMachineBuilder {
             Symbol: blockLabels.GetValueOrDefault(blockOffset.Block, blockOffset.Block));
           return true;
         case MOpcode.Mov when instruction.Operands.Count == 2
+            && instruction.Operands[0] is MOperand.Register symbolRegister
+            && instruction.Operands[1] is MOperand.LabelRef symbolLabel:
+          target = new(X86TargetOpcode.MoveSymbolAddress, [Register(symbolRegister)], Symbol: symbolLabel.Name);
+          return true;
+        case MOpcode.Mov when instruction.Operands.Count == 2
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var destinationAddress)
             && TryAddress(instruction.Operands[1], function, registers, allocation, out var sourceAddress):
           target = new(X86TargetOpcode.MoveMemoryToMemory, [], Address: destinationAddress,
@@ -180,6 +185,17 @@ public static class X86HostedMachineBuilder {
           return true;
         case MOpcode.Cmp when instruction.Operands[0] is MOperand.Register && instruction.Operands[1] is MOperand.Immediate compare:
           target = new(X86TargetOpcode.CompareImmediate, [Register(instruction.Operands[0])], compare.Value);
+          return true;
+        case MOpcode.Sbb when instruction.Operands.Count == 2 && instruction.Operands[0] is MOperand.Register
+            && instruction.Operands[1] is MOperand.Immediate sbbImmediate:
+          target = new(X86TargetOpcode.Sbb, [Register(instruction.Operands[0])], sbbImmediate.Value);
+          return true;
+        case MOpcode.Shl or MOpcode.Shr or MOpcode.Sar
+            when instruction.Operands.Count == 2
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var memoryShiftAddress)
+            && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.MemoryShiftCount, [], instruction.Opcode switch {
+            MOpcode.Shl => 4, MOpcode.Shr => 5, _ => 7 }, memoryShiftAddress);
           return true;
         case MOpcode.Add when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
           target = new(X86TargetOpcode.Add, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);

@@ -201,6 +201,18 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           bytes.AddRange(registerMemoryBytes);
           AddAddressRelocation(registerMemoryAddress, offset, registerMemoryBytes.Length);
           break;
+        case X86TargetOpcode.MoveSymbolAddress when instruction.Symbol is { Length: > 0 } addressSymbol:
+          var addressBytes = encoder.MoveImmediate(instruction.Registers[0], 0);
+          bytes.AddRange(addressBytes);
+          var addressWidth = function.Mode == X86Mode.Bit16 ? 2 : 4;
+          relocations.Add(new MachineRelocation(offset + addressBytes.Length - addressWidth,
+            addressWidth == 2 ? MachineRelocationKind.Absolute16 : MachineRelocationKind.Absolute32, addressSymbol));
+          break;
+        case X86TargetOpcode.MemoryShiftCount when instruction.Address is { } memoryShiftAddress:
+          var shiftMemoryBytes = encoder.ShiftMemoryCount(memoryShiftAddress, checked((int)instruction.Immediate));
+          bytes.AddRange(shiftMemoryBytes);
+          AddAddressRelocation(memoryShiftAddress, offset, shiftMemoryBytes.Length);
+          break;
         case X86TargetOpcode.Mov when instruction.Address is { } storeAddress && instruction.Immediate == 1:
           var storeBytes = encoder.MoveMemory(instruction.Registers[0], storeAddress, load: false);
           bytes.AddRange(storeBytes);
@@ -283,6 +295,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           break;
         case X86TargetOpcode.Sbb when instruction.Registers.Count >= 2:
           bytes.AddRange(encoder.AluRegister(instruction.Registers[0], instruction.Registers[1], 0x19));
+          break;
+        case X86TargetOpcode.Sbb when instruction.Registers.Count == 1:
+          bytes.AddRange(encoder.SbbImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
         case X86TargetOpcode.Neg:
           bytes.AddRange(encoder.UnaryRegister(instruction.Registers[0], 3));

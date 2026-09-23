@@ -213,6 +213,8 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
 
   public byte[] XorImmediate(MachineRegister destination, int value)
     => AluImmediate(destination, value, extension: 6);
+  public byte[] SbbImmediate(MachineRegister destination, int value)
+    => AluImmediate(destination, value, extension: 3);
 
   public byte[] CompareImmediate(MachineRegister destination, int value)
     => AluImmediate(destination, value, extension: 7);
@@ -335,6 +337,11 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     if (rex is { } prefix) bytes.Add(prefix);
     bytes.Add(0xD3);
     bytes.Add(ModRm(extension, register.Encoding));
+    return [.. bytes];
+  }
+  public byte[] ShiftMemoryCount(X86TargetAddress address, int extension) {
+    var bytes = new List<byte> { 0xD3 };
+    AppendAddress(bytes, extension, address);
     return [.. bytes];
   }
 
