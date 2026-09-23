@@ -55,7 +55,7 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   public byte[] MoveMemory(MachineRegister register, X86TargetAddress address, bool load) {
     Validate(register);
     var bytes = new List<byte>();
-    var rex = MemoryRex(register, address, w: mode == X86Mode.Bit64);
+    var rex = MemoryRex(register, address, w: mode == X86Mode.Bit64 && address.WidthBits == 64);
     if (rex is { } prefix)
       bytes.Add(prefix);
     bytes.Add((byte)(load ? 0x8B : 0x89));
@@ -66,7 +66,7 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   public byte[] AluMemory(MachineRegister register, X86TargetAddress address, int opcode, bool load) {
     Validate(register);
     var bytes = new List<byte>();
-    var rex = MemoryRex(register, address, w: mode == X86Mode.Bit64);
+    var rex = MemoryRex(register, address, w: mode == X86Mode.Bit64 && address.WidthBits == 64);
     if (rex is { } prefix)
       bytes.Add(prefix);
     bytes.Add((byte)opcode);
