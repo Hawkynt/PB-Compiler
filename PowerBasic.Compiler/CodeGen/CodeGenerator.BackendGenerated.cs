@@ -223,7 +223,7 @@ public sealed partial class CodeGenerator {
       this._asm.MarkLabel(this.GeneratedCalleeLabel(generated.Ir.Name)!);
       var abi = X86CallAbi.For(generated.Ir.Convention);
       var cleanupBytes = abi.StackCleanup == X86StackCleanup.Caller ? 0 : generated.StackLayout.ParameterBytes;
-      X86ProductionEmitter.EmitFunction(this._asm, generated.MachineProduct, generated.MachineProduct.Allocation,
+      X86ProductionEmitter.EmitFunction(this._asm, generated.MachineProduct,
         generated.StackLayout.ParameterOffsets, cleanupBytes, this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: generated.ElideFrame,
         emitInlineAsm: this.EmitRoutedInlineAsm);

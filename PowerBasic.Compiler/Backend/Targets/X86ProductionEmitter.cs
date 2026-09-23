@@ -18,22 +18,22 @@ public static class X86ProductionEmitter {
       Assembler assembler,
       IrMachineFunction function,
       IReadOnlyDictionary<int, Reg> allocation,
-      IReadOnlyList<int> parameterOffsets,
+      int[] parameterOffsets,
       int calleeCleanupBytes,
-      Func<string, Label?> calleeLabel,
-      Func<string, int, (Label Label, int Offset)> dataCellOf,
+      Func<string, Label?>? calleeLabel,
+      Func<string, Mem?>? dataCellOf,
       Action<Assembler>? emitEpilogue = null,
       bool alignLoops = false,
       bool allowFrameElision = false,
       IReadOnlyList<Reg>? registerSpills = null,
-      Action<string, IReadOnlyList<string>>? emitInlineAsm = null) {
+      Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null) {
     ArgumentNullException.ThrowIfNull(assembler);
     ArgumentNullException.ThrowIfNull(function);
     // x86-16 is the DOS executable target.  Its final product contains target-owned labels,
     // segment relocations and inline-assembly blocks, so it is intentionally emitted by the
     // target facade rather than by CodeGenerator itself.
     if (function.Target.Name.Equals("x86-16", StringComparison.OrdinalIgnoreCase)) {
-      MachineEmitter.EmitFunction(assembler, function, allocation, parameterOffsets,
+      MachineEmitter.EmitFunction(assembler, function, parameterOffsets,
         calleeCleanupBytes, calleeLabel, dataCellOf, emitEpilogue, alignLoops,
         allowFrameElision, registerSpills, emitInlineAsm);
       return;

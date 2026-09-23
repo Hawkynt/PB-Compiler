@@ -128,8 +128,7 @@ public sealed partial class CodeGenerator {
         this._asm.AlignCode(16);
       this._asm.MarkLabel(this._asm.Lbl(helper.Function.Name));
       X86ProductionEmitter.EmitFunction(
-        this._asm, helper.MachineProduct, helper.MachineProduct.Allocation,
-        helper.ParameterOffsets, helper.ParameterBytes,
+        this._asm, helper.MachineProduct, helper.ParameterOffsets, helper.ParameterBytes,
         this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops,
         allowFrameElision: helper.ElideFrame,
