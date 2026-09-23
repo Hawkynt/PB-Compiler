@@ -5,8 +5,14 @@ namespace PowerBasic.Compiler.Backend.Targets;
 /// <summary>Bridges the allocated x86 machine product into the hosted target-owned representation.</summary>
 public static class X86HostedMachineBuilder {
   public static bool TryBuild(IrMachineFunction machine, out X86TargetMachineFunction? hosted) {
+    return TryBuild(machine, out hosted, out _);
+  }
+
+  public static bool TryBuild(IrMachineFunction machine, out X86TargetMachineFunction? hosted,
+      out string? error) {
     ArgumentNullException.ThrowIfNull(machine);
     hosted = null;
+    error = null;
     var mode = machine.Target.Name switch {
       "x86-64" => X86Mode.Bit64,
       "x86-32" => X86Mode.Bit32,
@@ -25,10 +31,13 @@ public static class X86HostedMachineBuilder {
       StringComparer.Ordinal);
     foreach (var block in machine.Function.Blocks) {
       labels[blockLabels[block.Label]] = instructions.Count;
-      foreach (var instruction in block.Instructions) {
+      foreach (var (instruction, index) in block.Instructions.Select((item, index) => (item, index))) {
         if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, blockLabels,
-              out var targetInstruction))
+              out var targetInstruction)) {
+          error = $"block '{block.Label}' instruction #{index}: {instruction.Opcode} " +
+            $"({string.Join("|", instruction.Operands.Select(operand => operand.GetType().Name))})";
           return false;
+        }
         if (targetInstruction is not null)
           instructions.Add(targetInstruction);
       }
