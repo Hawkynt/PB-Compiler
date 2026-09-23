@@ -532,17 +532,17 @@ public static class X86HostedMachineBuilder {
     if (mnemonic is "AESENC" or "AESDEC" or "AESIMC" or "PCLMULQDQ") {
       var vectorOperands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
         .Select(operand => TryMachineRegister(operand.Reg, registers, allocation)).ToArray();
-      if (vectorOperands.Any(register => register is null) || vectorOperands.Length < 2)
-        return false;
-      var xmm0 = vectorOperands[0]!.Value;
-      var xmm1 = vectorOperands[1]!.Value;
-      target = new(mnemonic switch {
-        "AESENC" => X86TargetOpcode.AesEnc,
-        "AESDEC" => X86TargetOpcode.AesDec,
-        "AESIMC" => X86TargetOpcode.AesImc,
-        _ => X86TargetOpcode.Pclmul,
-      }, [xmm0, xmm1], Immediate: 0);
-      return true;
+      if (!vectorOperands.Any(register => register is null) && vectorOperands.Length >= 2) {
+        var xmm0 = vectorOperands[0]!.Value;
+        var xmm1 = vectorOperands[1]!.Value;
+        target = new(mnemonic switch {
+          "AESENC" => X86TargetOpcode.AesEnc,
+          "AESDEC" => X86TargetOpcode.AesDec,
+          "AESIMC" => X86TargetOpcode.AesImc,
+          _ => X86TargetOpcode.Pclmul,
+        }, [xmm0, xmm1], Immediate: 0);
+        return true;
+      }
     }
     if (TryExpandVectorAsm(mnemonic, instruction, registers, allocation, out target))
       return true;
@@ -567,23 +567,23 @@ public static class X86HostedMachineBuilder {
         return true;
       }
       var source = instruction.Operands.Skip(1).FirstOrDefault();
-      if (source is null || !TryAddress(source, function, registers, allocation, out var address))
-        return false;
-      var destination = registers.Registers[0] with { Bits = mode == X86Mode.Bit64 ? 64 : mode == X86Mode.Bit32 ? 32 : 16 };
-      target = new(mnemonic switch {
-        "POPCNT" => X86TargetOpcode.Popcnt,
-        "BSF" => X86TargetOpcode.Bsf,
-        "BSR" => X86TargetOpcode.Bsr,
-        "BEXTR" => X86TargetOpcode.Bextr,
-        "ANDN" => X86TargetOpcode.Andn,
-        "BLSI" => X86TargetOpcode.Blsi,
-        "BLSR" => X86TargetOpcode.Blsr,
-        "BZHI" => X86TargetOpcode.Bzhi,
-        "PEXT" => X86TargetOpcode.Pext,
-        "PDEP" => X86TargetOpcode.Pdep,
-        _ => X86TargetOpcode.Mulx,
-      }, [destination], Address: address);
-      return true;
+      if (source is not null && TryAddress(source, function, registers, allocation, out var address)) {
+        var destination = registers.Registers[0] with { Bits = mode == X86Mode.Bit64 ? 64 : mode == X86Mode.Bit32 ? 32 : 16 };
+        target = new(mnemonic switch {
+          "POPCNT" => X86TargetOpcode.Popcnt,
+          "BSF" => X86TargetOpcode.Bsf,
+          "BSR" => X86TargetOpcode.Bsr,
+          "BEXTR" => X86TargetOpcode.Bextr,
+          "ANDN" => X86TargetOpcode.Andn,
+          "BLSI" => X86TargetOpcode.Blsi,
+          "BLSR" => X86TargetOpcode.Blsr,
+          "BZHI" => X86TargetOpcode.Bzhi,
+          "PEXT" => X86TargetOpcode.Pext,
+          "PDEP" => X86TargetOpcode.Pdep,
+          _ => X86TargetOpcode.Mulx,
+        }, [destination], Address: address);
+        return true;
+      }
     }
     target = mnemonic switch {
       "NOP" => new X86TargetInstruction(X86TargetOpcode.Nop, []),
