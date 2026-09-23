@@ -195,6 +195,12 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           bytes.AddRange(compareMemoryBytes);
           AddAddressRelocation(compareAddress, offset, compareMemoryBytes.Length);
           break;
+        case X86TargetOpcode.RegisterMemoryAlu when instruction.Address is { } registerMemoryAddress:
+          var registerMemoryBytes = encoder.AluMemory(instruction.Registers[0], registerMemoryAddress,
+            checked((int)instruction.Immediate), load: true);
+          bytes.AddRange(registerMemoryBytes);
+          AddAddressRelocation(registerMemoryAddress, offset, registerMemoryBytes.Length);
+          break;
         case X86TargetOpcode.Mov when instruction.Address is { } storeAddress && instruction.Immediate == 1:
           var storeBytes = encoder.MoveMemory(instruction.Registers[0], storeAddress, load: false);
           bytes.AddRange(storeBytes);

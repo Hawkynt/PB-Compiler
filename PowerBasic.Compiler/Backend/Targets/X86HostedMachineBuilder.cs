@@ -123,7 +123,7 @@ public static class X86HostedMachineBuilder {
             && instruction.Operands[0] is MOperand.Register && instruction.Operands[1] is MOperand.Register:
           target = new(X86TargetOpcode.Xchg, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
           return true;
-        case MOpcode.Add when instruction.Operands[1] is MOperand.Immediate add:
+        case MOpcode.Add when instruction.Operands[0] is MOperand.Register && instruction.Operands[1] is MOperand.Immediate add:
           target = new(X86TargetOpcode.AddImmediate, [Register(instruction.Operands[0])], add.Value);
           return true;
         case MOpcode.Add when instruction.Operands.Count == 2
@@ -145,6 +145,14 @@ public static class X86HostedMachineBuilder {
             && TryAddress(instruction.Operands[1], function, registers, allocation, out var compareMemoryAddress):
           target = new(X86TargetOpcode.CompareRegisterMemory, [Register(instruction.Operands[0])], Address: compareMemoryAddress);
           return true;
+        case MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Adc or MOpcode.Sbb
+            when instruction.Operands.Count == 2 && instruction.Operands[0] is MOperand.Register
+            && TryAddress(instruction.Operands[1], function, registers, allocation, out var registerMemoryAddress):
+          target = new(X86TargetOpcode.RegisterMemoryAlu, [Register(instruction.Operands[0])], Address: registerMemoryAddress,
+            Immediate: instruction.Opcode switch {
+              MOpcode.Add => 0x03, MOpcode.Or => 0x0B, MOpcode.And => 0x23, MOpcode.Xor => 0x33,
+              MOpcode.Adc => 0x13, MOpcode.Sbb => 0x1B, _ => 0x2B });
+          return true;
         case MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
             when instruction.Operands.Count == 2
             && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell)
@@ -158,19 +166,19 @@ public static class X86HostedMachineBuilder {
             _ => X86TargetOpcode.Cmp,
           }, [RegisterValue(memoryRegister.Reg)], Address: memoryAluAddress);
           return true;
-        case MOpcode.Sub when instruction.Operands[1] is MOperand.Immediate sub:
+        case MOpcode.Sub when instruction.Operands[0] is MOperand.Register && instruction.Operands[1] is MOperand.Immediate sub:
           target = new(X86TargetOpcode.SubImmediate, [Register(instruction.Operands[0])], sub.Value);
           return true;
-        case MOpcode.And when instruction.Operands[1] is MOperand.Immediate andImmediate:
+        case MOpcode.And when instruction.Operands[0] is MOperand.Register && instruction.Operands[1] is MOperand.Immediate andImmediate:
           target = new(X86TargetOpcode.AndImmediate, [Register(instruction.Operands[0])], andImmediate.Value);
           return true;
-        case MOpcode.Or when instruction.Operands[1] is MOperand.Immediate orImmediate:
+        case MOpcode.Or when instruction.Operands[0] is MOperand.Register && instruction.Operands[1] is MOperand.Immediate orImmediate:
           target = new(X86TargetOpcode.OrImmediate, [Register(instruction.Operands[0])], orImmediate.Value);
           return true;
-        case MOpcode.Xor when instruction.Operands[1] is MOperand.Immediate xorImmediate:
+        case MOpcode.Xor when instruction.Operands[0] is MOperand.Register && instruction.Operands[1] is MOperand.Immediate xorImmediate:
           target = new(X86TargetOpcode.XorImmediate, [Register(instruction.Operands[0])], xorImmediate.Value);
           return true;
-        case MOpcode.Cmp when instruction.Operands[1] is MOperand.Immediate compare:
+        case MOpcode.Cmp when instruction.Operands[0] is MOperand.Register && instruction.Operands[1] is MOperand.Immediate compare:
           target = new(X86TargetOpcode.CompareImmediate, [Register(instruction.Operands[0])], compare.Value);
           return true;
         case MOpcode.Add when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
