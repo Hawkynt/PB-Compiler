@@ -78,7 +78,7 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
 
   private byte[] AluImmediate(MachineRegister destination, int value, int extension) {
     Validate(destination);
-    var rex = Rex(destination, destination, w: mode == X86Mode.Bit64);
+    var rex = RexRm(destination, w: mode == X86Mode.Bit64);
     var result = new List<byte>(rex is null ? 7 : 8);
     if (rex is { } prefix)
       result.Add(prefix);
@@ -103,6 +103,11 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     var rex = (byte)(0x40 | (w ? 0x08 : 0)
       | (source.Encoding >= 8 ? 0x04 : 0)
       | (destination.Encoding >= 8 ? 0x01 : 0));
+    return rex == 0x40 ? null : rex;
+  }
+
+  private static byte? RexRm(MachineRegister register, bool w) {
+    var rex = (byte)(0x40 | (w ? 0x08 : 0) | (register.Encoding >= 8 ? 0x01 : 0));
     return rex == 0x40 ? null : rex;
   }
 
