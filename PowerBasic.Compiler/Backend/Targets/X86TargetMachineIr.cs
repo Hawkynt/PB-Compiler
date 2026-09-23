@@ -110,7 +110,10 @@ public sealed record X86TargetInstruction(
     string? Symbol = null,
     IReadOnlyList<X86TargetOperand>? Operands = null,
     X86VectorOpcode? VectorOperation = null,
-    X86TargetAddress? SourceAddress = null);
+    X86TargetAddress? SourceAddress = null,
+    X86VectorEncoding? VectorEncoding = null);
+
+public enum X86VectorEncoding { Legacy, Vex, Evex }
 
 /// <summary>Explicit target operand kinds; register-only instructions use the compact fields above.</summary>
 public abstract record X86TargetOperand {
