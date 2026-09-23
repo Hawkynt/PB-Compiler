@@ -13,7 +13,7 @@ public sealed partial class CodeGenerator {
   // eligible functions compiled by the x86-16 back end, with their selected+scheduled machine IR,
   // register allocation, and the middle-end proof that no fixed local frame storage survived.
   // null until first queried. Empty unless UseExperimentalBackend.
-  private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc, bool ElideFrame)>? _backendProcs;
+  private Dictionary<ProcedureSymbol, (IrMachineFunction Machine, bool ElideFrame)>? _backendProcs;
 
   // the routed frame of a SOURCE procedure whose IR signature an interprocedural pass rewrote. It is
   // the same IR-derived layout a generated definition gets, kept here because the declaration the
@@ -39,7 +39,7 @@ public sealed partial class CodeGenerator {
     Cost: this.SelectionCost, CpuLevel: this._rt.Target.CpuLevel);
 
   /// <summary>The module body compiled by the x86-16 back end, when the whole of it selects and allocates.</summary>
-  private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? _backendMain;
+  private IrMachineFunction? _backendMain;
 
   // every procedure (and the module body) the routing considered and did not take, with the reason
   // the routing itself gave. Filled by BackendProcs/BackendMain as they decide; see BackendDeclines.
@@ -209,7 +209,7 @@ public sealed partial class CodeGenerator {
   /// <summary>Why the module as a whole refused to lower, when it did - see <see cref="RouteMain"/>.</summary>
   private string? _moduleLoweringDecline;
 
-  private Dictionary<ProcedureSymbol, (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc, bool ElideFrame)> BackendProcs() {
+  private Dictionary<ProcedureSymbol, (IrMachineFunction Machine, bool ElideFrame)> BackendProcs() {
     if (this._backendProcs is not null)
       return this._backendProcs;
     this._backendProcs = new(ReferenceEqualityComparer.Instance);
@@ -400,7 +400,8 @@ public sealed partial class CodeGenerator {
       // O0070 is optimizer-gated here, after the last middle-end sweep. The IR proof deliberately
       // says nothing about the ABI or future spills; MachineEmitter re-checks both against the final
       // machine function before actually omitting BP.
-      this._backendProcs[proc] = (mfn, alloc, this.Optimize && FrameElision.IsCandidate(irFn));
+      this._backendProcs[proc] = (new IrMachineFunction(irFn, mfn, alloc),
+        this.Optimize && FrameElision.IsCandidate(irFn));
 
     // An allocation failure can strand a source caller, and a removed source callee can strand an
     // O0284 helper. Conversely removing that helper strands its entry thunks. An O0283 generated
@@ -438,7 +439,7 @@ public sealed partial class CodeGenerator {
   /// of the body - and the filter that refused it only ever matched a TOP-LEVEL ChainStmt, so a CHAIN
   /// inside an IF was already routing and passing BackendChainTests.
   /// </summary>
-  private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? BackendMain() {
+  private IrMachineFunction? BackendMain() {
     if (this._backendMainKnown)
       return this._backendMain;
     var answer = this.RouteMain();
@@ -537,7 +538,7 @@ public sealed partial class CodeGenerator {
     return routed == 0 || direct == 0;
   }
 
-  private (MFunction Fn, IReadOnlyDictionary<int, Reg> Alloc)? RouteMain() {
+  private IrMachineFunction? RouteMain() {
     this._backendMainKnown = true;
     var routed = this.BackendProcs();               // also lowers the module and fills _backendModule
     // Error handling in main is selected inline just like it is in a procedure. The only difference
@@ -574,7 +575,7 @@ public sealed partial class CodeGenerator {
     MachineScheduler.Schedule(machine, this.SelectionTarget);
     if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } alloc)
       return this.DeclineMain("allocation: " + (noRegisters ?? "unknown"));
-    return this._backendMain = (machine, alloc);
+    return this._backendMain = new IrMachineFunction(main, machine, alloc);
   }
 
   /// <summary>Records why the module body was not routed and answers "not routed", in one expression.</summary>
@@ -607,8 +608,8 @@ public sealed partial class CodeGenerator {
 
   /// <summary>Emits the module body from the back end, ending in the implicit END the direct path also emits.</summary>
   private void EmitBackendMain() {
-    var (machine, alloc) = this._backendMain!.Value;
-    MachineEmitter.EmitFunction(this._asm, machine, alloc, [], 0, this.CalleeLabel, this.DataCellOf,
+    var machine = this._backendMain!;
+    MachineEmitter.EmitFunction(this._asm, machine, [], 0, this.CalleeLabel, this.DataCellOf,
       asm => {
         asm.Mov(Asm.Reg.AL, (Asm.Imm)0);
         asm.Jmp(this._rt.Exit);
@@ -1276,7 +1277,7 @@ public sealed partial class CodeGenerator {
 
   /// <summary>Emits a back-end-compiled function, eliding its BP frame only when O0070's IR and final-machine proofs both hold.</summary>
   private void EmitBackendFunction(ProcedureSymbol proc) {
-    var (mfn, alloc, elideFrame) = this.BackendProcs()[proc];
+    var (machine, elideFrame) = this.BackendProcs()[proc];
     var asm = this._asm;
     var paramBytes = this.LayoutFrame(proc);       // assigns each parameter its [BP+offset]
     if (this.Optimize && this.Cpu486)
@@ -1310,7 +1311,7 @@ public sealed partial class CodeGenerator {
     // its leading arguments never reached the stack, and the pushes that spilled them are discarded by
     // the epilogue's MOV SP,BP rather than popped.
     var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
-    MachineEmitter.EmitFunction(asm, mfn, alloc, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
+    MachineEmitter.EmitFunction(asm, machine, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
       alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame, registerSpills: spillRegs,
       emitInlineAsm: this.EmitRoutedInlineAsm);
     this.EmitBackendSemanticMerges();
