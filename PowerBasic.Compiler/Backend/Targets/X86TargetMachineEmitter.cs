@@ -184,6 +184,17 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           AddAddressRelocation(destinationAddress, offset + 1 + loadMemoryBytes.Length,
             storeMemoryBytes.Length);
           break;
+        case X86TargetOpcode.AluMemoryImmediate when instruction.Address is { } aluAddress:
+          var extension = instruction.Operands?.OfType<X86TargetOperand.Immediate>().FirstOrDefault()?.Value ?? 0;
+          var aluImmediateBytes = encoder.AluMemoryImmediate(aluAddress, checked((int)extension), instruction.Immediate);
+          bytes.AddRange(aluImmediateBytes);
+          AddAddressRelocation(aluAddress, offset, aluImmediateBytes.Length);
+          break;
+        case X86TargetOpcode.CompareRegisterMemory when instruction.Address is { } compareAddress:
+          var compareMemoryBytes = encoder.AluMemory(instruction.Registers[0], compareAddress, 0x3B, load: true);
+          bytes.AddRange(compareMemoryBytes);
+          AddAddressRelocation(compareAddress, offset, compareMemoryBytes.Length);
+          break;
         case X86TargetOpcode.Mov when instruction.Address is { } storeAddress && instruction.Immediate == 1:
           var storeBytes = encoder.MoveMemory(instruction.Registers[0], storeAddress, load: false);
           bytes.AddRange(storeBytes);
@@ -295,13 +306,13 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           bytes.AddRange(encoder.UnaryMultiplyDivide(instruction.Registers[0], 5));
           break;
         case X86TargetOpcode.Shl:
-          bytes.AddRange(encoder.ShiftRegister(instruction.Registers[0], 4, checked((int)instruction.Immediate)));
+          bytes.AddRange(instruction.Registers.Count >= 2 ? encoder.ShiftRegisterCount(instruction.Registers[0], 4) : encoder.ShiftRegister(instruction.Registers[0], 4, checked((int)instruction.Immediate)));
           break;
         case X86TargetOpcode.Shr:
-          bytes.AddRange(encoder.ShiftRegister(instruction.Registers[0], 5, checked((int)instruction.Immediate)));
+          bytes.AddRange(instruction.Registers.Count >= 2 ? encoder.ShiftRegisterCount(instruction.Registers[0], 5) : encoder.ShiftRegister(instruction.Registers[0], 5, checked((int)instruction.Immediate)));
           break;
         case X86TargetOpcode.Sar:
-          bytes.AddRange(encoder.ShiftRegister(instruction.Registers[0], 7, checked((int)instruction.Immediate)));
+          bytes.AddRange(instruction.Registers.Count >= 2 ? encoder.ShiftRegisterCount(instruction.Registers[0], 7) : encoder.ShiftRegister(instruction.Registers[0], 7, checked((int)instruction.Immediate)));
           break;
         case X86TargetOpcode.Rcl:
           bytes.AddRange(encoder.ShiftRegister(instruction.Registers[0], 2, checked((int)instruction.Immediate)));

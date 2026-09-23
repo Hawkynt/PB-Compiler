@@ -128,6 +128,7 @@ public enum X86TargetOpcode {
   Nop, Popcnt, Bsf, Bsr, Bextr, Andn, Blsi, Blsr, Bzhi, Pext, Pdep, Mulx,
   AesEnc, AesDec, AesImc, Pclmul, VectorBinary, Mov, Xchg, Lea,
   MoveMemoryImmediate, MoveMemorySymbol, MoveMemoryToMemory,
+  AluMemoryImmediate, CompareRegisterMemory,
   Add, Sub, And, Or, Xor, Cmp, Test, Adc, Sbb,
   Imul, Mul, Idiv, Div, Neg, Not, Inc, Dec, Cwd, Cbw,
   Shl, Shr, Sar, Shld, Shrd, Rcl, Rcr,

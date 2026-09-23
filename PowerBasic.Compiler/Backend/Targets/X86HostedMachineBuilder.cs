@@ -90,6 +90,12 @@ public static class X86HostedMachineBuilder {
           target = new(X86TargetOpcode.MoveMemorySymbol, [], Address: symbolAddress, Symbol: dataOffset.Name);
           return true;
         case MOpcode.Mov when instruction.Operands.Count == 2
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var blockAddressTarget)
+            && instruction.Operands[1] is MOperand.BlockOffset blockOffset:
+          target = new(X86TargetOpcode.MoveMemorySymbol, [], Address: blockAddressTarget,
+            Symbol: blockLabels.GetValueOrDefault(blockOffset.Block, blockOffset.Block));
+          return true;
+        case MOpcode.Mov when instruction.Operands.Count == 2
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var destinationAddress)
             && TryAddress(instruction.Operands[1], function, registers, allocation, out var sourceAddress):
           target = new(X86TargetOpcode.MoveMemoryToMemory, [], Address: destinationAddress,
@@ -125,6 +131,19 @@ public static class X86HostedMachineBuilder {
             && instruction.Operands[1] is MOperand.Register addRegister
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var addAddress):
           target = new(X86TargetOpcode.Add, [RegisterValue(addRegister.Reg)], Address: addAddress);
+          return true;
+        case MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
+            when instruction.Operands.Count == 2
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var immediateAluAddress)
+            && instruction.Operands[1] is MOperand.Immediate memoryImmediate:
+          target = new(X86TargetOpcode.AluMemoryImmediate, [], memoryImmediate.Value, immediateAluAddress,
+            Operands: [new X86TargetOperand.Immediate((long)(instruction.Opcode switch {
+              MOpcode.Add => 0, MOpcode.Or => 1, MOpcode.And => 4, MOpcode.Sub => 5, MOpcode.Xor => 6, _ => 7 }))]);
+          return true;
+        case MOpcode.Cmp when instruction.Operands.Count == 2
+            && instruction.Operands[0] is MOperand.Register
+            && TryAddress(instruction.Operands[1], function, registers, allocation, out var compareMemoryAddress):
+          target = new(X86TargetOpcode.CompareRegisterMemory, [Register(instruction.Operands[0])], Address: compareMemoryAddress);
           return true;
         case MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
             when instruction.Operands.Count == 2

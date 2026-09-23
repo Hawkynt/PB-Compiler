@@ -328,6 +328,28 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return [.. bytes];
   }
 
+  public byte[] ShiftRegisterCount(MachineRegister register, int extension) {
+    Validate(register);
+    var rex = RexRm(register, w: mode == X86Mode.Bit64);
+    var bytes = new List<byte>();
+    if (rex is { } prefix) bytes.Add(prefix);
+    bytes.Add(0xD3);
+    bytes.Add(ModRm(extension, register.Encoding));
+    return [.. bytes];
+  }
+
+  public byte[] AluMemoryImmediate(X86TargetAddress address, int extension, long value) {
+    var width = address.WidthBits == 8 ? 8 : mode == X86Mode.Bit16 || address.WidthBits == 16 ? 16 : 32;
+    var result = new List<byte>();
+    if (mode == X86Mode.Bit64 && width == 16) { result.Add(0x66); width = 16; }
+    result.Add((byte)(width == 8 ? 0x80 : 0x81));
+    AppendAddress(result, extension, address);
+    if (width == 8) result.Add((byte)value);
+    else if (width == 16) result.AddRange(BitConverter.GetBytes((ushort)value));
+    else result.AddRange(BitConverter.GetBytes((uint)value));
+    return [.. result];
+  }
+
   public byte[] DoubleShift(MachineRegister destination, MachineRegister source, bool right, int count) {
     Validate(destination);
     Validate(source);
