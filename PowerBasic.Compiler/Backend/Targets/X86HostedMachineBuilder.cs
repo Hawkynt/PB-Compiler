@@ -25,7 +25,7 @@ public static class X86HostedMachineBuilder {
     var instructions = new List<X86TargetInstruction>();
     foreach (var block in machine.Function.Blocks)
       foreach (var instruction in block.Instructions) {
-        if (!TryBuildInstruction(instruction, selectedMode, registers, out var targetInstruction))
+        if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, out var targetInstruction))
           return false;
         if (targetInstruction is not null)
           instructions.Add(targetInstruction);
@@ -41,6 +41,7 @@ public static class X86HostedMachineBuilder {
       MInstr instruction,
       X86Mode mode,
       X86TargetRegisterFile registers,
+      X86MachineFunction function,
       out X86TargetInstruction? target) {
     target = null;
     MachineRegister Register(MOperand operand) {
@@ -57,12 +58,11 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Mov when instruction.Operands.Count == 2:
           if (instruction.Operands[1] is MOperand.Immediate immediate)
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);
-          else if (instruction.Operands[1] is MOperand.Memory memory
-                   && TryAddress(memory, registers, out var loadAddress))
+          else if (TryAddress(instruction.Operands[1], function, registers, out var loadAddress))
             target = new(X86TargetOpcode.Mov, [Register(instruction.Operands[0])], Address: loadAddress);
-          else if (instruction.Operands[0] is MOperand.Memory storeMemory
+          else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot
                    && instruction.Operands[1] is MOperand.Register storeRegister
-                   && TryAddress(storeMemory, registers, out var storeAddress))
+                   && TryAddress(instruction.Operands[0], function, registers, out var storeAddress))
             target = new(X86TargetOpcode.Mov, [Register(storeRegister.Reg)], Address: storeAddress,
               Immediate: 1);
           else
@@ -72,8 +72,10 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Add when instruction.Operands[1] is MOperand.Immediate add:
           target = new(X86TargetOpcode.AddImmediate, [Register(instruction.Operands[0])], add.Value);
           return true;
-        case MOpcode.Add when instruction.Operands.Count == 2 && instruction.Operands[0] is MOperand.Memory addMemory
-            && instruction.Operands[1] is MOperand.Register addRegister && TryAddress(addMemory, registers, out var addAddress):
+        case MOpcode.Add when instruction.Operands.Count == 2
+            && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot)
+            && instruction.Operands[1] is MOperand.Register addRegister
+            && TryAddress(instruction.Operands[0], function, registers, out var addAddress):
           target = new(X86TargetOpcode.Add, [Register(addRegister.Reg)], Address: addAddress);
           return true;
         case MOpcode.Sub when instruction.Operands[1] is MOperand.Immediate sub:
@@ -182,8 +184,8 @@ public static class X86HostedMachineBuilder {
           }, []);
           return true;
         case MOpcode.Fld or MOpcode.Fstp or MOpcode.Fild or MOpcode.Fistp
-            when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Memory memory
-            && TryAddress(memory, registers, out var memoryAddress):
+            when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var memoryAddress):
           target = new(instruction.Opcode switch {
             MOpcode.Fld => X86TargetOpcode.Fld,
             MOpcode.Fstp => X86TargetOpcode.Fstp,
@@ -196,8 +198,6 @@ public static class X86HostedMachineBuilder {
           return true;
         case MOpcode.Pop when instruction.Operands.Count == 1:
           target = new(X86TargetOpcode.PopRegister, [Register(instruction.Operands[0])]);
-          return true;
-        case MOpcode.Ret:
           return true;
         default:
           return false;
@@ -224,5 +224,26 @@ public static class X86HostedMachineBuilder {
         _ => 80,
       });
     return address.Base is not null || address.Index is not null;
+  }
+
+  private static bool TryAddress(MOperand operand, X86MachineFunction function,
+      X86TargetRegisterFile registers, out X86TargetAddress address) {
+    if (operand is MOperand.Memory memory)
+      return TryAddress(memory, registers, out address);
+    if (operand is MOperand.StackSlot slot) {
+      var offset = 0;
+      for (var index = 0; index <= slot.Index && index < function.StackSlots.Count; ++index)
+        offset += (function.StackSlots[index] + 1) & ~1;
+      address = new(registers.FramePointer, null, 1, -offset + slot.Disp, slot.Size switch {
+        MRegSize.Byte => 8,
+        MRegSize.Word => 16,
+        MRegSize.Dword => 32,
+        MRegSize.Qword => 64,
+        _ => 80,
+      });
+      return true;
+    }
+    address = default;
+    return false;
   }
 }
