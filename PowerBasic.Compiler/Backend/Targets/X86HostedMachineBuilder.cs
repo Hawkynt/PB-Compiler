@@ -153,6 +153,44 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Ret:
           target = new(X86TargetOpcode.Ret, []);
           return true;
+        case MOpcode.Faddp or MOpcode.Fsubp or MOpcode.Fmulp or MOpcode.Fdivp
+            or MOpcode.Fcompp or MOpcode.FstswAx or MOpcode.Sahf or MOpcode.Fsqrt
+            or MOpcode.Fsin or MOpcode.Fcos or MOpcode.Fptan or MOpcode.Fpatan
+            or MOpcode.Fyl2x or MOpcode.Fxch or MOpcode.FstpSt0
+            or MOpcode.Fld1 or MOpcode.Fldln2 or MOpcode.Fldlg2 or MOpcode.Fldl2e or MOpcode.Fldl2t:
+          target = new(instruction.Opcode switch {
+            MOpcode.Faddp => X86TargetOpcode.Faddp,
+            MOpcode.Fsubp => X86TargetOpcode.Fsubp,
+            MOpcode.Fmulp => X86TargetOpcode.Fmulp,
+            MOpcode.Fdivp => X86TargetOpcode.Fdivp,
+            MOpcode.Fcompp => X86TargetOpcode.Fcompp,
+            MOpcode.FstswAx => X86TargetOpcode.FstswAx,
+            MOpcode.Sahf => X86TargetOpcode.Sahf,
+            MOpcode.Fsqrt => X86TargetOpcode.Fsqrt,
+            MOpcode.Fsin => X86TargetOpcode.Fsin,
+            MOpcode.Fcos => X86TargetOpcode.Fcos,
+            MOpcode.Fptan => X86TargetOpcode.Fptan,
+            MOpcode.Fpatan => X86TargetOpcode.Fpatan,
+            MOpcode.Fyl2x => X86TargetOpcode.Fyl2x,
+            MOpcode.Fxch => X86TargetOpcode.Fxch,
+            MOpcode.FstpSt0 => X86TargetOpcode.FstpSt0,
+            MOpcode.Fld1 => X86TargetOpcode.Fld1,
+            MOpcode.Fldln2 => X86TargetOpcode.Fldln2,
+            MOpcode.Fldlg2 => X86TargetOpcode.Fldlg2,
+            MOpcode.Fldl2e => X86TargetOpcode.Fldl2e,
+            _ => X86TargetOpcode.Fldl2t,
+          }, []);
+          return true;
+        case MOpcode.Fld or MOpcode.Fstp or MOpcode.Fild or MOpcode.Fistp
+            when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Memory memory
+            && TryAddress(memory, registers, out var memoryAddress):
+          target = new(instruction.Opcode switch {
+            MOpcode.Fld => X86TargetOpcode.Fld,
+            MOpcode.Fstp => X86TargetOpcode.Fstp,
+            MOpcode.Fild => X86TargetOpcode.Fild,
+            _ => X86TargetOpcode.Fistp,
+          }, [], Address: memoryAddress);
+          return true;
         case MOpcode.Push when instruction.Operands.Count == 1:
           target = new(X86TargetOpcode.PushRegister, [Register(instruction.Operands[0])]);
           return true;

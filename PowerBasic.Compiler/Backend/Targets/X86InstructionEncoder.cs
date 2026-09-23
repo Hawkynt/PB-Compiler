@@ -200,6 +200,18 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   public byte[] Cbw() => mode == X86Mode.Bit16 ? [0x98] : [0x98];
   public byte[] Nop() => [0x90];
 
+  public byte[] X87Memory(X86TargetAddress address, byte opcode, int extension) {
+    var bytes = new List<byte>(4);
+    if (MemoryRex(RegistersForAddress(address), address, w: false) is { } rex)
+      bytes.Add(rex);
+    bytes.Add(opcode);
+    AppendAddress(bytes, extension, address);
+    return [.. bytes];
+  }
+
+  private static MachineRegister RegistersForAddress(X86TargetAddress address)
+    => address.Base ?? address.Index ?? new MachineRegister("rax", 0, 64);
+
   public byte[] PushImmediate(int value) {
     if (value is >= sbyte.MinValue and <= sbyte.MaxValue)
       return [0x6A, (byte)value];

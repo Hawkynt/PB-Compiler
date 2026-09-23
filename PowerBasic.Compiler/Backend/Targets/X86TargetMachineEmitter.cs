@@ -113,6 +113,40 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Cbw:
           bytes.AddRange(encoder.Cbw());
           break;
+        case X86TargetOpcode.Faddp: bytes.Add(0xDE); bytes.Add(0xC1); break;
+        case X86TargetOpcode.Fsubp: bytes.Add(0xDE); bytes.Add(0xE9); break;
+        case X86TargetOpcode.Fmulp: bytes.Add(0xDE); bytes.Add(0xC9); break;
+        case X86TargetOpcode.Fdivp: bytes.Add(0xDE); bytes.Add(0xF9); break;
+        case X86TargetOpcode.Fcompp: bytes.Add(0xDE); bytes.Add(0xD9); break;
+        case X86TargetOpcode.FstswAx: bytes.Add(0xDF); bytes.Add(0xE0); break;
+        case X86TargetOpcode.Sahf: bytes.Add(0x9E); break;
+        case X86TargetOpcode.Fsqrt: bytes.Add(0xD9); bytes.Add(0xFA); break;
+        case X86TargetOpcode.Fsin: bytes.Add(0xD9); bytes.Add(0xFE); break;
+        case X86TargetOpcode.Fcos: bytes.Add(0xD9); bytes.Add(0xFF); break;
+        case X86TargetOpcode.Fptan: bytes.Add(0xD9); bytes.Add(0xF2); break;
+        case X86TargetOpcode.Fpatan: bytes.Add(0xDE); bytes.Add(0xF3); break;
+        case X86TargetOpcode.Fyl2x: bytes.Add(0xDE); bytes.Add(0xF1); break;
+        case X86TargetOpcode.Fxch: bytes.Add(0xD9); bytes.Add(0xC9); break;
+        case X86TargetOpcode.FstpSt0: bytes.Add(0xDD); bytes.Add(0xD8); break;
+        case X86TargetOpcode.Fld1: bytes.Add(0xD9); bytes.Add(0xE8); break;
+        case X86TargetOpcode.Fldln2: bytes.Add(0xD9); bytes.Add(0xED); break;
+        case X86TargetOpcode.Fldlg2: bytes.Add(0xD9); bytes.Add(0xEC); break;
+        case X86TargetOpcode.Fldl2e: bytes.Add(0xD9); bytes.Add(0xEA); break;
+        case X86TargetOpcode.Fldl2t: bytes.Add(0xD9); bytes.Add(0xE9); break;
+        case X86TargetOpcode.Fld when instruction.Address is { } fldAddress:
+          bytes.AddRange(encoder.X87Memory(fldAddress, fldAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9, 0));
+          break;
+        case X86TargetOpcode.Fstp when instruction.Address is { } fstpAddress:
+          bytes.AddRange(encoder.X87Memory(fstpAddress, fstpAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9, 3));
+          break;
+        case X86TargetOpcode.Fild when instruction.Address is { } fildAddress:
+          bytes.AddRange(encoder.X87Memory(fildAddress, fildAddress.WidthBits == 64 ? (byte)0xDF : (byte)0xDB,
+            fildAddress.WidthBits == 64 ? 5 : 0));
+          break;
+        case X86TargetOpcode.Fistp when instruction.Address is { } fistpAddress:
+          bytes.AddRange(encoder.X87Memory(fistpAddress, fistpAddress.WidthBits == 64 ? (byte)0xDF : (byte)0xDB,
+            fistpAddress.WidthBits == 64 ? 7 : 3));
+          break;
         case X86TargetOpcode.Jmp:
         case X86TargetOpcode.Jcc:
           if (string.IsNullOrWhiteSpace(instruction.Symbol))
