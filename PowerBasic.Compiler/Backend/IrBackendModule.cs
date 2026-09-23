@@ -92,9 +92,9 @@ public sealed class IrBackendModule {
     if (options.Target is IrBackendTarget.C or IrBackendTarget.PowerBasic35 or IrBackendTarget.X86_64)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
         options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops);
-    else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.X86_32)
+    else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.X86_32 or IrBackendTarget.Mos6502)
       IrMiddleEndPipeline.RunNativeModule(module, options.Optimize, options.OptimizeForSpeed,
-        options.OptimizeForSize, minimumIntegerStorageBits: options.Target == IrBackendTarget.X86_16 ? 16 : 32,
+        options.OptimizeForSize, minimumIntegerStorageBits: options.Target is IrBackendTarget.X86_16 or IrBackendTarget.Mos6502 ? 16 : 32,
         recoverIntegerArithmetic: options.RecoverIntegerArithmetic);
     else {
       declinedBecause = $"target '{options.Target}' has no emitter yet";
