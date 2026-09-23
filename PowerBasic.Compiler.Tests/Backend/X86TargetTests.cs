@@ -126,6 +126,7 @@ public sealed class X86TargetTests {
     Assert.That(new X86MachineSelector(SelectionTarget.Baseline), Is.Not.Null);
     Assert.That(new X86MachineAllocator(SelectionTarget.Baseline), Is.Not.Null);
     Assert.That(new X86MachineScheduler(SelectionTarget.Baseline), Is.Not.Null);
+    Assert.That(new X86MachinePostAllocation(), Is.Not.Null);
   }
 
   [Test]

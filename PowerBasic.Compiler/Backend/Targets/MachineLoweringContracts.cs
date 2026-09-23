@@ -33,11 +33,21 @@ public sealed class X86MachineScheduler(SelectionTarget target) : IMachineSchedu
   public void Schedule(MFunction function) => MachineScheduler.Schedule(function, target);
 }
 
+/// <summary>x86 rewrites that require the final physical-register assignment.</summary>
+public sealed class X86MachinePostAllocation
+    : IMachinePostAllocation<MFunction, IReadOnlyDictionary<int, Reg>> {
+  public void Run(MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
+    PostRegisterAllocationPeepholes.Run(function, allocation);
+    LateLoadStoreOptimization.Run(function, allocation);
+  }
+}
+
 /// <summary>Current x86 lowering implementation shared by the 16-, 32- and 64-bit x86 contracts.</summary>
 public sealed class X86MachineLowering : IMachineFunctionLowerer {
   private readonly X86MachineSelector _selector;
   private readonly X86MachineAllocator _allocator;
   private readonly X86MachineScheduler _scheduler;
+  private readonly X86MachinePostAllocation _postAllocation = new();
 
   public X86MachineLowering(SelectionTarget target) {
     this._selector = new(target);
@@ -71,8 +81,7 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       error = "allocation: " + (allocationReason ?? "register allocation failed");
       return false;
     }
-    PostRegisterAllocationPeepholes.Run(selected, allocation);
-    LateLoadStoreOptimization.Run(selected, allocation);
+    this._postAllocation.Run(selected, allocation);
     machine = new IrMachineFunction(source, selected, allocation);
     error = null;
     return true;

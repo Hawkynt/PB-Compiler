@@ -20,6 +20,11 @@ public interface IMachineScheduler<in TMachineFunction> {
   void Schedule(TMachineFunction function);
 }
 
+/// <summary>Target-owned rewrites that run after physical register allocation.</summary>
+public interface IMachinePostAllocation<in TMachineFunction, in TAllocation> {
+  void Run(TMachineFunction function, TAllocation allocation);
+}
+
 public interface IMachineCodeEmitter<in TMachineFunction, in TAllocation> {
   MachineCode Emit(TMachineFunction function, TAllocation allocation);
 }
