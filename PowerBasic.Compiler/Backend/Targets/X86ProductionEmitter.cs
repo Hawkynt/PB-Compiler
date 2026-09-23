@@ -26,10 +26,13 @@ public static class X86ProductionEmitter {
       throw new NotSupportedException($"x86 machine function '{function.Source.Name}' contains an unlowered opcode or operand: " +
         $"{function.HostedLoweringError ?? shape}");
     }
-    if (!function.Target.Name.Equals("x86-16", StringComparison.OrdinalIgnoreCase))
-      throw new NotSupportedException($"target '{function.Target.Name}' cannot be appended to a DOS image");
-
-    var target = new X86TargetMachineEmitter(new X86InstructionEncoder(X86Mode.Bit16));
+    var mode = function.Target.Name.ToLowerInvariant() switch {
+      "x86-16" => X86Mode.Bit16,
+      "x86-32" => X86Mode.Bit32,
+      "x86-64" => X86Mode.Bit64,
+      _ => throw new NotSupportedException($"target '{function.Target.Name}' is not an x86 hosted target")
+    };
+    var target = new X86TargetMachineEmitter(new X86InstructionEncoder(mode));
     // The target-owned address lowering currently materializes frame slots relative to BP.  Keep a
     // canonical frame until the target prologue itself owns frame-elision proofs; silently eliding it
     // here would turn valid stack-slot addresses into references to the caller's frame.
