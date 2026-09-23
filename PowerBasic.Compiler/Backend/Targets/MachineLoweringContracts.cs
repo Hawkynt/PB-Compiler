@@ -52,11 +52,11 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
   private readonly X86MachinePostAllocation _postAllocation = new();
 
   public X86MachineLowering(SelectionTarget target) {
-    this.Target = target.CpuLevel >= 686
-      ? new("x86-64", 64, 64)
-      : target.CpuLevel >= 386
-        ? new("x86-32", 32, 32)
-        : new("x86-16", 16, 16);
+    this.Target = target.TargetFamily switch {
+      MachineTargetFamily.X86_64 => new("x86-64", 64, 64),
+      MachineTargetFamily.X86_32 => new("x86-32", 32, 32),
+      _ => new("x86-16", 16, 16),
+    };
     this._selector = new(target);
     this._allocator = new(target);
     this._scheduler = new(target);

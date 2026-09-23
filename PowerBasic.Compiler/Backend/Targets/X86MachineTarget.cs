@@ -24,6 +24,9 @@ public sealed class X86MachineTarget : IMachineTarget {
 
   public IMachineFunctionLowerer CreateLowerer(SelectionTarget selectionTarget)
     => new X86MachineLowering(selectionTarget with {
+      TargetFamily = this._mode == X86Mode.Bit64
+        ? MachineTargetFamily.X86_64
+        : MachineTargetFamily.X86_32,
       CpuLevel = this._mode == X86Mode.Bit64
         ? Math.Max(selectionTarget.CpuLevel, 686)
         : Math.Max(selectionTarget.CpuLevel, 386)

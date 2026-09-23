@@ -16,9 +16,9 @@ public enum IrBackendTarget {
 /// <summary>Input-stage contract for the shared target emitters.</summary>
 public static class IrBackendTargetContract {
   public static SelectionTarget SelectionTarget(IrBackendOptions options) => options.Target switch {
-    IrBackendTarget.X86_16 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 86),
-    IrBackendTarget.X86_32 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 386),
-    IrBackendTarget.X86_64 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 686),
+    IrBackendTarget.X86_16 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 86, TargetFamily: MachineTargetFamily.X86_16),
+    IrBackendTarget.X86_32 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 386, TargetFamily: MachineTargetFamily.X86_32),
+    IrBackendTarget.X86_64 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 686, TargetFamily: MachineTargetFamily.X86_64),
     _ => global::PowerBasic.Compiler.Backend.SelectionTarget.Baseline,
   };
 
