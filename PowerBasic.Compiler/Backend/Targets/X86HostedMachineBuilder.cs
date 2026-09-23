@@ -66,7 +66,7 @@ public static class X86HostedMachineBuilder {
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);
           else if (TryAddress(instruction.Operands[1], function, registers, out var loadAddress))
             target = new(X86TargetOpcode.Mov, [Register(instruction.Operands[0])], Address: loadAddress);
-          else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell
+          else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell
                    && instruction.Operands[1] is MOperand.Register storeRegister
                    && TryAddress(instruction.Operands[0], function, registers, out var storeAddress))
             target = new(X86TargetOpcode.Mov, [RegisterValue(storeRegister.Reg)], Address: storeAddress,
@@ -87,14 +87,14 @@ public static class X86HostedMachineBuilder {
           target = new(X86TargetOpcode.AddImmediate, [Register(instruction.Operands[0])], add.Value);
           return true;
         case MOpcode.Add when instruction.Operands.Count == 2
-            && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot)
+            && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell)
             && instruction.Operands[1] is MOperand.Register addRegister
             && TryAddress(instruction.Operands[0], function, registers, out var addAddress):
           target = new(X86TargetOpcode.Add, [RegisterValue(addRegister.Reg)], Address: addAddress);
           return true;
         case MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
             when instruction.Operands.Count == 2
-            && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell)
+            && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell)
             && instruction.Operands[1] is MOperand.Register memoryRegister
             && TryAddress(instruction.Operands[0], function, registers, out var memoryAluAddress):
           target = new(instruction.Opcode switch {
