@@ -17,47 +17,47 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
     foreach (var instruction in function.Instructions) {
       var offset = bytes.Count;
       switch (instruction.Opcode) {
-        case X86TargetOpcode.MoveImmediate:
+        case X86TargetOpcode.Mov when instruction.Registers.Count == 1:
           bytes.AddRange(encoder.MoveImmediate(instruction.Registers[0], unchecked((ulong)instruction.Immediate)));
           break;
-        case X86TargetOpcode.MoveRegister:
+        case X86TargetOpcode.Mov:
           bytes.AddRange(encoder.MoveRegister(instruction.Registers[0], instruction.Registers[1]));
           break;
-        case X86TargetOpcode.AddImmediate:
+        case X86TargetOpcode.Add:
           bytes.AddRange(encoder.AddImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
-        case X86TargetOpcode.SubImmediate:
+        case X86TargetOpcode.Sub:
           bytes.AddRange(encoder.SubImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
-        case X86TargetOpcode.AndImmediate:
+        case X86TargetOpcode.And:
           bytes.AddRange(encoder.AndImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
-        case X86TargetOpcode.OrImmediate:
+        case X86TargetOpcode.Or:
           bytes.AddRange(encoder.OrImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
-        case X86TargetOpcode.XorImmediate:
+        case X86TargetOpcode.Xor:
           bytes.AddRange(encoder.XorImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
-        case X86TargetOpcode.CompareImmediate:
+        case X86TargetOpcode.Cmp:
           bytes.AddRange(encoder.CompareImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
-        case X86TargetOpcode.PushRegister:
+        case X86TargetOpcode.Push:
           bytes.AddRange(encoder.Push(instruction.Registers[0]));
           break;
-        case X86TargetOpcode.PopRegister:
+        case X86TargetOpcode.Pop:
           bytes.AddRange(encoder.Pop(instruction.Registers[0]));
           break;
-        case X86TargetOpcode.PushImmediate:
+        case X86TargetOpcode.Push when instruction.Registers.Count == 0:
           bytes.AddRange(encoder.PushImmediate(checked((int)instruction.Immediate)));
           break;
-        case X86TargetOpcode.CallRelative:
+        case X86TargetOpcode.Call:
           if (string.IsNullOrWhiteSpace(instruction.Symbol))
             throw new InvalidOperationException("relative calls require a symbol");
           var call = X86RelocationEncoder.CallRelative32(instruction.Symbol);
           relocations.AddRange(call.Relocations.Select(r => r with { Offset = r.Offset + offset }));
           bytes.AddRange(call.Bytes);
           break;
-        case X86TargetOpcode.Return:
+        case X86TargetOpcode.Ret:
           bytes.AddRange(encoder.Ret());
           break;
         default:
