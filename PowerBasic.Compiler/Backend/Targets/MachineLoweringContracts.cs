@@ -90,6 +90,10 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
     ArgumentNullException.ThrowIfNull(source);
     ArgumentNullException.ThrowIfNull(selected);
     machine = null;
+    if (!X86MachineTargetValidation.TryValidate(selected, this.Target, out var targetError)) {
+      error = "target: " + targetError;
+      return false;
+    }
     this._scheduler.Schedule(selected);
     if (this._allocator.TryAllocate(selected, out var allocationReason) is not { } allocation) {
       error = "allocation: " + (allocationReason ?? "register allocation failed");

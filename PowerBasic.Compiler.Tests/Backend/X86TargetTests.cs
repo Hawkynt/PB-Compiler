@@ -143,4 +143,12 @@ public sealed class X86TargetTests {
     var function = new MFunction("target") { TargetFamily = MachineTargetFamily.X86_64 };
     Assert.That(function.Clone().TargetFamily, Is.EqualTo(MachineTargetFamily.X86_64));
   }
+
+  [Test]
+  public void MachineTargetValidationRejectsCrossTargetProducts() {
+    var function = new MFunction("target") { TargetFamily = MachineTargetFamily.X86_16 };
+    Assert.That(X86MachineTargetValidation.TryValidate(function,
+      new MachineTargetDescription("x86-64", 64, 64), out var error), Is.False);
+    Assert.That(error, Does.Contain("X86_64"));
+  }
 }
