@@ -6,9 +6,11 @@ public sealed class X86TargetRegisterFile {
     this.Mode = mode;
     var names = mode == X86Mode.Bit64
       ? new[] { "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15" }
-      : new[] { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi" };
+      : mode == X86Mode.Bit32
+        ? new[] { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi" }
+        : new[] { "ax", "cx", "dx", "bx", "sp", "bp", "si", "di" };
     this.Registers = names.Select((name, index) =>
-      new MachineRegister(name, index, mode == X86Mode.Bit64 ? 64 : 32)).ToArray();
+      new MachineRegister(name, index, mode == X86Mode.Bit64 ? 64 : mode == X86Mode.Bit32 ? 32 : 16)).ToArray();
   }
 
   public X86Mode Mode { get; }

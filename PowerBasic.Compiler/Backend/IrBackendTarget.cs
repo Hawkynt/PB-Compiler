@@ -24,6 +24,7 @@ public static class IrBackendTargetContract {
 
   public static IMachineTarget? CreateMachineTarget(IrBackendTarget target) => target switch {
     IrBackendTarget.Mos6502 => new Mos6502MachineTarget(),
+    IrBackendTarget.X86_16 => new X86MachineTarget(X86Mode.Bit16, X86Abi.I8086Cdecl),
     IrBackendTarget.X86_32 => new X86MachineTarget(X86Mode.Bit32, X86Abi.I386Cdecl),
     IrBackendTarget.X86_64 => new X86MachineTarget(X86Mode.Bit64, X86Abi.SysV64),
     _ => null,

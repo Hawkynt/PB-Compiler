@@ -56,6 +56,21 @@ public sealed class X86TargetTests {
   }
 
   [Test]
+  public void HostedX86Emitter_EmitsIndependentX86_16MachineFunction() {
+    var target = new X86MachineTarget(X86Mode.Bit16, X86Abi.I8086Cdecl);
+    var registers = new X86TargetRegisterFile(X86Mode.Bit16);
+    var abi = new X86TargetAbi(X86Mode.Bit16, "i8086-cdecl", 2, 0,
+      [registers.ReturnValue], registers.ReturnValue, new HashSet<MachineRegister>());
+    var function = new X86TargetMachineFunction(X86Mode.Bit16, abi, [
+      new(X86TargetOpcode.MoveImmediate, [registers.ReturnValue], 42),
+    ]);
+
+    var code = target.HostedEmitter.Emit(function);
+
+    Assert.That(code.Bytes, Is.EqualTo(new byte[] { 0x55, 0x89, 0xE5, 0xB8, 0x2A, 0x00, 0x5D, 0xC3 }));
+  }
+
+  [Test]
   public void HostedX86Emitter_EmitsIndependentX86_64MachineFunction() {
     var target = new X86MachineTarget(X86Mode.Bit64, X86Abi.SysV64);
     var registers = new X86TargetRegisterFile(X86Mode.Bit64);

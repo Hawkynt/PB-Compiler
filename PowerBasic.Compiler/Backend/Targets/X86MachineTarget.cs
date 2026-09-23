@@ -6,10 +6,11 @@ public sealed class X86MachineTarget : IMachineTarget {
   private readonly X86Mode _mode;
 
   public X86MachineTarget(X86Mode mode, X86Abi abi) {
-    if ((mode == X86Mode.Bit32) != (abi.PointerBits == 32))
+    var expectedBits = mode switch { X86Mode.Bit16 => 16, X86Mode.Bit64 => 64, _ => 32 };
+    if (abi.PointerBits != expectedBits)
       throw new ArgumentException("ABI and machine mode disagree.", nameof(abi));
     this._mode = mode;
-    this.Description = new(mode == X86Mode.Bit64 ? "x86-64" : "x86-32", abi.PointerBits, abi.PointerBits);
+    this.Description = new(mode switch { X86Mode.Bit16 => "x86-16", X86Mode.Bit64 => "x86-64", _ => "x86-32" }, abi.PointerBits, abi.PointerBits);
     this.Abi = abi;
     this.Encoder = new X86InstructionEncoder(mode);
     this.Emitter = new X86MachineEmitter(this.Encoder, abi);
@@ -24,11 +25,15 @@ public sealed class X86MachineTarget : IMachineTarget {
 
   public IMachineFunctionLowerer CreateLowerer(SelectionTarget selectionTarget)
     => new X86MachineLowering(selectionTarget with {
-      TargetFamily = this._mode == X86Mode.Bit64
-        ? MachineTargetFamily.X86_64
-        : MachineTargetFamily.X86_32,
+      TargetFamily = this._mode switch {
+        X86Mode.Bit16 => MachineTargetFamily.X86_16,
+        X86Mode.Bit64 => MachineTargetFamily.X86_64,
+        _ => MachineTargetFamily.X86_32,
+      },
       CpuLevel = this._mode == X86Mode.Bit64
         ? Math.Max(selectionTarget.CpuLevel, 686)
-        : Math.Max(selectionTarget.CpuLevel, 386)
+        : this._mode == X86Mode.Bit32
+          ? Math.Max(selectionTarget.CpuLevel, 386)
+          : selectionTarget.CpuLevel
     });
 }

@@ -10,6 +10,10 @@ public sealed record X86Abi(
     MachineRegister ReturnRegister,
     IReadOnlySet<MachineRegister> CalleeSavedRegisters) : IMachineAbi {
 
+  public static X86Abi I8086Cdecl { get; } = new(
+    "i8086-cdecl", 16, 2, 0, [], X86RegisterFile.Gpr16[0],
+    new HashSet<MachineRegister>([X86RegisterFile.Gpr16[3], X86RegisterFile.Gpr16[5], X86RegisterFile.Gpr16[6], X86RegisterFile.Gpr16[7]]));
+
   public static X86Abi I386Cdecl { get; } = new(
     "i386-cdecl", 32, 4, 0, [], X86RegisterFile.Gpr32[0],
     new HashSet<MachineRegister>([X86RegisterFile.Gpr32[3], X86RegisterFile.Gpr32[5], X86RegisterFile.Gpr32[6], X86RegisterFile.Gpr32[7]]));
