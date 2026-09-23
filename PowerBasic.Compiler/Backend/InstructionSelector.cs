@@ -1880,11 +1880,18 @@ public sealed partial class InstructionSelector {
     // never reaches that assembler - the policy encodes it natively or emulates it - so asking this
     // question of one answers "unknown mnemonic" about an instruction the compiler emits perfectly
     // well.
+    AsmRegisterEffect effect;
     if (!PolicyOwnedInlineAsm(asm.Text)
-        && !new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out var error))
-      return this.Decline($"inline asm: {error}");
-
-    var effect = TextAssembler.Analyze(asm.Text, kinds);
+        && !new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out _)) {
+      // The selected target may not implement this x86 mnemonic. Preserve the opaque barrier and
+      // let the target lower it to its semantic runtime emulation entry instead of declining into
+      // the historical direct emitter.
+      var allRegisters = Enum.GetValues<Reg>().ToHashSet();
+      effect = new AsmRegisterEffect(allRegisters, allRegisters, allRegisters,
+        ReadsFlags: true, WritesFlags: true, IsOpaque: true);
+    } else {
+      effect = TextAssembler.Analyze(asm.Text, kinds);
+    }
     // A RESTORE is not a write in the sense that matters. `! POP BP` puts back what a `! PUSH BP`
     // took, and nothing between them writes BP at all - so BP holds the frame at every instruction
     // boundary, which is the only thing this check protects. The direct emitter addresses its frame
