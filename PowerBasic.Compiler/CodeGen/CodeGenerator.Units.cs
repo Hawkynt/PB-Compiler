@@ -158,7 +158,7 @@ public sealed partial class CodeGenerator {
           this.EmitBackendFunction(proc);
           var end = asm.DefineLabel();
           asm.MarkLabel(end);
-          this.TrackPostLinkFunction(proc, this.BackendProcs()[proc].Fn, start, end);
+          this.TrackPostLinkFunction(proc, this.BackendProcs()[proc].Machine.Function, start, end);
         } else
           this.EmitProcedure(proc);
       }

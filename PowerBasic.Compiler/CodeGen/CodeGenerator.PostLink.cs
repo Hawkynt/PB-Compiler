@@ -53,9 +53,9 @@ public sealed partial class CodeGenerator {
       if (tracked.Contains(procedure)
           || !this._procLabels.TryGetValue(procedure, out var procedureLabel)
           || !procedureLabel.IsBound
-          || backend.Fn.Blocks.Count == 0)
+          || backend.Machine.Function.Blocks.Count == 0)
         continue;
-      if (this.TryInferPostLinkRange(image, procedure, backend.Fn, procedureLabel.Position, codeLength) is { } inferred)
+      if (this.TryInferPostLinkRange(image, procedure, backend.Machine.Function, procedureLabel.Position, codeLength) is { } inferred)
         ranges.Add(inferred);
     }
 

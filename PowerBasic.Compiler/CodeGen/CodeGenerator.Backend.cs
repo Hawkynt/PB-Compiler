@@ -579,7 +579,7 @@ public sealed partial class CodeGenerator {
   }
 
   /// <summary>Records why the module body was not routed and answers "not routed", in one expression.</summary>
-  private (MFunction, IReadOnlyDictionary<int, Reg>)? DeclineMain(string reason) {
+  private IrMachineFunction? DeclineMain(string reason) {
     this._backendDeclines.Add(("main", reason));
     return null;
   }
