@@ -50,6 +50,9 @@ public sealed class X86TargetTests {
       Is.EqualTo(new byte[] { 0x48, 0x83, 0xC0, 0x07 }));
     Assert.That(encoder.SubImmediate(X86RegisterFile.Gpr64[8], 300),
       Is.EqualTo(new byte[] { 0x49, 0x81, 0xE8, 0x2C, 0x01, 0x00, 0x00 }));
+    Assert.That(encoder.XorImmediate(X86RegisterFile.Gpr64[0], 0),
+      Is.EqualTo(new byte[] { 0x48, 0x83, 0xF0, 0x00 }));
+    Assert.That(encoder.PushImmediate(127), Is.EqualTo(new byte[] { 0x6A, 0x7F }));
   }
 
   [Test]

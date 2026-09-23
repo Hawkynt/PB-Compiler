@@ -56,6 +56,24 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   public byte[] SubImmediate(MachineRegister destination, int value)
     => AluImmediate(destination, value, extension: 5);
 
+  public byte[] AndImmediate(MachineRegister destination, int value)
+    => AluImmediate(destination, value, extension: 4);
+
+  public byte[] OrImmediate(MachineRegister destination, int value)
+    => AluImmediate(destination, value, extension: 1);
+
+  public byte[] XorImmediate(MachineRegister destination, int value)
+    => AluImmediate(destination, value, extension: 6);
+
+  public byte[] CompareImmediate(MachineRegister destination, int value)
+    => AluImmediate(destination, value, extension: 7);
+
+  public byte[] PushImmediate(int value) {
+    if (value is >= sbyte.MinValue and <= sbyte.MaxValue)
+      return [0x6A, (byte)value];
+    return [0x68, .. BitConverter.GetBytes(value)];
+  }
+
   private byte[] AluImmediate(MachineRegister destination, int value, int extension) {
     Validate(destination);
     var rex = Rex(destination, destination, w: mode == X86Mode.Bit64);
