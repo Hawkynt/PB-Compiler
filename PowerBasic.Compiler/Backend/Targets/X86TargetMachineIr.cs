@@ -109,7 +109,8 @@ public sealed record X86TargetInstruction(
     X86TargetAddress? Address = null,
     string? Symbol = null,
     IReadOnlyList<X86TargetOperand>? Operands = null,
-    X86VectorOpcode? VectorOperation = null);
+    X86VectorOpcode? VectorOperation = null,
+    X86TargetAddress? SourceAddress = null);
 
 /// <summary>Explicit target operand kinds; register-only instructions use the compact fields above.</summary>
 public abstract record X86TargetOperand {
@@ -123,7 +124,7 @@ public abstract record X86TargetOperand {
 public enum X86TargetOpcode {
   Nop, Popcnt, Bsf, Bsr, Bextr, Andn, Blsi, Blsr, Bzhi, Pext, Pdep, Mulx,
   AesEnc, AesDec, AesImc, Pclmul, VectorBinary, Mov, Xchg, Lea,
-  MoveMemoryImmediate, MoveMemorySymbol,
+  MoveMemoryImmediate, MoveMemorySymbol, MoveMemoryToMemory,
   Add, Sub, And, Or, Xor, Cmp, Test, Adc, Sbb,
   Imul, Mul, Idiv, Div, Neg, Not, Inc, Dec, Cwd, Cbw,
   Shl, Shr, Sar, Shld, Shrd, Rcl, Rcr,

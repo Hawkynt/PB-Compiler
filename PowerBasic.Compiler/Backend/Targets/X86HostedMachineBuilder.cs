@@ -71,6 +71,12 @@ public static class X86HostedMachineBuilder {
             && instruction.Operands[1] is MOperand.DataOffset dataOffset:
           target = new(X86TargetOpcode.MoveMemorySymbol, [], Address: symbolAddress, Symbol: dataOffset.Name);
           return true;
+        case MOpcode.Mov when instruction.Operands.Count == 2
+            && TryAddress(instruction.Operands[0], function, registers, out var destinationAddress)
+            && TryAddress(instruction.Operands[1], function, registers, out var sourceAddress):
+          target = new(X86TargetOpcode.MoveMemoryToMemory, [], Address: destinationAddress,
+            SourceAddress: sourceAddress);
+          return true;
         case MOpcode.Mov when instruction.Operands.Count == 2:
           if (instruction.Operands[1] is MOperand.Immediate immediate)
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);

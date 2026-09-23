@@ -37,6 +37,12 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
       if (preserveFramePointer)
         bytes.AddRange(encoder.Pop(registers.FramePointer));
     }
+    MachineRegister ScratchRegister(int widthBits) => widthBits switch {
+      8 => registers.LowBytes[0],
+      16 => function.Mode == X86Mode.Bit64 ? registers.Words[0] : registers.Registers[0],
+      32 => registers.Dwords[0],
+      _ => registers.Registers[0],
+    };
     if (preserveFramePointer) {
       bytes.AddRange(encoder.Push(registers.FramePointer));
       bytes.AddRange(function.Mode == X86Mode.Bit64 ? [0x48, 0x89, 0xE5] : [0x89, 0xE5]);
@@ -153,6 +159,20 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           relocations.Add(new MachineRelocation(offset + symbolBytes.Length - sourceWidth,
             sourceWidth == 2 ? MachineRelocationKind.Absolute16 : MachineRelocationKind.Absolute32,
             sourceSymbol));
+          break;
+        case X86TargetOpcode.MoveMemoryToMemory when instruction.Address is { } destinationAddress
+            && instruction.SourceAddress is { } sourceAddress:
+          var scratch = ScratchRegister(sourceAddress.WidthBits);
+          var preserved = registers.Registers[0];
+          bytes.AddRange(encoder.Push(preserved));
+          var loadMemoryBytes = encoder.MoveMemory(scratch, sourceAddress, load: true);
+          bytes.AddRange(loadMemoryBytes);
+          var storeMemoryBytes = encoder.MoveMemory(scratch, destinationAddress, load: false);
+          bytes.AddRange(storeMemoryBytes);
+          bytes.AddRange(encoder.Pop(preserved));
+          AddAddressRelocation(sourceAddress, offset + 1, loadMemoryBytes.Length);
+          AddAddressRelocation(destinationAddress, offset + 1 + loadMemoryBytes.Length,
+            storeMemoryBytes.Length);
           break;
         case X86TargetOpcode.Mov when instruction.Address is { } storeAddress && instruction.Immediate == 1:
           var storeBytes = encoder.MoveMemory(instruction.Registers[0], storeAddress, load: false);
