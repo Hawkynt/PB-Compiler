@@ -59,6 +59,24 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
             instruction.Opcode == X86TargetOpcode.Bsr);
           bytes.AddRange(scanBytes); AddAddressRelocation(scanAddress, offset, scanBytes.Length);
           break;
+        case X86TargetOpcode.Bextr when instruction.Registers.Count >= 3:
+          bytes.AddRange(encoder.BmiRegister(instruction.Registers[0], instruction.Registers[1], instruction.Registers[2], 0xF7));
+          break;
+        case X86TargetOpcode.Andn when instruction.Registers.Count >= 3:
+          bytes.AddRange(encoder.BmiRegister(instruction.Registers[0], instruction.Registers[1], instruction.Registers[2], 0xF2));
+          break;
+        case X86TargetOpcode.Blsi when instruction.Registers.Count >= 2:
+          bytes.AddRange(encoder.BmiRegister(instruction.Registers[0], instruction.Registers[1], instruction.Registers[1], 0xF3));
+          break;
+        case X86TargetOpcode.Blsr when instruction.Registers.Count >= 2:
+          bytes.AddRange(encoder.BmiRegister(instruction.Registers[0], instruction.Registers[1], instruction.Registers[1], 0xF3));
+          break;
+        case X86TargetOpcode.Bzhi or X86TargetOpcode.Pext or X86TargetOpcode.Pdep or X86TargetOpcode.Mulx
+            when instruction.Registers.Count >= 3:
+          bytes.AddRange(encoder.BmiRegister(instruction.Registers[0], instruction.Registers[1], instruction.Registers[2],
+            instruction.Opcode switch { X86TargetOpcode.Bzhi => (byte)0xF5, X86TargetOpcode.Pext => (byte)0xF5,
+              X86TargetOpcode.Pdep => (byte)0xF5, _ => (byte)0xF6 }));
+          break;
         case X86TargetOpcode.Mov when instruction.Address is { } loadAddress && instruction.Immediate == 0:
           var loadBytes = encoder.MoveMemory(instruction.Registers[0], loadAddress, load: true);
           bytes.AddRange(loadBytes);

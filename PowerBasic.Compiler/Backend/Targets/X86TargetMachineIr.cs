@@ -49,6 +49,31 @@ public sealed class X86TargetRegisterFile {
   }
 }
 
+/// <summary>Explicit SIMD register classes.  They are not aliases for the scalar allocator.</summary>
+public enum X86VectorRegisterClass { Mmx64, Xmm128, Ymm256, Zmm512 }
+
+public sealed class X86VectorRegisterFile(X86VectorRegisterClass registerClass) {
+  public X86VectorRegisterClass Class { get; } = registerClass;
+  public int WidthBits => registerClass switch {
+    X86VectorRegisterClass.Mmx64 => 64,
+    X86VectorRegisterClass.Xmm128 => 128,
+    X86VectorRegisterClass.Ymm256 => 256,
+    _ => 512,
+  };
+  public IReadOnlyList<MachineRegister> Registers { get; } = Enumerable.Range(0,
+    registerClass == X86VectorRegisterClass.Mmx64 ? 8 : registerClass == X86VectorRegisterClass.Zmm512 ? 32 : 16)
+    .Select(index => new MachineRegister(
+      registerClass == X86VectorRegisterClass.Mmx64 ? $"mm{index}" :
+      registerClass == X86VectorRegisterClass.Xmm128 ? $"xmm{index}" :
+      registerClass == X86VectorRegisterClass.Ymm256 ? $"ymm{index}" : $"zmm{index}", index,
+      registerClass switch {
+        X86VectorRegisterClass.Mmx64 => 64,
+        X86VectorRegisterClass.Xmm128 => 128,
+        X86VectorRegisterClass.Ymm256 => 256,
+        _ => 512,
+      })).ToArray();
+}
+
 /// <summary>Target-specific memory address; no segment-register or 16-bit addressing assumptions.</summary>
 public readonly record struct X86TargetAddress(
     MachineRegister? Base,
@@ -87,7 +112,7 @@ public abstract record X86TargetOperand {
 }
 
 public enum X86TargetOpcode {
-  Nop, Popcnt, Bsf, Bsr, Mov, Xchg, Lea,
+  Nop, Popcnt, Bsf, Bsr, Bextr, Andn, Blsi, Blsr, Bzhi, Pext, Pdep, Mulx, Mov, Xchg, Lea,
   Add, Sub, And, Or, Xor, Cmp, Test, Adc, Sbb,
   Imul, Mul, Idiv, Div, Neg, Not, Inc, Dec, Cwd, Cbw,
   Shl, Shr, Sar, Shld, Shrd, Rcl, Rcr,

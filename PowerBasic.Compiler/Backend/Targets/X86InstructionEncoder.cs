@@ -257,6 +257,15 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     bytes.Add(0x0F); bytes.Add(0xB8); AppendAddress(bytes, destination.Encoding, source);
     return [.. bytes];
   }
+  public byte[] BmiRegister(MachineRegister destination, MachineRegister left, MachineRegister right, byte opcode,
+      byte map = 0x38) {
+    Validate(destination); Validate(left); Validate(right);
+    var rex = Rex(destination, right, w: mode == X86Mode.Bit64 && destination.Bits == 64);
+    var bytes = new List<byte>(); if (rex is { } prefix) bytes.Add(prefix);
+    bytes.Add(0xC4); bytes.Add(0xE2); bytes.Add(0x79); bytes.Add(map); bytes.Add(opcode);
+    bytes.Add(ModRm(destination.Encoding, right.Encoding));
+    return [.. bytes];
+  }
 
   public byte[] UnaryRegister(MachineRegister register, int extension) {
     Validate(register);

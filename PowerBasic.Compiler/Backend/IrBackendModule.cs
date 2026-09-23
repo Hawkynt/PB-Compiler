@@ -52,11 +52,14 @@ public sealed class IrBackendModule {
   public bool TryLowerMachine(out IReadOnlyList<string> errors) {
     var target = IrBackendTargetContract.SelectionTarget(Options);
     if (Options.Target == IrBackendTarget.Mos6502) {
-      errors = ["target 'Mos6502' has no Low IR instruction selector yet"];
-      return false;
+      if (!IrMachinePipeline.TryLower(this.Module, new Mos6502MachineLowering(), target,
+            out var mosMachine, out errors))
+        return false;
+      this.Machine = mosMachine;
+      return true;
     }
 
-    if (Options.Target is IrBackendTarget.X86_32 or IrBackendTarget.X86_64) {
+    if (Options.Target is IrBackendTarget.X86_16 or IrBackendTarget.X86_32 or IrBackendTarget.X86_64) {
       var targetModel = IrBackendTargetContract.CreateMachineTarget(Options.Target);
       if (targetModel is null) {
         errors = [$"target '{Options.Target}' has no machine target contract"];

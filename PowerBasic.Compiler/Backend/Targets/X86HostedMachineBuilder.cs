@@ -390,7 +390,7 @@ public static class X86HostedMachineBuilder {
       return false;
     var mnemonic = text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)[0]
       .ToUpperInvariant();
-    if (mnemonic is "POPCNT" or "BSF" or "BSR") {
+    if (mnemonic is "POPCNT" or "BSF" or "BSR" or "BEXTR" or "ANDN" or "BLSI" or "BLSR" or "BZHI" or "PEXT" or "PDEP" or "MULX") {
       var source = instruction.Operands.Skip(1).FirstOrDefault();
       if (source is null || !TryAddress(source, function, registers, out var address))
         return false;
@@ -398,7 +398,15 @@ public static class X86HostedMachineBuilder {
       target = new(mnemonic switch {
         "POPCNT" => X86TargetOpcode.Popcnt,
         "BSF" => X86TargetOpcode.Bsf,
-        _ => X86TargetOpcode.Bsr,
+        "BSR" => X86TargetOpcode.Bsr,
+        "BEXTR" => X86TargetOpcode.Bextr,
+        "ANDN" => X86TargetOpcode.Andn,
+        "BLSI" => X86TargetOpcode.Blsi,
+        "BLSR" => X86TargetOpcode.Blsr,
+        "BZHI" => X86TargetOpcode.Bzhi,
+        "PEXT" => X86TargetOpcode.Pext,
+        "PDEP" => X86TargetOpcode.Pdep,
+        _ => X86TargetOpcode.Mulx,
       }, [destination], Address: address);
       return true;
     }

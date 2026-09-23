@@ -74,12 +74,6 @@ public sealed record IrType(IrTypeKind Kind, int Bits, bool Signed = true,
   public static readonly IrType U16 = new(IrTypeKind.Int, 16, Signed: false);
   public static readonly IrType U32 = new(IrTypeKind.Int, 32, Signed: false);
   public static readonly IrType U64 = new(IrTypeKind.Int, 64, Signed: false);
-  public static readonly IrType I128 = new(IrTypeKind.Int, 128);
-  public static readonly IrType U128 = new(IrTypeKind.Int, 128, Signed: false);
-  public static readonly IrType I256 = new(IrTypeKind.Int, 256);
-  public static readonly IrType U256 = new(IrTypeKind.Int, 256, Signed: false);
-  public static readonly IrType I512 = new(IrTypeKind.Int, 512);
-  public static readonly IrType U512 = new(IrTypeKind.Int, 512, Signed: false);
 
   public static readonly IrType F32 = new(IrTypeKind.Float, 32);
   public static readonly IrType F64 = new(IrTypeKind.Float, 64);
@@ -113,12 +107,6 @@ public sealed record IrType(IrTypeKind Kind, int Bits, bool Signed = true,
     (32, false) => U32,
     (64, true) => I64,
     (64, false) => U64,
-    (128, true) => I128,
-    (128, false) => U128,
-    (256, true) => I256,
-    (256, false) => U256,
-    (512, true) => I512,
-    (512, false) => U512,
     _ => new IrType(IrTypeKind.Int, bits, signed),
   };
 
