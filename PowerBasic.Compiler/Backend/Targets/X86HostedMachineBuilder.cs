@@ -527,8 +527,6 @@ public static class X86HostedMachineBuilder {
     var text = asm.Text.Trim();
     if (text.Length == 0)
       return true;
-    if (text.Contains('\n') || text.Contains('\r'))
-      return false;
     var mnemonic = text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)[0]
       .ToUpperInvariant();
     if (mnemonic is "AESENC" or "AESDEC" or "AESIMC" or "PCLMULQDQ") {
@@ -608,7 +606,7 @@ public static class X86HostedMachineBuilder {
     if (target is not null)
       return true;
     var runtimeRegisters = instruction.Operands.Skip(1).OfType<MOperand.Register>()
-      .Select(operand => TryMachineRegister(operand.Reg, registers))
+      .Select(operand => TryMachineRegister(operand.Reg, registers, allocation))
       .Where(register => register is not null).Select(register => register!.Value).ToArray();
     target = new X86TargetInstruction(X86TargetOpcode.Call, runtimeRegisters,
       Symbol: PowerBasic.Compiler.Runtime.InlineAsmExports.EmulationRoutine(mnemonic));
