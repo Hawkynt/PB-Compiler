@@ -216,6 +216,9 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   public byte[] SbbImmediate(MachineRegister destination, int value)
     => AluImmediate(destination, value, extension: 3);
 
+  public byte[] AdcImmediate(MachineRegister destination, int value)
+    => AluImmediate(destination, value, extension: 2);
+
   public byte[] CompareImmediate(MachineRegister destination, int value)
     => AluImmediate(destination, value, extension: 7);
 

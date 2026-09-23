@@ -299,6 +299,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Sbb when instruction.Registers.Count == 1:
           bytes.AddRange(encoder.SbbImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
+        case X86TargetOpcode.Adc when instruction.Registers.Count == 1:
+          bytes.AddRange(encoder.AdcImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
+          break;
         case X86TargetOpcode.Neg:
           bytes.AddRange(encoder.UnaryRegister(instruction.Registers[0], 3));
           break;

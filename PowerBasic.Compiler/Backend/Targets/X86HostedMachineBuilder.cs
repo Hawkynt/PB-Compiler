@@ -137,13 +137,14 @@ public static class X86HostedMachineBuilder {
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var addAddress):
           target = new(X86TargetOpcode.Add, [RegisterValue(addRegister.Reg)], Address: addAddress);
           return true;
-        case MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
+        case MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Adc or MOpcode.Cmp
             when instruction.Operands.Count == 2
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var immediateAluAddress)
             && instruction.Operands[1] is MOperand.Immediate memoryImmediate:
           target = new(X86TargetOpcode.AluMemoryImmediate, [], memoryImmediate.Value, immediateAluAddress,
             Operands: [new X86TargetOperand.Immediate((long)(instruction.Opcode switch {
-              MOpcode.Add => 0, MOpcode.Or => 1, MOpcode.And => 4, MOpcode.Sub => 5, MOpcode.Xor => 6, _ => 7 }))]);
+              MOpcode.Add => 0, MOpcode.Or => 1, MOpcode.And => 4, MOpcode.Sub => 5, MOpcode.Xor => 6,
+              MOpcode.Adc => 2, _ => 7 }))]);
           return true;
         case MOpcode.Cmp when instruction.Operands.Count == 2
             && instruction.Operands[0] is MOperand.Register
@@ -189,6 +190,20 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Sbb when instruction.Operands.Count == 2 && instruction.Operands[0] is MOperand.Register
             && instruction.Operands[1] is MOperand.Immediate sbbImmediate:
           target = new(X86TargetOpcode.Sbb, [Register(instruction.Operands[0])], sbbImmediate.Value);
+          return true;
+        case MOpcode.Adc when instruction.Operands.Count == 2 && instruction.Operands[0] is MOperand.Register
+            && instruction.Operands[1] is MOperand.Immediate adcImmediate:
+          target = new(X86TargetOpcode.Adc, [Register(instruction.Operands[0])], adcImmediate.Value);
+          return true;
+        case MOpcode.Shl or MOpcode.Shr or MOpcode.Sar
+            when instruction.Operands.Count == 2
+            && instruction.Operands[0] is MOperand.Register
+            && instruction.Operands[1] is MOperand.Register:
+          target = new(instruction.Opcode switch {
+            MOpcode.Shl => X86TargetOpcode.Shl,
+            MOpcode.Shr => X86TargetOpcode.Shr,
+            _ => X86TargetOpcode.Sar,
+          }, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
           return true;
         case MOpcode.Shl or MOpcode.Shr or MOpcode.Sar
             when instruction.Operands.Count == 2
@@ -415,7 +430,8 @@ public static class X86HostedMachineBuilder {
         MRegSize.Qword => 64,
         _ => 80,
       });
-    return address.Base is not null || address.Index is not null;
+    // Absolute displacement-only memory operands are valid in all hosted modes.
+    return address.Base is not null || address.Index is not null || memory.Disp != 0;
   }
 
   private static bool TryAddress(MOperand operand, X86MachineFunction function,
