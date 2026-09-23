@@ -4,6 +4,49 @@ namespace PowerBasic.Compiler.Backend;
 
 /// <summary>The target-specific machine boundary after target-independent Low IR.</summary>
 public static class IrMachinePipeline {
+  /// <summary>Selects one Low IR function without scheduling or allocating it.</summary>
+  public static bool TrySelectFunction(
+      IrFunction function,
+      SelectionTarget target,
+      out MFunction? selected,
+      out string? error) {
+    ArgumentNullException.ThrowIfNull(function);
+    selected = null;
+    if (function.IsDeclaration || function.Entry is null) {
+      error = "selection: declaration";
+      return false;
+    }
+    if (InstructionSelector.TrySelect(function, out var declineReason, target) is not { } machine) {
+      error = "selection: " + (declineReason ?? "unknown machine construct");
+      return false;
+    }
+    selected = machine;
+    error = null;
+    return true;
+  }
+
+  /// <summary>Schedules and allocates a selected machine function, then applies late rewrites.</summary>
+  public static bool TryAllocateFunction(
+      IrFunction source,
+      MFunction selected,
+      SelectionTarget target,
+      out IrMachineFunction? machine,
+      out string? error) {
+    ArgumentNullException.ThrowIfNull(source);
+    ArgumentNullException.ThrowIfNull(selected);
+    machine = null;
+    MachineScheduler.Schedule(selected, target);
+    if (LinearScanAllocator.Allocate(selected, target, out var allocationReason) is not { } allocation) {
+      error = "allocation: " + (allocationReason ?? "register allocation failed");
+      return false;
+    }
+    PostRegisterAllocationPeepholes.Run(selected, allocation);
+    LateLoadStoreOptimization.Run(selected, allocation);
+    machine = new IrMachineFunction(source, selected, allocation);
+    error = null;
+    return true;
+  }
+
   /// <summary>Selects, schedules, allocates, and performs late machine rewrites for one IR function.</summary>
   public static bool TryLowerFunction(
       IrFunction function,
@@ -12,24 +55,9 @@ public static class IrMachinePipeline {
       out string? error) {
     ArgumentNullException.ThrowIfNull(function);
     machine = null;
-    if (function.IsDeclaration || function.Entry is null) {
-      error = "selection: declaration";
+    if (!TrySelectFunction(function, target, out var selected, out error))
       return false;
-    }
-    if (InstructionSelector.TrySelect(function, out var declineReason, target) is not { } selected) {
-      error = "selection: " + (declineReason ?? "unknown machine construct");
-      return false;
-    }
-    MachineScheduler.Schedule(selected, target);
-    if (LinearScanAllocator.Allocate(selected, target, out var allocationReason) is not { } allocation) {
-      error = "allocation: " + (allocationReason ?? "register allocation failed");
-      return false;
-    }
-    PostRegisterAllocationPeepholes.Run(selected, allocation);
-    LateLoadStoreOptimization.Run(selected, allocation);
-    machine = new IrMachineFunction(function, selected, allocation);
-    error = null;
-    return true;
+    return TryAllocateFunction(function, selected!, target, out machine, out error);
   }
 
   public static bool TryLower(

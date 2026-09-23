@@ -329,8 +329,8 @@ public sealed partial class CodeGenerator {
         }
         (this._backendRewrittenFrames ??= new(ReferenceEqualityComparer.Instance))[proc] = rewrittenLayout;
       }
-      if (InstructionSelector.TrySelect(irFn, out var declineReason, this.SelectionTarget) is not { } mfn) {
-        this._backendDeclines.Add((proc.Name, "selection: " + (declineReason ?? "unknown")));
+      if (!IrMachinePipeline.TrySelectFunction(irFn, this.SelectionTarget, out var mfn, out var selectionError)) {
+        this._backendDeclines.Add((proc.Name, selectionError ?? "selection: unknown"));
         continue;
       }
       // The handler itself is already machine IR at this point. What a procedure adds over main is
@@ -386,12 +386,11 @@ public sealed partial class CodeGenerator {
     var allocated = new List<(ProcedureSymbol Proc, IrFunction Fn, MFunction Machine,
       IReadOnlyDictionary<int, Reg> Alloc)>();
     foreach (var (proc, irFn, mfn) in candidates) {
-      MachineScheduler.Schedule(mfn, this.SelectionTarget);             // schedule first, then allocate the final order
-      if (LinearScanAllocator.Allocate(mfn, this.SelectionTarget, out var noRegisters) is not { } alloc) {
-        this._backendDeclines.Add((proc.Name, "allocation: " + (noRegisters ?? "unknown")));
+      if (!IrMachinePipeline.TryAllocateFunction(irFn, mfn, this.SelectionTarget, out var machineProduct, out var allocationError)) {
+        this._backendDeclines.Add((proc.Name, allocationError ?? "allocation: unknown"));
         continue;                                 // a value live across a CALL has no register - decline
       }
-      allocated.Add((proc, irFn, mfn, alloc));
+      allocated.Add((proc, irFn, machineProduct!.Function, machineProduct.Allocation));
     }
 
     PruneStrandedCallers(allocated, a => a.Proc, a => a.Fn);
