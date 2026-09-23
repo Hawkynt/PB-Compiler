@@ -75,6 +75,11 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       error = "selection: " + (declineReason ?? "unknown machine construct");
       return false;
     }
+    machine.TargetFamily = this.Target.Name switch {
+      "x86-64" => MachineTargetFamily.X86_64,
+      "x86-32" => MachineTargetFamily.X86_32,
+      _ => MachineTargetFamily.X86_16,
+    };
     selected = machine;
     error = null;
     return true;

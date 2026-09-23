@@ -17,6 +17,9 @@ namespace PowerBasic.Compiler.Backend;
 /// </summary>
 public enum MRegSize { Byte, Word, Dword, Qword, Tbyte }
 
+/// <summary>The concrete machine family a selected function is allowed to use.</summary>
+public enum MachineTargetFamily { X86_16, X86_32, X86_64, Mos6502 }
+
 /// <summary>A register operand: a virtual id until allocation binds it to a physical register.</summary>
 public readonly record struct MReg(int VirtualId, Reg Physical, MRegSize Size, bool IsVirtual) {
 
@@ -397,6 +400,7 @@ public sealed class MBlock(string label) {
 /// <summary>A machine function: its blocks, the number of virtual registers selection minted, and the stack-slot table.</summary>
 public sealed class MFunction(string name) {
   public string Name { get; } = name;
+  public MachineTargetFamily TargetFamily { get; set; } = MachineTargetFamily.X86_16;
   public List<MBlock> Blocks { get; } = [];
   public int VirtualRegisterCount { get; set; }
 
@@ -455,6 +459,7 @@ public sealed class MFunction(string name) {
     var copy = new MFunction(this.Name) {
       VirtualRegisterCount = this.VirtualRegisterCount,
       HasArgumentPlan = this.HasArgumentPlan,
+      TargetFamily = this.TargetFamily,
     };
     copy.StackSlots.AddRange(this.StackSlots);
     copy.ArgumentLoads.AddRange(this.ArgumentLoads);
@@ -473,6 +478,7 @@ public sealed class MFunction(string name) {
     ArgumentNullException.ThrowIfNull(other);
     this.VirtualRegisterCount = other.VirtualRegisterCount;
     this.HasArgumentPlan = other.HasArgumentPlan;
+    this.TargetFamily = other.TargetFamily;
     this.StackSlots.Clear();
     this.StackSlots.AddRange(other.StackSlots);
     this.ArgumentLoads.Clear();

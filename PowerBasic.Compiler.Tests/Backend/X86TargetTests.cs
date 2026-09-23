@@ -137,4 +137,10 @@ public sealed class X86TargetTests {
     Assert.That(() => target.CreateLowerer(SelectionTarget.Baseline),
       Throws.TypeOf<NotSupportedException>());
   }
+
+  [Test]
+  public void MachineFunctionClonePreservesTargetFamily() {
+    var function = new MFunction("target") { TargetFamily = MachineTargetFamily.X86_64 };
+    Assert.That(function.Clone().TargetFamily, Is.EqualTo(MachineTargetFamily.X86_64));
+  }
 }
