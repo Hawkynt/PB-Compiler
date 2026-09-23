@@ -19,6 +19,11 @@ public sealed class Mos6502MachineLowering : IMachineFunctionLowerer {
             [new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte)), new MOperand.Immediate(constantResult.Value)], MInstrEffect.None));
         else if (instruction is IrRet)
           machineBlock.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+        else if (instruction is IrInlineAsm asm)
+          machineBlock.Instructions.Add(new MInstr(MOpcode.Call,
+            [new MOperand.LabelRef(PowerBasic.Compiler.Runtime.InlineAsmExports.EmulationRoutine(
+              asm.Text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "asm"))],
+            MInstrEffect.None));
         else if (instruction is IrBinary { Rhs: IrConstantInt constant } binary
                  && binary.Op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor)
           machineBlock.Instructions.Add(new MInstr(binary.Op switch {

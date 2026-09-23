@@ -4,6 +4,7 @@ public sealed class Mos6502MachineEmitter(IMachineInstructionEncoder encoder) : 
   public MachineCode EmitFunction(X86MachineFunction function) {
     ArgumentNullException.ThrowIfNull(function);
     var bytes = new List<byte>();
+    var relocations = new List<MachineRelocation>();
     var mos = (Mos6502InstructionEncoder)encoder;
     var frame = function.TargetAllocation is Mos6502Allocation allocation ? allocation.Frame : null;
     if (frame is not null)
@@ -26,6 +27,10 @@ public sealed class Mos6502MachineEmitter(IMachineInstructionEncoder encoder) : 
         bytes.AddRange(mos.OrImmediate((byte)orValue.Value));
       else if (instruction.Opcode == MOpcode.Xor && instruction.Operands is [MOperand.Immediate xor])
         bytes.AddRange(mos.XorImmediate((byte)xor.Value));
+      else if (instruction.Opcode == MOpcode.Call && instruction.Operands is [MOperand.LabelRef label]) {
+        relocations.Add(new MachineRelocation(bytes.Count + 1, MachineRelocationKind.Absolute16, label.Name));
+        bytes.AddRange([0x20, 0x00, 0x00]);
+      }
     }
     if (frame is not null) {
       // Preserve the ABI return register while restoring callee-saved pseudo-registers.
@@ -37,7 +42,7 @@ public sealed class Mos6502MachineEmitter(IMachineInstructionEncoder encoder) : 
       bytes.AddRange(mos.PopAccumulator());
     }
     bytes.AddRange(encoder.Ret());
-    return new(bytes.ToArray(), []);
+    return new(bytes.ToArray(), relocations);
   }
 
   public MachineCode EmitFunction(ReadOnlySpan<byte> body, bool preserveFramePointer = true) {

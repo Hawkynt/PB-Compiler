@@ -460,7 +460,14 @@ public static class X86HostedMachineBuilder {
       "FLDL2T" => new X86TargetInstruction(X86TargetOpcode.Fldl2t, []),
       _ => null,
     };
-    return target is not null;
+    if (target is not null)
+      return true;
+    var runtimeRegisters = instruction.Operands.Skip(1).OfType<MOperand.Register>()
+      .Select(operand => TryMachineRegister(operand.Reg, registers))
+      .Where(register => register is not null).Select(register => register!.Value).ToArray();
+    target = new X86TargetInstruction(X86TargetOpcode.Call, runtimeRegisters,
+      Symbol: PowerBasic.Compiler.Runtime.InlineAsmExports.EmulationRoutine(mnemonic));
+    return true;
   }
 
   private static MachineRegister? TryMachineRegister(MReg register, X86TargetRegisterFile registers) {

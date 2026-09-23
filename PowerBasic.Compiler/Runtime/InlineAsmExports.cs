@@ -29,4 +29,10 @@ public static class InlineAsmExports {
   /// <summary>The runtime label <paramref name="name"/> denotes, or null when it names no export.</summary>
   public static string? Canonical(string name)
     => _canonical.TryGetValue(name, out var label) ? label : null;
+
+  /// <summary>Returns the semantic runtime entry for unsupported inline-assembly instructions.</summary>
+  public static string EmulationRoutine(string mnemonic) {
+    var normalized = new string(mnemonic.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+    return normalized.Length == 0 ? "rt_inline_asm_emulate" : "rt_inline_asm_" + normalized;
+  }
 }
