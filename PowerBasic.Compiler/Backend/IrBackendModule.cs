@@ -16,6 +16,38 @@ public sealed class IrBackendModule {
   public IrBackendOptions Options { get; }
   public IrMachineModule? Machine { get; private set; }
 
+  /// <summary>Emits the target-owned hosted x86 products produced by machine lowering.</summary>
+  public bool TryEmitHostedX86(
+      out IReadOnlyDictionary<string, MachineCode> emitted,
+      out IReadOnlyList<string> errors) {
+    emitted = new Dictionary<string, MachineCode>(StringComparer.Ordinal);
+    if (this.Machine is null) {
+      errors = ["hosted emission requires machine lowering"];
+      return false;
+    }
+    if (this.Options.Target is not (IrBackendTarget.X86_16 or IrBackendTarget.X86_32 or IrBackendTarget.X86_64)) {
+      errors = [$"target '{this.Options.Target}' is not an x86 hosted target"];
+      return false;
+    }
+
+    var target = IrBackendTargetContract.CreateMachineTarget(this.Options.Target);
+    if (target is not X86MachineTarget x86) {
+      errors = [$"target '{this.Options.Target}' has no x86 emitter contract"];
+      return false;
+    }
+    var results = new Dictionary<string, MachineCode>(StringComparer.Ordinal);
+    foreach (var function in this.Machine.Functions) {
+      if (function.HostedFunction is null) {
+        errors = [$"function '{function.Source.Name}' is not representable by the hosted x86 machine emitter"];
+        return false;
+      }
+      results.Add(function.Source.Name, x86.HostedEmitter.Emit(function.HostedFunction));
+    }
+    emitted = results;
+    errors = [];
+    return true;
+  }
+
   /// <summary>Completes the explicit Low IR → Machine SSA → Machine IR boundary.</summary>
   public bool TryLowerMachine(out IReadOnlyList<string> errors) {
     var target = IrBackendTargetContract.SelectionTarget(Options);

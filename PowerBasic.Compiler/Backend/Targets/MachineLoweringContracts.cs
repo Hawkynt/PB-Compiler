@@ -100,7 +100,9 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       return false;
     }
     this._postAllocation.Run(selected, allocation);
-    machine = new IrMachineFunction(source, selected, allocation, this.Target);
+    X86HostedMachineBuilder.TryBuild(
+      new IrMachineFunction(source, selected, allocation, this.Target), out var hosted);
+    machine = new IrMachineFunction(source, selected, allocation, this.Target, hosted);
     error = null;
     return true;
   }
