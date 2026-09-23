@@ -14,7 +14,7 @@ public static class X86HostedMachineBuilder {
       _ => (X86Mode?)null,
     };
     if (mode is not { } selectedMode)
-      return false;
+      return true;
 
     var registers = new X86TargetRegisterFile(selectedMode);
     var abi = selectedMode switch {
@@ -62,7 +62,7 @@ public static class X86HostedMachineBuilder {
     try {
       switch (instruction.Opcode) {
         case MOpcode.InlineAsm when instruction.Operands.FirstOrDefault() is MOperand.InlineAsmText asm:
-          return TryExpandInlineAsm(asm, out target);
+          return TryExpandInlineAsm(instruction, asm, mode, registers, function, out target);
         case MOpcode.Mov when instruction.Operands.Count == 2:
           if (instruction.Operands[1] is MOperand.Immediate immediate)
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);
@@ -380,8 +380,8 @@ public static class X86HostedMachineBuilder {
     return false;
   }
 
-  private static bool TryExpandInlineAsm(MOperand.InlineAsmText asm,
-      out X86TargetInstruction? target) {
+  private static bool TryExpandInlineAsm(MInstr instruction, MOperand.InlineAsmText asm, X86Mode mode,
+      X86TargetRegisterFile registers, X86MachineFunction function, out X86TargetInstruction? target) {
     target = null;
     var text = asm.Text.Trim();
     if (text.Length == 0)
@@ -390,6 +390,18 @@ public static class X86HostedMachineBuilder {
       return false;
     var mnemonic = text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)[0]
       .ToUpperInvariant();
+    if (mnemonic is "POPCNT" or "BSF" or "BSR") {
+      var source = instruction.Operands.Skip(1).FirstOrDefault();
+      if (source is null || !TryAddress(source, function, registers, out var address))
+        return false;
+      var destination = registers.Registers[0] with { Bits = mode == X86Mode.Bit64 ? 64 : mode == X86Mode.Bit32 ? 32 : 16 };
+      target = new(mnemonic switch {
+        "POPCNT" => X86TargetOpcode.Popcnt,
+        "BSF" => X86TargetOpcode.Bsf,
+        _ => X86TargetOpcode.Bsr,
+      }, [destination], Address: address);
+      return true;
+    }
     target = mnemonic switch {
       "NOP" => new X86TargetInstruction(X86TargetOpcode.Nop, []),
       "CBW" => new X86TargetInstruction(X86TargetOpcode.Cbw, []),

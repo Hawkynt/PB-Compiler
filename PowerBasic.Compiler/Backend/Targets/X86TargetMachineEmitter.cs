@@ -43,6 +43,22 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Nop:
           bytes.AddRange(encoder.Nop());
           break;
+        case X86TargetOpcode.Popcnt when instruction.Address is { } popcntAddress:
+          var popcntBytes = encoder.Popcnt(instruction.Registers[0], popcntAddress);
+          bytes.AddRange(popcntBytes); AddAddressRelocation(popcntAddress, offset, popcntBytes.Length);
+          break;
+        case X86TargetOpcode.Popcnt when instruction.Registers.Count >= 2:
+          bytes.AddRange(encoder.Popcnt(instruction.Registers[0], instruction.Registers[1]));
+          break;
+        case X86TargetOpcode.Bsf or X86TargetOpcode.Bsr when instruction.Registers.Count >= 2:
+          bytes.AddRange(encoder.BitScan(instruction.Registers[0], instruction.Registers[1],
+            instruction.Opcode == X86TargetOpcode.Bsr));
+          break;
+        case X86TargetOpcode.Bsf or X86TargetOpcode.Bsr when instruction.Address is { } scanAddress:
+          var scanBytes = encoder.BitScan(instruction.Registers[0], scanAddress,
+            instruction.Opcode == X86TargetOpcode.Bsr);
+          bytes.AddRange(scanBytes); AddAddressRelocation(scanAddress, offset, scanBytes.Length);
+          break;
         case X86TargetOpcode.Mov when instruction.Address is { } loadAddress && instruction.Immediate == 0:
           var loadBytes = encoder.MoveMemory(instruction.Registers[0], loadAddress, load: true);
           bytes.AddRange(loadBytes);

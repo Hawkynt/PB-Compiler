@@ -87,7 +87,7 @@ public abstract record X86TargetOperand {
 }
 
 public enum X86TargetOpcode {
-  Nop, Mov, Xchg, Lea,
+  Nop, Popcnt, Bsf, Bsr, Mov, Xchg, Lea,
   Add, Sub, And, Or, Xor, Cmp, Test, Adc, Sbb,
   Imul, Mul, Idiv, Div, Neg, Not, Inc, Dec, Cwd, Cbw,
   Shl, Shr, Sar, Shld, Shrd, Rcl, Rcr,
