@@ -18,8 +18,10 @@ public sealed record X86Abi(
     var regs = mode == X86Mode.Bit16 ? X86RegisterFile.Gpr16 : mode == X86Mode.Bit32 ? X86RegisterFile.Gpr32 : X86RegisterFile.Gpr64;
     var ax = regs[0];
     var fast = mode == X86Mode.Bit64 ? new[] { regs[1], regs[2], regs[8], regs[9] } : new[] { regs[0], regs[2], regs[1] };
+    var sysv64 = mode == X86Mode.Bit64 ? new[] { regs[7], regs[6], regs[2], regs[1], regs[8], regs[9] } : Array.Empty<MachineRegister>();
     var arguments = convention switch {
       Ir.IrCallConvention.Fastcall or Ir.IrCallConvention.Watcall => fast,
+      Ir.IrCallConvention.Cdecl when mode == X86Mode.Bit64 => sysv64,
       _ => Array.Empty<MachineRegister>(),
     };
     return new($"x86-{bits}-{convention.ToString().ToLowerInvariant()}", bits,

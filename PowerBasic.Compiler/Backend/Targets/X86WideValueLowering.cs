@@ -14,6 +14,16 @@ public sealed record X86WideValue(int WidthBits, IReadOnlyList<MachineRegister> 
 }
 
 public static class X86WideValueLowering {
+  public static IReadOnlyList<MachineRegister> PlaceValue(int widthBits, X86Abi abi, int registerStart = 0) {
+    var parts = Math.Max(1, (widthBits + abi.PointerBits - 1) / abi.PointerBits);
+    if (registerStart + parts > abi.ArgumentRegisters.Count)
+      return [];
+    return abi.ArgumentRegisters.Skip(registerStart).Take(parts).ToArray();
+  }
+
+  public static IReadOnlyList<MachineRegister> PlaceReturn(int widthBits, X86Abi abi) =>
+    PlaceValue(widthBits, abi, 0);
+
   /// <summary>Builds the carry-chain operation used when no SIMD class is available.</summary>
   public static IEnumerable<X86TargetInstruction> Add(X86WideValue left, X86WideValue right) {
     if (left.WidthBits != right.WidthBits || left.Parts.Count != right.Parts.Count)
