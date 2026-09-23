@@ -4,17 +4,29 @@ namespace PowerBasic.Compiler.Backend.Targets;
 public sealed class X86TargetRegisterFile {
   public X86TargetRegisterFile(X86Mode mode) {
     this.Mode = mode;
-    var names = mode == X86Mode.Bit64
-      ? new[] { "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15" }
-      : mode == X86Mode.Bit32
-        ? new[] { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi" }
-        : new[] { "ax", "cx", "dx", "bx", "sp", "bp", "si", "di" };
-    this.Registers = names.Select((name, index) =>
-      new MachineRegister(name, index, mode == X86Mode.Bit64 ? 64 : mode == X86Mode.Bit32 ? 32 : 16)).ToArray();
+    this.Registers = mode switch {
+      X86Mode.Bit64 => X86RegisterFile.Gpr64,
+      X86Mode.Bit32 => X86RegisterFile.Gpr32,
+      _ => X86RegisterFile.Gpr16,
+    };
+    this.Words = mode == X86Mode.Bit64 ? X86RegisterFile.Gpr64Words : X86RegisterFile.Gpr16;
+    this.Dwords = mode == X86Mode.Bit64 ? X86RegisterFile.Gpr64Dwords : X86RegisterFile.Gpr32;
+    this.LowBytes = mode == X86Mode.Bit64 ? X86RegisterFile.Gpr64LowBytes : X86RegisterFile.LowBytes;
+    this.HighBytes = X86RegisterFile.HighBytes;
   }
 
   public X86Mode Mode { get; }
   public IReadOnlyList<MachineRegister> Registers { get; }
+  public IReadOnlyList<MachineRegister> Words { get; }
+  public IReadOnlyList<MachineRegister> Dwords { get; }
+  public IReadOnlyList<MachineRegister> LowBytes { get; }
+  public IReadOnlyList<MachineRegister> HighBytes { get; }
+  public IEnumerable<MachineRegister> All {
+    get {
+      var aliases = this.Registers.Concat(this.Words).Concat(this.Dwords).Concat(this.LowBytes);
+      return this.Mode == X86Mode.Bit64 ? aliases.Distinct() : aliases.Concat(this.HighBytes).Distinct();
+    }
+  }
   public MachineRegister StackPointer => this.Registers[4];
   public MachineRegister FramePointer => this.Registers[5];
   public MachineRegister ReturnValue => this.Registers[0];
@@ -25,27 +37,23 @@ public sealed class X86TargetRegisterFile {
       throw new InvalidOperationException("physical register is not in the target register file");
     if (register.Size is MRegSize.Qword or MRegSize.Tbyte)
       return this.Registers[index];
-    var names = this.Mode == X86Mode.Bit64
-      ? new[] { "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15" }
-      : this.Mode == X86Mode.Bit32
-        ? new[] { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi" }
-        : new[] { "ax", "cx", "dx", "bx", "sp", "bp", "si", "di" };
-    var full = names[index];
-    var name = register.Size switch {
-      MRegSize.Dword when this.Mode == X86Mode.Bit64 && index >= 8 => full + "d",
-      MRegSize.Dword when this.Mode == X86Mode.Bit64 => "e" + full[1..],
-      MRegSize.Dword => full,
-      MRegSize.Word when this.Mode == X86Mode.Bit64 && index >= 8 => full + "w",
-      MRegSize.Word when this.Mode == X86Mode.Bit64 => full[1..],
-      MRegSize.Word when this.Mode != X86Mode.Bit16 => full[1..],
-      MRegSize.Byte when index == 0 => "al",
-      MRegSize.Byte when index == 1 => "cl",
-      MRegSize.Byte when index == 2 => "dl",
-      MRegSize.Byte when index == 3 => "bl",
-      _ => full,
+    if (register.Size == MRegSize.Byte) {
+      // Reg.AH..BH intentionally retain their hardware encodings (4..7); they are
+      // not interchangeable with AL..BL and cannot be encoded with a REX prefix.
+      if (register.Physical.IsByte() && index >= 4) {
+        if (this.Mode == X86Mode.Bit64)
+          throw new InvalidOperationException("AH/CH/DH/BH are not encodable in x86-64 mode");
+        return this.HighBytes[index - 4];
+      }
+      if ((uint)index >= (uint)this.LowBytes.Count)
+        throw new InvalidOperationException("physical byte register is not in the target register file");
+      return this.LowBytes[index];
+    }
+    return register.Size switch {
+      MRegSize.Word => this.Words[index],
+      MRegSize.Dword => this.Dwords[index],
+      _ => this.Registers[index],
     };
-    var bits = register.Size switch { MRegSize.Byte => 8, MRegSize.Word => 16, MRegSize.Dword => 32, _ => this.Mode == X86Mode.Bit64 ? 64 : 32 };
-    return new(name, index, bits);
   }
 }
 

@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Backend.Targets;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 
@@ -7,6 +8,38 @@ namespace PowerBasic.Compiler.Tests.Backend;
 
 [TestFixture]
 public sealed class X86TargetTests {
+  [Test]
+  public void X86RegisterFileExposesAliasedScalarViews() {
+    Assert.Multiple(() => {
+      Assert.That(X86RegisterFile.Ax, Is.EqualTo(X86RegisterFile.Gpr16[0]));
+      Assert.That(X86RegisterFile.Al, Is.EqualTo(new MachineRegister("al", 0, 8, 0)));
+      Assert.That(X86RegisterFile.Ah, Is.EqualTo(new MachineRegister("ah", 4, 8, 0)));
+      Assert.That(X86RegisterFile.Eax.AliasGroup, Is.EqualTo(X86RegisterFile.Ax.AliasGroup));
+      Assert.That(X86RegisterFile.Rax.AliasGroup, Is.EqualTo(X86RegisterFile.Ax.AliasGroup));
+      Assert.That(X86RegisterFile.Gpr64LowBytes[8].Name, Is.EqualTo("r8b"));
+      Assert.That(X86RegisterFile.Gpr64Words[8].Name, Is.EqualTo("r8w"));
+      Assert.That(X86RegisterFile.Gpr64Dwords[8].Name, Is.EqualTo("r8d"));
+    });
+  }
+
+  [TestCase(X86Mode.Bit16, Reg.AL, MRegSize.Byte, "al", 0)]
+  [TestCase(X86Mode.Bit16, Reg.AH, MRegSize.Byte, "ah", 4)]
+  [TestCase(X86Mode.Bit32, Reg.EAX, MRegSize.Dword, "eax", 0)]
+  [TestCase(X86Mode.Bit32, Reg.AH, MRegSize.Byte, "ah", 4)]
+  [TestCase(X86Mode.Bit64, Reg.AX, MRegSize.Qword, "rax", 0)]
+  public void HostedRegisterFilePreservesRegisterViewAndEncoding(X86Mode mode, Reg physical, MRegSize size, string name, int encoding) {
+    var register = new X86TargetRegisterFile(mode).RegisterFor(MReg.Physical_(physical, size));
+    Assert.That(register.Name, Is.EqualTo(name));
+    Assert.That(register.Encoding, Is.EqualTo(encoding));
+  }
+
+  [Test]
+  public void X86_64RejectsLegacyHighByteRegisters() {
+    Assert.That(() => new X86TargetRegisterFile(X86Mode.Bit64)
+      .RegisterFor(MReg.Physical_(Reg.AH, MRegSize.Byte)),
+      Throws.InvalidOperationException.With.Message.Contains("not encodable"));
+  }
+
   [Test]
   public void X86_32_UsesCdeclAndFrameShell() {
     var target = new X86MachineTarget(X86Mode.Bit32, X86Abi.I386Cdecl);
