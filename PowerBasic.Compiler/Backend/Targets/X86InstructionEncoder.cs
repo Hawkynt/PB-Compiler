@@ -132,7 +132,7 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
 
   private void AppendAddress(List<byte> bytes, int reg, X86TargetAddress address) {
     if (mode == X86Mode.Bit16) {
-      var rm = (address.Base?.Encoding, address.Index?.Encoding) switch {
+      var rm16 = (address.Base?.Encoding, address.Index?.Encoding) switch {
         (3, 6) or (6, 3) => 0,
         (3, 7) or (7, 3) => 1,
         (5, 6) or (6, 5) => 2,
@@ -148,7 +148,7 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
         bytes.Add((byte)((0 << 6) | ((reg & 7) << 3) | 6));
         bytes.AddRange(BitConverter.GetBytes((ushort)address.Displacement));
       } else {
-        AppendModRm(bytes, reg, rm, address.Displacement,
+      AppendModRm(bytes, reg, rm16, address.Displacement,
           address.Base?.Encoding == 5 && address.Index is null);
       }
       return;

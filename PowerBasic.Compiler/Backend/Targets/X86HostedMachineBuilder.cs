@@ -55,6 +55,7 @@ public static class X86HostedMachineBuilder {
         throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
       return registers.RegisterFor(register);
     }
+    MachineRegister Register(MReg register) => Register(new MOperand.Register(register));
 
     try {
       switch (instruction.Opcode) {
@@ -333,10 +334,10 @@ public static class X86HostedMachineBuilder {
     if (operand is MOperand.Memory memory)
       return TryAddress(memory, registers, out address);
     if (operand is MOperand.StackSlot slot) {
-      var offset = 0;
+      var slotOffset = 0;
       for (var index = 0; index <= slot.Index && index < function.StackSlots.Count; ++index)
-        offset += (function.StackSlots[index] + 1) & ~1;
-      address = new(registers.FramePointer, null, 1, -offset + slot.Disp, slot.Size switch {
+        slotOffset += (function.StackSlots[index] + 1) & ~1;
+      address = new(registers.FramePointer, null, 1, -slotOffset + slot.Disp, slot.Size switch {
         MRegSize.Byte => 8,
         MRegSize.Word => 16,
         MRegSize.Dword => 32,

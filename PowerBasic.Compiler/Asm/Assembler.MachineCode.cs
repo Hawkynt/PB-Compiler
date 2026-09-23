@@ -16,7 +16,7 @@ public sealed partial class Assembler {
       foreach (var name in code.Labels.Keys)
         labels[name] = resolveSymbol(name) ?? this.DefineLabel(name);
     var cursor = 0;
-    foreach (var (name, offset) in (code.Labels ?? []).OrderBy(pair => pair.Value)) {
+    foreach (var (name, offset) in (code.Labels ?? new Dictionary<string, int>()).OrderBy(pair => pair.Value)) {
       if (offset < cursor || offset > code.Bytes.Length)
         throw new InvalidOperationException($"invalid machine label offset {offset} for '{name}'");
       if (offset > cursor)

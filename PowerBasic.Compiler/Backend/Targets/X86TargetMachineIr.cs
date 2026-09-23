@@ -20,7 +20,7 @@ public sealed class X86TargetRegisterFile {
   public MachineRegister ReturnValue => this.Registers[0];
 
   public MachineRegister RegisterFor(MReg register) {
-    var index = register.Physical.Index();
+    var index = (int)register.Physical & 0x0F;
     if ((uint)index >= (uint)this.Registers.Count)
       throw new InvalidOperationException("physical register is not in the target register file");
     if (register.Size is MRegSize.Qword or MRegSize.Tbyte)
