@@ -155,6 +155,9 @@ public sealed class IrPassManagerTests {
       "SwitchFormation.Run(",
       "StringStackPromotion.Run(",
       "MemoryRoutineSpecialization.Run(",
+      "InstructionSelector.TrySelect(",
+      "MachineScheduler.Schedule(",
+      "LinearScanAllocator.Allocate(",
     };
 
     var violations = files
