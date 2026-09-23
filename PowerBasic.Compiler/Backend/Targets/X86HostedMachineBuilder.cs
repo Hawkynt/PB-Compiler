@@ -17,11 +17,7 @@ public static class X86HostedMachineBuilder {
       return true;
 
     var registers = new X86TargetRegisterFile(selectedMode);
-    var abi = selectedMode switch {
-      X86Mode.Bit64 => X86Abi.SysV64,
-      X86Mode.Bit32 => X86Abi.I386Cdecl,
-      _ => X86Abi.I8086Cdecl,
-    };
+    var abi = X86Abi.For(machine.Source.Convention, selectedMode);
     var instructions = new List<X86TargetInstruction>();
     var labels = new Dictionary<string, int>(StringComparer.Ordinal);
     var blockLabels = machine.Function.Blocks.ToDictionary(

@@ -36,7 +36,7 @@ public interface IMachineEmitter {
 
 public readonly record struct MachineTargetDescription(string Name, int PointerBits, int RegisterBits);
 
-public readonly record struct MachineRegister(string Name, int Encoding, int Bits, int AliasGroup = -1) {
+public readonly record struct MachineRegister(string Name, int Encoding, int Bits) {
   public override string ToString() => this.Name;
 }
 
