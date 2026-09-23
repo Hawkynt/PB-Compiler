@@ -568,14 +568,12 @@ public sealed partial class CodeGenerator {
       return this.DeclineMain(externalDecline);
     if (!this.DataGlobalsResolve(main, out var unaddressable))
       return this.DeclineMain(this.UnaddressableGlobal(unaddressable));
-    if (InstructionSelector.TrySelect(main, out var declineReason, this.SelectionTarget) is not { } machine)
-      return this.DeclineMain("selection: " + (declineReason ?? "unknown"));
-    if (UndefinedRuntimeCallee(machine) is { } undefined)
+    if (!IrMachinePipeline.TryLowerFunction(main, this.SelectionTarget,
+        out var machineProduct, out var declineReason))
+      return this.DeclineMain(declineReason ?? "unknown machine lowering failure");
+    if (UndefinedRuntimeCallee(machineProduct!.Function) is { } undefined)
       return this.DeclineMain($"routing: calls '{undefined}', which the DOS runtime does not define");
-    MachineScheduler.Schedule(machine, this.SelectionTarget);
-    if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } alloc)
-      return this.DeclineMain("allocation: " + (noRegisters ?? "unknown"));
-    return this._backendMain = new IrMachineFunction(main, machine, alloc);
+    return this._backendMain = machineProduct;
   }
 
   /// <summary>Records why the module body was not routed and answers "not routed", in one expression.</summary>

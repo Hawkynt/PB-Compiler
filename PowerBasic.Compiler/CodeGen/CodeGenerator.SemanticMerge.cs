@@ -56,16 +56,13 @@ public sealed partial class CodeGenerator {
         continue;
       if (this.ExternalCalleeDecline(helper) is not null || !this.DataGlobalsResolve(helper, out _))
         continue;
-      if (InstructionSelector.TrySelect(helper, out _, this.SelectionTarget) is not { } machine
-          || UndefinedRuntimeCallee(machine) is not null)
-        continue;
-
-      MachineScheduler.Schedule(machine);
-      if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out _) is not { } allocation)
+      if (!IrMachinePipeline.TryLowerFunction(helper, this.SelectionTarget,
+          out var machineProduct, out _)
+          || UndefinedRuntimeCallee(machineProduct!.Function) is not null)
         continue;
 
       this._backendSemanticMerges[helper.Name] = new BackendSemanticMerge(
-        helper, new IrMachineFunction(helper, machine, allocation), parameterOffsets, parameterBytes,
+        helper, machineProduct, parameterOffsets, parameterBytes,
         this.Optimize && FrameElision.IsCandidate(helper));
     }
   }

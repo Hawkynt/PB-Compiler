@@ -124,23 +124,19 @@ public sealed partial class CodeGenerator {
       decline = this.UnaddressableGlobal(unaddressable);
       return false;
     }
-    if (InstructionSelector.TrySelect(function, out var declineReason, this.SelectionTarget) is not { } machine) {
-      decline = "selection: " + (declineReason ?? "unknown");
+    if (!IrMachinePipeline.TryLowerFunction(function, this.SelectionTarget,
+        out var machineProduct, out var declineReason)) {
+      decline = declineReason ?? "unknown machine lowering failure";
       return false;
     }
+    var machine = machineProduct!.Function;
     if (UndefinedRuntimeCallee(machine) is { } undefined) {
       decline = $"routing: calls '{undefined}', which the DOS runtime does not define";
       return false;
     }
 
-    MachineScheduler.Schedule(machine);
-    if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } allocation) {
-      decline = "allocation: " + (noRegisters ?? "unknown");
-      return false;
-    }
-
     this._backendGenerated![function.Name] = new BackendGeneratedFunction(
-      function, new IrMachineFunction(function, machine, allocation),
+      function, machineProduct,
       this.Optimize && FrameElision.IsCandidate(function), layout);
     decline = string.Empty;
     return true;
