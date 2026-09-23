@@ -95,6 +95,19 @@ public static class X86HostedMachineBuilder {
             && TryAddress(instruction.Operands[0], function, registers, out var addAddress):
           target = new(X86TargetOpcode.Add, [Register(addRegister.Reg)], Address: addAddress);
           return true;
+        case MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
+            when instruction.Operands.Count == 2
+            && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell)
+            && instruction.Operands[1] is MOperand.Register memoryRegister
+            && TryAddress(instruction.Operands[0], function, registers, out var memoryAluAddress):
+          target = new(instruction.Opcode switch {
+            MOpcode.Sub => X86TargetOpcode.Sub,
+            MOpcode.And => X86TargetOpcode.And,
+            MOpcode.Or => X86TargetOpcode.Or,
+            MOpcode.Xor => X86TargetOpcode.Xor,
+            _ => X86TargetOpcode.Cmp,
+          }, [Register(memoryRegister.Reg)], Address: memoryAluAddress);
+          return true;
         case MOpcode.Sub when instruction.Operands[1] is MOperand.Immediate sub:
           target = new(X86TargetOpcode.SubImmediate, [Register(instruction.Operands[0])], sub.Value);
           return true;
@@ -154,6 +167,12 @@ public static class X86HostedMachineBuilder {
             _ => X86TargetOpcode.Idiv,
           }, [Register(instruction.Operands[0])]);
           return true;
+        case MOpcode.Imul when instruction.Operands.Count == 2
+            && instruction.Operands[0] is MOperand.Register
+            && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Imul,
+            [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
         case MOpcode.Cwd:
           target = new(X86TargetOpcode.Cwd, []);
           return true;
@@ -195,6 +214,14 @@ public static class X86HostedMachineBuilder {
           return true;
         case MOpcode.JmpIndirect when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Register:
           target = new(X86TargetOpcode.JmpIndirect, [Register(instruction.Operands[0])]);
+          return true;
+        case MOpcode.JmpIndirect when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var indirectAddress):
+          target = new(X86TargetOpcode.JmpIndirect, [], Address: indirectAddress);
+          return true;
+        case MOpcode.CallFar when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var farAddress):
+          target = new(X86TargetOpcode.CallFar, [], Address: farAddress);
           return true;
         case MOpcode.Ret:
           target = new(X86TargetOpcode.Ret, []);

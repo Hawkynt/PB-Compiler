@@ -205,6 +205,19 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return [.. bytes];
   }
 
+  public byte[] ImulRegister(MachineRegister destination, MachineRegister source) {
+    Validate(destination);
+    Validate(source);
+    var rex = Rex(destination, source, w: mode == X86Mode.Bit64);
+    var bytes = new List<byte>(4);
+    if (rex is { } prefix)
+      bytes.Add(prefix);
+    bytes.Add(0x0F);
+    bytes.Add(0xAF);
+    bytes.Add(ModRm(destination.Encoding, source.Encoding));
+    return [.. bytes];
+  }
+
   public byte[] UnaryRegister(MachineRegister register, int extension) {
     Validate(register);
     var rex = RexRm(register, w: mode == X86Mode.Bit64);
