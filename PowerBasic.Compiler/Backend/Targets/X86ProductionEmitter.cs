@@ -18,8 +18,13 @@ public static class X86ProductionEmitter {
       Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null) {
     ArgumentNullException.ThrowIfNull(assembler);
     ArgumentNullException.ThrowIfNull(function);
-    if (function.HostedFunction is null)
-      throw new NotSupportedException($"x86 machine function '{function.Source.Name}' contains an unlowered opcode or operand");
+    if (function.HostedFunction is null) {
+      var shape = string.Join(", ", function.Function.AllInstructions
+        .Select(instruction => $"{instruction.Opcode}({string.Join("|", instruction.Operands.Select(operand => operand.GetType().Name))})")
+        .Distinct()
+        .Take(12));
+      throw new NotSupportedException($"x86 machine function '{function.Source.Name}' contains an unlowered opcode or operand: {shape}");
+    }
     if (!function.Target.Name.Equals("x86-16", StringComparison.OrdinalIgnoreCase))
       throw new NotSupportedException($"target '{function.Target.Name}' cannot be appended to a DOS image");
 
