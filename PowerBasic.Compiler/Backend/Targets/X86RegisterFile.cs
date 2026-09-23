@@ -51,6 +51,21 @@ public static class X86RegisterFile {
   public static MachineRegister Ah => HighBytes[0];
   public static MachineRegister Eax => Gpr32[0];
   public static MachineRegister Rax => Gpr64[0];
+  public static MachineRegister Cx => Gpr16[1];
+  public static MachineRegister Cl => LowBytes[1];
+  public static MachineRegister Ch => HighBytes[1];
+  public static MachineRegister Ecx => Gpr32[1];
+  public static MachineRegister Dx => Gpr16[2];
+  public static MachineRegister Dl => LowBytes[2];
+  public static MachineRegister Dh => HighBytes[2];
+  public static MachineRegister Edx => Gpr32[2];
+  public static MachineRegister Bx => Gpr16[3];
+  public static MachineRegister Bl => LowBytes[3];
+  public static MachineRegister Bh => HighBytes[3];
+  public static MachineRegister Ebx => Gpr32[3];
+
+  public static IEnumerable<MachineRegister> All { get; } = Gpr16.Concat(Gpr32).Concat(Gpr64)
+    .Concat(LowBytes).Concat(HighBytes).Concat(Gpr64LowBytes).Concat(Gpr64Words).Concat(Gpr64Dwords).Distinct();
 
   public static MachineRegister Get(X86Mode mode, int encoding) {
     var registers = mode switch {
