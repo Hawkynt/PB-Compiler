@@ -66,10 +66,11 @@ public static class X86HostedMachineBuilder {
     MachineRegister Register(MOperand operand) {
       if (operand is not MOperand.Register { Reg: var register })
         throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
-      if (register.IsVirtual && !allocation.TryGetValue(register.VirtualId, out var physical))
-        throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
-      if (register.IsVirtual)
+      if (register.IsVirtual) {
+        if (!allocation.TryGetValue(register.VirtualId, out var physical))
+          throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
         register = MReg.Physical_(physical, register.Size);
+      }
       return registers.RegisterFor(register);
     }
     MachineRegister RegisterValue(MReg register) => Register(new MOperand.Register(register));
@@ -354,15 +355,14 @@ public static class X86HostedMachineBuilder {
   private static bool TryAddress(MOperand.Memory memory, X86TargetRegisterFile registers,
       IReadOnlyDictionary<int, Reg> allocation,
       out X86TargetAddress address) {
-    static MachineRegister? Convert(MReg? register, X86TargetRegisterFile file)
-      => register is { IsVirtual: false } value && (uint)value.Physical.Index() < (uint)file.Registers.Count
-        ? file.Registers[value.Physical.Index()]
-        : null;
     static MachineRegister? ConvertAllocated(MReg? register, X86TargetRegisterFile file,
         IReadOnlyDictionary<int, Reg> map) {
       if (register is not { } value) return null;
-      if (value.IsVirtual && !map.TryGetValue(value.VirtualId, out var physical)) return null;
-      return file.RegisterFor(value.IsVirtual ? MReg.Physical_(physical, value.Size) : value);
+      if (value.IsVirtual) {
+        if (!map.TryGetValue(value.VirtualId, out var physical)) return null;
+        value = MReg.Physical_(physical, value.Size);
+      }
+      return file.RegisterFor(value);
     }
     address = new(ConvertAllocated(memory.Base, registers, allocation), ConvertAllocated(memory.Index, registers, allocation), (byte)memory.Scale,
       memory.Disp, memory.Size switch {
@@ -561,7 +561,9 @@ public static class X86HostedMachineBuilder {
   private static MachineRegister? TryMachineRegister(MReg register, X86TargetRegisterFile registers,
       IReadOnlyDictionary<int, Reg>? allocation = null) {
     if (register.IsVirtual) {
-      if (allocation is null || !allocation.TryGetValue(register.VirtualId, out var physical))
+      if (allocation is null)
+        return null;
+      if (!allocation.TryGetValue(register.VirtualId, out var physical))
         return null;
       register = MReg.Physical_(physical, register.Size);
     }
