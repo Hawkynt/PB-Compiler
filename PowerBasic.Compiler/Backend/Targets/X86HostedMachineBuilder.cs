@@ -24,10 +24,14 @@ public static class X86HostedMachineBuilder {
     };
     var instructions = new List<X86TargetInstruction>();
     var labels = new Dictionary<string, int>(StringComparer.Ordinal);
+    var blockLabels = machine.Function.Blocks.ToDictionary(
+      block => block.Label, block => machine.Function.Name + "$" + block.Label,
+      StringComparer.Ordinal);
     foreach (var block in machine.Function.Blocks) {
-      labels[block.Label] = instructions.Count;
+      labels[blockLabels[block.Label]] = instructions.Count;
       foreach (var instruction in block.Instructions) {
-        if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, out var targetInstruction))
+        if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, blockLabels,
+              out var targetInstruction))
           return false;
         if (targetInstruction is not null)
           instructions.Add(targetInstruction);
@@ -36,7 +40,8 @@ public static class X86HostedMachineBuilder {
 
     hosted = new X86TargetMachineFunction(selectedMode,
       new X86TargetAbi(selectedMode, abi.Name, abi.StackAlignment, abi.ShadowSpaceBytes,
-        abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters), instructions, labels);
+        abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters), instructions, labels,
+      machine.Function.StackSlots.Sum(size => (size + 1) & ~1));
     return true;
   }
 
@@ -45,15 +50,13 @@ public static class X86HostedMachineBuilder {
       X86Mode mode,
       X86TargetRegisterFile registers,
       X86MachineFunction function,
+      IReadOnlyDictionary<string, string> blockLabels,
       out X86TargetInstruction? target) {
     target = null;
     MachineRegister Register(MOperand operand) {
       if (operand is not MOperand.Register { Reg: var register } || register.IsVirtual)
         throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
-      var index = register.Physical.Index();
-      if ((uint)index >= (uint)registers.Registers.Count)
-        throw new InvalidOperationException("allocated register is not part of the hosted x86 register file");
-      return registers.Registers[index];
+      return registers.RegisterFor(register);
     }
 
     try {
@@ -63,7 +66,7 @@ public static class X86HostedMachineBuilder {
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);
           else if (TryAddress(instruction.Operands[1], function, registers, out var loadAddress))
             target = new(X86TargetOpcode.Mov, [Register(instruction.Operands[0])], Address: loadAddress);
-          else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot
+          else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell
                    && instruction.Operands[1] is MOperand.Register storeRegister
                    && TryAddress(instruction.Operands[0], function, registers, out var storeAddress))
             target = new(X86TargetOpcode.Mov, [Register(storeRegister.Reg)], Address: storeAddress,
@@ -88,6 +91,19 @@ public static class X86HostedMachineBuilder {
             && instruction.Operands[1] is MOperand.Register addRegister
             && TryAddress(instruction.Operands[0], function, registers, out var addAddress):
           target = new(X86TargetOpcode.Add, [Register(addRegister.Reg)], Address: addAddress);
+          return true;
+        case MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
+            when instruction.Operands.Count == 2
+            && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell)
+            && instruction.Operands[1] is MOperand.Register memoryRegister
+            && TryAddress(instruction.Operands[0], function, registers, out var memoryAluAddress):
+          target = new(instruction.Opcode switch {
+            MOpcode.Sub => X86TargetOpcode.Sub,
+            MOpcode.And => X86TargetOpcode.And,
+            MOpcode.Or => X86TargetOpcode.Or,
+            MOpcode.Xor => X86TargetOpcode.Xor,
+            _ => X86TargetOpcode.Cmp,
+          }, [Register(memoryRegister.Reg)], Address: memoryAluAddress);
           return true;
         case MOpcode.Sub when instruction.Operands[1] is MOperand.Immediate sub:
           target = new(X86TargetOpcode.SubImmediate, [Register(instruction.Operands[0])], sub.Value);
@@ -148,6 +164,12 @@ public static class X86HostedMachineBuilder {
             _ => X86TargetOpcode.Idiv,
           }, [Register(instruction.Operands[0])]);
           return true;
+        case MOpcode.Imul when instruction.Operands.Count == 2
+            && instruction.Operands[0] is MOperand.Register
+            && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Imul,
+            [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
         case MOpcode.Cwd:
           target = new(X86TargetOpcode.Cwd, []);
           return true;
@@ -175,10 +197,11 @@ public static class X86HostedMachineBuilder {
             [Register(instruction.Operands[0]), Register(instruction.Operands[1])], doubleShift.Value);
           return true;
         case MOpcode.Jmp when instruction.Operands[0] is MOperand.LabelRef label:
-          target = new(X86TargetOpcode.Jmp, [], Symbol: label.Name);
+          target = new(X86TargetOpcode.Jmp, [], Symbol: blockLabels.GetValueOrDefault(label.Name, label.Name));
           return true;
         case MOpcode.Jcc when instruction.Operands[0] is MOperand.LabelRef label:
-          target = new(X86TargetOpcode.Jcc, [], (long)(instruction.Condition ?? Condition.Equal), Symbol: label.Name);
+          target = new(X86TargetOpcode.Jcc, [], (long)(instruction.Condition ?? Condition.Equal),
+            Symbol: blockLabels.GetValueOrDefault(label.Name, label.Name));
           return true;
         case MOpcode.Call when instruction.Operands[0] is MOperand.LabelRef label:
           target = new(X86TargetOpcode.Call, [], Symbol: label.Name);
@@ -188,6 +211,14 @@ public static class X86HostedMachineBuilder {
           return true;
         case MOpcode.JmpIndirect when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Register:
           target = new(X86TargetOpcode.JmpIndirect, [Register(instruction.Operands[0])]);
+          return true;
+        case MOpcode.JmpIndirect when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var indirectAddress):
+          target = new(X86TargetOpcode.JmpIndirect, [], Address: indirectAddress);
+          return true;
+        case MOpcode.CallFar when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var farAddress):
+          target = new(X86TargetOpcode.CallFar, [], Address: farAddress);
           return true;
         case MOpcode.Ret:
           target = new(X86TargetOpcode.Ret, []);
@@ -249,6 +280,14 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Push when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Immediate immediatePush:
           target = new(X86TargetOpcode.Push, [], immediatePush.Value);
           return true;
+        case MOpcode.Push when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var pushAddress):
+          target = new(X86TargetOpcode.Push, [], Address: pushAddress);
+          return true;
+        case MOpcode.Pop when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var popAddress):
+          target = new(X86TargetOpcode.Pop, [], Address: popAddress);
+          return true;
         case MOpcode.Push when instruction.Operands.Count == 1:
           target = new(X86TargetOpcode.PushRegister, [Register(instruction.Operands[0])]);
           return true;
@@ -297,6 +336,20 @@ public static class X86HostedMachineBuilder {
         MRegSize.Qword => 64,
         _ => 80,
       });
+      return true;
+    }
+    if (operand is MOperand.DataCell cell) {
+      address = new(null, null, 1, cell.Disp, cell.Size switch {
+        MRegSize.Byte => 8,
+        MRegSize.Word => 16,
+        MRegSize.Dword => 32,
+        MRegSize.Qword => 64,
+        _ => 80,
+      }, cell.Name);
+      return true;
+    }
+    if (operand is MOperand.DataOffset offset) {
+      address = new(null, null, 1, offset.Disp, 0, offset.Name);
       return true;
     }
     address = default;
