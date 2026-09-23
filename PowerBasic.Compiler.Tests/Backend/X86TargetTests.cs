@@ -125,6 +125,7 @@ public sealed class X86TargetTests {
     Assert.That(target.CreateLowerer(SelectionTarget.Baseline), Is.TypeOf<X86MachineLowering>());
     Assert.That(new X86MachineSelector(SelectionTarget.Baseline), Is.Not.Null);
     Assert.That(new X86MachineAllocator(SelectionTarget.Baseline), Is.Not.Null);
+    Assert.That(new X86MachineScheduler(SelectionTarget.Baseline), Is.Not.Null);
   }
 
   [Test]

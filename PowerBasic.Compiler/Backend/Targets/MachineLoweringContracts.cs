@@ -28,16 +28,21 @@ public sealed class X86MachineAllocator(SelectionTarget target)
     => LinearScanAllocator.Allocate(function, target, out declineReason);
 }
 
+/// <summary>x86 machine scheduling owned by the x86 target.</summary>
+public sealed class X86MachineScheduler(SelectionTarget target) : IMachineScheduler<MFunction> {
+  public void Schedule(MFunction function) => MachineScheduler.Schedule(function, target);
+}
+
 /// <summary>Current x86 lowering implementation shared by the 16-, 32- and 64-bit x86 contracts.</summary>
 public sealed class X86MachineLowering : IMachineFunctionLowerer {
-  private readonly SelectionTarget _target;
   private readonly X86MachineSelector _selector;
   private readonly X86MachineAllocator _allocator;
+  private readonly X86MachineScheduler _scheduler;
 
   public X86MachineLowering(SelectionTarget target) {
-    this._target = target;
     this._selector = new(target);
     this._allocator = new(target);
+    this._scheduler = new(target);
   }
 
   public bool TrySelect(IrFunction function, out MFunction? selected, out string? error) {
@@ -61,7 +66,7 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
     ArgumentNullException.ThrowIfNull(source);
     ArgumentNullException.ThrowIfNull(selected);
     machine = null;
-    MachineScheduler.Schedule(selected, this._target);
+    this._scheduler.Schedule(selected);
     if (this._allocator.TryAllocate(selected, out var allocationReason) is not { } allocation) {
       error = "allocation: " + (allocationReason ?? "register allocation failed");
       return false;

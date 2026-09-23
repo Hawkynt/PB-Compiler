@@ -15,6 +15,11 @@ public interface IMachineAllocator<in TMachineFunction, out TAllocation> {
   TAllocation? TryAllocate(TMachineFunction function, out string? declineReason);
 }
 
+/// <summary>Target-owned ordering of selected machine instructions before allocation.</summary>
+public interface IMachineScheduler<in TMachineFunction> {
+  void Schedule(TMachineFunction function);
+}
+
 public interface IMachineCodeEmitter<in TMachineFunction, in TAllocation> {
   MachineCode Emit(TMachineFunction function, TAllocation allocation);
 }
