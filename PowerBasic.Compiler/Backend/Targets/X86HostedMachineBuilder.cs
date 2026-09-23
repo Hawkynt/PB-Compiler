@@ -249,6 +249,14 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Push when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Immediate immediatePush:
           target = new(X86TargetOpcode.Push, [], immediatePush.Value);
           return true;
+        case MOpcode.Push when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var pushAddress):
+          target = new(X86TargetOpcode.Push, [], Address: pushAddress);
+          return true;
+        case MOpcode.Pop when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var popAddress):
+          target = new(X86TargetOpcode.Pop, [], Address: popAddress);
+          return true;
         case MOpcode.Push when instruction.Operands.Count == 1:
           target = new(X86TargetOpcode.PushRegister, [Register(instruction.Operands[0])]);
           return true;

@@ -206,7 +206,14 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Push when instruction.Registers.Count == 1:
           bytes.AddRange(encoder.Push(instruction.Registers[0]));
           break;
+        case X86TargetOpcode.Push when instruction.Address is { } pushAddress:
+          bytes.AddRange(encoder.IndirectMemory(pushAddress, 6));
+          break;
         case X86TargetOpcode.Pop:
+          if (instruction.Address is { } popAddress) {
+            bytes.AddRange(encoder.IndirectMemory(popAddress, 0, 0x8F));
+            break;
+          }
           bytes.AddRange(encoder.Pop(instruction.Registers[0]));
           break;
         case X86TargetOpcode.Push when instruction.Registers.Count == 0:
