@@ -45,7 +45,7 @@ public sealed record X86Abi(
       var regs = register + parts <= this.ArgumentRegisters.Count
         ? this.ArgumentRegisters.Skip(register).Take(parts).ToArray()
         : Array.Empty<MachineRegister>();
-      if (regs.Count != 0) register += parts;
+      if (regs.Any()) register += parts;
       else { result.Add((index, regs, stack)); stack += parts * (this.PointerBits / 8); continue; }
       result.Add((index, regs, -1));
     }

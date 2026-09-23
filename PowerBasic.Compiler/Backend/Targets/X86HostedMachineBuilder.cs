@@ -55,7 +55,7 @@ public static class X86HostedMachineBuilder {
         throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
       return registers.RegisterFor(register);
     }
-    MachineRegister Register(MReg register) => Register(new MOperand.Register(register));
+    MachineRegister RegisterValue(MReg register) => Register(new MOperand.Register(register));
 
     try {
       switch (instruction.Opcode) {
@@ -69,7 +69,7 @@ public static class X86HostedMachineBuilder {
           else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell
                    && instruction.Operands[1] is MOperand.Register storeRegister
                    && TryAddress(instruction.Operands[0], function, registers, out var storeAddress))
-            target = new(X86TargetOpcode.Mov, [Register(storeRegister.Reg)], Address: storeAddress,
+            target = new(X86TargetOpcode.Mov, [RegisterValue(storeRegister.Reg)], Address: storeAddress,
               Immediate: 1);
           else
             target = new(X86TargetOpcode.MoveRegister,
@@ -90,7 +90,7 @@ public static class X86HostedMachineBuilder {
             && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot)
             && instruction.Operands[1] is MOperand.Register addRegister
             && TryAddress(instruction.Operands[0], function, registers, out var addAddress):
-          target = new(X86TargetOpcode.Add, [Register(addRegister.Reg)], Address: addAddress);
+          target = new(X86TargetOpcode.Add, [RegisterValue(addRegister.Reg)], Address: addAddress);
           return true;
         case MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
             when instruction.Operands.Count == 2
@@ -103,7 +103,7 @@ public static class X86HostedMachineBuilder {
             MOpcode.Or => X86TargetOpcode.Or,
             MOpcode.Xor => X86TargetOpcode.Xor,
             _ => X86TargetOpcode.Cmp,
-          }, [Register(memoryRegister.Reg)], Address: memoryAluAddress);
+          }, [RegisterValue(memoryRegister.Reg)], Address: memoryAluAddress);
           return true;
         case MOpcode.Sub when instruction.Operands[1] is MOperand.Immediate sub:
           target = new(X86TargetOpcode.SubImmediate, [Register(instruction.Operands[0])], sub.Value);
