@@ -208,9 +208,14 @@ public sealed class MachineEmitter {
       Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null,
       bool alignLoops = false, bool allowFrameElision = false,
       IReadOnlyList<Asm.Reg>? registerSpills = null,
-      Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null)
-    => EmitFunction(asm, function.Function, function.Allocation, paramOffsets, paramBytes,
+      Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null) {
+    ArgumentNullException.ThrowIfNull(function);
+    if (function.Target.Name is not "x86-16")
+      throw new InvalidOperationException(
+        $"the legacy Assembler emitter only accepts x86-16 machine products, got '{function.Target.Name}'");
+    EmitFunction(asm, function.Function, function.Allocation, paramOffsets, paramBytes,
       resolveCallee, resolveData, onReturn, alignLoops, allowFrameElision, registerSpills, emitInlineAsm);
+  }
 
   /// <summary>
   /// Whether the machine function still satisfies the middle-end frame-free proof after instruction
