@@ -22,7 +22,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// so it cannot be hidden the same way twice.
 /// </para>
 /// <para>
-/// The fix is not a decline. <see cref="Backend.MachineEmitter"/> takes the target's ISA policy as a
+/// The fix is not a decline. <see cref="Backend.X86HostedTargetEmitter"/> takes the target's ISA policy as a
 /// callback, so the routed path reaches the SAME emulator the direct emitter uses and keeps the body.
 /// Declining would also have been correct and would have cost the routing every program with a line
 /// of portable SIMD in it.
@@ -70,7 +70,7 @@ public sealed class BackendInlineAsmVirtualizationTests {
         $"$CPU {cpu} got a raw PADDW; the declared target cannot execute it");
       Assert.That(routed, Does.Contain("main"),
         "emulating it is the routed path's job now, so the body must still route - a decline here "
-        + "would mean the ISA policy callback stopped reaching MachineEmitter");
+        + "would mean the ISA policy callback stopped reaching X86HostedTargetEmitter");
     });
   }
 

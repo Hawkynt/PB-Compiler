@@ -38,7 +38,7 @@ public sealed class BackendResidencyTests {
   private static readonly SelectionTarget _speed386 = new(CpuLevel: 386, Optimize: true, OptimizeSpeed: true);
 
   /// <summary>The module body of <paramref name="source"/>, selected and scheduled but not yet allocated.</summary>
-  private static MFunction Select(string source, SelectionTarget target) {
+  private static X86MachineFunction Select(string source, SelectionTarget target) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var module = IrLowering.TryLowerModule(model, out var why);
@@ -257,7 +257,7 @@ public sealed class BackendResidencyTests {
     var a = MReg.Virtual(0);
     var b = MReg.Virtual(1);
     var c = MReg.Virtual(2);
-    var function = new MFunction("F") { VirtualRegisterCount = 3 };
+    var function = new X86MachineFunction("F") { VirtualRegisterCount = 3 };
     function.StackSlots.Add(2);
     var block = new MBlock("entry");
     MInstr Move(MOperand destination, MOperand source)

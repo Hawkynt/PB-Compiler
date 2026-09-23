@@ -29,7 +29,7 @@ public sealed class BackendFloatTests {
     return model;
   }
 
-  private static MFunction Select(string source, string function) {
+  private static X86MachineFunction Select(string source, string function) {
     var module = IrLowering.TryLowerModule(Bind(source));
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset");
     IrMiddleEndPipeline.Standard().RunOnModule(module!);

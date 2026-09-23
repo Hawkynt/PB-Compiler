@@ -24,8 +24,8 @@ public sealed class MachineSchedulerTests {
     [new MOperand.Register(MReg.Physical_(dest)), new MOperand.Register(MReg.Physical_(src))],
     new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true, ReadsMemory: false, WritesMemory: false));
 
-  private static MFunction OneBlock(params MInstr[] instrs) {
-    var fn = new MFunction("t");
+  private static X86MachineFunction OneBlock(params MInstr[] instrs) {
+    var fn = new X86MachineFunction("t");
     var block = new MBlock("entry");
     block.Instructions.AddRange(instrs);
     fn.Blocks.Add(block);

@@ -43,14 +43,14 @@ public sealed class IndirectCallBackendTests {
 
   [Test]
   public void Emit_GivenIndirectCallThroughBx_ThenUses8086FfSlash2Encoding() {
-    var function = new MFunction("t");
+    var function = new X86MachineFunction("t");
     var block = new MBlock("entry");
     block.Instructions.Add(new MInstr(MOpcode.Call,
       [new MOperand.Register(MReg.Physical_(Reg.BX, MRegSize.Word))], MInstrEffect.None));
     function.Blocks.Add(block);
 
     var assembler = new Assembler();
-    MachineEmitter.Emit(assembler, function, new Dictionary<int, Reg>());
+    X86HostedTargetEmitter.Emit(assembler, function, new Dictionary<int, Reg>());
 
     // Intel CALL r/m16 is FF /2. For register BX the ModR/M byte is 11 010 011b = D3h.
     Assert.That(assembler.ToArray(), Is.EqualTo(new byte[] { 0xFF, 0xD3 }));

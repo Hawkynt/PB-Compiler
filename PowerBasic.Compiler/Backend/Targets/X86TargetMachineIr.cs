@@ -47,19 +47,33 @@ public sealed record X86TargetInstruction(
     string? Symbol = null);
 
 public enum X86TargetOpcode {
-  MoveImmediate,
-  MoveRegister,
-  AddImmediate,
-  SubImmediate,
-  AndImmediate,
-  OrImmediate,
-  XorImmediate,
-  CompareImmediate,
-  PushRegister,
-  PopRegister,
-  PushImmediate,
-  CallRelative,
-  Return,
+  Mov, Xchg, Lea,
+  Add, Sub, And, Or, Xor, Cmp, Test, Adc, Sbb,
+  Imul, Mul, Idiv, Div, Neg, Not, Inc, Dec, Cwd, Cbw,
+  Shl, Shr, Sar, Shld, Shrd, Rcl, Rcr,
+  Push, Pop, Jmp, Jcc, Call, Ret, CallFar, JmpIndirect, JmpIndexed,
+  Fld, Fstp, Fild, Fistp, Faddp, Fsubp, Fmulp, Fdivp,
+  Fadd, Fsub, Fmul, Fdiv, Fcomp, Fiadd, Fisub, Fimul, Fidiv,
+  Fcompp, FstswAx, Sahf, Fsqrt,
+  Fsin, Fcos, Fptan, Fpatan, Fyl2x, Fxch, FstpSt0,
+  Fld1, Fldln2, Fldlg2, Fldl2e, Fldl2t,
+  InlineAsm,
+
+  // Compatibility spellings for hosted target tests and clients while they migrate to the
+  // complete target opcode vocabulary.
+  MoveImmediate = Mov,
+  MoveRegister = Mov,
+  AddImmediate = Add,
+  SubImmediate = Sub,
+  AndImmediate = And,
+  OrImmediate = Or,
+  XorImmediate = Xor,
+  CompareImmediate = Cmp,
+  PushRegister = Push,
+  PopRegister = Pop,
+  PushImmediate = Push,
+  CallRelative = Call,
+  Return = Ret,
 }
 
 /// <summary>Independent target machine function used by hosted x86 emitters.</summary>

@@ -49,7 +49,7 @@ public sealed partial class LinearScanAllocator {
   /// both reload <c>ES</c> immediately in front of a far access, which is where the value would go.
   /// </para>
   /// </summary>
-  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> AsmHeldByIndex(MFunction function, out string? conflict)
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> AsmHeldByIndex(X86MachineFunction function, out string? conflict)
     => AsmHeldByIndex(function, out conflict, out _);
 
   /// <summary>
@@ -73,7 +73,7 @@ public sealed partial class LinearScanAllocator {
   /// spiller has run out of moves. Everything before that keeps both.
   /// </para>
   /// </summary>
-  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> AsmHeldByIndex(MFunction function,
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> AsmHeldByIndex(X86MachineFunction function,
       out string? conflict, out IReadOnlyDictionary<int, IReadOnlyList<Reg>> precise) {
     conflict = null;
     precise = _noReservations;

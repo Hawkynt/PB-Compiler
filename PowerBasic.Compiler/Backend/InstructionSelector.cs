@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 74116)
+Total output lines: 5304
+
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Ir;
 
@@ -5,7 +8,7 @@ namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
 /// Stage 2 of the x86-16 back end (docs/X86-BACKEND.md): selects the typed-SSA IR into the
-/// <see cref="MFunction"/> machine IR over virtual registers. Each SSA value becomes a virtual
+/// <see cref="X86MachineFunction"/> machine IR over virtual registers. Each SSA value becomes a virtual
 /// register (or an immediate for an <see cref="IrConstantInt"/>); each instruction lowers to one or
 /// more <see cref="MInstr"/> in two-address x86 form. Anything it cannot model makes
 /// <see cref="TrySelect"/> return null, so the coverage census can name the unsupported construct and
@@ -61,7 +64,7 @@ public sealed partial class InstructionSelector {
   /// had put there.
   /// </summary>
   private readonly Dictionary<IrValue, int> _qslots = new(ReferenceEqualityComparer.Instance);
-  private MFunction _function = null!;
+  private X86MachineFunction _function = null!;
 
   /// <summary>Whether this function's result is a pb36 closure - see <see cref="IrFunction.ReturnsClosure"/>.</summary>
   private bool _returnsClosure;
@@ -101,22 +104,22 @@ public sealed partial class InstructionSelector {
   private InstructionSelector(SelectionTarget target) => this._target = target;
 
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
-  public static MFunction? TrySelect(IrFunction fn)
+  public static X86MachineFunction? TrySelect(IrFunction fn)
     => TrySelect(fn, out _, SelectionTarget.Baseline);
 
   /// <summary>Selects a function into machine IR for a given target and objective, or null when it declines.</summary>
-  public static MFunction? TrySelect(IrFunction fn, SelectionTarget target) => TrySelect(fn, out _, target);
+  public static X86MachineFunction? TrySelect(IrFunction fn, SelectionTarget target) => TrySelect(fn, out _, target);
 
   /// <summary>
   /// Selects a function into machine IR, reporting <paramref name="declineReason"/> - the construct that
   /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
   /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
   /// </summary>
-  public static MFunction? TrySelect(IrFunction fn, out string? declineReason)
+  public static X86MachineFunction? TrySelect(IrFunction fn, out string? declineReason)
     => TrySelect(fn, out declineReason, SelectionTarget.Baseline);
 
   /// <summary>The same, for a given target and objective.</summary>
-  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, SelectionTarget target) {
+  public static X86MachineFunction? TrySelect(IrFunction fn, out string? declineReason, SelectionTarget target) {
     declineReason = null;
     if (fn.IsDeclaration || fn.Entry is null) {
       declineReason = "declaration";
@@ -135,14 +138,14 @@ public sealed partial class InstructionSelector {
     return false;
   }
 
-  /// <summary>As <see cref="Decline"/>, for the paths that return a null <see cref="MFunction"/>.</summary>
-  private MFunction? DeclineNull(string reason) {
+  /// <summary>As <see cref="Decline"/>, for the paths that return a null <see cref="X86MachineFunction"/>.</summary>
+  private X86MachineFunction? DeclineNull(string reason) {
     this._decline ??= reason;
     return null;
   }
 
-  private MFunction? Run(IrFunction fn) {
-    this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
+  private X86MachineFunction? Run(IrFunction fn) {
+    this._function = new X86MachineFunction(fn.Name) { HasArgumentPlan = true };
     this._returnsClosure = fn.ReturnsClosure;
 
     if (this.UsesNativeDwordRegisters && IrDominators.Build(fn) is { } dominators)
@@ -397,7 +400,7 @@ public sealed partial class InstructionSelector {
   /// to be undone in the allocator's terms rather than the selector's, and a value spilled to the frame
   /// has no exchange instruction at all. The register is minted at selection, so it is an ordinary
   /// value the allocator sees from the start - not a spiller-minted one, and so not a member of
-  /// <see cref="MFunction.MovedValues"/>, whose whole meaning is "already moved once during spilling".
+  /// <see cref="X86MachineFunction.MovedValues"/>, whose whole meaning is "already moved once during spilling".
   /// </para>
   ///
   /// <para>
@@ -1864,7 +1867,7 @@ public sealed partial class InstructionSelector {
   /// instruction. <c>! LEA BX, GetStrLoc</c> parses as <c>LEA BX, [BP+0]</c> and does not parse at all
   /// as <c>LEA BX, &lt;label&gt;</c>; <c>INC</c>, <c>CMP</c> and <c>XCHG</c> against a documented string
   /// export are the same shape. Each of those ENDED the compilation out of
-  /// <c>MachineEmitter.EmitInlineAsm</c>, where the direct emitter reports a diagnostic and carries on.
+  /// <c>X86HostedTargetEmitter.EmitInlineAsm</c>, where the direct emitter reports a diagnostic and carries on.
   /// The parse therefore runs once more here, through <see cref="AsmNameKinds"/> - which answers the
   /// same KINDS the emitter's own resolver will - and the failure becomes a decline, so the direct
   /// emitter takes the function and issues exactly the diagnostic it always did.
@@ -2014,7 +2017,7 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
-  /// Answers the effect analysis' questions about identifiers the same way <c>MachineEmitter</c>'s own
+  /// Answers the effect analysis' questions about identifiers the same way <c>X86HostedTargetEmitter</c>'s own
   /// resolver will answer the real assembly: a name the lowering paired with a block is a code label,
   /// any other bound name is storage, and an unbound one is a runtime export - code again.
   ///
@@ -2575,271 +2578,7 @@ public sealed partial class InstructionSelector {
 
     var destination = this.FloatCell(sel);
     var falseBlock = new MBlock($"{this._current.Label}.selfalse{this._splitCount}");
-    var doneBlock = new MBlock($"{this._current.Label}.seldone{this._splitCount}");
-    ++this._splitCount;
-
-    var zero = new MOperand.Immediate(0);
-    this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [cond, zero],
-      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
-        ReadsMemory: false, WritesMemory: false)));
-    this.EmitX87(MOpcode.Fld, ifTrue, reads: true);
-    this.EmitX87(MOpcode.Fstp, destination, reads: false);
-    this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(doneBlock.Label)],
-      new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false),
-      Condition.NotEqual));
-    this._current.Successors.Add(doneBlock.Label);
-    this._current.Successors.Add(falseBlock.Label);
-
-    this._current = falseBlock;
-    this.EmitX87(MOpcode.Fld, ifFalse, reads: true);
-    this.EmitX87(MOpcode.Fstp, destination, reads: false);
-    falseBlock.Successors.Add(doneBlock.Label);
-
-    this._function.Blocks.Add(falseBlock);
-    this._function.Blocks.Add(doneBlock);
-    this._current = doneBlock;
-    return true;
-  }
-
-  /// <summary>
-  /// Width changes between the two integer sizes this target has registers for. Widening a word to a
-  /// pair sets the high half from the source's sign (<c>SAR 15</c> smears the sign bit across it) or
-  /// from zero; narrowing a pair to a word is just its low half, which is already a register of its
-  /// own - so a truncation costs no instruction at all.
-  /// </summary>
-  private bool SelectCast(IrCast cast, MBlock block) {
-    var from = cast.Value.Type;
-    var to = cast.Type;
-    switch (cast.Op) {
-      // BASIC's comparison result is already -1/0 in a full word, so widening it to i16 is nothing
-      case IrCastOp.SExt when from.IsBool && to.IsInteger && to.Bits == 16 && this._vregs.TryGetValue(cast.Value, out var truth): {
-        this._vregs[cast] = truth;
-        return true;
-      }
-      // ...and the LONG of it. A truth value is a full word of -1 or 0, so sign-extending it to 32
-      // bits repeats that word: -1 becomes FFFF:FFFF and 0 becomes 0000:0000. Both halves are
-      // therefore the same register, which is what `s& = (a% = b%)` asks for - BASIC's comparison IS
-      // a value, and a LONG one was the shape that declined.
-      case IrCastOp.SExt when from.IsBool && IsWide(to): {
-        if (!this.TryOperand(cast.Value, out var truthWide))
-          return false;
-        var (lowHalf, highHalf) = this.FreshPair(cast);
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lowHalf, truthWide], MovEffect(lowHalf, truthWide)));
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [highHalf, truthWide], MovEffect(highHalf, truthWide)));
-        return true;
-      }
-      // ...and the BYTE of it. A truth value is a full word of -1 or 0, so its low byte is 0xFF or
-      // 0x00 - which IS the byte truth value, with no work to do beyond naming the low half. The
-      // rename is the same one a Trunc to a byte uses; the spiller gives each mention its own size
-      // back, so the word and the byte view of one register do not collide.
-      case IrCastOp.SExt when from.IsBool && to.IsInteger && to.Bits == 8: {
-        if (!this.TryOperand(cast.Value, out var truthByte))
-          return false;
-        if (truthByte is MOperand.Register truthWord) {
-          this._vregs[cast] = truthWord.Reg with { Size = MRegSize.Byte };
-          return true;
-        }
-        var byteReg = this.FreshVreg(cast.Type);
-        var byteDest = new MOperand.Register(byteReg);
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [byteDest, truthByte], MovEffect(byteDest, truthByte)));
-        this._vregs[cast] = byteReg;
-        return true;
-      }
-      // BASIC truth is a FULL WORD of -1 or 0, so widening a bool to a number is not a copy: the
-      // value wanted is 1 or 0. Masking the low bit is what turns one into the other, and it is the
-      // reason this cannot share the integer widening below - that one would produce -1.
-      case IrCastOp.ZExt when from.IsBool && to.IsInteger && to.Bits is 16 or 32: {
-        if (!this.TryOperand(cast.Value, out var truth))
-          return false;
-        var one = new MOperand.Immediate(1);
-        if (IsWide(to)) {
-          var (low, high) = this.FreshPair(cast);
-          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, truth], MovEffect(low, truth)));
-          this._current.Instructions.Add(new MInstr(MOpcode.And, [low, one],
-            new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
-              ReadsMemory: false, WritesMemory: false)));
-          var zero = new MOperand.Immediate(0);
-          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, zero], MovEffect(high, zero)));
-          return true;
-        }
-        var narrow = this.FreshVreg(cast.Type);
-        var dest = new MOperand.Register(narrow);
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, truth], MovEffect(dest, truth)));
-        this._current.Instructions.Add(new MInstr(MOpcode.And, [dest, one],
-          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
-            ReadsMemory: false, WritesMemory: false)));
-        this._vregs[cast] = narrow;
-        return true;
-      }
-      // A BYTE widened to a WORD or a DWORD. There were cases here for a bool source, for a word
-      // reaching a dword and for either reaching a qword, and none for a byte - so `u8 -> i16`
-      // declined 339 times over the SVGA corpus alone, `-> u16` 15 more and `-> i32` 94: 448 of the
-      // routing gaps there, the largest single reason the direct emitter could not be retired. The
-      // SIGNED twin is the case immediately below, where CBW does the whole of it.
-      //
-      // Staged through the physical AX rather than through a byte VIEW of the destination vreg.
-      // The view is what ScratchU8ToWord does; it depends on every consumer handing a mention back
-      // its own size, and staging avoids the question. MOVZX is not in this back end's opcode set,
-      // which is why the extension is written out rather than named.
-      //
-      // The 32-bit half arrived second, and its first diagnosis is kept here because it was WRONG. A
-      // version of this case that also built the dword pair made five DRAW_* corpus suites fail with
-      // `Operand size mismatch: DX vs [BP-90]`, and removing only that half made them clean again,
-      // which read as a defect in forming the pair. It was not. Dumping the machine IR showed the
-      // extension emitting correctly - XOR AH,AH / MOV AL,[slot] / MOV lo,AX / XOR hi,hi - and then
-      // the 32-bit CALL ARGUMENT staging peeling the widening cast away and reading the ORIGINAL byte
-      // into DX: its guard was `!IsWide(...)`, "narrower than 32 bits", which a BYTE satisfies too.
-      // That peel requires a word source now, so the pair stands and the 94 declines are closed. Two
-      // rounds of reasoning about the spiller had not found it; one instruction dump did.
-      case IrCastOp.ZExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16 or 32: {
-        if (!this.TryOperand(cast.Value, out var source))
-          return false;
-        // Staged through the physical AX rather than through a byte VIEW of the destination vreg.
-        // The view is what ScratchU8ToWord does and it is not spill-safe: FindVirtualSize takes the
-        // WIDEST mention of a virtual register and Rewrite then applies that one size to every
-        // mention, so the byte reference silently becomes a word one and the emitter meets
-        // `MOV DL, <word slot>`. Five corpus suites failed exactly that way before this was staged.
-        var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
-        var ah = new MOperand.Register(MReg.Physical_(Reg.AH, MRegSize.Byte));
-        var al = new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte));
-        this._current.Instructions.Add(new MInstr(MOpcode.Xor, [ah, ah],
-          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
-            ReadsMemory: false, WritesMemory: false)));
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [al, source], MovEffect(al, source)));
-        if (IsWide(to)) {
-          var (low, high) = this.FreshPair(cast);
-          var zero = new MOperand.Immediate(0);
-          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, ax], MovEffect(low, ax)));
-          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, zero], MovEffect(high, zero)));
-          return true;
-        }
-        var dest = this.FreshVreg(cast.Type);
-        var word = new MOperand.Register(dest);
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [word, ax], MovEffect(word, ax)));
-        this._vregs[cast] = dest;
-        return true;
-      }
-      // The SIGNED twin of the widening above, and CBW is the whole of it: the 8086 sign-extends AL
-      // into AX in one instruction, so the staging is a byte move and that. It goes through the
-      // physical AX for the same reason the zero-extension does - a byte VIEW of the destination
-      // vreg is not spill-safe - and CBW has nowhere else to work anyway.
-      case IrCastOp.SExt when from.IsInteger && from.Bits == 8 && to.IsInteger && to.Bits is 16 or 32: {
-        if (!this.TryOperand(cast.Value, out var source))
-          return false;
-
-        var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
-        var al = new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte));
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [al, source], MovEffect(al, source)));
-        this._current.Instructions.Add(new MInstr(MOpcode.Cbw, [],
-          new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-            ReadsMemory: false, WritesMemory: false), condition: null, clobbers: [Reg.AX]));
-        if (IsWide(to)) {
-          // ...and CWD carries the sign on into the high word, which is what makes this a 32-bit
-          // signed widening rather than a 16-bit one with rubbish above it.
-          var (low, high) = this.FreshPair(cast);
-          var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
-          this._current.Instructions.Add(new MInstr(MOpcode.Cwd, [],
-            new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-              ReadsMemory: false, WritesMemory: false), condition: null, clobbers: [Reg.DX]));
-          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [low, ax], MovEffect(low, ax)));
-          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [high, dx], MovEffect(high, dx)));
-          return true;
-        }
-        var widened = this.FreshVreg(cast.Type);
-        var wide = new MOperand.Register(widened);
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [wide, ax], MovEffect(wide, ax)));
-        this._vregs[cast] = widened;
-        return true;
-      }
-      case IrCastOp.SExt or IrCastOp.ZExt when IsWide(to) && from.IsInteger && from.Bits == 16: {
-        if (!this.TryOperand(cast.Value, out var source))
-          return false;
-        var (lo, hi) = this.FreshPair(cast);
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, source], MovEffect(lo, source)));
-        if (cast.Op == IrCastOp.ZExt) {
-          var zero = new MOperand.Immediate(0);
-          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, zero], MovEffect(hi, zero)));
-          return true;
-        }
-        // sign-extend: copy the value and smear its sign bit over the whole high word
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, source], MovEffect(hi, source)));
-        this.EmitSignSmear(hi);
-        return true;
-      }
-      // A SINGLE reinterpreted as the integer of the same width, and back. The lowering emits this
-      // pair to clear a float's sign bit for ABS - `bitcast -> and 0x7FFFFFFF -> bitcast` - and the
-      // bit-twiddle is what --emit-c and --emit-llvm render, so the shape stays and the selector
-      // learns it rather than the middle end being changed to suit one target.
-      //
-      // The four-byte slot is the whole mechanism: an intermediate float lives in a TBYTE cell at the
-      // x87's own width, and its SINGLE bit pattern only exists once something stores it at four
-      // bytes. That is the same store PopRounded makes, for the same reason.
-      case IrCastOp.BitCast when from.IsFloat && from.Bits == 32 && IsWide(to): {
-        if (!this.TryFloatOperand(cast.Value, out var source))
-          return false;
-        this.EmitX87(MOpcode.Fld, source, reads: true);
-        var slot = this._function.StackSlots.Count;
-        this._function.StackSlots.Add(4);
-        this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(slot, MRegSize.Dword), reads: false);
-        var word = new MOperand.StackSlot(slot, MRegSize.Word);
-        var (lo, hi) = this.FreshPair(cast);
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, word], MovEffect(lo, word)));
-        var above = Shifted(word, 2);
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, above], MovEffect(hi, above)));
-        return true;
-      }
-      case IrCastOp.BitCast when from.IsInteger && IsWide(from) && to.IsFloat && to.Bits == 32: {
-        if (!this.TryOperandPair(cast.Value, out var low, out var high))
-          return false;
-        var slot = this._function.StackSlots.Count;
-        this._function.StackSlots.Add(4);
-        var word = new MOperand.StackSlot(slot, MRegSize.Word);
-        this.StoreWord(word, low);
-        this.StoreWord(Shifted(word, 2), high);
-        this.EmitX87(MOpcode.Fld, new MOperand.StackSlot(slot, MRegSize.Dword), reads: true);
-        this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
-        return true;
-      }
-      // The DOUBLE twin of the pair above, and simpler: a QUAD already lives in a qword frame cell,
-      // so the eight-byte store IS the result and no register pair is minted for it.
-      case IrCastOp.BitCast when from.IsFloat && from.Bits == 64 && IsQuad(to): {
-        if (!this.TryFloatOperand(cast.Value, out var source))
-          return false;
-        this.EmitX87(MOpcode.Fld, source, reads: true);
-        var slot = this._function.StackSlots.Count;
-        this._function.StackSlots.Add(8);
-        this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(slot, MRegSize.Qword), reads: false);
-        this._qslots[cast] = slot;
-        return true;
-      }
-      case IrCastOp.BitCast when from.IsInteger && IsQuad(from) && to.IsFloat && to.Bits == 64: {
-        if (!this.TryQwordSlot(cast.Value, out var source))
-          return false;
-        this.EmitX87(MOpcode.Fld, new MOperand.StackSlot(source, MRegSize.Qword), reads: true);
-        this.EmitX87(MOpcode.Fstp, this.FloatCell(cast), reads: false);
-        return true;
-      }
-      case IrCastOp.SExt or IrCastOp.ZExt when IsQuad(to) && IsWide(from):
-        return this.SelectWideToQword(cast);
-      // An INTEGER straight into a QUAD, which `q = q * 3 + n%` asks for. There are arms for 16->32
-      // and for 32->64 and this is neither, so it declined - and only with the OPTIMIZER OFF, because
-      // instcombine otherwise splits the widening into the two steps that do exist. The composition
-      // is the same one instcombine performs, done here so the shape does not depend on it.
-      case IrCastOp.SExt or IrCastOp.ZExt when IsQuad(to) && from.IsInteger && from.Bits == 16:
-        return this.SelectWordToQword(cast);
-      // A BYTE is the low half of the word already holding the value, so narrowing to one is a
-      // change of VIEW rather than of content: the same virtual register, named at byte width. That
-      // is the same reinterpretation the runtime-call staging does when it needs AL out of AX, and
-      // it is why no masking instruction is emitted - nothing above the low eight bits is readable
-      // through a byte-sized name.
-      case IrCastOp.Trunc when from.IsInteger && from.Bits == 16 && to.IsInteger && to.Bits <= 8: {
-        if (!this.TryOperand(cast.Value, out var source))
-          return false;
-        if (source is MOperand.Register word) {
-          this._vregs[cast] = word.Reg with { Size = MRegSize.Byte };
-          return true;
-        }
-        // a constant has no register to rename, so it is moved into one at byte width - the move is
+    var doneBlock = new MBlock($"{this._current.Label}.seldone{this._splitCount}"…4116 tokens truncated… // a constant has no register to rename, so it is moved into one at byte width - the move is
         // what the narrowing costs when the value did not arrive in a register to begin with
         var narrowed = this.FreshVreg(cast.Type);
         var dest = new MOperand.Register(narrowed);

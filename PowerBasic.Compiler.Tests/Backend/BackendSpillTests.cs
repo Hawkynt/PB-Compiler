@@ -97,7 +97,7 @@ public sealed class BackendSpillTests {
     return model;
   }
 
-  private static MFunction Select(string source, string function) {
+  private static X86MachineFunction Select(string source, string function) {
     var module = IrLowering.TryLowerModule(Bind(source));
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset");
     IrMiddleEndPipeline.Standard().RunOnModule(module!);
@@ -243,7 +243,7 @@ public sealed class BackendSpillTests {
     // right to keep it in a register and split nothing - which is what it does now that it asks
     // liveness rather than the interval hull whether a clobber touches anything.
     var value = MReg.Virtual(0);
-    var function = new MFunction("F") { VirtualRegisterCount = 1 };
+    var function = new X86MachineFunction("F") { VirtualRegisterCount = 1 };
     function.StackSlots.Add(2);
     var block = new MBlock("entry");
     block.Instructions.Add(new MInstr(MOpcode.Mov,
@@ -276,7 +276,7 @@ public sealed class BackendSpillTests {
   [CancelAfter(2_000)]
   public void Allocate_GivenReadModifyWriteDefinitionNeedsSplitting_ThenReloadsBeforeUpdating() {
     var value = MReg.Virtual(0);
-    var function = new MFunction("F") { VirtualRegisterCount = 1 };
+    var function = new X86MachineFunction("F") { VirtualRegisterCount = 1 };
     function.StackSlots.AddRange([2, 2, 2]);
     var block = new MBlock("entry");
     block.Instructions.Add(new MInstr(MOpcode.Mov,
@@ -306,7 +306,7 @@ public sealed class BackendSpillTests {
     var word = MReg.Virtual(0, MRegSize.Word);
     var lowByte = MReg.Virtual(0, MRegSize.Byte);
     var result = MReg.Virtual(1, MRegSize.Byte);
-    var function = new MFunction("F") { VirtualRegisterCount = 2 };
+    var function = new X86MachineFunction("F") { VirtualRegisterCount = 2 };
     var block = new MBlock("entry");
     block.Instructions.Add(new MInstr(MOpcode.Mov,
       [new MOperand.Register(word), new MOperand.Immediate(0)],

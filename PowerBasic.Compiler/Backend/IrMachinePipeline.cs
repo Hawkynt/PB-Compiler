@@ -9,7 +9,7 @@ public static class IrMachinePipeline {
   public static bool TrySelectFunction(
       IrFunction function,
       SelectionTarget target,
-      out MFunction? selected,
+      out X86MachineFunction? selected,
       out string? error) {
     return TrySelectFunction(function, new X86MachineLowering(target), out selected, out error);
   }
@@ -17,7 +17,7 @@ public static class IrMachinePipeline {
   public static bool TrySelectFunction(
       IrFunction function,
       IMachineFunctionLowerer lowerer,
-      out MFunction? selected,
+      out X86MachineFunction? selected,
       out string? error) {
     ArgumentNullException.ThrowIfNull(function);
     ArgumentNullException.ThrowIfNull(lowerer);
@@ -27,7 +27,7 @@ public static class IrMachinePipeline {
   /// <summary>Schedules and allocates a selected machine function, then applies late rewrites.</summary>
   public static bool TryAllocateFunction(
       IrFunction source,
-      MFunction selected,
+      X86MachineFunction selected,
       SelectionTarget target,
       out IrMachineFunction? machine,
       out string? error) {
@@ -36,7 +36,7 @@ public static class IrMachinePipeline {
 
   public static bool TryAllocateFunction(
       IrFunction source,
-      MFunction selected,
+      X86MachineFunction selected,
       IMachineFunctionLowerer lowerer,
       out IrMachineFunction? machine,
       out string? error) {

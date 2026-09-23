@@ -90,7 +90,7 @@ public sealed class BackendRegisterPressureTests {
     return model;
   }
 
-  private static MFunction Select(string source, string function) {
+  private static X86MachineFunction Select(string source, string function) {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset: " + why);
     IrMiddleEndPipeline.Standard().RunOnModule(module!);

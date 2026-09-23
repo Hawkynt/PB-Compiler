@@ -5,7 +5,7 @@ namespace PowerBasic.Compiler.Backend;
 /// <summary>Local machine-IR simplifications that require the final virtual-to-physical allocation.</summary>
 public static class PostRegisterAllocationPeepholes {
 
-  public static int Run(MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
+  public static int Run(X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     ArgumentNullException.ThrowIfNull(function);
     ArgumentNullException.ThrowIfNull(allocation);
     if (!MachineOptimizationState.IsMarked(function))
@@ -257,7 +257,7 @@ public static class PostRegisterAllocationPeepholes {
     => Resolve(left, allocation) is { } a && Resolve(right, allocation) is { } b && a == b && left.Size == right.Size;
 
   /// <summary>
-  /// Resolves the register exactly as <see cref="MachineEmitter"/> will emit it. The allocator stores a
+  /// Resolves the register exactly as <see cref="X86HostedTargetEmitter"/> will emit it. The allocator stores a
   /// byte virtual as its containing word register (AX/CX/DX/BX), but emission names the addressable low
   /// byte. Comparing the container here would miss self-copies such as <c>v:byte(AX) &lt;- AL</c> and,
   /// worse, could let the overwritten-copy rule delete the definition feeding that apparent copy.

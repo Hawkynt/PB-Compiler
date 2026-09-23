@@ -153,7 +153,7 @@ public sealed class BackendGlobalAccessTests {
     Assert.That(DataCells(firstMachine!), Is.Not.EquivalentTo(DataCells(secondMachine!)),
       "same-named STATIC locals in different procedures must not alias");
 
-    static IReadOnlyList<string> DataCells(MFunction fn) => fn.AllInstructions
+    static IReadOnlyList<string> DataCells(X86MachineFunction fn) => fn.AllInstructions
       .SelectMany(i => i.Operands)
       .OfType<MOperand.DataCell>()
       .Select(cell => cell.Name)

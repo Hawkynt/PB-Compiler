@@ -22,10 +22,10 @@ public static class MachineScheduler {
   private const int _registerFile = 6;
 
   /// <summary>Runs optimizer-gated combines for the conservative baseline target, then schedules.</summary>
-  public static void Schedule(MFunction function) => Schedule(function, SelectionTarget.Baseline);
+  public static void Schedule(X86MachineFunction function) => Schedule(function, SelectionTarget.Baseline);
 
   /// <summary>Runs optimizer-gated target combines, then reorders non-terminators by their dependencies.</summary>
-  public static void Schedule(MFunction function, SelectionTarget target) {
+  public static void Schedule(X86MachineFunction function, SelectionTarget target) {
     if (MachineOptimizationState.IsMarked(function)) {
       // O0348/O0349 live here rather than in selection: only after all IR instructions have become
       // one machine stream can a private TBYTE spill/reload pair be recognized. Run before any

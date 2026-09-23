@@ -69,7 +69,7 @@ public sealed class BackendPhiSwapTests {
   }
 
   /// <summary>Every register-to-register MOV the loop block ends with - the edge's copies.</summary>
-  private static List<MInstr> EdgeCopies(MFunction machine)
+  private static List<MInstr> EdgeCopies(X86MachineFunction machine)
     => [.. machine.Blocks.First(b => b.Label == "loop").Instructions
       .Where(i => i.Opcode == MOpcode.Mov
         && i.Operands is [MOperand.Register, MOperand.Register])];

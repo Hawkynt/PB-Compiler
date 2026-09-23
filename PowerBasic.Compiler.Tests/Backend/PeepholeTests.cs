@@ -55,19 +55,19 @@ public sealed class PeepholeTests {
     new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false),
     condition);
 
-  private static MFunction OneBlock(params MInstr[] instrs) {
-    var fn = new MFunction("t") { VirtualRegisterCount = 16 };
+  private static X86MachineFunction OneBlock(params MInstr[] instrs) {
+    var fn = new X86MachineFunction("t") { VirtualRegisterCount = 16 };
     var block = new MBlock("entry");
     block.Instructions.AddRange(instrs);
     fn.Blocks.Add(block);
     return fn;
   }
 
-  private static List<MInstr> Body(MFunction fn) => fn.Blocks[0].Instructions;
+  private static List<MInstr> Body(X86MachineFunction fn) => fn.Blocks[0].Instructions;
 
   /// <summary>A function of several blocks, laid out in the order given - which is the order the emitter uses.</summary>
-  private static MFunction Laid(params (string Label, MInstr[] Body)[] blocks) {
-    var fn = new MFunction("t") { VirtualRegisterCount = 16 };
+  private static X86MachineFunction Laid(params (string Label, MInstr[] Body)[] blocks) {
+    var fn = new X86MachineFunction("t") { VirtualRegisterCount = 16 };
     foreach (var (label, body) in blocks) {
       var block = new MBlock(label);
       block.Instructions.AddRange(body);

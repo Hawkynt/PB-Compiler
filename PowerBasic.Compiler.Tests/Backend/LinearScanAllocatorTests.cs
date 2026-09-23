@@ -41,7 +41,7 @@ public sealed class LinearScanAllocatorTests {
   public void Allocate_GivenValueLiveAcrossClobberingCall_ThenAvoidsCallerSavedRegisters() {
     // v0 = 5 ; CALL (clobbers AX/CX/DX) ; store v0  -- v0 is live across the call, so it must land in
     // a callee-saved register (BX/SI/DI), never one the call destroys
-    var fn = new MFunction("t");
+    var fn = new X86MachineFunction("t");
     var block = new MBlock("entry");
     block.Instructions.Add(new MInstr(MOpcode.Mov, [new MOperand.Register(MReg.Virtual(0)), new MOperand.Immediate(5)],
       new MInstrEffect([0], [], false, false, false, false)));
@@ -67,7 +67,7 @@ public sealed class LinearScanAllocatorTests {
   /// </summary>
   [Test]
   public void Allocate_GivenAValueCarriedInAxAcrossAnUnrelatedDefinition_ThenTheIntruderAvoidsAx() {
-    var fn = new MFunction("t");
+    var fn = new X86MachineFunction("t");
     var block = new MBlock("entry");
     var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
     block.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_lmul")], MInstrEffect.None,
@@ -116,7 +116,7 @@ public sealed class LinearScanAllocatorTests {
   /// It used to draw from the ordinary base set, where SI and DI are legal answers, and the only thing
   /// keeping <c>[SI+DI]</c> out of the corpus was that BX is the first addressing register the pool
   /// offers and no corpus function has two indexed bases live at once. Reaching the assembler with one
-  /// ENDS the compilation inside <c>MachineEmitter.EmitInstruction</c>, where nothing can decline.
+  /// ENDS the compilation inside <c>X86HostedTargetEmitter.EmitInstruction</c>, where nothing can decline.
   /// This is the mirror of the index-side defect the <c>_indexing</c> set was introduced for, and that
   /// one only appeared once rematerialization changed the pressure.
   /// </para>
@@ -129,7 +129,7 @@ public sealed class LinearScanAllocatorTests {
   /// </summary>
   [Test]
   public void Allocate_GivenAPlainBaseHoldingBx_ThenAnIndexedBaseIsNotGivenSiOrDi() {
-    var fn = new MFunction("t");
+    var fn = new X86MachineFunction("t");
     var block = new MBlock("entry");
     // v0 is an ordinary base and starts first, so it takes BX; v1 is an index, so it takes SI; v2 is
     // the base of an INDEXED operand and used to be offered whatever addressing register remained
@@ -165,7 +165,7 @@ public sealed class LinearScanAllocatorTests {
   }
 
   /// <summary>The physical base register of every indexed memory operand the function ends up with.</summary>
-  private static List<Reg> IndexedBasesOf(MFunction fn, IReadOnlyDictionary<int, Reg> allocation) {
+  private static List<Reg> IndexedBasesOf(X86MachineFunction fn, IReadOnlyDictionary<int, Reg> allocation) {
     var bases = new List<Reg>();
     foreach (var instr in fn.AllInstructions)
       foreach (var operand in instr.Operands)
@@ -181,7 +181,7 @@ public sealed class LinearScanAllocatorTests {
   /// </summary>
   [Test]
   public void Allocate_GivenOneIndexedBase_ThenItTakesBxAndTheIndexTakesSiOrDi() {
-    var fn = new MFunction("t");
+    var fn = new X86MachineFunction("t");
     var block = new MBlock("entry");
     for (var v = 0; v < 2; ++v)
       block.Instructions.Add(new MInstr(MOpcode.Mov,

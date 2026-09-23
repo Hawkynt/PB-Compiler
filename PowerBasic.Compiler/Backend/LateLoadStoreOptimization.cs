@@ -11,7 +11,7 @@ namespace PowerBasic.Compiler.Backend;
 /// </summary>
 public static class LateLoadStoreOptimization {
 
-  public static int Run(MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
+  public static int Run(X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     ArgumentNullException.ThrowIfNull(function);
     ArgumentNullException.ThrowIfNull(allocation);
     if (!MachineOptimizationState.TryGetFirstSpillSlot(function, out var firstSpillSlot))
@@ -158,7 +158,7 @@ public static class LateLoadStoreOptimization {
   };
 
   /// <summary>
-  /// Resolves the register exactly as <see cref="MachineEmitter"/> will name it. Byte virtuals are
+  /// Resolves the register exactly as <see cref="X86HostedTargetEmitter"/> will name it. Byte virtuals are
   /// allocated in AX/CX/DX/BX but emitted through their low-byte aliases AL/CL/DL/BL; keeping that
   /// distinction here is what lets the value facts participate in precise physical-alias tracking.
   /// </summary>

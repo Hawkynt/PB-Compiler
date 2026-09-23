@@ -117,7 +117,7 @@ public sealed class BackendDynamicArrayAliasTests {
   /// </summary>
   [Test]
   public void Allocate_GivenAValueDefinedBetweenACallAndItsResultMove_ThenItAvoidsTheResultRegister() {
-    var m = new MFunction("F");
+    var m = new X86MachineFunction("F");
     var entry = new MBlock("entry");
     m.Blocks.Add(entry);
     var intruder = new MOperand.Register(MReg.Virtual(0));

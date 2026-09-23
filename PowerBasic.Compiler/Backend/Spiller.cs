@@ -36,7 +36,7 @@ internal static class Spiller {
   /// <param name="Untouched">
   /// virtual registers still present that the spiller has not moved yet. Every move consumes its
   /// subject - the id is replaced everywhere by fresh ones, or by a memory cell - and every id a move
-  /// mints is recorded in <see cref="MFunction.MovedValues"/> at birth, so a first move on a value
+  /// mints is recorded in <see cref="X86MachineFunction.MovedValues"/> at birth, so a first move on a value
   /// lowers this by one and nothing can ever raise it.
   /// </param>
   /// <param name="Crossings">
@@ -56,7 +56,7 @@ internal static class Spiller {
   /// </param>
   internal readonly record struct Progress(int Untouched, int Crossings, int Unsettled, int Present) {
 
-    public static Progress Of(MFunction function) {
+    public static Progress Of(X86MachineFunction function) {
       var census = ValueCensus.Of(function);
       var present = new HashSet<int>();
       var mentioned = new List<int>();
@@ -109,7 +109,7 @@ internal static class Spiller {
   /// at a time then wants sixteen. Recomputing puts each back beside the one instruction that reads it.
   /// </para>
   /// </summary>
-  internal static bool RematerializeOne(MFunction function) {
+  internal static bool RematerializeOne(X86MachineFunction function) {
     if (TryReloadAddressArgument(function))
       return true;
 
@@ -203,7 +203,7 @@ internal static class Spiller {
   /// address equivalent of spilling an ordinary parameter directly to <see cref="MOperand.ParamCell"/>;
   /// the extra move exists only because an x86-16 memory base itself cannot be memory.
   /// </summary>
-  private static bool TryReloadAddressArgument(MFunction function) {
+  private static bool TryReloadAddressArgument(X86MachineFunction function) {
     var census = ValueCensus.Of(function);
     foreach (var load in function.ArgumentLoads.ToList()) {
       if (!IsAddressOnly(function, load.VirtualId))
@@ -238,7 +238,7 @@ internal static class Spiller {
   }
 
   /// <summary>True when every machine use is as an address base/index and nothing redefines it.</summary>
-  private static bool IsAddressOnly(MFunction function, int virtualId) {
+  private static bool IsAddressOnly(X86MachineFunction function, int virtualId) {
     var found = false;
     foreach (var instruction in function.AllInstructions) {
       var registers = LivenessAnalysis.RegistersOf(instruction);
@@ -358,7 +358,7 @@ internal static class Spiller {
     private readonly Dictionary<MInstr, (MBlock Block, int Index)> _positions =
       new(ReferenceEqualityComparer.Instance);
 
-    public static ValueCensus Of(MFunction function) {
+    public static ValueCensus Of(X86MachineFunction function) {
       var census = new ValueCensus();
       var mentioned = new List<int>();
       foreach (var block in function.Blocks)
@@ -524,7 +524,7 @@ internal static class Spiller {
   /// original. A fresh id is essential: liveness has one interval per id, so copying the same
   /// definition with the same destination would still leave one interval spanning all calls.
   /// </summary>
-  private static void Rematerialize(MFunction function, ValueCensus census, MInstr definition, int virtualId) {
+  private static void Rematerialize(X86MachineFunction function, ValueCensus census, MInstr definition, int virtualId) {
     var target = ((MOperand.Register)definition.Operands[0]).Reg;
     foreach (var block in function.Blocks)
       for (var i = block.Instructions.Count - 1; i >= 0; --i) {
@@ -596,7 +596,7 @@ internal static class Spiller {
   /// KIND to be tried, and a caller cannot try what it cannot name.
   /// </para>
   /// </summary>
-  internal static bool SplitCrossingOne(MFunction function) {
+  internal static bool SplitCrossingOne(X86MachineFunction function) {
     var clobbers = GetClobberIndices(function);
     return TrySplitLongest(function, ValueCensus.Of(function), LivenessAnalysis.Compute(function)
       .Where(interval => clobbers.Any(at => interval.Start < at && at < interval.End)));
@@ -615,7 +615,7 @@ internal static class Spiller {
   /// could only add another cell and another pair of moves.
   /// </para>
   /// </summary>
-  internal static bool SplitPressureOne(MFunction function)
+  internal static bool SplitPressureOne(X86MachineFunction function)
     => TrySplitLongest(function, ValueCensus.Of(function), LivenessAnalysis.Compute(function)
       .Where(interval => !function.MovedValues.Contains(interval.VirtualId)));
 
@@ -628,7 +628,7 @@ internal static class Spiller {
   /// illegal memory-to-memory MOV, while the explicit store/reloads are ordinary register-memory
   /// instructions.
   /// </summary>
-  private static bool TrySplitLongest(MFunction function, ValueCensus census,
+  private static bool TrySplitLongest(X86MachineFunction function, ValueCensus census,
       IEnumerable<LivenessAnalysis.LiveInterval> offered) {
     // A value the spiller has not moved yet is offered before one it has, whatever their lengths: taking
     // a range apart a second time is the move that may settle nothing at all, and the longest range in
@@ -711,7 +711,7 @@ internal static class Spiller {
   /// parameter spilling cannot handle a use that already has a memory operand, but an explicit reload
   /// keeps the eventual instruction register-memory and gives every use its own short live range.
   /// </summary>
-  private static bool TrySplitArgument(MFunction function, ValueCensus census, int virtualId,
+  private static bool TrySplitArgument(X86MachineFunction function, ValueCensus census, int virtualId,
       (int VirtualId, int ArgumentIndex, int ByteDelta) load) {
     if (function.AllInstructions.Any(instruction =>
           LivenessAnalysis.RegistersOf(instruction).Writes.Contains(virtualId)))
@@ -740,7 +740,7 @@ internal static class Spiller {
     return true;
   }
 
-  private static MRegSize? FindVirtualSize(MFunction function, int virtualId) {
+  private static MRegSize? FindVirtualSize(X86MachineFunction function, int virtualId) {
     MRegSize? result = null;
     foreach (var instruction in function.AllInstructions)
       foreach (var operand in instruction.Operands)
@@ -766,7 +766,7 @@ internal static class Spiller {
     => left is null || StorageBytes(right) > StorageBytes(left.Value) ? right : left.Value;
 
   /// <summary>Global instruction indices carrying a physical-register clobber.</summary>
-  private static List<int> GetClobberIndices(MFunction function) {
+  private static List<int> GetClobberIndices(X86MachineFunction function) {
     var result = new List<int>();
     var index = 0;
     foreach (var instruction in function.AllInstructions) {
@@ -778,7 +778,7 @@ internal static class Spiller {
   }
 
   /// <summary>Finds every compatible instruction defining a virtual value.</summary>
-  private static bool TryFindDefinitions(MFunction function, int virtualId, out List<MInstr> definitions,
+  private static bool TryFindDefinitions(X86MachineFunction function, int virtualId, out List<MInstr> definitions,
       out MReg target) {
     definitions = [];
     target = default;
@@ -801,7 +801,7 @@ internal static class Spiller {
       .OfType<MOperand.Register>()
       .FirstOrDefault(register => register.Reg.IsVirtual && register.Reg.VirtualId == virtualId);
 
-  internal static bool SpillOne(MFunction function) {
+  internal static bool SpillOne(X86MachineFunction function) {
     var length = new Dictionary<int, int>();
     foreach (var interval in LivenessAnalysis.Compute(function))
       length[interval.VirtualId] = interval.End - interval.Start;
@@ -843,7 +843,7 @@ internal static class Spiller {
   }
 
   /// <summary>True when every reference to the value is one the emitter can satisfy from memory.</summary>
-  private static bool CanSpill(MFunction function, int virtualId, bool isArgument) {
+  private static bool CanSpill(X86MachineFunction function, int virtualId, bool isArgument) {
     foreach (var instr in function.AllInstructions) {
       // a value used as a memory base/index needs a real register wherever it appears
       foreach (var operand in instr.Operands)
@@ -880,7 +880,7 @@ internal static class Spiller {
     return true;
   }
 
-  private static void Rewrite(MFunction function, int virtualId, MOperand cell) {
+  private static void Rewrite(X86MachineFunction function, int virtualId, MOperand cell) {
     foreach (var block in function.Blocks)
       for (var i = 0; i < block.Instructions.Count; ++i) {
         var instr = block.Instructions[i];

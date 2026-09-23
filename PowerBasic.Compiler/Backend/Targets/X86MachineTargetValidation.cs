@@ -4,7 +4,7 @@ namespace PowerBasic.Compiler.Backend.Targets;
 
 /// <summary>Validates that a selected x86 machine function belongs to the target consuming it.</summary>
 public static class X86MachineTargetValidation {
-  public static bool TryValidate(MFunction function, MachineTargetDescription target,
+  public static bool TryValidate(X86MachineFunction function, MachineTargetDescription target,
       out string? error) {
     ArgumentNullException.ThrowIfNull(function);
     var expected = target.PointerBits switch {

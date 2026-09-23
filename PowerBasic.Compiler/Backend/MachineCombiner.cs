@@ -10,10 +10,10 @@ namespace PowerBasic.Compiler.Backend;
 public static class MachineCombiner {
 
   /// <summary>Combines selected x86 instruction windows for the conservative baseline target.</summary>
-  public static int Run(MFunction function) => Run(function, SelectionTarget.Baseline);
+  public static int Run(X86MachineFunction function) => Run(function, SelectionTarget.Baseline);
 
   /// <summary>Combines selected x86 instruction windows without increasing virtual-register pressure.</summary>
-  public static int Run(MFunction function, SelectionTarget target) {
+  public static int Run(X86MachineFunction function, SelectionTarget target) {
     ArgumentNullException.ThrowIfNull(function);
     var addressValues = AddressConstrainedValues(function);
     var blocksByLabel = function.Blocks.ToDictionary(block => block.Label, StringComparer.Ordinal);
@@ -37,7 +37,7 @@ public static class MachineCombiner {
   /// or definitions anywhere in the function, so this cannot silently widen an ordinary LONG value
   /// that the rest of the backend still represents as a pair.
   /// </summary>
-  private static int CombineDwordCopies(MFunction function, MBlock block,
+  private static int CombineDwordCopies(X86MachineFunction function, MBlock block,
       IReadOnlyDictionary<int, int> reads, IReadOnlyDictionary<int, int> writes) {
     var changed = 0;
     for (var i = 0; i + 3 < block.Instructions.Count; ++i) {
@@ -137,7 +137,7 @@ public static class MachineCombiner {
     }
   }
 
-  private static (Dictionary<int, int> Reads, Dictionary<int, int> Writes) RegisterCensus(MFunction function) {
+  private static (Dictionary<int, int> Reads, Dictionary<int, int> Writes) RegisterCensus(X86MachineFunction function) {
     var reads = new Dictionary<int, int>();
     var writes = new Dictionary<int, int>();
     foreach (var instruction in function.AllInstructions) {
@@ -199,7 +199,7 @@ public static class MachineCombiner {
     return changed;
   }
 
-  private static HashSet<int> AddressConstrainedValues(MFunction function) {
+  private static HashSet<int> AddressConstrainedValues(X86MachineFunction function) {
     var values = new HashSet<int>();
     foreach (var instruction in function.AllInstructions)
       foreach (var memory in instruction.Operands.OfType<MOperand.Memory>()) {

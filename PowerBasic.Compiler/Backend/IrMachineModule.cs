@@ -6,7 +6,7 @@ namespace PowerBasic.Compiler.Backend;
 /// <summary>The selected and allocated representation of one IR function.</summary>
 public sealed record IrMachineFunction(
     Ir.IrFunction Source,
-    MFunction Function,
+    X86MachineFunction Function,
     IReadOnlyDictionary<int, Reg> Allocation,
     MachineTargetDescription Target,
     X86TargetMachineFunction? HostedFunction = null);

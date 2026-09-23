@@ -90,7 +90,7 @@ public sealed class BackendCallRoutingTests {
     Assert.That(allocation, Is.Not.Null, $"allocation declined: {allocationReason}");
 
     var asm = new Assembler();
-    MachineEmitter.EmitFunction(asm, selected, allocation!, [6, 4], 4);
+    X86HostedTargetEmitter.EmitFunction(asm, selected, allocation!, [6, 4], 4);
     var bytes = asm.ToArray();
 
     Assert.That(Contains(bytes, 0xFF, 0xD3), Is.True,
@@ -133,7 +133,7 @@ public sealed class BackendCallRoutingTests {
     var asm = new Assembler();
     var parameterOffsets = Enumerable.Range(0, parameters.Count)
       .Select(i => 4 + (parameters.Count - i - 1) * 2).ToArray();
-    MachineEmitter.EmitFunction(asm, selected, allocation!, parameterOffsets, parameters.Count * 2);
+    X86HostedTargetEmitter.EmitFunction(asm, selected, allocation!, parameterOffsets, parameters.Count * 2);
 
     Assert.That(Contains(asm.ToArray(), 0xFF, 0xD6), Is.True,
       "CALL SI must encode as the 8086 near-indirect FF /2 form");

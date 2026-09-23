@@ -83,7 +83,7 @@ public sealed class BackendDivisionTests {
   }
 
   // the physical register the MOV right after the IDIV copies the result out of
-  private static Reg ResultRegister(MFunction m) {
+  private static Reg ResultRegister(X86MachineFunction m) {
     var instrs = m.AllInstructions.ToList();
     var after = instrs.SkipWhile(i => i.Opcode != MOpcode.Idiv).Skip(1);
     return after.Select(i => i.Operands.Count > 1 ? i.Operands[1] : null)

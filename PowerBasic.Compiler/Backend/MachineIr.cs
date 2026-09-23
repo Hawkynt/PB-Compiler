@@ -398,7 +398,7 @@ public sealed class MBlock(string label) {
 }
 
 /// <summary>A machine function: its blocks, the number of virtual registers selection minted, and the stack-slot table.</summary>
-public sealed class MFunction(string name) {
+public sealed class X86MachineFunction(string name) {
   public string Name { get; } = name;
   public MachineTargetFamily TargetFamily { get; set; } = MachineTargetFamily.X86_16;
   public List<MBlock> Blocks { get; } = [];
@@ -455,8 +455,8 @@ public sealed class MFunction(string name) {
   /// objective's coalescing may cost an allocation the un-coalesced function had, and a decline is not
   /// an acceptable price for a code-quality transform.
   /// </summary>
-  public MFunction Clone() {
-    var copy = new MFunction(this.Name) {
+  public X86MachineFunction Clone() {
+    var copy = new X86MachineFunction(this.Name) {
       VirtualRegisterCount = this.VirtualRegisterCount,
       HasArgumentPlan = this.HasArgumentPlan,
       TargetFamily = this.TargetFamily,
@@ -474,7 +474,7 @@ public sealed class MFunction(string name) {
   }
 
   /// <summary>Takes over another function's blocks and frame - how a discarded-or-kept transform commits.</summary>
-  public void Adopt(MFunction other) {
+  public void Adopt(X86MachineFunction other) {
     ArgumentNullException.ThrowIfNull(other);
     this.VirtualRegisterCount = other.VirtualRegisterCount;
     this.HasArgumentPlan = other.HasArgumentPlan;

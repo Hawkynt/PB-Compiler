@@ -203,7 +203,7 @@ public sealed class BackendRuntimeCallTests {
     return module;
   }
 
-  private static MFunction Select(string source, string function) {
+  private static X86MachineFunction Select(string source, string function) {
     var fn = Optimized(source).Functions.First(f => f.Name.Equals(function, StringComparison.OrdinalIgnoreCase));
     var m = InstructionSelector.TrySelect(fn, out var reason);
     Assert.That(m, Is.Not.Null, $"{function} declined: {reason}");

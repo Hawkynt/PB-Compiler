@@ -1,17 +1,18 @@
 using PowerBasic.Compiler.Asm;
+using PowerBasic.Compiler.Backend;
 
-namespace PowerBasic.Compiler.Backend;
+namespace PowerBasic.Compiler.Backend.Targets;
 
 /// <summary>
 /// Stage 5 of the x86-16 back end (docs/X86-BACKEND.md): emission. Given a selected
-/// <see cref="MFunction"/> and the linear-scan allocation (stage 4), it rewrites every virtual
+/// <see cref="X86MachineFunction"/> and the linear-scan allocation (stage 4), it rewrites every virtual
 /// register operand to its physical register, resolves each stack slot to a <c>[BP+disp]</c> frame
 /// cell, and emits the instruction through the existing <see cref="Assembler"/> - so encoding, length
 /// and fixups are handled there (no byte patching, the reason the asm-IL layer avoids the byte-level
 /// renaming walls). This emits the instruction body; the calling-convention prologue/epilogue and the
 /// wiring into the whole-program codegen are the integration step that follows.
 /// </summary>
-public sealed class MachineEmitter {
+public sealed class X86HostedTargetEmitter {
 
   private readonly Assembler _asm;
   private readonly IReadOnlyDictionary<int, Reg> _allocation;
@@ -21,7 +22,7 @@ public sealed class MachineEmitter {
   private readonly Func<string, Mem?>? _resolveData;
   private readonly int[] _paramOffsets;
 
-  private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
+  private X86HostedTargetEmitter(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation,
       Func<string, Label?>? resolveCallee = null, Func<string, Mem?>? resolveData = null,
       int[]? paramOffsets = null, int registerSpillBytes = 0) {
     PostRegisterAllocationPeepholes.Run(function, allocation);
@@ -51,8 +52,8 @@ public sealed class MachineEmitter {
   }
 
   /// <summary>Emits the body of <paramref name="function"/> into <paramref name="asm"/> using the given register allocation.</summary>
-  public static void Emit(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
-    var emitter = new MachineEmitter(asm, function, allocation);
+  public static void Emit(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation) {
+    var emitter = new X86HostedTargetEmitter(asm, function, allocation);
     foreach (var block in function.Blocks) {
       asm.MarkLabel(emitter._labels[block.Label]);
       foreach (var instr in block.Instructions)
@@ -98,13 +99,13 @@ public sealed class MachineEmitter {
   /// The optimized IR proved that the function owns no fixed local stack storage. The emitter still
   /// re-checks the final machine function and target ABI before acting on that proof.
   /// </param>
-  public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
+  public static void EmitFunction(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation,
       int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
       Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null, bool alignLoops = false,
       bool allowFrameElision = false, IReadOnlyList<Asm.Reg>? registerSpills = null,
       Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null) {
     var spills = registerSpills ?? [];
-    var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets,
+    var emitter = new X86HostedTargetEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets,
       registerSpillBytes: spills.Count * 2) { _emitInlineAsm = emitInlineAsm };
     var loopHeaders = alignLoops ? FindLoopHeaders(function) : null;
     var elideFrame = CanElideFrame(function, allowFrameElision && spills.Count == 0);
@@ -227,7 +228,7 @@ public sealed class MachineEmitter {
   /// A parameter that remains a <see cref="MOperand.ParamCell"/> in the body still needs BP throughout,
   /// as does any alloca/spill slot or inline assembly.
   /// </summary>
-  private static bool CanElideFrame(MFunction function, bool requested) {
+  private static bool CanElideFrame(X86MachineFunction function, bool requested) {
     if (!requested || function.StackSlots.Count != 0)
       return false;
     foreach (var instruction in function.AllInstructions) {
@@ -243,7 +244,7 @@ public sealed class MachineEmitter {
   /// Finds loop headers from machine layout: a successor at or before its predecessor is a backward
   /// edge, and its target is the block a repeated iteration re-enters.
   /// </summary>
-  private static HashSet<string> FindLoopHeaders(MFunction function) {
+  private static HashSet<string> FindLoopHeaders(X86MachineFunction function) {
     var positions = function.Blocks
       .Select((block, index) => (block.Label, Index: index))
       .ToDictionary(item => item.Label, item => item.Index, StringComparer.Ordinal);
@@ -282,7 +283,7 @@ public sealed class MachineEmitter {
     foreach (var operand in instr.Operands)
       if (operand is MOperand.Memory { SegmentCell: { } name }) {
         if (cell is not null && cell != name)
-          throw new BackendInvariantException("MachineEmitter.LoadSegmentOverride",
+          throw new BackendInvariantException("X86HostedTargetEmitter.LoadSegmentOverride",
             $"one instruction is relative to both {cell} and {name}, and ES can only hold one - "
               + "InstructionSelector.SegmentCellOf names a single cell (rt_arrseg), so two operands "
               + "of one instruction can never disagree about it");
@@ -422,7 +423,7 @@ public sealed class MachineEmitter {
             asm.Call(this.Mem(ops[0]));
             break;
           default:
-            throw new BackendInvariantException("MachineEmitter.EmitInstruction",
+            throw new BackendInvariantException("X86HostedTargetEmitter.EmitInstruction",
               $"CALL target {ops[0]} is neither a direct code label nor a word register/memory operand");
         }
         break;
@@ -474,7 +475,7 @@ public sealed class MachineEmitter {
       case MOpcode.InlineAsm: this.EmitInlineAsm(asm, instr); break;
       // Not a decline: the selector is the only producer of machine instructions, and every MOpcode it
       // constructs has an arm above. Mul, Div and Pop are declared and never built.
-      default: throw new BackendInvariantException("MachineEmitter.EmitInstruction",
+      default: throw new BackendInvariantException("X86HostedTargetEmitter.EmitInstruction",
         $"machine opcode {instr.Opcode} has no emission arm, and only this back end's own selector, "
           + "peephole and spiller construct one");
     }
@@ -586,7 +587,7 @@ public sealed class MachineEmitter {
       switch (this.ToSource(src)) {
         case Reg s: mr(m, s); break;
         case Imm i: mi(m, i); break;
-        default: throw new BackendInvariantException("MachineEmitter.Emit2",
+        default: throw new BackendInvariantException("X86HostedTargetEmitter.Emit2",
           $"{dest} <- {src} is memory to memory - InstructionSelector.TryOperand yields only "
             + "Immediate/DataOffset/LabelRef/Register, and Spiller.CanSpill refuses an instruction that "
             + "already carries a cell");
@@ -604,7 +605,7 @@ public sealed class MachineEmitter {
     MOperand.LabelRef label => Imm.OffsetOf(this.ResolveCallee(label.Name)),
     // InlineAsmText and BlockAddressTable are the unhandled kinds, and each occupies a fixed position
     // of an opcode EmitInstruction dispatches before it reaches here.
-    _ => throw new BackendInvariantException("MachineEmitter.ToSource",
+    _ => throw new BackendInvariantException("X86HostedTargetEmitter.ToSource",
       $"operand {operand} is in a source position, where the selector emits only "
         + "Register/Immediate/Memory/StackSlot/DataCell/ParamCell/DataOffset/BlockOffset/LabelRef"),
   };
@@ -624,7 +625,7 @@ public sealed class MachineEmitter {
     var resolved = this.ResolveData(name);
     return resolved.Displacement == 0
       ? resolved.Label!
-      : throw new BackendInvariantException("MachineEmitter.DataLabel",
+      : throw new BackendInvariantException("X86HostedTargetEmitter.DataLabel",
         $"data object '{name}' resolved to a cell {resolved.Displacement} bytes past its label, and "
           + "an OFFSET has nowhere to carry that - every arm of CodeGenerator.ResolveDataCell answers "
           + "with displacement zero");
@@ -636,14 +637,14 @@ public sealed class MachineEmitter {
   /// </summary>
   private Label ResolveCallee(string name)
     => this._resolveCallee is { } resolve
-      ? resolve(name) ?? throw new BackendInvariantException("MachineEmitter.ResolveCallee",
+      ? resolve(name) ?? throw new BackendInvariantException("X86HostedTargetEmitter.ResolveCallee",
           $"no label for callee '{name}' - CodeGenerator routing admits a function address or direct "
             + "call only when that procedure has a code label")
       : this._asm.Lbl(name);
 
   private Mem ResolveData(string name)
     => this._resolveData?.Invoke(name)
-       ?? throw new BackendInvariantException("MachineEmitter.ResolveData",
+       ?? throw new BackendInvariantException("X86HostedTargetEmitter.ResolveData",
          $"no data cell for global '{name}' - CodeGenerator.DataGlobalsResolve asks the same resolver "
            + "about every global a function names before that function is allowed to route");
 
@@ -667,7 +668,7 @@ public sealed class MachineEmitter {
 
   private void EmitInlineAsm(Assembler asm, MInstr instr) {
     if (instr.Operands.Count == 0 || instr.Operands[0] is not MOperand.InlineAsmText descriptor)
-      throw new BackendInvariantException("MachineEmitter.EmitInlineAsm",
+      throw new BackendInvariantException("X86HostedTargetEmitter.EmitInlineAsm",
         "an MOpcode.InlineAsm instruction has no MOperand.InlineAsmText descriptor - "
           + "InstructionSelector.SelectInlineAsm puts it at operand 0 and nothing removes it");
 
@@ -693,7 +694,7 @@ public sealed class MachineEmitter {
     // failure here means the two resolvers disagreed about a name - which is a defect in this back end
     // rather than a construct it does not cover.
     if (!new TextAssembler(asm).TryParse(descriptor.Text, resolver, out var error))
-      throw new BackendInvariantException("MachineEmitter.EmitInlineAsm",
+      throw new BackendInvariantException("X86HostedTargetEmitter.EmitInlineAsm",
         $"inline asm '{descriptor.Text.Trim()}' assembled at selection and not at emission: {error}");
   }
 
@@ -730,7 +731,7 @@ public sealed class MachineEmitter {
       Asm.Reg.BX => Asm.Reg.BL,
       // LinearScanAllocator.ByteRegisters marks every vreg named at byte width anywhere and LegalFor
       // then offers it only AX/CX/DX/BX; the byte-sized physicals the selector pins are CL and AL
-      _ => throw new BackendInvariantException("MachineEmitter.Resolve",
+      _ => throw new BackendInvariantException("X86HostedTargetEmitter.Resolve",
         $"a byte value was allocated {physical}, which has no addressable low byte on an 8086 - "
           + "the allocator offers a byte-sized value only AX, CX, DX and BX"),
     };
@@ -748,7 +749,7 @@ public sealed class MachineEmitter {
     MOperand.Memory m when m.Index is { } x => Segmented(Sized(Asm.Mem.At(this.Resolve(m.Base!.Value), this.Resolve(x), m.Disp), m.Size), m),
     MOperand.Memory m when m.Base is { } b => Segmented(Sized(Asm.Mem.At(this.Resolve(b), m.Disp), m.Size), m),
     MOperand.Memory m => Segmented(Sized(Asm.Mem.At(m.Disp), m.Size), m),
-    _ => throw new BackendInvariantException("MachineEmitter.Mem",
+    _ => throw new BackendInvariantException("X86HostedTargetEmitter.Mem",
       $"operand {operand} is in a memory position - every caller reaches here only after the operand "
         + "failed an `is MOperand.Register` test or came from a selector site that supplies a cell"),
   };

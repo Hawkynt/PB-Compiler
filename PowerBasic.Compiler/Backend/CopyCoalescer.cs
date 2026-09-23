@@ -50,7 +50,7 @@ namespace PowerBasic.Compiler.Backend;
 internal static class CopyCoalescer {
 
   /// <summary>Merges what it can prove, and answers how many copies it removed.</summary>
-  internal static int Run(MFunction function) {
+  internal static int Run(X86MachineFunction function) {
     var removed = 0;
     // one merge invalidates every liveness fact, so each round re-measures; the bound is the number of
     // copies, since each round removes at least one
@@ -97,7 +97,7 @@ internal static class CopyCoalescer {
   /// the first instruction. That definition is not an instruction, so the rule below cannot see it and
   /// would merge across a write it does not know happens.
   /// </summary>
-  private static HashSet<int> ArgumentRegisters(MFunction function) {
+  private static HashSet<int> ArgumentRegisters(X86MachineFunction function) {
     var pinned = new HashSet<int>();
     foreach (var (virtualId, _, _) in function.ArgumentLoads)
       pinned.Add(virtualId);
@@ -108,7 +108,7 @@ internal static class CopyCoalescer {
   /// Whether <paramref name="a"/> and <paramref name="b"/> may become one register: no definition of
   /// either lands where the other is still live, the copies between them excepted.
   /// </summary>
-  private static bool CanMerge(MFunction function, LivenessAnalysis.Liveness liveness, int a, int b) {
+  private static bool CanMerge(X86MachineFunction function, LivenessAnalysis.Liveness liveness, int a, int b) {
     var after = liveness.LiveAfter;
     foreach (var (index, instr) in Numbered(function)) {
       // an inline-asm block's operands ARE its BASIC names' machine locations, so two names sharing a
@@ -148,7 +148,7 @@ internal static class CopyCoalescer {
     => register is { IsVirtual: true, VirtualId: var v } && (v == a || v == b);
 
   /// <summary>Rewrites every mention of <paramref name="from"/> as <paramref name="to"/> and drops the copies that became no-ops.</summary>
-  private static int Merge(MFunction function, int from, int to) {
+  private static int Merge(X86MachineFunction function, int from, int to) {
     var removed = 0;
     foreach (var block in function.Blocks) {
       for (var i = block.Instructions.Count - 1; i >= 0; --i) {
@@ -195,7 +195,7 @@ internal static class CopyCoalescer {
   private static MReg? RewriteRegister(MReg? register, int from, int to)
     => register is { IsVirtual: true, VirtualId: var v } && v == from ? register.Value with { VirtualId = to } : register;
 
-  private static IEnumerable<(int Index, MInstr Instr)> Numbered(MFunction function) {
+  private static IEnumerable<(int Index, MInstr Instr)> Numbered(X86MachineFunction function) {
     var index = 0;
     foreach (var block in function.Blocks)
       foreach (var instr in block.Instructions)

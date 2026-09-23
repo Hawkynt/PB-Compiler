@@ -81,7 +81,7 @@ public static class Peephole {
     MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor;
 
   /// <summary>Rewrites the idioms above in place; the number of rewrites made.</summary>
-  public static int Run(MFunction function) {
+  public static int Run(X86MachineFunction function) {
     ArgumentNullException.ThrowIfNull(function);
     MachineOptimizationState.Mark(function);
     var total = 0;
@@ -119,7 +119,7 @@ public static class Peephole {
   /// </summary>
   private sealed record Census(Dictionary<int, int> Defs, Dictionary<int, int> Uses) {
 
-    public static Census Of(MFunction function) {
+    public static Census Of(X86MachineFunction function) {
       var defs = new Dictionary<int, int>();
       var uses = new Dictionary<int, int>();
       foreach (var instr in function.AllInstructions) {
@@ -469,7 +469,7 @@ public static class Peephole {
 
   /// <summary>
   /// The two rewrites that follow from the block ORDER, which is the order
-  /// <see cref="MachineEmitter"/> lays the blocks out in and therefore the order the labels land in:
+  /// <see cref="X86HostedTargetEmitter"/> lays the blocks out in and therefore the order the labels land in:
   /// a <c>JMP</c> to the block laid out next is the fallthrough and is deleted, and a
   /// <c>Jcc next / JMP away</c> pair is <c>J!cc away</c>. Both leave the successor set alone - the
   /// same two blocks are reachable on the same two conditions - and neither can be done during
@@ -482,7 +482,7 @@ public static class Peephole {
   /// deleted one takes nothing with it that the instruction in front of it does not still say.
   /// </para>
   /// </summary>
-  private static int StraightenBranches(MFunction function) {
+  private static int StraightenBranches(X86MachineFunction function) {
     var made = 0;
     for (var b = 0; b + 1 < function.Blocks.Count; ++b) {
       var body = function.Blocks[b].Instructions;

@@ -11,7 +11,7 @@ public static class SuperoptimizedPeepholes {
   private static readonly IReadOnlyDictionary<SourcePattern, Candidate> _catalog = DiscoverCatalog();
 
   /// <summary>Applies exhaustively verified replacements whose flag differences are unobservable.</summary>
-  public static int Run(MFunction function) {
+  public static int Run(X86MachineFunction function) {
     ArgumentNullException.ThrowIfNull(function);
     var changed = 0;
     foreach (var block in function.Blocks)

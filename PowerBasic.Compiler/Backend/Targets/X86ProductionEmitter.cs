@@ -57,7 +57,7 @@ internal static class X86DosMachineEmitter {
       bool allowFrameElision,
       IReadOnlyList<Reg>? registerSpills,
       Func<string, IAsmSymbolResolver, bool>? emitInlineAsm)
-    => MachineEmitter.EmitFunction(assembler, function, parameterOffsets, calleeCleanupBytes,
+    => X86HostedTargetEmitter.EmitFunction(assembler, function, parameterOffsets, calleeCleanupBytes,
       calleeLabel, dataCellOf, emitEpilogue, alignLoops, allowFrameElision, registerSpills,
       emitInlineAsm);
 }

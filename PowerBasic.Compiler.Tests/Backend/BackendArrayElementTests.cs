@@ -314,7 +314,7 @@ public sealed class BackendArrayElementTests {
   /// </summary>
   [Test]
   public void Allocate_GivenAPairReturnedThroughDxAx_ThenNeitherHalfLivesInTheOthersRegister() {
-    var m = new MFunction("F");
+    var m = new X86MachineFunction("F");
     var entry = new MBlock("entry");
     m.Blocks.Add(entry);
     var lo = new MOperand.Register(MReg.Virtual(0));

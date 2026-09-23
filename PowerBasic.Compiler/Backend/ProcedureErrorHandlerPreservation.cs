@@ -23,7 +23,7 @@ public static class ProcedureErrorHandlerPreservation {
   private static readonly string[] _cells = ["rt_onerr", "rt_onerr_bp", "rt_onerr_sp"];
 
   /// <summary>Adds entry save and return restore sequences. Returns the number of inserted instructions.</summary>
-  public static int Run(MFunction function) {
+  public static int Run(X86MachineFunction function) {
     if (function.Blocks.Count == 0)
       return 0;
 
@@ -58,7 +58,7 @@ public static class ProcedureErrorHandlerPreservation {
     return inserted;
   }
 
-  private static MOperand.Register Scratch(MFunction function)
+  private static MOperand.Register Scratch(X86MachineFunction function)
     => new(MReg.Virtual(function.VirtualRegisterCount++, MRegSize.Word));
 
   private static MInstr Load(MOperand.Register destination, MOperand source)

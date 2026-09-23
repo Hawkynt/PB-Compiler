@@ -11,34 +11,34 @@ namespace PowerBasic.Compiler.Backend.Targets;
 public interface IMachineFunctionLowerer {
   MachineTargetDescription Target { get; }
 
-  bool TrySelect(IrFunction function, out MFunction? selected, out string? error);
+  bool TrySelect(IrFunction function, out X86MachineFunction? selected, out string? error);
 
-  bool TryAllocate(IrFunction source, MFunction selected,
+  bool TryAllocate(IrFunction source, X86MachineFunction selected,
       out IrMachineFunction? machine, out string? error);
 }
 
 /// <summary>x86 instruction selection owned by the x86 target, not by the generic machine pipeline.</summary>
-public sealed class X86MachineSelector(SelectionTarget target) : IMachineSelector<MFunction> {
-  public MFunction? TrySelect(IrFunction function, out string? declineReason)
+public sealed class X86MachineSelector(SelectionTarget target) : IMachineSelector<X86MachineFunction> {
+  public X86MachineFunction? TrySelect(IrFunction function, out string? declineReason)
     => InstructionSelector.TrySelect(function, out declineReason, target);
 }
 
 /// <summary>x86 register allocation owned by the x86 target.</summary>
 public sealed class X86MachineAllocator(SelectionTarget target)
-    : IMachineAllocator<MFunction, IReadOnlyDictionary<int, Reg>> {
-  public IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function, out string? declineReason)
+    : IMachineAllocator<X86MachineFunction, IReadOnlyDictionary<int, Reg>> {
+  public IReadOnlyDictionary<int, Reg>? TryAllocate(X86MachineFunction function, out string? declineReason)
     => LinearScanAllocator.Allocate(function, target, out declineReason);
 }
 
 /// <summary>x86 machine scheduling owned by the x86 target.</summary>
-public sealed class X86MachineScheduler(SelectionTarget target) : IMachineScheduler<MFunction> {
-  public void Schedule(MFunction function) => MachineScheduler.Schedule(function, target);
+public sealed class X86MachineScheduler(SelectionTarget target) : IMachineScheduler<X86MachineFunction> {
+  public void Schedule(X86MachineFunction function) => MachineScheduler.Schedule(function, target);
 }
 
 /// <summary>x86 rewrites that require the final physical-register assignment.</summary>
 public sealed class X86MachinePostAllocation
-    : IMachinePostAllocation<MFunction, IReadOnlyDictionary<int, Reg>> {
-  public void Run(MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
+    : IMachinePostAllocation<X86MachineFunction, IReadOnlyDictionary<int, Reg>> {
+  public void Run(X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     PostRegisterAllocationPeepholes.Run(function, allocation);
     LateLoadStoreOptimization.Run(function, allocation);
   }
@@ -64,7 +64,7 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
 
   public MachineTargetDescription Target { get; }
 
-  public bool TrySelect(IrFunction function, out MFunction? selected, out string? error) {
+  public bool TrySelect(IrFunction function, out X86MachineFunction? selected, out string? error) {
     ArgumentNullException.ThrowIfNull(function);
     selected = null;
     if (function.IsDeclaration || function.Entry is null) {
@@ -85,7 +85,7 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
     return true;
   }
 
-  public bool TryAllocate(IrFunction source, MFunction selected,
+  public bool TryAllocate(IrFunction source, X86MachineFunction selected,
       out IrMachineFunction? machine, out string? error) {
     ArgumentNullException.ThrowIfNull(source);
     ArgumentNullException.ThrowIfNull(selected);
