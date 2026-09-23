@@ -207,6 +207,11 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           bytes.AddRange(registerMemoryBytes);
           AddAddressRelocation(registerMemoryAddress, offset, registerMemoryBytes.Length);
           break;
+        case X86TargetOpcode.Adc or X86TargetOpcode.Sbb when instruction.Address is { } carryMemoryAddress:
+          var carryOpcode = instruction.Opcode == X86TargetOpcode.Adc ? 0x11 : 0x19;
+          var carryBytes = encoder.AluMemory(instruction.Registers[0], carryMemoryAddress, carryOpcode, load: false);
+          bytes.AddRange(carryBytes); AddAddressRelocation(carryMemoryAddress, offset, carryBytes.Length);
+          break;
         case X86TargetOpcode.MoveSymbolAddress when instruction.Symbol is { Length: > 0 } addressSymbol:
           var addressBytes = encoder.MoveImmediate(instruction.Registers[0], 0);
           bytes.AddRange(addressBytes);
@@ -218,6 +223,13 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           var shiftMemoryBytes = encoder.ShiftMemoryCount(memoryShiftAddress, checked((int)instruction.Immediate));
           bytes.AddRange(shiftMemoryBytes);
           AddAddressRelocation(memoryShiftAddress, offset, shiftMemoryBytes.Length);
+          break;
+        case X86TargetOpcode.MemoryShiftImmediate when instruction.Address is { } immediateShiftAddress:
+          var immediateShiftExtension = checked((int)(instruction.Operands?.OfType<X86TargetOperand.Immediate>().FirstOrDefault()?.Value ?? 4));
+          var immediateShiftBytes = encoder.ShiftMemory(immediateShiftAddress, immediateShiftExtension,
+            checked((int)instruction.Immediate));
+          bytes.AddRange(immediateShiftBytes);
+          AddAddressRelocation(immediateShiftAddress, offset, immediateShiftBytes.Length);
           break;
         case X86TargetOpcode.Mov when instruction.Address is { } storeAddress && instruction.Immediate == 1:
           var storeBytes = encoder.MoveMemory(instruction.Registers[0], storeAddress, load: false);
@@ -295,6 +307,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           break;
         case X86TargetOpcode.Test when instruction.Registers.Count >= 2:
           bytes.AddRange(encoder.AluRegister(instruction.Registers[0], instruction.Registers[1], 0x85));
+          break;
+        case X86TargetOpcode.Test when instruction.Registers.Count == 1:
+          bytes.AddRange(encoder.TestImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
         case X86TargetOpcode.Adc when instruction.Registers.Count >= 2:
           bytes.AddRange(encoder.AluRegister(instruction.Registers[0], instruction.Registers[1], 0x11));

@@ -219,6 +219,19 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   public byte[] AdcImmediate(MachineRegister destination, int value)
     => AluImmediate(destination, value, extension: 2);
 
+  public byte[] TestImmediate(MachineRegister destination, int value) {
+    Validate(destination);
+    var bytes = new List<byte>();
+    if (mode == X86Mode.Bit64 && destination.Bits == 64)
+      bytes.Add(0x48);
+    else if (destination.Bits == 16 && mode != X86Mode.Bit16)
+      bytes.Add(0x66);
+    bytes.Add(0xF7);
+    bytes.Add((byte)(0xC0 | destination.Encoding));
+    bytes.AddRange(destination.Bits <= 16 ? BitConverter.GetBytes((ushort)value) : BitConverter.GetBytes(value));
+    return [.. bytes];
+  }
+
   public byte[] CompareImmediate(MachineRegister destination, int value)
     => AluImmediate(destination, value, extension: 7);
 
@@ -345,6 +358,15 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   public byte[] ShiftMemoryCount(X86TargetAddress address, int extension) {
     var bytes = new List<byte> { 0xD3 };
     AppendAddress(bytes, extension, address);
+    return [.. bytes];
+  }
+
+  public byte[] ShiftMemory(X86TargetAddress address, int extension, int count) {
+    var bytes = new List<byte>();
+    if (mode == X86Mode.Bit64 && address.WidthBits == 16) bytes.Add(0x66);
+    bytes.Add(0xC1);
+    AppendAddress(bytes, extension, address);
+    bytes.Add((byte)count);
     return [.. bytes];
   }
 
