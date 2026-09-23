@@ -1,6 +1,10 @@
 namespace PowerBasic.Compiler.Backend.Targets;
 
-public enum X86VectorOpcode { Move, Add, Sub, And, Or, Xor, Multiply, AesEnc, AesDec, Pclmul }
+public enum X86VectorOpcode {
+  Move, Add, AddW, Sub, SubW, And, Or, Xor, Multiply,
+  MinUnsignedDword, MaxUnsignedDword, BlendWord, AlignRight,
+  AesEnc, AesDec, Pclmul,
+}
 
 public sealed record X86VectorInstruction(
     X86VectorOpcode Opcode,

@@ -423,6 +423,8 @@ public static class X86HostedMachineBuilder {
       }, [xmm0, xmm1], Immediate: 0);
       return true;
     }
+    if (TryExpandVectorAsm(mnemonic, instruction, registers, out target))
+      return true;
     if (mnemonic is "POPCNT" or "BSF" or "BSR" or "BEXTR" or "ANDN" or "BLSI" or "BLSR" or "BZHI" or "PEXT" or "PDEP" or "MULX") {
       var registerOperands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
         .Select(operand => TryMachineRegister(operand.Reg, registers)).ToArray();
@@ -487,6 +489,43 @@ public static class X86HostedMachineBuilder {
       .Where(register => register is not null).Select(register => register!.Value).ToArray();
     target = new X86TargetInstruction(X86TargetOpcode.Call, runtimeRegisters,
       Symbol: PowerBasic.Compiler.Runtime.InlineAsmExports.EmulationRoutine(mnemonic));
+    return true;
+  }
+
+  private static bool TryExpandVectorAsm(string mnemonic, MInstr instruction,
+      X86TargetRegisterFile registers, out X86TargetInstruction? target) {
+    target = null;
+    var operation = mnemonic switch {
+      "MOVDQA" or "MOVDQU" or "MOVQ" => X86VectorOpcode.Move,
+      "PADDW" or "VPADDW" => X86VectorOpcode.AddW,
+      "PADDQ" or "VPADDQ" => X86VectorOpcode.Add,
+      "PSUBW" or "VPSUBW" => X86VectorOpcode.SubW,
+      "PSUBQ" or "VPSUBQ" => X86VectorOpcode.Sub,
+      "PAND" or "VPAND" => X86VectorOpcode.And,
+      "POR" or "VPOR" => X86VectorOpcode.Or,
+      "PXOR" or "VPXOR" => X86VectorOpcode.Xor,
+      "PMINUD" => X86VectorOpcode.MinUnsignedDword,
+      "PMAXUD" => X86VectorOpcode.MaxUnsignedDword,
+      "PBLENDW" => X86VectorOpcode.BlendWord,
+      "PALIGNR" => X86VectorOpcode.AlignRight,
+      _ => (X86VectorOpcode?)null,
+    };
+    if (operation is not { } selected)
+      return false;
+    var operands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
+      .Select(operand => TryMachineRegister(operand.Reg, registers)).ToArray();
+    if (operands.Any(register => register is null) || operands.Length < 2)
+      return false;
+    var vectorOperands = operands.Select(register => register!.Value).ToArray();
+    var legacy = !mnemonic.StartsWith("V", StringComparison.Ordinal);
+    var selectedRegisters = vectorOperands.Length >= 3
+      ? vectorOperands.Take(3).ToArray()
+      : [vectorOperands[0], vectorOperands[0], vectorOperands[1]];
+    var immediate = instruction.Operands.Skip(1).OfType<MOperand.Immediate>()
+      .Select(value => (byte)value.Value).FirstOrDefault();
+    target = new(X86TargetOpcode.VectorBinary, selectedRegisters, immediate,
+      VectorOperation: selected,
+      VectorEncoding: legacy ? X86VectorEncoding.Legacy : null);
     return true;
   }
 

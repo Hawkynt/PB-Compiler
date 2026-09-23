@@ -121,16 +121,26 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
             var (map, opcode, pp) = operation switch {
               X86VectorOpcode.Move => ((byte)1, (byte)0x6F, (byte)1),
               X86VectorOpcode.Add => ((byte)1, (byte)0xD4, (byte)1), // VPADDQ
+              X86VectorOpcode.AddW => ((byte)1, (byte)0xFD, (byte)1), // VPADDW
               X86VectorOpcode.Sub => ((byte)1, (byte)0xFB, (byte)1), // VPSUBQ
+              X86VectorOpcode.SubW => ((byte)1, (byte)0xF9, (byte)1), // VPSUBW
               X86VectorOpcode.And => ((byte)1, (byte)0xDB, (byte)1), // VPAND
               X86VectorOpcode.Or => ((byte)1, (byte)0xEB, (byte)1), // VPOR
               X86VectorOpcode.Xor => ((byte)1, (byte)0xEF, (byte)1), // VPXOR
               X86VectorOpcode.Multiply => ((byte)2, (byte)0x40, (byte)1), // VPMULLQ (AVX-512)
+              X86VectorOpcode.MinUnsignedDword => ((byte)2, (byte)0x3B, (byte)1), // VPMINUD
+              X86VectorOpcode.MaxUnsignedDword => ((byte)2, (byte)0x3D, (byte)1), // VPMAXUD
+              X86VectorOpcode.BlendWord => ((byte)3, (byte)0x0E, (byte)1), // VPBLENDW
+              X86VectorOpcode.AlignRight => ((byte)3, (byte)0x0F, (byte)3), // VPALIGNR
               _ => throw new BackendInvariantException("X86TargetMachineEmitter.VectorBinary",
                 $"operation {operation} is not a generic vector operation"),
             };
-            var vectorBytes = bits == 64
-              ? _vectorEncoder.LegacyMmx(destination, instruction.Registers[2], opcode)
+            var vectorBytes = instruction.VectorEncoding == X86VectorEncoding.Legacy && bits == 128
+              ? _vectorEncoder.LegacyXmm(destination, instruction.Registers[2], map, opcode, pp,
+                instruction.Immediate == 0 ? null : (byte?)instruction.Immediate)
+              : bits == 64
+              ? _vectorEncoder.LegacyMmxImmediate(destination, instruction.Registers[2], opcode,
+                instruction.Immediate == 0 ? null : (byte?)instruction.Immediate)
               : bits == 512
               ? _vectorEncoder.Evex(destination, instruction.Registers[1], instruction.Registers[2], map, opcode, pp,
                 wide: operation == X86VectorOpcode.Multiply, vectorBits: bits)

@@ -2,6 +2,29 @@ namespace PowerBasic.Compiler.Backend.Targets;
 
 /// <summary>Standalone VEX/EVEX encoder.  It never routes through the text assembler.</summary>
 public sealed class X86VectorInstructionEncoder {
+  public byte[] LegacyXmm(MachineRegister destination, MachineRegister source,
+      byte map, byte opcode, byte pp = 0, byte? immediate = null) {
+    ValidateVector(destination, 128); ValidateVector(source, 128);
+    if (destination.Encoding > 15 || source.Encoding > 15)
+      throw new ArgumentException("XMM register encoding out of range");
+    var bytes = new List<byte>();
+    if (pp == 1) bytes.Add(0x66);
+    else if (pp == 2) bytes.Add(0xF3);
+    else if (pp == 3) bytes.Add(0xF2);
+    bytes.Add(0x0F);
+    if (map != 1) bytes.Add(map == 2 ? (byte)0x38 : (byte)0x3A);
+    bytes.Add(opcode);
+    bytes.Add((byte)(0xC0 | ((destination.Encoding & 7) << 3) | (source.Encoding & 7)));
+    if (immediate is { } value) bytes.Add(value);
+    return [.. bytes];
+  }
+
+  public byte[] LegacyMmxImmediate(MachineRegister destination, MachineRegister source,
+      byte opcode, byte? immediate = null) {
+    var bytes = LegacyMmx(destination, source, opcode).ToList();
+    if (immediate is { } value) bytes.Add(value);
+    return [.. bytes];
+  }
   public byte[] LegacyMmx(MachineRegister destination, MachineRegister right, byte opcode) {
     ValidateVector(destination, 64); ValidateVector(right, 64);
     if (destination.Encoding > 7 || right.Encoding > 7)
