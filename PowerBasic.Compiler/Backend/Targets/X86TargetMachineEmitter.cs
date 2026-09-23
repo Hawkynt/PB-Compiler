@@ -6,6 +6,7 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
     ArgumentNullException.ThrowIfNull(function);
     var bytes = new List<byte>();
     var relocations = new List<MachineRelocation>();
+    var labels = new Dictionary<string, int>(StringComparer.Ordinal);
     var registers = new X86TargetRegisterFile(function.Mode);
     if (preserveFramePointer) {
       bytes.AddRange(encoder.Push(registers.FramePointer));
@@ -14,7 +15,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
     if (function.Abi.ShadowSpaceBytes != 0)
       bytes.AddRange(encoder.AdjustStack(function.Abi.ShadowSpaceBytes, allocate: true));
 
-    foreach (var instruction in function.Instructions) {
+    foreach (var (instruction, index) in function.Instructions.Select((item, index) => (item, index))) {
+      foreach (var label in function.LabelInstructionIndices.Where(pair => pair.Value == index))
+        labels[label.Key] = bytes.Count;
       var offset = bytes.Count;
       switch (instruction.Opcode) {
         case X86TargetOpcode.Mov when instruction.Address is { } loadAddress && instruction.Immediate == 0:
@@ -169,7 +172,7 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Call:
           if (string.IsNullOrWhiteSpace(instruction.Symbol))
             throw new InvalidOperationException("relative calls require a symbol");
-          var call = X86RelocationEncoder.CallRelative32(instruction.Symbol);
+          var call = X86RelocationEncoder.CallRelative(function.Mode, instruction.Symbol);
           relocations.AddRange(call.Relocations.Select(r => r with { Offset = r.Offset + offset }));
           bytes.AddRange(call.Bytes);
           break;
@@ -186,6 +189,8 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
     if (preserveFramePointer)
       bytes.AddRange(encoder.Pop(registers.FramePointer));
     bytes.AddRange(encoder.Ret());
-    return new(bytes.ToArray(), relocations);
+    foreach (var label in function.LabelInstructionIndices.Where(pair => pair.Value == function.Instructions.Count))
+      labels[label.Key] = bytes.Count;
+    return new(bytes.ToArray(), relocations, labels);
   }
 }

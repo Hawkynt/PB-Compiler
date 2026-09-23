@@ -11,9 +11,23 @@ public sealed partial class Assembler {
   public void AppendMachineCode(MachineCode code, Func<string, Label?> resolveSymbol) {
     ArgumentNullException.ThrowIfNull(resolveSymbol);
     var start = this.Position;
-    this.Db(code.Bytes);
+    var labels = new Dictionary<string, Label>(StringComparer.Ordinal);
+    if (code.Labels is { Count: > 0 })
+      foreach (var name in code.Labels.Keys)
+        labels[name] = resolveSymbol(name) ?? this.DefineLabel(name);
+    var cursor = 0;
+    foreach (var (name, offset) in (code.Labels ?? []).OrderBy(pair => pair.Value)) {
+      if (offset < cursor || offset > code.Bytes.Length)
+        throw new InvalidOperationException($"invalid machine label offset {offset} for '{name}'");
+      if (offset > cursor)
+        this.Db(code.Bytes[cursor..offset]);
+      this.MarkLabel(labels[name]);
+      cursor = offset;
+    }
+    if (cursor < code.Bytes.Length)
+      this.Db(code.Bytes[cursor..]);
     foreach (var relocation in code.Relocations) {
-      var label = resolveSymbol(relocation.Symbol)
+      var label = labels.GetValueOrDefault(relocation.Symbol) ?? resolveSymbol(relocation.Symbol)
         ?? throw new InvalidOperationException($"machine relocation references unknown symbol '{relocation.Symbol}'");
       var position = start + relocation.Offset;
       switch (relocation.Kind) {

@@ -23,17 +23,20 @@ public static class X86HostedMachineBuilder {
       _ => X86Abi.I8086Cdecl,
     };
     var instructions = new List<X86TargetInstruction>();
-    foreach (var block in machine.Function.Blocks)
+    var labels = new Dictionary<string, int>(StringComparer.Ordinal);
+    foreach (var block in machine.Function.Blocks) {
+      labels[block.Label] = instructions.Count;
       foreach (var instruction in block.Instructions) {
         if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, out var targetInstruction))
           return false;
         if (targetInstruction is not null)
           instructions.Add(targetInstruction);
       }
+    }
 
     hosted = new X86TargetMachineFunction(selectedMode,
       new X86TargetAbi(selectedMode, abi.Name, abi.StackAlignment, abi.ShadowSpaceBytes,
-        abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters), instructions);
+        abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters), instructions, labels);
     return true;
   }
 
