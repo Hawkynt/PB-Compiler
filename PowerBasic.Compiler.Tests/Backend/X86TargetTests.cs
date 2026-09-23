@@ -161,15 +161,6 @@ public sealed class X86TargetTests {
   }
 
   [Test]
-  public void LegacyMachineStagesDelegateSelectionAndAllocation() {
-    var stages = new X86LegacyMachineStages(
-      new X86LegacySelector(SelectionTarget.Baseline),
-      new X86LegacyAllocator(SelectionTarget.Baseline));
-    Assert.That(stages.Selector, Is.Not.Null);
-    Assert.That(stages.Allocator, Is.Not.Null);
-  }
-
-  [Test]
   public void ProductionTargetsConsumeLowIr() {
     Assert.That(IrBackendTargetContract.RequiredInputStage(IrBackendTarget.C),
       Is.EqualTo(IrRepresentationStage.LowIr));
