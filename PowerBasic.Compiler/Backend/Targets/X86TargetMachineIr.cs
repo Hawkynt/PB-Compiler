@@ -40,7 +40,7 @@ public sealed class X86TargetRegisterFile {
     if (register.Size == MRegSize.Byte) {
       // Reg.AH..BH intentionally retain their hardware encodings (4..7); they are
       // not interchangeable with AL..BL and cannot be encoded with a REX prefix.
-      if (register.Physical.IsByte() && index >= 4) {
+      if (((int)register.Physical & 0xF0) == 0 && index >= 4) {
         if (this.Mode == X86Mode.Bit64)
           throw new InvalidOperationException("AH/CH/DH/BH are not encodable in x86-64 mode");
         return this.HighBytes[index - 4];
