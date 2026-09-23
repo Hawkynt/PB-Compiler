@@ -230,6 +230,22 @@ public static class X86HostedMachineBuilder {
             _ => X86TargetOpcode.Fistp,
           }, [], Address: memoryAddress);
           return true;
+        case MOpcode.Fadd or MOpcode.Fsub or MOpcode.Fmul or MOpcode.Fdiv or MOpcode.Fcomp
+            or MOpcode.Fiadd or MOpcode.Fisub or MOpcode.Fimul or MOpcode.Fidiv
+            when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var arithmeticAddress):
+          target = new(instruction.Opcode switch {
+            MOpcode.Fadd => X86TargetOpcode.Fadd,
+            MOpcode.Fsub => X86TargetOpcode.Fsub,
+            MOpcode.Fmul => X86TargetOpcode.Fmul,
+            MOpcode.Fdiv => X86TargetOpcode.Fdiv,
+            MOpcode.Fcomp => X86TargetOpcode.Fcomp,
+            MOpcode.Fiadd => X86TargetOpcode.Fiadd,
+            MOpcode.Fisub => X86TargetOpcode.Fisub,
+            MOpcode.Fimul => X86TargetOpcode.Fimul,
+            _ => X86TargetOpcode.Fidiv,
+          }, [], Address: arithmeticAddress);
+          return true;
         case MOpcode.Push when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Immediate immediatePush:
           target = new(X86TargetOpcode.Push, [], immediatePush.Value);
           return true;

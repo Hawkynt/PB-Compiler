@@ -170,6 +170,29 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           bytes.AddRange(encoder.X87Memory(fistpAddress, fistpAddress.WidthBits == 64 ? (byte)0xDF : (byte)0xDB,
             fistpAddress.WidthBits == 64 ? 7 : 3));
           break;
+        case X86TargetOpcode.Fadd or X86TargetOpcode.Fsub or X86TargetOpcode.Fmul
+            or X86TargetOpcode.Fdiv or X86TargetOpcode.Fcomp when instruction.Address is { } fpAddress:
+          bytes.AddRange(encoder.X87Memory(fpAddress,
+            fpAddress.WidthBits == 64 ? (byte)0xDC : (byte)0xD8,
+            instruction.Opcode switch {
+              X86TargetOpcode.Fadd => 0,
+              X86TargetOpcode.Fmul => 1,
+              X86TargetOpcode.Fcomp => 3,
+              X86TargetOpcode.Fsub => 4,
+              _ => 6,
+            }));
+          break;
+        case X86TargetOpcode.Fiadd or X86TargetOpcode.Fisub or X86TargetOpcode.Fimul
+            or X86TargetOpcode.Fidiv when instruction.Address is { } integerAddress:
+          bytes.AddRange(encoder.X87Memory(integerAddress,
+            integerAddress.WidthBits == 16 ? (byte)0xDE : (byte)0xDA,
+            instruction.Opcode switch {
+              X86TargetOpcode.Fiadd => 0,
+              X86TargetOpcode.Fimul => 1,
+              X86TargetOpcode.Fisub => 4,
+              _ => 6,
+            }));
+          break;
         case X86TargetOpcode.Jmp:
         case X86TargetOpcode.Jcc:
           if (string.IsNullOrWhiteSpace(instruction.Symbol))
