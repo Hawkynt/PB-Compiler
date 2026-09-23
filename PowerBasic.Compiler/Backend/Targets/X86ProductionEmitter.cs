@@ -17,7 +17,6 @@ public static class X86ProductionEmitter {
   public static void EmitFunction(
       Assembler assembler,
       IrMachineFunction function,
-      IReadOnlyDictionary<int, Reg> allocation,
       int[] parameterOffsets,
       int calleeCleanupBytes,
       Func<string, Label?>? calleeLabel,
