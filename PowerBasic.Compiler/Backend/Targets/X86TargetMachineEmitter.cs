@@ -56,7 +56,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           bytes.AddRange(encoder.XchgRegister(instruction.Registers[0], instruction.Registers[1]));
           break;
         case X86TargetOpcode.Add when instruction.Address is { } addAddress:
-          bytes.AddRange(encoder.AluMemory(instruction.Registers[0], addAddress, 0x01, load: false));
+          var addBytes = encoder.AluMemory(instruction.Registers[0], addAddress, 0x01, load: false);
+          bytes.AddRange(addBytes);
+          AddAddressRelocation(addAddress, offset, addBytes.Length);
           break;
         case X86TargetOpcode.Sub or X86TargetOpcode.And or X86TargetOpcode.Or or X86TargetOpcode.Xor
             or X86TargetOpcode.Cmp when instruction.Address is { } memoryAluAddress:
@@ -243,9 +245,14 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Jcc:
           if (string.IsNullOrWhiteSpace(instruction.Symbol))
             throw new InvalidOperationException("branches require a symbol");
+          var shortRelocation = function.Mode == X86Mode.Bit16;
           var branch = instruction.Opcode == X86TargetOpcode.Jmp
-            ? new MachineCode([0xE9, 0, 0, 0, 0], [new MachineRelocation(1, MachineRelocationKind.Relative32, instruction.Symbol, -4)])
-            : new MachineCode([(byte)(0x0F), (byte)(0x80 + instruction.Immediate), 0, 0, 0, 0], [new MachineRelocation(2, MachineRelocationKind.Relative32, instruction.Symbol, -4)]);
+            ? shortRelocation
+              ? new MachineCode([0xE9, 0, 0], [new MachineRelocation(1, MachineRelocationKind.Relative16, instruction.Symbol, -2)])
+              : new MachineCode([0xE9, 0, 0, 0, 0], [new MachineRelocation(1, MachineRelocationKind.Relative32, instruction.Symbol, -4)])
+            : shortRelocation
+              ? new MachineCode([0x0F, (byte)(0x80 + instruction.Immediate), 0, 0], [new MachineRelocation(2, MachineRelocationKind.Relative16, instruction.Symbol, -2)])
+              : new MachineCode([(byte)0x0F, (byte)(0x80 + instruction.Immediate), 0, 0, 0, 0], [new MachineRelocation(2, MachineRelocationKind.Relative32, instruction.Symbol, -4)]);
           relocations.AddRange(branch.Relocations.Select(r => r with { Offset = r.Offset + offset }));
           bytes.AddRange(branch.Bytes);
           break;
@@ -253,11 +260,15 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           bytes.AddRange(encoder.Push(instruction.Registers[0]));
           break;
         case X86TargetOpcode.Push when instruction.Address is { } pushAddress:
-          bytes.AddRange(encoder.IndirectMemory(pushAddress, 6));
+          var pushBytes = encoder.IndirectMemory(pushAddress, 6);
+          bytes.AddRange(pushBytes);
+          AddAddressRelocation(pushAddress, offset, pushBytes.Length);
           break;
         case X86TargetOpcode.Pop:
           if (instruction.Address is { } popAddress) {
-            bytes.AddRange(encoder.IndirectMemory(popAddress, 0, 0x8F));
+            var popBytes = encoder.IndirectMemory(popAddress, 0, 0x8F);
+            bytes.AddRange(popBytes);
+            AddAddressRelocation(popAddress, offset, popBytes.Length);
             break;
           }
           bytes.AddRange(encoder.Pop(instruction.Registers[0]));

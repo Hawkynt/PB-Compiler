@@ -30,20 +30,12 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   }
 
   public byte[] AdjustStack(int bytes, bool allocate) {
-    if (bytes <= 0)
-      throw new ArgumentOutOfRangeException(nameof(bytes), bytes, "Stack adjustment must be positive.");
-    var extension = allocate ? 5 : 0;
-    if (bytes <= sbyte.MaxValue) {
-      var opcode = allocate ? (byte)0xEC : (byte)0xC4;
-      return mode == X86Mode.Bit64
-        ? [0x48, 0x83, opcode, (byte)bytes]
-        : [0x83, opcode, (byte)bytes];
-    }
-    return mode switch {
-      X86Mode.Bit16 => [0x81, (byte)(0xC0 | (extension << 3) | 4), .. BitConverter.GetBytes((ushort)bytes)],
-      X86Mode.Bit32 => [0x81, (byte)(0xC0 | (extension << 3) | 4), .. BitConverter.GetBytes(bytes)],
-      _ => [0x48, 0x81, (byte)(0xC0 | (extension << 3) | 4), .. BitConverter.GetBytes(bytes)],
-    };
+    if (bytes is <= 0 or > 127)
+      throw new ArgumentOutOfRangeException(nameof(bytes), bytes, "The compact stack adjustment supports 1..127 bytes.");
+    var opcode = allocate ? (byte)0xEC : (byte)0xC4;
+    return mode == X86Mode.Bit64
+      ? [0x48, 0x83, opcode, (byte)bytes]
+      : [0x83, opcode, (byte)bytes];
   }
 
   public byte[] MoveRegister(MachineRegister destination, MachineRegister source) {
@@ -71,15 +63,6 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
       bytes.Add(prefix);
     bytes.Add(0xFF);
     bytes.Add(ModRm(extension, register.Encoding));
-    return [.. bytes];
-  }
-
-  public byte[] IndirectMemory(X86TargetAddress address, int extension, byte opcode = 0xFF) {
-    var bytes = new List<byte>();
-    if (MemoryRex(new MachineRegister("rax", 0, mode == X86Mode.Bit64 ? 64 : mode == X86Mode.Bit32 ? 32 : 16), address, false) is { } rex)
-      bytes.Add(rex);
-    bytes.Add(opcode);
-    AppendAddress(bytes, extension, address);
     return [.. bytes];
   }
 
@@ -138,13 +121,8 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
         (null, null) => 6,
         _ => throw new NotSupportedException("x86-16 address requires BX/BP/SI/DI"),
       };
-      if (address.Base is null && address.Index is null) {
-        bytes.Add((byte)((0 << 6) | ((reg & 7) << 3) | 6));
-        bytes.AddRange(BitConverter.GetBytes((ushort)address.Displacement));
-      } else {
-        AppendModRm(bytes, reg, rm, address.Displacement,
-          address.Base?.Encoding == 5 && address.Index is null);
-      }
+      AppendModRm(bytes, reg, rm, address.Displacement,
+        address.Base?.Encoding == 5 && address.Index is null || address.Base is null && address.Index is null);
       return;
     }
     var baseReg = address.Base?.Encoding ?? 5;
@@ -202,19 +180,6 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
       bytes.Add(prefix);
     bytes.Add((byte)opcode);
     bytes.Add(ModRm(source.Encoding, destination.Encoding));
-    return [.. bytes];
-  }
-
-  public byte[] ImulRegister(MachineRegister destination, MachineRegister source) {
-    Validate(destination);
-    Validate(source);
-    var rex = Rex(destination, source, w: mode == X86Mode.Bit64);
-    var bytes = new List<byte>(4);
-    if (rex is { } prefix)
-      bytes.Add(prefix);
-    bytes.Add(0x0F);
-    bytes.Add(0xAF);
-    bytes.Add(ModRm(destination.Encoding, source.Encoding));
     return [.. bytes];
   }
 
