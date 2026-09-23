@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Backend.Targets;
 
 namespace PowerBasic.Compiler.Backend;
 
@@ -10,19 +11,17 @@ public static class IrMachinePipeline {
       SelectionTarget target,
       out MFunction? selected,
       out string? error) {
+    return TrySelectFunction(function, new X86MachineLowering(target), out selected, out error);
+  }
+
+  public static bool TrySelectFunction(
+      IrFunction function,
+      IMachineFunctionLowerer lowerer,
+      out MFunction? selected,
+      out string? error) {
     ArgumentNullException.ThrowIfNull(function);
-    selected = null;
-    if (function.IsDeclaration || function.Entry is null) {
-      error = "selection: declaration";
-      return false;
-    }
-    if (InstructionSelector.TrySelect(function, out var declineReason, target) is not { } machine) {
-      error = "selection: " + (declineReason ?? "unknown machine construct");
-      return false;
-    }
-    selected = machine;
-    error = null;
-    return true;
+    ArgumentNullException.ThrowIfNull(lowerer);
+    return lowerer.TrySelect(function, out selected, out error);
   }
 
   /// <summary>Schedules and allocates a selected machine function, then applies late rewrites.</summary>
@@ -32,19 +31,19 @@ public static class IrMachinePipeline {
       SelectionTarget target,
       out IrMachineFunction? machine,
       out string? error) {
+    return TryAllocateFunction(source, selected, new X86MachineLowering(target), out machine, out error);
+  }
+
+  public static bool TryAllocateFunction(
+      IrFunction source,
+      MFunction selected,
+      IMachineFunctionLowerer lowerer,
+      out IrMachineFunction? machine,
+      out string? error) {
     ArgumentNullException.ThrowIfNull(source);
     ArgumentNullException.ThrowIfNull(selected);
-    machine = null;
-    MachineScheduler.Schedule(selected, target);
-    if (LinearScanAllocator.Allocate(selected, target, out var allocationReason) is not { } allocation) {
-      error = "allocation: " + (allocationReason ?? "register allocation failed");
-      return false;
-    }
-    PostRegisterAllocationPeepholes.Run(selected, allocation);
-    LateLoadStoreOptimization.Run(selected, allocation);
-    machine = new IrMachineFunction(source, selected, allocation);
-    error = null;
-    return true;
+    ArgumentNullException.ThrowIfNull(lowerer);
+    return lowerer.TryAllocate(source, selected, out machine, out error);
   }
 
   /// <summary>Selects, schedules, allocates, and performs late machine rewrites for one IR function.</summary>
@@ -79,10 +78,11 @@ public static class IrMachinePipeline {
     }
 
     var selected = new List<IrMachineFunction>();
+    var lowerer = new X86MachineLowering(target);
     foreach (var function in module.Functions) {
       if (function.IsDeclaration || function.Entry is null)
         continue;
-      if (!TryLowerFunction(function, target, out var selectedMachine, out var declineReason)) {
+      if (!TryLowerFunction(function, lowerer, out var selectedMachine, out var declineReason)) {
         errors = [$"function '{function.Name}' was not lowered: {declineReason ?? "unknown machine construct"}"];
         return false;
       }
@@ -98,5 +98,17 @@ public static class IrMachinePipeline {
     machine = new IrMachineModule(module, target, selected);
     errors = [];
     return true;
+  }
+
+  private static bool TryLowerFunction(
+      IrFunction function,
+      IMachineFunctionLowerer lowerer,
+      out IrMachineFunction? machine,
+      out string? error) {
+    if (!TrySelectFunction(function, lowerer, out var selected, out error)) {
+      machine = null;
+      return false;
+    }
+    return TryAllocateFunction(function, selected!, lowerer, out machine, out error);
   }
 }
