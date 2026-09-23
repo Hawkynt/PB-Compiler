@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Backend;
+
 namespace PowerBasic.Compiler.Backend.Targets;
 
 /// <summary>Target-independent stages shared by every machine backend.</summary>
@@ -6,6 +8,9 @@ public interface IMachineTarget {
   IMachineAbi Abi { get; }
   IMachineInstructionEncoder Encoder { get; }
   IMachineEmitter Emitter { get; }
+
+  /// <summary>Creates the target-owned Low IR machine lowering for one compilation.</summary>
+  IMachineFunctionLowerer CreateLowerer(SelectionTarget selectionTarget);
 }
 
 public interface IMachineAbi {

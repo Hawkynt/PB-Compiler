@@ -64,7 +64,17 @@ public static class IrMachinePipeline {
       SelectionTarget target,
       out IrMachineModule? machine,
       out IReadOnlyList<string> errors) {
+    return TryLower(module, new X86MachineLowering(target), target, out machine, out errors);
+  }
+
+  public static bool TryLower(
+      IrModule module,
+      IMachineFunctionLowerer lowerer,
+      SelectionTarget target,
+      out IrMachineModule? machine,
+      out IReadOnlyList<string> errors) {
     ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(lowerer);
     machine = null;
     if (module.RepresentationStage != IrRepresentationStage.LowIr) {
       errors = [$"machine lowering requires LowIr, got {module.RepresentationStage}"];
@@ -78,7 +88,6 @@ public static class IrMachinePipeline {
     }
 
     var selected = new List<IrMachineFunction>();
-    var lowerer = new X86MachineLowering(target);
     foreach (var function in module.Functions) {
       if (function.IsDeclaration || function.Entry is null)
         continue;

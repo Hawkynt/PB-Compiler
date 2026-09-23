@@ -118,4 +118,17 @@ public sealed class X86TargetTests {
     Assert.That(IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.X86_32), Is.TypeOf<X86MachineTarget>());
     Assert.That(IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.X86_64), Is.TypeOf<X86MachineTarget>());
   }
+
+  [Test]
+  public void MachineTargetOwnsTheLoweringContract() {
+    var target = (X86MachineTarget)IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.X86_64)!;
+    Assert.That(target.CreateLowerer(SelectionTarget.Baseline), Is.TypeOf<X86MachineLowering>());
+  }
+
+  [Test]
+  public void Mos6502DeclinesUntilItsInstructionSelectorExists() {
+    var target = new Mos6502MachineTarget();
+    Assert.That(() => target.CreateLowerer(SelectionTarget.Baseline),
+      Throws.TypeOf<NotSupportedException>());
+  }
 }

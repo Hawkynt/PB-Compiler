@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Backend;
+
 namespace PowerBasic.Compiler.Backend.Targets;
 
 public sealed class X86MachineTarget : IMachineTarget {
@@ -14,4 +16,7 @@ public sealed class X86MachineTarget : IMachineTarget {
   public IMachineAbi Abi { get; }
   public IMachineInstructionEncoder Encoder { get; }
   public IMachineEmitter Emitter { get; }
+
+  public IMachineFunctionLowerer CreateLowerer(SelectionTarget selectionTarget)
+    => new X86MachineLowering(selectionTarget);
 }

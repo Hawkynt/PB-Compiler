@@ -1,6 +1,7 @@
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Backend.Targets;
 
 namespace PowerBasic.Compiler.Backend;
 
@@ -18,6 +19,24 @@ public sealed class IrBackendModule {
   /// <summary>Completes the explicit Low IR → Machine SSA → Machine IR boundary.</summary>
   public bool TryLowerMachine(out IReadOnlyList<string> errors) {
     var target = IrBackendTargetContract.SelectionTarget(Options);
+    if (Options.Target == IrBackendTarget.Mos6502) {
+      errors = ["target 'Mos6502' has no Low IR instruction selector yet"];
+      return false;
+    }
+
+    if (Options.Target is IrBackendTarget.X86_32 or IrBackendTarget.X86_64) {
+      var targetModel = IrBackendTargetContract.CreateMachineTarget(Options.Target);
+      if (targetModel is null) {
+        errors = [$"target '{Options.Target}' has no machine target contract"];
+        return false;
+      }
+      if (!IrMachinePipeline.TryLower(this.Module, targetModel.CreateLowerer(target), target,
+            out var targetMachine, out errors))
+        return false;
+      this.Machine = targetMachine;
+      return true;
+    }
+
     if (!IrMachinePipeline.TryLower(this.Module, target, out var machine, out errors))
       return false;
     this.Machine = machine;

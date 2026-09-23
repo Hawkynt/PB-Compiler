@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Backend;
+
 namespace PowerBasic.Compiler.Backend.Targets;
 
 public sealed class Mos6502MachineTarget : IMachineTarget {
@@ -12,4 +14,8 @@ public sealed class Mos6502MachineTarget : IMachineTarget {
   public IMachineAbi Abi { get; }
   public IMachineInstructionEncoder Encoder { get; }
   public IMachineEmitter Emitter { get; }
+
+  public IMachineFunctionLowerer CreateLowerer(SelectionTarget selectionTarget)
+    => throw new NotSupportedException(
+      "the MOS 6502 target has an ABI and emitter shell, but no Low IR instruction selector yet");
 }
