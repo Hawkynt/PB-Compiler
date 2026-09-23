@@ -116,7 +116,7 @@ public sealed class LinearScanAllocatorTests {
   /// It used to draw from the ordinary base set, where SI and DI are legal answers, and the only thing
   /// keeping <c>[SI+DI]</c> out of the corpus was that BX is the first addressing register the pool
   /// offers and no corpus function has two indexed bases live at once. Reaching the assembler with one
-  /// ENDS the compilation inside <c>PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitInstruction</c>, where nothing can decline.
+  /// ENDS the compilation inside hosted target machine lowering, where nothing can decline.
   /// This is the mirror of the index-side defect the <c>_indexing</c> set was introduced for, and that
   /// one only appeared once rematerialization changed the pressure.
   /// </para>
