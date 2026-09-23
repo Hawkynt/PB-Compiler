@@ -2,16 +2,36 @@ namespace PowerBasic.Compiler.Backend.Targets;
 
 /// <summary>Encodes the independent hosted x86 machine representation and its relocations.</summary>
 public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
-  public MachineCode Emit(X86TargetMachineFunction function, bool preserveFramePointer = true) {
+  public MachineCode Emit(X86TargetMachineFunction function, bool preserveFramePointer = true,
+      bool emitReturn = true) {
     ArgumentNullException.ThrowIfNull(function);
     var bytes = new List<byte>();
     var relocations = new List<MachineRelocation>();
     var labels = new Dictionary<string, int>(StringComparer.Ordinal);
     var registers = new X86TargetRegisterFile(function.Mode);
+    void AddAddressRelocation(X86TargetAddress address, int instructionOffset, int encodedLength) {
+      if (address.Symbol is not { Length: > 0 } symbol || address.Base is not null || address.Index is not null)
+        return;
+      var width = function.Mode == X86Mode.Bit16 ? 2 : 4;
+      var kind = function.Mode == X86Mode.Bit16
+        ? MachineRelocationKind.Absolute16 : MachineRelocationKind.Absolute32;
+      relocations.Add(new MachineRelocation(instructionOffset + encodedLength - width, kind, symbol,
+        address.Displacement));
+    }
+    void AppendFunctionEpilogue() {
+      if (function.Abi.ShadowSpaceBytes != 0)
+        bytes.AddRange(encoder.AdjustStack(function.Abi.ShadowSpaceBytes, allocate: false));
+      if (function.FrameSizeBytes != 0)
+        bytes.AddRange(encoder.AdjustStack(function.FrameSizeBytes, allocate: false));
+      if (preserveFramePointer)
+        bytes.AddRange(encoder.Pop(registers.FramePointer));
+    }
     if (preserveFramePointer) {
       bytes.AddRange(encoder.Push(registers.FramePointer));
       bytes.AddRange(function.Mode == X86Mode.Bit64 ? [0x48, 0x89, 0xE5] : [0x89, 0xE5]);
     }
+    if (function.FrameSizeBytes != 0)
+      bytes.AddRange(encoder.AdjustStack(function.FrameSizeBytes, allocate: true));
     if (function.Abi.ShadowSpaceBytes != 0)
       bytes.AddRange(encoder.AdjustStack(function.Abi.ShadowSpaceBytes, allocate: true));
 
@@ -20,11 +40,18 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         labels[label.Key] = bytes.Count;
       var offset = bytes.Count;
       switch (instruction.Opcode) {
+        case X86TargetOpcode.Nop:
+          bytes.AddRange(encoder.Nop());
+          break;
         case X86TargetOpcode.Mov when instruction.Address is { } loadAddress && instruction.Immediate == 0:
-          bytes.AddRange(encoder.MoveMemory(instruction.Registers[0], loadAddress, load: true));
+          var loadBytes = encoder.MoveMemory(instruction.Registers[0], loadAddress, load: true);
+          bytes.AddRange(loadBytes);
+          AddAddressRelocation(loadAddress, offset, loadBytes.Length);
           break;
         case X86TargetOpcode.Mov when instruction.Address is { } storeAddress && instruction.Immediate == 1:
-          bytes.AddRange(encoder.MoveMemory(instruction.Registers[0], storeAddress, load: false));
+          var storeBytes = encoder.MoveMemory(instruction.Registers[0], storeAddress, load: false);
+          bytes.AddRange(storeBytes);
+          AddAddressRelocation(storeAddress, offset, storeBytes.Length);
           break;
         case X86TargetOpcode.Mov when instruction.Registers.Count == 1 && instruction.Address is null:
           bytes.AddRange(encoder.MoveImmediate(instruction.Registers[0], unchecked((ulong)instruction.Immediate)));
@@ -33,13 +60,31 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           bytes.AddRange(encoder.MoveRegister(instruction.Registers[0], instruction.Registers[1]));
           break;
         case X86TargetOpcode.Lea when instruction.Address is { } leaAddress:
-          bytes.AddRange(encoder.LeaMemory(instruction.Registers[0], leaAddress));
+          var leaBytes = encoder.LeaMemory(instruction.Registers[0], leaAddress);
+          bytes.AddRange(leaBytes);
+          AddAddressRelocation(leaAddress, offset, leaBytes.Length);
           break;
         case X86TargetOpcode.Xchg when instruction.Registers.Count >= 2:
           bytes.AddRange(encoder.XchgRegister(instruction.Registers[0], instruction.Registers[1]));
           break;
         case X86TargetOpcode.Add when instruction.Address is { } addAddress:
-          bytes.AddRange(encoder.AluMemory(instruction.Registers[0], addAddress, 0x01, load: false));
+          var addBytes = encoder.AluMemory(instruction.Registers[0], addAddress, 0x01, load: false);
+          bytes.AddRange(addBytes);
+          AddAddressRelocation(addAddress, offset, addBytes.Length);
+          break;
+        case X86TargetOpcode.Sub or X86TargetOpcode.And or X86TargetOpcode.Or or X86TargetOpcode.Xor
+            or X86TargetOpcode.Cmp when instruction.Address is { } memoryAluAddress:
+          var memoryOpcode = instruction.Opcode switch {
+            X86TargetOpcode.Sub => 0x29,
+            X86TargetOpcode.And => 0x21,
+            X86TargetOpcode.Or => 0x09,
+            X86TargetOpcode.Xor => 0x31,
+            _ => 0x39,
+          };
+          var memoryAluBytes = encoder.AluMemory(instruction.Registers[0], memoryAluAddress,
+            memoryOpcode, load: false);
+          bytes.AddRange(memoryAluBytes);
+          AddAddressRelocation(memoryAluAddress, offset, memoryAluBytes.Length);
           break;
         case X86TargetOpcode.Add when instruction.Registers.Count == 1:
           bytes.AddRange(encoder.AddImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
@@ -107,6 +152,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Idiv:
           bytes.AddRange(encoder.UnaryMultiplyDivide(instruction.Registers[0], 7));
           break;
+        case X86TargetOpcode.Imul when instruction.Registers.Count >= 2:
+          bytes.AddRange(encoder.ImulRegister(instruction.Registers[0], instruction.Registers[1]));
+          break;
         case X86TargetOpcode.Shl:
           bytes.AddRange(encoder.ShiftRegister(instruction.Registers[0], 4, checked((int)instruction.Immediate)));
           break;
@@ -157,22 +205,30 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Fldl2e: bytes.Add(0xD9); bytes.Add(0xEA); break;
         case X86TargetOpcode.Fldl2t: bytes.Add(0xD9); bytes.Add(0xE9); break;
         case X86TargetOpcode.Fld when instruction.Address is { } fldAddress:
-          bytes.AddRange(encoder.X87Memory(fldAddress, fldAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9, 0));
+          var fldBytes = encoder.X87Memory(fldAddress, fldAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9, 0);
+          bytes.AddRange(fldBytes);
+          AddAddressRelocation(fldAddress, offset, fldBytes.Length);
           break;
         case X86TargetOpcode.Fstp when instruction.Address is { } fstpAddress:
-          bytes.AddRange(encoder.X87Memory(fstpAddress, fstpAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9, 3));
+          var fstpBytes = encoder.X87Memory(fstpAddress, fstpAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9, 3);
+          bytes.AddRange(fstpBytes);
+          AddAddressRelocation(fstpAddress, offset, fstpBytes.Length);
           break;
         case X86TargetOpcode.Fild when instruction.Address is { } fildAddress:
-          bytes.AddRange(encoder.X87Memory(fildAddress, fildAddress.WidthBits == 64 ? (byte)0xDF : (byte)0xDB,
-            fildAddress.WidthBits == 64 ? 5 : 0));
+          var fildBytes = encoder.X87Memory(fildAddress, fildAddress.WidthBits == 64 ? (byte)0xDF : (byte)0xDB,
+            fildAddress.WidthBits == 64 ? 5 : 0);
+          bytes.AddRange(fildBytes);
+          AddAddressRelocation(fildAddress, offset, fildBytes.Length);
           break;
         case X86TargetOpcode.Fistp when instruction.Address is { } fistpAddress:
-          bytes.AddRange(encoder.X87Memory(fistpAddress, fistpAddress.WidthBits == 64 ? (byte)0xDF : (byte)0xDB,
-            fistpAddress.WidthBits == 64 ? 7 : 3));
+          var fistpBytes = encoder.X87Memory(fistpAddress, fistpAddress.WidthBits == 64 ? (byte)0xDF : (byte)0xDB,
+            fistpAddress.WidthBits == 64 ? 7 : 3);
+          bytes.AddRange(fistpBytes);
+          AddAddressRelocation(fistpAddress, offset, fistpBytes.Length);
           break;
         case X86TargetOpcode.Fadd or X86TargetOpcode.Fsub or X86TargetOpcode.Fmul
             or X86TargetOpcode.Fdiv or X86TargetOpcode.Fcomp when instruction.Address is { } fpAddress:
-          bytes.AddRange(encoder.X87Memory(fpAddress,
+          var fpBytes = encoder.X87Memory(fpAddress,
             fpAddress.WidthBits == 64 ? (byte)0xDC : (byte)0xD8,
             instruction.Opcode switch {
               X86TargetOpcode.Fadd => 0,
@@ -180,33 +236,53 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
               X86TargetOpcode.Fcomp => 3,
               X86TargetOpcode.Fsub => 4,
               _ => 6,
-            }));
+            });
+          bytes.AddRange(fpBytes);
+          AddAddressRelocation(fpAddress, offset, fpBytes.Length);
           break;
         case X86TargetOpcode.Fiadd or X86TargetOpcode.Fisub or X86TargetOpcode.Fimul
             or X86TargetOpcode.Fidiv when instruction.Address is { } integerAddress:
-          bytes.AddRange(encoder.X87Memory(integerAddress,
+          var integerBytes = encoder.X87Memory(integerAddress,
             integerAddress.WidthBits == 16 ? (byte)0xDE : (byte)0xDA,
             instruction.Opcode switch {
               X86TargetOpcode.Fiadd => 0,
               X86TargetOpcode.Fimul => 1,
               X86TargetOpcode.Fisub => 4,
               _ => 6,
-            }));
+            });
+          bytes.AddRange(integerBytes);
+          AddAddressRelocation(integerAddress, offset, integerBytes.Length);
           break;
         case X86TargetOpcode.Jmp:
         case X86TargetOpcode.Jcc:
           if (string.IsNullOrWhiteSpace(instruction.Symbol))
             throw new InvalidOperationException("branches require a symbol");
+          var shortRelocation = function.Mode == X86Mode.Bit16;
           var branch = instruction.Opcode == X86TargetOpcode.Jmp
-            ? new MachineCode([0xE9, 0, 0, 0, 0], [new MachineRelocation(1, MachineRelocationKind.Relative32, instruction.Symbol, -4)])
-            : new MachineCode([(byte)(0x0F), (byte)(0x80 + instruction.Immediate), 0, 0, 0, 0], [new MachineRelocation(2, MachineRelocationKind.Relative32, instruction.Symbol, -4)]);
+            ? shortRelocation
+              ? new MachineCode([0xE9, 0, 0], [new MachineRelocation(1, MachineRelocationKind.Relative16, instruction.Symbol, -2)])
+              : new MachineCode([0xE9, 0, 0, 0, 0], [new MachineRelocation(1, MachineRelocationKind.Relative32, instruction.Symbol, -4)])
+            : shortRelocation
+              ? new MachineCode([0x0F, (byte)(0x80 + instruction.Immediate), 0, 0], [new MachineRelocation(2, MachineRelocationKind.Relative16, instruction.Symbol, -2)])
+              : new MachineCode([(byte)0x0F, (byte)(0x80 + instruction.Immediate), 0, 0, 0, 0], [new MachineRelocation(2, MachineRelocationKind.Relative32, instruction.Symbol, -4)]);
           relocations.AddRange(branch.Relocations.Select(r => r with { Offset = r.Offset + offset }));
           bytes.AddRange(branch.Bytes);
           break;
         case X86TargetOpcode.Push when instruction.Registers.Count == 1:
           bytes.AddRange(encoder.Push(instruction.Registers[0]));
           break;
+        case X86TargetOpcode.Push when instruction.Address is { } pushAddress:
+          var pushBytes = encoder.IndirectMemory(pushAddress, 6);
+          bytes.AddRange(pushBytes);
+          AddAddressRelocation(pushAddress, offset, pushBytes.Length);
+          break;
         case X86TargetOpcode.Pop:
+          if (instruction.Address is { } popAddress) {
+            var popBytes = encoder.IndirectMemory(popAddress, 0, 0x8F);
+            bytes.AddRange(popBytes);
+            AddAddressRelocation(popAddress, offset, popBytes.Length);
+            break;
+          }
           bytes.AddRange(encoder.Pop(instruction.Registers[0]));
           break;
         case X86TargetOpcode.Push when instruction.Registers.Count == 0:
@@ -222,9 +298,38 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           }
           break;
         case X86TargetOpcode.JmpIndirect:
-          bytes.AddRange(encoder.IndirectRegister(instruction.Registers[0], 4));
+          if (instruction.Address is { } indirectAddress) {
+            var indirectBytes = encoder.IndirectMemory(indirectAddress, 4);
+            bytes.AddRange(indirectBytes);
+            AddAddressRelocation(indirectAddress, offset, indirectBytes.Length);
+          } else
+            bytes.AddRange(encoder.IndirectRegister(instruction.Registers[0], 4));
+          break;
+        case X86TargetOpcode.JmpIndexed when instruction.Registers.Count == 1
+            && instruction.Operands?.FirstOrDefault() is X86TargetOperand.Table table:
+          var tableName = "__jt" + offset;
+          var tableAddress = new X86TargetAddress(instruction.Registers[0], null, 1, 0,
+            function.Mode == X86Mode.Bit16 ? 16 : 32, tableName);
+          var indexedBytes = encoder.IndirectMemory(tableAddress, 4);
+          bytes.AddRange(indexedBytes);
+          AddAddressRelocation(tableAddress, offset, indexedBytes.Length);
+          foreach (var label in table.Labels) {
+            var tableOffset = bytes.Count;
+            var width = function.Mode == X86Mode.Bit16 ? 2 : 4;
+            bytes.AddRange(new byte[width]);
+            relocations.Add(new MachineRelocation(tableOffset,
+              function.Mode == X86Mode.Bit16 ? MachineRelocationKind.Absolute16 : MachineRelocationKind.Absolute32,
+              label));
+          }
+          labels[tableName] = offset + indexedBytes.Length;
+          break;
+        case X86TargetOpcode.CallFar when instruction.Address is { } farAddress:
+          var farBytes = encoder.IndirectMemory(farAddress, 3);
+          bytes.AddRange(farBytes);
+          AddAddressRelocation(farAddress, offset, farBytes.Length);
           break;
         case X86TargetOpcode.Ret:
+          AppendFunctionEpilogue();
           bytes.AddRange(encoder.Ret());
           break;
         default:
@@ -232,11 +337,10 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
       }
     }
 
-    if (function.Abi.ShadowSpaceBytes != 0)
-      bytes.AddRange(encoder.AdjustStack(function.Abi.ShadowSpaceBytes, allocate: false));
-    if (preserveFramePointer)
-      bytes.AddRange(encoder.Pop(registers.FramePointer));
-    bytes.AddRange(encoder.Ret());
+    if (emitReturn) {
+      AppendFunctionEpilogue();
+      bytes.AddRange(encoder.Ret());
+    }
     foreach (var label in function.LabelInstructionIndices.Where(pair => pair.Value == function.Instructions.Count))
       labels[label.Key] = bytes.Count;
     return new(bytes.ToArray(), relocations, labels);

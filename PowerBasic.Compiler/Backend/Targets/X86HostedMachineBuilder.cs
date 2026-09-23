@@ -61,6 +61,8 @@ public static class X86HostedMachineBuilder {
 
     try {
       switch (instruction.Opcode) {
+        case MOpcode.InlineAsm when instruction.Operands.FirstOrDefault() is MOperand.InlineAsmText asm:
+          return TryExpandInlineAsm(asm, out target);
         case MOpcode.Mov when instruction.Operands.Count == 2:
           if (instruction.Operands[1] is MOperand.Immediate immediate)
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);
@@ -220,6 +222,14 @@ public static class X86HostedMachineBuilder {
             && TryAddress(instruction.Operands[0], function, registers, out var farAddress):
           target = new(X86TargetOpcode.CallFar, [], Address: farAddress);
           return true;
+        case MOpcode.JmpIndexed when instruction.Operands.Count >= 2
+            && instruction.Operands[0] is MOperand.Register indexRegister
+            && instruction.Operands[1] is MOperand.BlockAddressTable table:
+          var tableLabels = table.Blocks.Select(label => blockLabels.GetValueOrDefault(label, label)).ToArray();
+          target = new(X86TargetOpcode.JmpIndexed, [Register(indexRegister)],
+            Symbol: instruction.Operands.OfType<MOperand.LabelRef>().FirstOrDefault()?.Name,
+            Operands: [new X86TargetOperand.Table(tableLabels, table.Keys)]);
+          return true;
         case MOpcode.Ret:
           target = new(X86TargetOpcode.Ret, []);
           return true;
@@ -368,5 +378,36 @@ public static class X86HostedMachineBuilder {
     }
     address = default;
     return false;
+  }
+
+  private static bool TryExpandInlineAsm(MOperand.InlineAsmText asm,
+      out X86TargetInstruction? target) {
+    target = null;
+    var text = asm.Text.Trim();
+    if (text.Length == 0)
+      return true;
+    if (text.Contains('\n') || text.Contains('\r'))
+      return false;
+    var mnemonic = text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)[0]
+      .ToUpperInvariant();
+    target = mnemonic switch {
+      "NOP" => new X86TargetInstruction(X86TargetOpcode.Nop, []),
+      "CBW" => new X86TargetInstruction(X86TargetOpcode.Cbw, []),
+      "CWD" or "CDQ" or "CQO" => new X86TargetInstruction(X86TargetOpcode.Cwd, []),
+      "SAHF" => new X86TargetInstruction(X86TargetOpcode.Sahf, []),
+      "FSQRT" => new X86TargetInstruction(X86TargetOpcode.Fsqrt, []),
+      "FSIN" => new X86TargetInstruction(X86TargetOpcode.Fsin, []),
+      "FCOS" => new X86TargetInstruction(X86TargetOpcode.Fcos, []),
+      "FPTAN" => new X86TargetInstruction(X86TargetOpcode.Fptan, []),
+      "FPATAN" => new X86TargetInstruction(X86TargetOpcode.Fpatan, []),
+      "FYL2X" => new X86TargetInstruction(X86TargetOpcode.Fyl2x, []),
+      "FLD1" => new X86TargetInstruction(X86TargetOpcode.Fld1, []),
+      "FLDLN2" => new X86TargetInstruction(X86TargetOpcode.Fldln2, []),
+      "FLDLG2" => new X86TargetInstruction(X86TargetOpcode.Fldlg2, []),
+      "FLDL2E" => new X86TargetInstruction(X86TargetOpcode.Fldl2e, []),
+      "FLDL2T" => new X86TargetInstruction(X86TargetOpcode.Fldl2t, []),
+      _ => null,
+    };
+    return target is not null;
   }
 }
