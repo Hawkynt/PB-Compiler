@@ -13,9 +13,16 @@ public sealed class Mos6502MachineLowering : IMachineFunctionLowerer {
     var result = new X86MachineFunction(function.Name) { TargetFamily = MachineTargetFamily.Mos6502 };
     foreach (var block in function.Blocks) {
       var machineBlock = new MBlock(block.Label);
-      foreach (var instruction in block.Instructions)
+      foreach (var instruction in block.Instructions) {
         if (instruction is IrRet)
           machineBlock.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
+        else if (instruction is IrBinary { Rhs: IrConstantInt constant } binary
+                 && binary.Op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor)
+          machineBlock.Instructions.Add(new MInstr(binary.Op switch {
+            IrBinaryOp.Add => MOpcode.Add, IrBinaryOp.Sub => MOpcode.Sub,
+            IrBinaryOp.And => MOpcode.And, IrBinaryOp.Or => MOpcode.Or, _ => MOpcode.Xor,
+          }, [new MOperand.Immediate(constant.Value)], MInstrEffect.None));
+      }
       result.Blocks.Add(machineBlock);
     }
     selected = result;

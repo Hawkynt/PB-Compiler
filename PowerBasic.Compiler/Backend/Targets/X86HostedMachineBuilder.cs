@@ -14,7 +14,7 @@ public static class X86HostedMachineBuilder {
       _ => (X86Mode?)null,
     };
     if (mode is not { } selectedMode)
-      return false;
+      return true;
 
     var registers = new X86TargetRegisterFile(selectedMode);
     var abi = selectedMode switch {
@@ -24,10 +24,14 @@ public static class X86HostedMachineBuilder {
     };
     var instructions = new List<X86TargetInstruction>();
     var labels = new Dictionary<string, int>(StringComparer.Ordinal);
+    var blockLabels = machine.Function.Blocks.ToDictionary(
+      block => block.Label, block => machine.Function.Name + "$" + block.Label,
+      StringComparer.Ordinal);
     foreach (var block in machine.Function.Blocks) {
-      labels[block.Label] = instructions.Count;
+      labels[blockLabels[block.Label]] = instructions.Count;
       foreach (var instruction in block.Instructions) {
-        if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, out var targetInstruction))
+        if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, blockLabels,
+              out var targetInstruction))
           return false;
         if (targetInstruction is not null)
           instructions.Add(targetInstruction);
@@ -36,7 +40,8 @@ public static class X86HostedMachineBuilder {
 
     hosted = new X86TargetMachineFunction(selectedMode,
       new X86TargetAbi(selectedMode, abi.Name, abi.StackAlignment, abi.ShadowSpaceBytes,
-        abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters), instructions, labels);
+        abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters), instructions, labels,
+      machine.Function.StackSlots.Sum(size => (size + 1) & ~1));
     return true;
   }
 
@@ -45,25 +50,25 @@ public static class X86HostedMachineBuilder {
       X86Mode mode,
       X86TargetRegisterFile registers,
       X86MachineFunction function,
+      IReadOnlyDictionary<string, string> blockLabels,
       out X86TargetInstruction? target) {
     target = null;
     MachineRegister Register(MOperand operand) {
       if (operand is not MOperand.Register { Reg: var register } || register.IsVirtual)
         throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
-      var index = register.Physical.Index();
-      if ((uint)index >= (uint)registers.Registers.Count)
-        throw new InvalidOperationException("allocated register is not part of the hosted x86 register file");
-      return registers.Registers[index];
+      return registers.RegisterFor(register);
     }
 
     try {
       switch (instruction.Opcode) {
+        case MOpcode.InlineAsm when instruction.Operands.FirstOrDefault() is MOperand.InlineAsmText asm:
+          return TryExpandInlineAsm(instruction, asm, mode, registers, function, out target);
         case MOpcode.Mov when instruction.Operands.Count == 2:
           if (instruction.Operands[1] is MOperand.Immediate immediate)
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);
           else if (TryAddress(instruction.Operands[1], function, registers, out var loadAddress))
             target = new(X86TargetOpcode.Mov, [Register(instruction.Operands[0])], Address: loadAddress);
-          else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot
+          else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell
                    && instruction.Operands[1] is MOperand.Register storeRegister
                    && TryAddress(instruction.Operands[0], function, registers, out var storeAddress))
             target = new(X86TargetOpcode.Mov, [Register(storeRegister.Reg)], Address: storeAddress,
@@ -88,6 +93,19 @@ public static class X86HostedMachineBuilder {
             && instruction.Operands[1] is MOperand.Register addRegister
             && TryAddress(instruction.Operands[0], function, registers, out var addAddress):
           target = new(X86TargetOpcode.Add, [Register(addRegister.Reg)], Address: addAddress);
+          return true;
+        case MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
+            when instruction.Operands.Count == 2
+            && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell)
+            && instruction.Operands[1] is MOperand.Register memoryRegister
+            && TryAddress(instruction.Operands[0], function, registers, out var memoryAluAddress):
+          target = new(instruction.Opcode switch {
+            MOpcode.Sub => X86TargetOpcode.Sub,
+            MOpcode.And => X86TargetOpcode.And,
+            MOpcode.Or => X86TargetOpcode.Or,
+            MOpcode.Xor => X86TargetOpcode.Xor,
+            _ => X86TargetOpcode.Cmp,
+          }, [Register(memoryRegister.Reg)], Address: memoryAluAddress);
           return true;
         case MOpcode.Sub when instruction.Operands[1] is MOperand.Immediate sub:
           target = new(X86TargetOpcode.SubImmediate, [Register(instruction.Operands[0])], sub.Value);
@@ -148,6 +166,12 @@ public static class X86HostedMachineBuilder {
             _ => X86TargetOpcode.Idiv,
           }, [Register(instruction.Operands[0])]);
           return true;
+        case MOpcode.Imul when instruction.Operands.Count == 2
+            && instruction.Operands[0] is MOperand.Register
+            && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Imul,
+            [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
         case MOpcode.Cwd:
           target = new(X86TargetOpcode.Cwd, []);
           return true;
@@ -175,10 +199,11 @@ public static class X86HostedMachineBuilder {
             [Register(instruction.Operands[0]), Register(instruction.Operands[1])], doubleShift.Value);
           return true;
         case MOpcode.Jmp when instruction.Operands[0] is MOperand.LabelRef label:
-          target = new(X86TargetOpcode.Jmp, [], Symbol: label.Name);
+          target = new(X86TargetOpcode.Jmp, [], Symbol: blockLabels.GetValueOrDefault(label.Name, label.Name));
           return true;
         case MOpcode.Jcc when instruction.Operands[0] is MOperand.LabelRef label:
-          target = new(X86TargetOpcode.Jcc, [], (long)(instruction.Condition ?? Condition.Equal), Symbol: label.Name);
+          target = new(X86TargetOpcode.Jcc, [], (long)(instruction.Condition ?? Condition.Equal),
+            Symbol: blockLabels.GetValueOrDefault(label.Name, label.Name));
           return true;
         case MOpcode.Call when instruction.Operands[0] is MOperand.LabelRef label:
           target = new(X86TargetOpcode.Call, [], Symbol: label.Name);
@@ -188,6 +213,22 @@ public static class X86HostedMachineBuilder {
           return true;
         case MOpcode.JmpIndirect when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Register:
           target = new(X86TargetOpcode.JmpIndirect, [Register(instruction.Operands[0])]);
+          return true;
+        case MOpcode.JmpIndirect when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var indirectAddress):
+          target = new(X86TargetOpcode.JmpIndirect, [], Address: indirectAddress);
+          return true;
+        case MOpcode.CallFar when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var farAddress):
+          target = new(X86TargetOpcode.CallFar, [], Address: farAddress);
+          return true;
+        case MOpcode.JmpIndexed when instruction.Operands.Count >= 2
+            && instruction.Operands[0] is MOperand.Register indexRegister
+            && instruction.Operands[1] is MOperand.BlockAddressTable table:
+          var tableLabels = table.Blocks.Select(label => blockLabels.GetValueOrDefault(label, label)).ToArray();
+          target = new(X86TargetOpcode.JmpIndexed, [Register(indexRegister)],
+            Symbol: instruction.Operands.OfType<MOperand.LabelRef>().FirstOrDefault()?.Name,
+            Operands: [new X86TargetOperand.Table(tableLabels, table.Keys)]);
           return true;
         case MOpcode.Ret:
           target = new(X86TargetOpcode.Ret, []);
@@ -249,6 +290,14 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Push when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Immediate immediatePush:
           target = new(X86TargetOpcode.Push, [], immediatePush.Value);
           return true;
+        case MOpcode.Push when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var pushAddress):
+          target = new(X86TargetOpcode.Push, [], Address: pushAddress);
+          return true;
+        case MOpcode.Pop when instruction.Operands.Count == 1
+            && TryAddress(instruction.Operands[0], function, registers, out var popAddress):
+          target = new(X86TargetOpcode.Pop, [], Address: popAddress);
+          return true;
         case MOpcode.Push when instruction.Operands.Count == 1:
           target = new(X86TargetOpcode.PushRegister, [Register(instruction.Operands[0])]);
           return true;
@@ -299,7 +348,97 @@ public static class X86HostedMachineBuilder {
       });
       return true;
     }
+    if (operand is MOperand.DataCell cell) {
+      address = new(null, null, 1, cell.Disp, cell.Size switch {
+        MRegSize.Byte => 8,
+        MRegSize.Word => 16,
+        MRegSize.Dword => 32,
+        MRegSize.Qword => 64,
+        _ => 80,
+      }, cell.Name);
+      return true;
+    }
+    if (operand is MOperand.DataOffset offset) {
+      address = new(null, null, 1, offset.Disp, 0, offset.Name);
+      return true;
+    }
+    if (operand is MOperand.ParamCell parameter) {
+      // Stack-only routed ABIs place the first incoming word at BP+4.  Wide parameters carry
+      // their own byte delta, so this remains correct for the split LONG/DOUBLE forms emitted by
+      // the selector without reintroducing a source-procedure frame dependency.
+      address = new(registers.FramePointer, null, 1, 4 + parameter.ArgumentIndex * 2 + parameter.ByteDelta,
+        parameter.Size switch {
+          MRegSize.Byte => 8,
+          MRegSize.Word => 16,
+          MRegSize.Dword => 32,
+          MRegSize.Qword => 64,
+          _ => 80,
+        });
+      return true;
+    }
     address = default;
     return false;
+  }
+
+  private static bool TryExpandInlineAsm(MInstr instruction, MOperand.InlineAsmText asm, X86Mode mode,
+      X86TargetRegisterFile registers, X86MachineFunction function, out X86TargetInstruction? target) {
+    target = null;
+    var text = asm.Text.Trim();
+    if (text.Length == 0)
+      return true;
+    if (text.Contains('\n') || text.Contains('\r'))
+      return false;
+    var mnemonic = text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)[0]
+      .ToUpperInvariant();
+    if (mnemonic is "AESENC" or "AESDEC" or "AESIMC" or "PCLMULQDQ") {
+      var xmm0 = new MachineRegister("xmm0", 0, 128);
+      var xmm1 = new MachineRegister("xmm1", 1, 128);
+      target = new(mnemonic switch {
+        "AESENC" => X86TargetOpcode.AesEnc,
+        "AESDEC" => X86TargetOpcode.AesDec,
+        "AESIMC" => X86TargetOpcode.AesImc,
+        _ => X86TargetOpcode.Pclmul,
+      }, [xmm0, xmm1], Immediate: 0);
+      return true;
+    }
+    if (mnemonic is "POPCNT" or "BSF" or "BSR" or "BEXTR" or "ANDN" or "BLSI" or "BLSR" or "BZHI" or "PEXT" or "PDEP" or "MULX") {
+      var source = instruction.Operands.Skip(1).FirstOrDefault();
+      if (source is null || !TryAddress(source, function, registers, out var address))
+        return false;
+      var destination = registers.Registers[0] with { Bits = mode == X86Mode.Bit64 ? 64 : mode == X86Mode.Bit32 ? 32 : 16 };
+      target = new(mnemonic switch {
+        "POPCNT" => X86TargetOpcode.Popcnt,
+        "BSF" => X86TargetOpcode.Bsf,
+        "BSR" => X86TargetOpcode.Bsr,
+        "BEXTR" => X86TargetOpcode.Bextr,
+        "ANDN" => X86TargetOpcode.Andn,
+        "BLSI" => X86TargetOpcode.Blsi,
+        "BLSR" => X86TargetOpcode.Blsr,
+        "BZHI" => X86TargetOpcode.Bzhi,
+        "PEXT" => X86TargetOpcode.Pext,
+        "PDEP" => X86TargetOpcode.Pdep,
+        _ => X86TargetOpcode.Mulx,
+      }, [destination], Address: address);
+      return true;
+    }
+    target = mnemonic switch {
+      "NOP" => new X86TargetInstruction(X86TargetOpcode.Nop, []),
+      "CBW" => new X86TargetInstruction(X86TargetOpcode.Cbw, []),
+      "CWD" or "CDQ" or "CQO" => new X86TargetInstruction(X86TargetOpcode.Cwd, []),
+      "SAHF" => new X86TargetInstruction(X86TargetOpcode.Sahf, []),
+      "FSQRT" => new X86TargetInstruction(X86TargetOpcode.Fsqrt, []),
+      "FSIN" => new X86TargetInstruction(X86TargetOpcode.Fsin, []),
+      "FCOS" => new X86TargetInstruction(X86TargetOpcode.Fcos, []),
+      "FPTAN" => new X86TargetInstruction(X86TargetOpcode.Fptan, []),
+      "FPATAN" => new X86TargetInstruction(X86TargetOpcode.Fpatan, []),
+      "FYL2X" => new X86TargetInstruction(X86TargetOpcode.Fyl2x, []),
+      "FLD1" => new X86TargetInstruction(X86TargetOpcode.Fld1, []),
+      "FLDLN2" => new X86TargetInstruction(X86TargetOpcode.Fldln2, []),
+      "FLDLG2" => new X86TargetInstruction(X86TargetOpcode.Fldlg2, []),
+      "FLDL2E" => new X86TargetInstruction(X86TargetOpcode.Fldl2e, []),
+      "FLDL2T" => new X86TargetInstruction(X86TargetOpcode.Fldl2t, []),
+      _ => null,
+    };
+    return target is not null;
   }
 }
