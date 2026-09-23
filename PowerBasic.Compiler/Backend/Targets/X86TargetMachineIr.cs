@@ -26,7 +26,8 @@ public readonly record struct X86TargetAddress(
     MachineRegister? Index,
     byte Scale,
     int Displacement,
-    int WidthBits = 0);
+    int WidthBits = 0,
+    string? Symbol = null);
 
 /// <summary>Explicit ABI facts consumed by lowering and emission.</summary>
 public sealed record X86TargetAbi(

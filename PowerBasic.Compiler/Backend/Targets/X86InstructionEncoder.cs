@@ -118,14 +118,16 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
         (7, null) => 5,
         (5, null) => 6,
         (3, null) => 7,
+        (null, null) => 6,
         _ => throw new NotSupportedException("x86-16 address requires BX/BP/SI/DI"),
       };
-      AppendModRm(bytes, reg, rm, address.Displacement, address.Base?.Encoding == 5 && address.Index is null);
+      AppendModRm(bytes, reg, rm, address.Displacement,
+        address.Base?.Encoding == 5 && address.Index is null || address.Base is null && address.Index is null);
       return;
     }
     var baseReg = address.Base?.Encoding ?? 5;
     var indexReg = address.Index?.Encoding ?? 4;
-    var needsSib = address.Index is not null || (baseReg & 7) == 4;
+    var needsSib = address.Index is not null || address.Base is null || (baseReg & 7) == 4;
     var displacement = address.Displacement;
     var mod = displacement == 0 && (baseReg & 7) != 5 ? 0 : displacement is >= sbyte.MinValue and <= sbyte.MaxValue ? 1 : 2;
     if (address.Base is null)
