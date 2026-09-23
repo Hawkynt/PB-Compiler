@@ -213,6 +213,9 @@ public sealed class MachineEmitter {
     if (function.Target.Name is not "x86-16")
       throw new InvalidOperationException(
         $"the legacy Assembler emitter only accepts x86-16 machine products, got '{function.Target.Name}'");
+    if (function.Function.TargetFamily != MachineTargetFamily.X86_16)
+      throw new InvalidOperationException(
+        $"the legacy Assembler emitter received a '{function.Function.TargetFamily}' machine function");
     EmitFunction(asm, function.Function, function.Allocation, paramOffsets, paramBytes,
       resolveCallee, resolveData, onReturn, alignLoops, allowFrameElision, registerSpills, emitInlineAsm);
   }
