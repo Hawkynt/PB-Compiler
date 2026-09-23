@@ -93,7 +93,7 @@ public sealed class BackendTruthValueTests {
     Assert.That(alloc, Is.Not.Null, "the split blocks must still allocate");
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.Emit(asm, m!, alloc!);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.Emit(asm, m!, alloc!);
 
     // an unbound label would throw here when the fixups resolve, so reaching bytes is the check
     Assert.That(asm.ToArray(), Is.Not.Empty);

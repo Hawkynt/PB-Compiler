@@ -259,7 +259,7 @@ public sealed class BackendNeverThrowsTests {
   /// </para>
   /// </summary>
   private static readonly (string Name, string Source)[] _formerlyRaised = [
-    // X86HostedTargetEmitter.EmitInlineAsm. The lowering proved the text parses against its OWN stand-in
+    // PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitInlineAsm. The lowering proved the text parses against its OWN stand-in
     // symbols, where a name that is neither a variable nor a label answers as memory; at emission the
     // same name is the runtime label it really is, and the two disagree about what is an instruction.
     // LEA/INC/CMP/XCHG against a documented string-manager export are the four shapes that differ.

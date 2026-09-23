@@ -50,7 +50,7 @@ public sealed class IndirectCallBackendTests {
     function.Blocks.Add(block);
 
     var assembler = new Assembler();
-    X86HostedTargetEmitter.Emit(assembler, function, new Dictionary<int, Reg>());
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.Emit(assembler, function, new Dictionary<int, Reg>());
 
     // Intel CALL r/m16 is FF /2. For register BX the ModR/M byte is 11 010 011b = D3h.
     Assert.That(assembler.ToArray(), Is.EqualTo(new byte[] { 0xFF, 0xD3 }));

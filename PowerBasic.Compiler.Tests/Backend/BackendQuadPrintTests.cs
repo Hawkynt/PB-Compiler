@@ -89,7 +89,7 @@ public sealed class BackendQuadPrintTests {
     var allocation = LinearScanAllocator.Allocate(machine, target);
     Assert.That(allocation, Is.Not.Null);
     var assembler = new Assembler();
-    X86HostedTargetEmitter.EmitFunction(assembler, machine, allocation!, [], 0);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(assembler, machine, allocation!, [], 0);
     var bytes = assembler.ToArray();
     Assert.That(bytes.Zip(bytes.Skip(1), (a, b) => (a, b)),
       Has.Some.EqualTo(((byte)0x66, encoding)), "the selected dword operation must reach the encoder");
@@ -177,7 +177,7 @@ public sealed class BackendQuadPrintTests {
     var allocation = LinearScanAllocator.Allocate(machine, target);
     Assert.That(allocation, Is.Not.Null);
     var assembler = new Assembler();
-    X86HostedTargetEmitter.EmitFunction(assembler, machine, allocation!, [], 0);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(assembler, machine, allocation!, [], 0);
     var bytes = assembler.ToArray();
     Assert.That(Contains(bytes, 0x66, 0x0F, encoding), Is.True,
       "the dword double shift must reach the encoder");

@@ -29,7 +29,7 @@ public sealed class MachineEmitterTests {
     Assert.That(alloc, Does.ContainKey(0).And.ContainKey(1));
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.Emit(asm, m!, alloc!);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.Emit(asm, m!, alloc!);
     var bytes = asm.ToArray();
 
     // a reference stream with the SAME physical registers the allocator chose
@@ -59,7 +59,7 @@ public sealed class MachineEmitterTests {
     Assert.That(alloc, Is.Not.Null);
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.Emit(asm, m!, alloc!);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.Emit(asm, m!, alloc!);
     // the alloca lowers to LEA <reg>, [BP-2] taking the address of the first frame slot; that
     // resolved frame reference must appear in the emitted stream
     var reference = new Assembler();
@@ -86,7 +86,7 @@ public sealed class MachineEmitterTests {
     Assert.That(alloc, Is.Not.Null);
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.Emit(asm, m!, alloc!);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.Emit(asm, m!, alloc!);
     var bytes = asm.ToArray();   // resolves the label fixups - throws if a branch target is unbound
 
     Assert.That(bytes, Is.Not.Empty);
@@ -111,7 +111,7 @@ public sealed class MachineEmitterTests {
     Assert.That(alloc, Is.Not.Null);
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.EmitFunction(asm, m!, alloc!, [4, 6], 4, allowFrameElision: true);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(asm, m!, alloc!, [4, 6], 4, allowFrameElision: true);
     var bytes = asm.ToArray();
 
     var entryFrame = new Assembler();
@@ -142,7 +142,7 @@ public sealed class MachineEmitterTests {
     Assert.That(allocation, Is.Not.Null);
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.EmitFunction(asm, machine!, allocation!, [], 0, allowFrameElision: true);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(asm, machine!, allocation!, [], 0, allowFrameElision: true);
 
     Assert.That(asm.ToArray(), Is.EqualTo(new byte[] { 0xC3 }), "RET is the complete function");
   }
@@ -160,7 +160,7 @@ public sealed class MachineEmitterTests {
     Assert.That(machine!.StackSlots, Is.Not.Empty);
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.EmitFunction(asm, machine, allocation!, [], 0, allowFrameElision: true);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(asm, machine, allocation!, [], 0, allowFrameElision: true);
 
     Assert.That(asm.ToArray()[0], Is.EqualTo((byte)0x55), "PUSH BP remains because a frame slot survived");
   }
@@ -178,7 +178,7 @@ public sealed class MachineEmitterTests {
     Assert.That(allocation, Is.Not.Null);
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.EmitFunction(asm, machine, allocation!, [4], 4, allowFrameElision: true);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(asm, machine, allocation!, [4], 4, allowFrameElision: true);
     var bytes = asm.ToArray();
 
     var fullTeardown = new Assembler();
@@ -204,7 +204,7 @@ public sealed class MachineEmitterTests {
     function.Blocks.Add(block);
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.EmitFunction(asm, function, new Dictionary<int, Reg>(), [], 0, allowFrameElision: true);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(asm, function, new Dictionary<int, Reg>(), [], 0, allowFrameElision: true);
     asm.MarkLabel(asm.Lbl("rt"));
     var bytes = asm.ToArray();
 
@@ -226,7 +226,7 @@ public sealed class MachineEmitterTests {
     fn.Blocks.Add(block);
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.Emit(asm, fn, new Dictionary<int, Reg>());
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.Emit(asm, fn, new Dictionary<int, Reg>());
     asm.MarkLabel(asm.Lbl("rt"));   // define the call target so the fixup resolves
     var bytes = asm.ToArray();
 

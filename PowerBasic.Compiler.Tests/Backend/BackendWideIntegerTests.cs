@@ -224,7 +224,7 @@ public sealed class BackendWideIntegerTests {
     // keeps the one compact shift and the assembler then expands it into four count-one ones.
     var asm = new Assembler { Allow186ImmediateShifts = target.Cpu186OrLater };
 
-    X86HostedTargetEmitter.EmitFunction(asm, m!, alloc!, [], 0);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(asm, m!, alloc!, [], 0);
 
     var bytes = asm.ToArray();
     Assert.That(bytes.Zip(bytes.Skip(1), (a, b) => (a, b)),
@@ -275,7 +275,7 @@ public sealed class BackendWideIntegerTests {
     Assert.That(alloc, Is.Not.Null);
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.EmitFunction(asm, m!, alloc!, [6], 4);   // one 4-byte argument at [BP+6]
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(asm, m!, alloc!, [6], 4);   // one 4-byte argument at [BP+6]
 
     // both halves must be loaded, so the prologue reads [BP+6] and [BP+8]
     var reference = new Assembler();
@@ -325,7 +325,7 @@ public sealed class BackendWideIntegerTests {
     Assert.That(alloc, Is.Not.Null, "the pair should allocate - the halves are ordinary virtual registers");
 
     var asm = new Assembler();
-    X86HostedTargetEmitter.Emit(asm, m!, alloc!);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.Emit(asm, m!, alloc!);
     var bytes = asm.ToArray();
 
     Assert.That(bytes, Is.Not.Empty);

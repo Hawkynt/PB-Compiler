@@ -175,7 +175,7 @@ public sealed class BackendFrameTests {
     var alloc = LinearScanAllocator.Allocate(m)!;
 
     var asm = new PowerBasic.Compiler.Asm.Assembler();
-    X86HostedTargetEmitter.EmitFunction(asm, m, alloc, [], 0);
+    PowerBasic.Compiler.Backend.Targets.X86HostedTargetEmitter.EmitFunction(asm, m, alloc, [], 0);
 
     // 8 slots of 2 bytes = 16 bytes = 8 words, and REP STOSW (F3 AB) is how the direct path spells it
     var bytes = asm.ToArray();
