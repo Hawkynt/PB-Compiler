@@ -96,6 +96,11 @@ public static class X86HostedMachineBuilder {
             Symbol: blockLabels.GetValueOrDefault(blockOffset.Block, blockOffset.Block));
           return true;
         case MOpcode.Mov when instruction.Operands.Count == 2
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var stackSymbolAddress)
+            && instruction.Operands[1] is MOperand.LabelRef stackSymbol:
+          target = new(X86TargetOpcode.MoveMemorySymbol, [], Address: stackSymbolAddress, Symbol: stackSymbol.Name);
+          return true;
+        case MOpcode.Mov when instruction.Operands.Count == 2
             && instruction.Operands[0] is MOperand.Register symbolRegister
             && instruction.Operands[1] is MOperand.LabelRef symbolLabel:
           target = new(X86TargetOpcode.MoveSymbolAddress, [Register(symbolRegister)], Symbol: symbolLabel.Name);
@@ -147,14 +152,14 @@ public static class X86HostedMachineBuilder {
             _ => X86TargetOpcode.Add,
           }, [RegisterValue(addRegister.Reg)], Address: addAddress);
           return true;
-        case MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Adc or MOpcode.Cmp
+        case MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Adc or MOpcode.Sbb or MOpcode.Cmp
             when instruction.Operands.Count == 2
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var immediateAluAddress)
             && instruction.Operands[1] is MOperand.Immediate memoryImmediate:
           target = new(X86TargetOpcode.AluMemoryImmediate, [], memoryImmediate.Value, immediateAluAddress,
             Operands: [new X86TargetOperand.Immediate((long)(instruction.Opcode switch {
               MOpcode.Add => 0, MOpcode.Or => 1, MOpcode.And => 4, MOpcode.Sub => 5, MOpcode.Xor => 6,
-              MOpcode.Adc => 2, _ => 7 }))]);
+              MOpcode.Adc => 2, MOpcode.Sbb => 3, _ => 7 }))]);
           return true;
         case MOpcode.Cmp when instruction.Operands.Count == 2
             && instruction.Operands[0] is MOperand.Register
@@ -462,7 +467,7 @@ public static class X86HostedMachineBuilder {
         _ => 80,
       });
     // Absolute displacement-only memory operands are valid in all hosted modes.
-    return address.Base is not null || address.Index is not null || memory.Disp != 0;
+    return true;
   }
 
   private static bool TryAddress(MOperand operand, X86MachineFunction function,

@@ -215,9 +215,13 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.MoveSymbolAddress when instruction.Symbol is { Length: > 0 } addressSymbol:
           var addressBytes = encoder.MoveImmediate(instruction.Registers[0], 0);
           bytes.AddRange(addressBytes);
-          var addressWidth = function.Mode == X86Mode.Bit16 ? 2 : 4;
+          var addressWidth = function.Mode switch { X86Mode.Bit16 => 2, X86Mode.Bit64 => 8, _ => 4 };
           relocations.Add(new MachineRelocation(offset + addressBytes.Length - addressWidth,
-            addressWidth == 2 ? MachineRelocationKind.Absolute16 : MachineRelocationKind.Absolute32, addressSymbol));
+            function.Mode switch {
+              X86Mode.Bit16 => MachineRelocationKind.Absolute16,
+              X86Mode.Bit64 => MachineRelocationKind.Absolute64,
+              _ => MachineRelocationKind.Absolute32,
+            }, addressSymbol));
           break;
         case X86TargetOpcode.MemoryShiftCount when instruction.Address is { } memoryShiftAddress:
           var shiftMemoryBytes = encoder.ShiftMemoryCount(memoryShiftAddress, checked((int)instruction.Immediate));
