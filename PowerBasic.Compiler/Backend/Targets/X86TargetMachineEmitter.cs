@@ -2,7 +2,8 @@ namespace PowerBasic.Compiler.Backend.Targets;
 
 /// <summary>Encodes the independent hosted x86 machine representation and its relocations.</summary>
 public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
-  public MachineCode Emit(X86TargetMachineFunction function, bool preserveFramePointer = true) {
+  public MachineCode Emit(X86TargetMachineFunction function, bool preserveFramePointer = true,
+      bool emitReturn = true) {
     ArgumentNullException.ThrowIfNull(function);
     var bytes = new List<byte>();
     var relocations = new List<MachineRelocation>();
@@ -306,13 +307,15 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
       }
     }
 
-    if (function.Abi.ShadowSpaceBytes != 0)
-      bytes.AddRange(encoder.AdjustStack(function.Abi.ShadowSpaceBytes, allocate: false));
-    if (function.FrameSizeBytes != 0)
-      bytes.AddRange(encoder.AdjustStack(function.FrameSizeBytes, allocate: false));
-    if (preserveFramePointer)
-      bytes.AddRange(encoder.Pop(registers.FramePointer));
-    bytes.AddRange(encoder.Ret());
+    if (emitReturn) {
+      if (function.Abi.ShadowSpaceBytes != 0)
+        bytes.AddRange(encoder.AdjustStack(function.Abi.ShadowSpaceBytes, allocate: false));
+      if (function.FrameSizeBytes != 0)
+        bytes.AddRange(encoder.AdjustStack(function.FrameSizeBytes, allocate: false));
+      if (preserveFramePointer)
+        bytes.AddRange(encoder.Pop(registers.FramePointer));
+      bytes.AddRange(encoder.Ret());
+    }
     foreach (var label in function.LabelInstructionIndices.Where(pair => pair.Value == function.Instructions.Count))
       labels[label.Key] = bytes.Count;
     return new(bytes.ToArray(), relocations, labels);
