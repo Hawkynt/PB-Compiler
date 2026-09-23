@@ -33,9 +33,10 @@ public static class X86HostedMachineBuilder {
       labels[blockLabels[block.Label]] = instructions.Count;
       foreach (var (instruction, index) in block.Instructions.Select((item, index) => (item, index))) {
         if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, blockLabels,
-              out var targetInstruction)) {
+              out var targetInstruction, out var instructionError)) {
           error = $"block '{block.Label}' instruction #{index}: {instruction.Opcode} " +
-            $"({string.Join("|", instruction.Operands.Select(operand => operand.GetType().Name))})";
+            $"({string.Join("|", instruction.Operands.Select(operand => operand.GetType().Name))})" +
+            (instructionError is null ? "" : $" - {instructionError}");
           return false;
         }
         if (targetInstruction is not null)
@@ -57,8 +58,10 @@ public static class X86HostedMachineBuilder {
       X86TargetRegisterFile registers,
       X86MachineFunction function,
       IReadOnlyDictionary<string, string> blockLabels,
-      out X86TargetInstruction? target) {
+      out X86TargetInstruction? target,
+      out string? error) {
     target = null;
+    error = null;
     MachineRegister Register(MOperand operand) {
       if (operand is not MOperand.Register { Reg: var register } || register.IsVirtual)
         throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
@@ -334,9 +337,11 @@ public static class X86HostedMachineBuilder {
         default:
           return false;
       }
-    } catch (ArgumentException) {
+    } catch (ArgumentException ex) {
+      error = ex.Message;
       return false;
-    } catch (InvalidOperationException) {
+    } catch (InvalidOperationException ex) {
+      error = ex.Message;
       return false;
     }
   }
