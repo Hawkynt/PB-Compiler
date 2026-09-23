@@ -36,6 +36,53 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
       : [0x83, opcode, (byte)bytes];
   }
 
+  public byte[] MoveRegister(MachineRegister destination, MachineRegister source) {
+    Validate(destination);
+    Validate(source);
+    if (destination.Bits != source.Bits)
+      throw new ArgumentException("Register widths must match.");
+    var rex = Rex(destination, source, w: mode == X86Mode.Bit64);
+    var result = new List<byte>(rex is null ? 2 : 3);
+    if (rex is { } prefix)
+      result.Add(prefix);
+    result.Add(0x89);
+    result.Add(ModRm(destination.Encoding, source.Encoding));
+    return [.. result];
+  }
+
+  public byte[] AddImmediate(MachineRegister destination, int value)
+    => AluImmediate(destination, value, extension: 0);
+
+  public byte[] SubImmediate(MachineRegister destination, int value)
+    => AluImmediate(destination, value, extension: 5);
+
+  private byte[] AluImmediate(MachineRegister destination, int value, int extension) {
+    Validate(destination);
+    var rex = Rex(destination, destination, w: mode == X86Mode.Bit64);
+    var result = new List<byte>(rex is null ? 7 : 8);
+    if (rex is { } prefix)
+      result.Add(prefix);
+    if (value is >= sbyte.MinValue and <= sbyte.MaxValue) {
+      result.Add(0x83);
+      result.Add(ModRm(extension, destination.Encoding));
+      result.Add((byte)value);
+    } else {
+      result.Add(0x81);
+      result.Add(ModRm(extension, destination.Encoding));
+      result.AddRange(BitConverter.GetBytes(value));
+    }
+    return [.. result];
+  }
+
+  private static byte ModRm(int reg, int rm) => (byte)(0xC0 | ((reg & 7) << 3) | (rm & 7));
+
+  private static byte? Rex(MachineRegister destination, MachineRegister source, bool w) {
+    var rex = (byte)(0x40 | (w ? 0x08 : 0)
+      | (source.Encoding >= 8 ? 0x04 : 0)
+      | (destination.Encoding >= 8 ? 0x01 : 0));
+    return rex == 0x40 ? null : rex;
+  }
+
   private void Validate(MachineRegister register) {
     if (register.Bits != (mode == X86Mode.Bit64 ? 64 : 32))
       throw new ArgumentException("Register width does not match the target mode.", nameof(register));

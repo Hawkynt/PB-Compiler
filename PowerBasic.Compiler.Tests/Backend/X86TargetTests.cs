@@ -42,6 +42,17 @@ public sealed class X86TargetTests {
   }
 
   [Test]
+  public void X86_64_EncodesRegisterMoveAndArithmeticImmediate() {
+    var encoder = new X86InstructionEncoder(X86Mode.Bit64);
+    Assert.That(encoder.MoveRegister(X86RegisterFile.Gpr64[8], X86RegisterFile.Gpr64[0]),
+      Is.EqualTo(new byte[] { 0x49, 0x89, 0xC0 }));
+    Assert.That(encoder.AddImmediate(X86RegisterFile.Gpr64[0], 7),
+      Is.EqualTo(new byte[] { 0x48, 0x83, 0xC0, 0x07 }));
+    Assert.That(encoder.SubImmediate(X86RegisterFile.Gpr64[8], 300),
+      Is.EqualTo(new byte[] { 0x49, 0x81, 0xE8, 0x2C, 0x01, 0x00, 0x00 }));
+  }
+
+  [Test]
   public void MismatchedAbiAndModeIsRejected() {
     Assert.That(() => new X86MachineTarget(X86Mode.Bit32, X86Abi.Windows64), Throws.ArgumentException);
   }
