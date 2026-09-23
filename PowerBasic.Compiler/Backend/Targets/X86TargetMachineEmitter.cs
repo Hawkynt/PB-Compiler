@@ -35,6 +35,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Lea when instruction.Address is { } leaAddress:
           bytes.AddRange(encoder.LeaMemory(instruction.Registers[0], leaAddress));
           break;
+        case X86TargetOpcode.Xchg when instruction.Registers.Count >= 2:
+          bytes.AddRange(encoder.XchgRegister(instruction.Registers[0], instruction.Registers[1]));
+          break;
         case X86TargetOpcode.Add when instruction.Address is { } addAddress:
           bytes.AddRange(encoder.AluMemory(instruction.Registers[0], addAddress, 0x01, load: false));
           break;
@@ -174,10 +177,15 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           break;
         case X86TargetOpcode.Call:
           if (string.IsNullOrWhiteSpace(instruction.Symbol))
-            throw new InvalidOperationException("relative calls require a symbol");
-          var call = X86RelocationEncoder.CallRelative(function.Mode, instruction.Symbol);
-          relocations.AddRange(call.Relocations.Select(r => r with { Offset = r.Offset + offset }));
-          bytes.AddRange(call.Bytes);
+            bytes.AddRange(encoder.IndirectRegister(instruction.Registers[0], 2));
+          else {
+            var call = X86RelocationEncoder.CallRelative(function.Mode, instruction.Symbol);
+            relocations.AddRange(call.Relocations.Select(r => r with { Offset = r.Offset + offset }));
+            bytes.AddRange(call.Bytes);
+          }
+          break;
+        case X86TargetOpcode.JmpIndirect:
+          bytes.AddRange(encoder.IndirectRegister(instruction.Registers[0], 4));
           break;
         case X86TargetOpcode.Ret:
           bytes.AddRange(encoder.Ret());

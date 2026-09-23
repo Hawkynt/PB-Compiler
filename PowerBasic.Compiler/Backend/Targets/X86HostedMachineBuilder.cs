@@ -76,6 +76,10 @@ public static class X86HostedMachineBuilder {
             && TryAddress(instruction.Operands[1], function, registers, out var leaAddress):
           target = new(X86TargetOpcode.Lea, [Register(instruction.Operands[0])], Address: leaAddress);
           return true;
+        case MOpcode.Xchg when instruction.Operands.Count == 2
+            && instruction.Operands[0] is MOperand.Register && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Xchg, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
         case MOpcode.Add when instruction.Operands[1] is MOperand.Immediate add:
           target = new(X86TargetOpcode.AddImmediate, [Register(instruction.Operands[0])], add.Value);
           return true;
@@ -159,6 +163,12 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Call when instruction.Operands[0] is MOperand.LabelRef label:
           target = new(X86TargetOpcode.Call, [], Symbol: label.Name);
           return true;
+        case MOpcode.Call when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Register:
+          target = new(X86TargetOpcode.Call, [Register(instruction.Operands[0])]);
+          return true;
+        case MOpcode.JmpIndirect when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Register:
+          target = new(X86TargetOpcode.JmpIndirect, [Register(instruction.Operands[0])]);
+          return true;
         case MOpcode.Ret:
           target = new(X86TargetOpcode.Ret, []);
           return true;
@@ -199,6 +209,9 @@ public static class X86HostedMachineBuilder {
             MOpcode.Fild => X86TargetOpcode.Fild,
             _ => X86TargetOpcode.Fistp,
           }, [], Address: memoryAddress);
+          return true;
+        case MOpcode.Push when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Immediate immediatePush:
+          target = new(X86TargetOpcode.Push, [], immediatePush.Value);
           return true;
         case MOpcode.Push when instruction.Operands.Count == 1:
           target = new(X86TargetOpcode.PushRegister, [Register(instruction.Operands[0])]);

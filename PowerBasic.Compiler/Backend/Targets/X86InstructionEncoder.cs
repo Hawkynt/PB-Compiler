@@ -52,6 +52,20 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return [.. result];
   }
 
+  public byte[] XchgRegister(MachineRegister left, MachineRegister right)
+    => AluRegister(left, right, 0x87);
+
+  public byte[] IndirectRegister(MachineRegister register, int extension) {
+    Validate(register);
+    var rex = RexRm(register, w: mode == X86Mode.Bit64);
+    var bytes = new List<byte>(3);
+    if (rex is { } prefix)
+      bytes.Add(prefix);
+    bytes.Add(0xFF);
+    bytes.Add(ModRm(extension, register.Encoding));
+    return [.. bytes];
+  }
+
   public byte[] MoveMemory(MachineRegister register, X86TargetAddress address, bool load) {
     Validate(register);
     var bytes = new List<byte>();
