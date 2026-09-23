@@ -61,6 +61,16 @@ public static class X86HostedMachineBuilder {
       switch (instruction.Opcode) {
         case MOpcode.InlineAsm when instruction.Operands.FirstOrDefault() is MOperand.InlineAsmText asm:
           return TryExpandInlineAsm(instruction, asm, mode, registers, function, out target);
+        case MOpcode.Mov when instruction.Operands.Count == 2
+            && TryAddress(instruction.Operands[0], function, registers, out var immediateAddress)
+            && instruction.Operands[1] is MOperand.Immediate immediateMemory:
+          target = new(X86TargetOpcode.MoveMemoryImmediate, [], immediateMemory.Value, immediateAddress);
+          return true;
+        case MOpcode.Mov when instruction.Operands.Count == 2
+            && TryAddress(instruction.Operands[0], function, registers, out var symbolAddress)
+            && instruction.Operands[1] is MOperand.DataOffset dataOffset:
+          target = new(X86TargetOpcode.MoveMemorySymbol, [], Address: symbolAddress, Symbol: dataOffset.Name);
+          return true;
         case MOpcode.Mov when instruction.Operands.Count == 2:
           if (instruction.Operands[1] is MOperand.Immediate immediate)
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);

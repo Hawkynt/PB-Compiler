@@ -100,6 +100,22 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return [.. bytes];
   }
 
+  public byte[] MoveMemoryImmediate(X86TargetAddress address, long value) {
+    var bytes = new List<byte>();
+    var width = address.WidthBits == 8 ? 8 : mode == X86Mode.Bit16 || address.WidthBits == 16 ? 16 : 32;
+    if (mode == X86Mode.Bit64 && width == 16)
+      bytes.Add(0x66);
+    bytes.Add(width == 8 ? (byte)0xC6 : (byte)0xC7);
+    AppendAddress(bytes, 0, address);
+    if (width == 8)
+      bytes.Add((byte)value);
+    else if (width == 16)
+      bytes.AddRange(BitConverter.GetBytes((ushort)value));
+    else
+      bytes.AddRange(BitConverter.GetBytes((uint)value));
+    return [.. bytes];
+  }
+
   public byte[] LeaMemory(MachineRegister register, X86TargetAddress address) {
     Validate(register);
     var bytes = new List<byte>();

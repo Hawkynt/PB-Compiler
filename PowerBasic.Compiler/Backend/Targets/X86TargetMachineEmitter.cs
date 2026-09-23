@@ -19,6 +19,16 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
       relocations.Add(new MachineRelocation(instructionOffset + encodedLength - width, kind, symbol,
         address.Displacement));
     }
+    void AddMemoryAddressRelocation(X86TargetAddress address, int instructionOffset, int encodedLength,
+        int immediateWidth) {
+      if (address.Symbol is not { Length: > 0 } symbol || address.Base is not null || address.Index is not null)
+        return;
+      var width = function.Mode == X86Mode.Bit16 ? 2 : 4;
+      var kind = function.Mode == X86Mode.Bit16
+        ? MachineRelocationKind.Absolute16 : MachineRelocationKind.Absolute32;
+      relocations.Add(new MachineRelocation(instructionOffset + encodedLength - immediateWidth - width,
+        kind, symbol, address.Displacement));
+    }
     void AppendFunctionEpilogue() {
       if (function.Abi.ShadowSpaceBytes != 0)
         bytes.AddRange(encoder.AdjustStack(function.Abi.ShadowSpaceBytes, allocate: false));
@@ -127,6 +137,22 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           var loadBytes = encoder.MoveMemory(instruction.Registers[0], loadAddress, load: true);
           bytes.AddRange(loadBytes);
           AddAddressRelocation(loadAddress, offset, loadBytes.Length);
+          break;
+        case X86TargetOpcode.MoveMemoryImmediate when instruction.Address is { } immediateAddress:
+          var immediateBytes = encoder.MoveMemoryImmediate(immediateAddress, instruction.Immediate);
+          bytes.AddRange(immediateBytes);
+          AddMemoryAddressRelocation(immediateAddress, offset, immediateBytes.Length,
+            immediateAddress.WidthBits == 8 ? 1 : immediateAddress.WidthBits == 16 ? 2 : 4);
+          break;
+        case X86TargetOpcode.MoveMemorySymbol when instruction.Address is { } symbolAddress
+            && instruction.Symbol is { Length: > 0 } sourceSymbol:
+          var symbolBytes = encoder.MoveMemoryImmediate(symbolAddress, 0);
+          bytes.AddRange(symbolBytes);
+          var sourceWidth = symbolAddress.WidthBits == 8 ? 1 : symbolAddress.WidthBits == 16 ? 2 : 4;
+          AddMemoryAddressRelocation(symbolAddress, offset, symbolBytes.Length, sourceWidth);
+          relocations.Add(new MachineRelocation(offset + symbolBytes.Length - sourceWidth,
+            sourceWidth == 2 ? MachineRelocationKind.Absolute16 : MachineRelocationKind.Absolute32,
+            sourceSymbol));
           break;
         case X86TargetOpcode.Mov when instruction.Address is { } storeAddress && instruction.Immediate == 1:
           var storeBytes = encoder.MoveMemory(instruction.Registers[0], storeAddress, load: false);
