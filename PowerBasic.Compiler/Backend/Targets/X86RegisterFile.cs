@@ -35,15 +35,15 @@ public static class X86RegisterFile {
   ];
 
   public static IReadOnlyList<MachineRegister> Gpr64LowBytes { get; } =
-    ["al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"]
+    new[] { "al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b" }
       .Select((name, index) => new MachineRegister(name, index, 8, index)).ToArray();
 
   public static IReadOnlyList<MachineRegister> Gpr64Words { get; } =
-    ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w"]
+    new[] { "ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w" }
       .Select((name, index) => new MachineRegister(name, index, 16, index)).ToArray();
 
   public static IReadOnlyList<MachineRegister> Gpr64Dwords { get; } =
-    ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"]
+    new[] { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d" }
       .Select((name, index) => new MachineRegister(name, index, 32, index)).ToArray();
 
   public static MachineRegister Ax => Gpr16[0];
