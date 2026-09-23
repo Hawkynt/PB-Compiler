@@ -56,6 +56,25 @@ public sealed class X86TargetTests {
   }
 
   [Test]
+  public void HostedX86Emitter_EmitsIndependentX86_64MachineFunction() {
+    var target = new X86MachineTarget(X86Mode.Bit64, X86Abi.SysV64);
+    var registers = new X86TargetRegisterFile(X86Mode.Bit64);
+    var abi = new X86TargetAbi(X86Mode.Bit64, "x86-64-sysv", 16, 0,
+      [registers.ReturnValue], registers.ReturnValue, new HashSet<MachineRegister>());
+    var function = new X86TargetMachineFunction(X86Mode.Bit64, abi, [
+      new(X86TargetOpcode.MoveImmediate, [registers.ReturnValue], 42),
+      new(X86TargetOpcode.Return, []),
+    ]);
+
+    var code = target.HostedEmitter.Emit(function);
+
+    Assert.That(code.Bytes, Is.EqualTo(new byte[] {
+      0x55, 0x48, 0x89, 0xE5, 0x48, 0xB8, 0x2A, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0xC3, 0x5D, 0xC3
+    }));
+  }
+
+  [Test]
   public void MismatchedAbiAndModeIsRejected() {
     Assert.That(() => new X86MachineTarget(X86Mode.Bit32, X86Abi.Windows64), Throws.ArgumentException);
   }

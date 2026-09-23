@@ -20,6 +20,8 @@ public sealed class X86MachineTarget : IMachineTarget {
   public IMachineInstructionEncoder Encoder { get; }
   public IMachineEmitter Emitter { get; }
 
+  public X86TargetMachineEmitter HostedEmitter => new((X86InstructionEncoder)this.Encoder);
+
   public IMachineFunctionLowerer CreateLowerer(SelectionTarget selectionTarget)
     => new X86MachineLowering(selectionTarget with {
       CpuLevel = this._mode == X86Mode.Bit64
