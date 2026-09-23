@@ -37,7 +37,8 @@ public static class X86HostedMachineBuilder {
     hosted = new X86TargetMachineFunction(selectedMode,
       new X86TargetAbi(selectedMode, abi.Name, abi.StackAlignment, abi.ShadowSpaceBytes,
         abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters), instructions, labels,
-      machine.Function.StackSlots.Sum(size => (size + 1) & ~1));
+      machine.Function.StackSlots.Sum(size => (size + 1) & ~1),
+      abi.PlaceArguments(machine.Source.Parameters.Select(parameter => parameter.Type).ToArray()));
     return true;
   }
 
@@ -387,8 +388,12 @@ public static class X86HostedMachineBuilder {
     var mnemonic = text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)[0]
       .ToUpperInvariant();
     if (mnemonic is "AESENC" or "AESDEC" or "AESIMC" or "PCLMULQDQ") {
-      var xmm0 = new MachineRegister("xmm0", 0, 128);
-      var xmm1 = new MachineRegister("xmm1", 1, 128);
+      var vectorOperands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
+        .Select(operand => TryMachineRegister(operand.Reg, registers)).ToArray();
+      if (vectorOperands.Any(register => register is null) || vectorOperands.Length < 2)
+        return false;
+      var xmm0 = vectorOperands[0]!.Value;
+      var xmm1 = vectorOperands[1]!.Value;
       target = new(mnemonic switch {
         "AESENC" => X86TargetOpcode.AesEnc,
         "AESDEC" => X86TargetOpcode.AesDec,
@@ -398,6 +403,25 @@ public static class X86HostedMachineBuilder {
       return true;
     }
     if (mnemonic is "POPCNT" or "BSF" or "BSR" or "BEXTR" or "ANDN" or "BLSI" or "BLSR" or "BZHI" or "PEXT" or "PDEP" or "MULX") {
+      var registerOperands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
+        .Select(operand => TryMachineRegister(operand.Reg, registers)).ToArray();
+      var requiredRegisters = mnemonic is "BLSI" or "BLSR" or "POPCNT" or "BSF" or "BSR" ? 2 : 3;
+      if (registerOperands.Length >= requiredRegisters && registerOperands.All(register => register is not null)) {
+        target = new(mnemonic switch {
+          "POPCNT" => X86TargetOpcode.Popcnt,
+          "BSF" => X86TargetOpcode.Bsf,
+          "BSR" => X86TargetOpcode.Bsr,
+          "BEXTR" => X86TargetOpcode.Bextr,
+          "ANDN" => X86TargetOpcode.Andn,
+          "BLSI" => X86TargetOpcode.Blsi,
+          "BLSR" => X86TargetOpcode.Blsr,
+          "BZHI" => X86TargetOpcode.Bzhi,
+          "PEXT" => X86TargetOpcode.Pext,
+          "PDEP" => X86TargetOpcode.Pdep,
+          _ => X86TargetOpcode.Mulx,
+        }, registerOperands.Take(requiredRegisters).Select(register => register!.Value).ToArray());
+        return true;
+      }
       var source = instruction.Operands.Skip(1).FirstOrDefault();
       if (source is null || !TryAddress(source, function, registers, out var address))
         return false;
@@ -436,5 +460,18 @@ public static class X86HostedMachineBuilder {
       _ => null,
     };
     return target is not null;
+  }
+
+  private static MachineRegister? TryMachineRegister(MReg register, X86TargetRegisterFile registers) {
+    if (register.IsVirtual)
+      return null;
+    if (register.Physical.IsMmx() || register.Physical.IsXmm() || register.Physical.IsYmm() || register.Physical.IsZmm()) {
+      var index = register.Physical.Index();
+      var (prefix, bits) = register.Physical.IsMmx() ? ("mm", 64)
+        : register.Physical.IsXmm() ? ("xmm", 128)
+        : register.Physical.IsYmm() ? ("ymm", 256) : ("zmm", 512);
+      return new MachineRegister(prefix + index, index, bits);
+    }
+    return registers.RegisterFor(register);
   }
 }

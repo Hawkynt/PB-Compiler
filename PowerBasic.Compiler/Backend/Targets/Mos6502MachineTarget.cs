@@ -16,6 +16,5 @@ public sealed class Mos6502MachineTarget : IMachineTarget {
   public IMachineEmitter Emitter { get; }
 
   public IMachineFunctionLowerer CreateLowerer(SelectionTarget selectionTarget)
-    => throw new NotSupportedException(
-      "the MOS 6502 target has an ABI and emitter shell, but no Low IR instruction selector yet");
+    => new Mos6502MachineLowering();
 }

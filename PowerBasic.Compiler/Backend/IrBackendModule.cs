@@ -52,11 +52,14 @@ public sealed class IrBackendModule {
   public bool TryLowerMachine(out IReadOnlyList<string> errors) {
     var target = IrBackendTargetContract.SelectionTarget(Options);
     if (Options.Target == IrBackendTarget.Mos6502) {
-      errors = ["target 'Mos6502' has no Low IR instruction selector yet"];
-      return false;
+      if (!IrMachinePipeline.TryLower(this.Module, new Mos6502MachineLowering(), target,
+            out var mosMachine, out errors))
+        return false;
+      this.Machine = mosMachine;
+      return true;
     }
 
-    if (Options.Target is IrBackendTarget.X86_32 or IrBackendTarget.X86_64) {
+    if (Options.Target is IrBackendTarget.X86_16 or IrBackendTarget.X86_32 or IrBackendTarget.X86_64) {
       var targetModel = IrBackendTargetContract.CreateMachineTarget(Options.Target);
       if (targetModel is null) {
         errors = [$"target '{Options.Target}' has no machine target contract"];
@@ -89,9 +92,9 @@ public sealed class IrBackendModule {
     if (options.Target is IrBackendTarget.C or IrBackendTarget.PowerBasic35 or IrBackendTarget.X86_64)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
         options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops);
-    else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.X86_32)
+    else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.X86_32 or IrBackendTarget.Mos6502)
       IrMiddleEndPipeline.RunNativeModule(module, options.Optimize, options.OptimizeForSpeed,
-        options.OptimizeForSize, minimumIntegerStorageBits: options.Target == IrBackendTarget.X86_16 ? 16 : 32,
+        options.OptimizeForSize, minimumIntegerStorageBits: options.Target is IrBackendTarget.X86_16 or IrBackendTarget.Mos6502 ? 16 : 32,
         recoverIntegerArithmetic: options.RecoverIntegerArithmetic);
     else {
       declinedBecause = $"target '{options.Target}' has no emitter yet";

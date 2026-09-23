@@ -401,6 +401,8 @@ public sealed class MBlock(string label) {
 public sealed class X86MachineFunction(string name) {
   public string Name { get; } = name;
   public MachineTargetFamily TargetFamily { get; set; } = MachineTargetFamily.X86_16;
+  /// <summary>Target-owned allocation/frame facts for non-x86 machine families.</summary>
+  public object? TargetAllocation { get; set; }
   public List<MBlock> Blocks { get; } = [];
   public int VirtualRegisterCount { get; set; }
 

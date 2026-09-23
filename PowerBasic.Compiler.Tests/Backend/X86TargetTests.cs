@@ -196,10 +196,9 @@ public sealed class X86TargetTests {
   }
 
   [Test]
-  public void Mos6502DeclinesUntilItsInstructionSelectorExists() {
+  public void Mos6502OwnsAnInstructionSelector() {
     var target = new Mos6502MachineTarget();
-    Assert.That(() => target.CreateLowerer(SelectionTarget.Baseline),
-      Throws.TypeOf<NotSupportedException>());
+    Assert.That(target.CreateLowerer(SelectionTarget.Baseline), Is.TypeOf<Mos6502MachineLowering>());
   }
 
   [Test]
