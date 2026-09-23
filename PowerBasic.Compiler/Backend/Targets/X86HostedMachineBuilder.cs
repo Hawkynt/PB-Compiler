@@ -77,7 +77,7 @@ public static class X86HostedMachineBuilder {
 
     try {
       switch (instruction.Opcode) {
-        case MOpcode.InlineAsm when instruction.Operands.FirstOrDefault() is MOperand.InlineAsmText asm:
+        case MOpcode.InlineAsm when instruction.Operands.OfType<MOperand.InlineAsmText>().FirstOrDefault() is { } asm:
           return TryExpandInlineAsm(instruction, asm, mode, registers, function, allocation, out target);
         case MOpcode.Mov when instruction.Operands.Count == 2
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var immediateAddress)
