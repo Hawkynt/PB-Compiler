@@ -63,6 +63,16 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return [.. bytes];
   }
 
+  public byte[] LeaMemory(MachineRegister register, X86TargetAddress address) {
+    Validate(register);
+    var bytes = new List<byte>();
+    if (MemoryRex(register, address, w: mode == X86Mode.Bit64) is { } rex)
+      bytes.Add(rex);
+    bytes.Add(0x8D);
+    AppendAddress(bytes, register.Encoding, address);
+    return [.. bytes];
+  }
+
   public byte[] AluMemory(MachineRegister register, X86TargetAddress address, int opcode, bool load) {
     Validate(register);
     var bytes = new List<byte>();

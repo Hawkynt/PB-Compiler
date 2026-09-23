@@ -32,6 +32,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Mov:
           bytes.AddRange(encoder.MoveRegister(instruction.Registers[0], instruction.Registers[1]));
           break;
+        case X86TargetOpcode.Lea when instruction.Address is { } leaAddress:
+          bytes.AddRange(encoder.LeaMemory(instruction.Registers[0], leaAddress));
+          break;
         case X86TargetOpcode.Add when instruction.Address is { } addAddress:
           bytes.AddRange(encoder.AluMemory(instruction.Registers[0], addAddress, 0x01, load: false));
           break;

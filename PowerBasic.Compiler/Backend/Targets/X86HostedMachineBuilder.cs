@@ -72,6 +72,10 @@ public static class X86HostedMachineBuilder {
             target = new(X86TargetOpcode.MoveRegister,
               [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
           return true;
+        case MOpcode.Lea when instruction.Operands.Count == 2
+            && TryAddress(instruction.Operands[1], function, registers, out var leaAddress):
+          target = new(X86TargetOpcode.Lea, [Register(instruction.Operands[0])], Address: leaAddress);
+          return true;
         case MOpcode.Add when instruction.Operands[1] is MOperand.Immediate add:
           target = new(X86TargetOpcode.AddImmediate, [Register(instruction.Operands[0])], add.Value);
           return true;
