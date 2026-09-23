@@ -66,15 +66,6 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return [.. bytes];
   }
 
-  public byte[] IndirectMemory(X86TargetAddress address, int extension, byte opcode = 0xFF) {
-    var bytes = new List<byte>();
-    if (MemoryRex(new MachineRegister("rax", 0, mode == X86Mode.Bit64 ? 64 : mode == X86Mode.Bit32 ? 32 : 16), address, false) is { } rex)
-      bytes.Add(rex);
-    bytes.Add(opcode);
-    AppendAddress(bytes, extension, address);
-    return [.. bytes];
-  }
-
   public byte[] MoveMemory(MachineRegister register, X86TargetAddress address, bool load) {
     Validate(register);
     var bytes = new List<byte>();

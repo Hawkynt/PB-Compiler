@@ -12,6 +12,8 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
       bytes.AddRange(encoder.Push(registers.FramePointer));
       bytes.AddRange(function.Mode == X86Mode.Bit64 ? [0x48, 0x89, 0xE5] : [0x89, 0xE5]);
     }
+    if (function.FrameSizeBytes != 0)
+      bytes.AddRange(encoder.AdjustStack(function.FrameSizeBytes, allocate: true));
     if (function.Abi.ShadowSpaceBytes != 0)
       bytes.AddRange(encoder.AdjustStack(function.Abi.ShadowSpaceBytes, allocate: true));
 
@@ -241,6 +243,8 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
 
     if (function.Abi.ShadowSpaceBytes != 0)
       bytes.AddRange(encoder.AdjustStack(function.Abi.ShadowSpaceBytes, allocate: false));
+    if (function.FrameSizeBytes != 0)
+      bytes.AddRange(encoder.AdjustStack(function.FrameSizeBytes, allocate: false));
     if (preserveFramePointer)
       bytes.AddRange(encoder.Pop(registers.FramePointer));
     bytes.AddRange(encoder.Ret());

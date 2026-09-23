@@ -2,17 +2,7 @@ using PowerBasic.Compiler.Asm;
 
 namespace PowerBasic.Compiler.Backend.Targets;
 
-/// <summary>
-/// The production x86 emission boundary.  Code generation must not know which concrete
-/// instruction encoder is used for a target; it hands the allocated machine product back to
-/// the target contract and this facade owns the final target emission decision.
-///
-/// The DOS image writer still needs the assembler-backed x86-16 spelling (labels, segment
-/// fixups, inline assembly and runtime calls are DOS-image concerns).  Hosted x86-32/x86-64
-/// products use <see cref="X86TargetMachineEmitter"/> and are never sent through that DOS
-/// spelling.  Keeping the distinction here prevents callers from accidentally selecting an
-/// emitter based on source-path choreography.
-/// </summary>
+/// <summary>Production x86 emission boundary.</summary>
 public static class X86ProductionEmitter {
   public static void EmitFunction(
       Assembler assembler,
@@ -28,36 +18,17 @@ public static class X86ProductionEmitter {
       Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null) {
     ArgumentNullException.ThrowIfNull(assembler);
     ArgumentNullException.ThrowIfNull(function);
-    // x86-16 is the DOS executable target.  Its final product contains target-owned labels,
-    // segment relocations and inline-assembly blocks, so it is intentionally emitted by the
-    // target facade rather than by CodeGenerator itself.
-    if (function.Target.Name.Equals("x86-16", StringComparison.OrdinalIgnoreCase)) {
-      X86DosMachineEmitter.EmitFunction(assembler, function, parameterOffsets,
-        calleeCleanupBytes, calleeLabel, dataCellOf, emitEpilogue, alignLoops,
-        allowFrameElision, registerSpills, emitInlineAsm);
-      return;
-    }
+    if (function.HostedFunction is null)
+      throw new NotSupportedException($"x86 machine function '{function.Source.Name}' contains an unlowered opcode or operand");
+    if (!function.Target.Name.Equals("x86-16", StringComparison.OrdinalIgnoreCase))
+      throw new NotSupportedException($"target '{function.Target.Name}' cannot be appended to a DOS image");
 
-    throw new NotSupportedException(
-      $"the hosted x86 emitter cannot append '{function.Target.Name}' machine code to a DOS image");
+    var target = new X86TargetMachineEmitter(new X86InstructionEncoder(X86Mode.Bit16));
+    var code = target.Emit(function.HostedFunction, preserveFramePointer: !allowFrameElision);
+    assembler.AppendMachineCode(code, symbol => calleeLabel?.Invoke(symbol));
+    // The runtime exit sequence is target policy, not instruction selection.  It is appended only
+    // after the target emitter has finished the function and therefore cannot reintroduce a legacy
+    // body-emission fallback.
+    emitEpilogue?.Invoke(assembler);
   }
-}
-
-/// <summary>Target-owned DOS image adapter retained for labels and segment fixups.</summary>
-internal static class X86DosMachineEmitter {
-  public static void EmitFunction(
-      Assembler assembler,
-      IrMachineFunction function,
-      int[] parameterOffsets,
-      int calleeCleanupBytes,
-      Func<string, Label?>? calleeLabel,
-      Func<string, Mem?>? dataCellOf,
-      Action<Assembler>? emitEpilogue,
-      bool alignLoops,
-      bool allowFrameElision,
-      IReadOnlyList<Reg>? registerSpills,
-      Func<string, IAsmSymbolResolver, bool>? emitInlineAsm)
-    => X86HostedTargetEmitter.EmitFunction(assembler, function, parameterOffsets, calleeCleanupBytes,
-      calleeLabel, dataCellOf, emitEpilogue, alignLoops, allowFrameElision, registerSpills,
-      emitInlineAsm);
 }

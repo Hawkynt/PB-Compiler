@@ -91,10 +91,12 @@ public sealed class X86TargetMachineFunction(
     X86Mode mode,
     X86TargetAbi abi,
     IReadOnlyList<X86TargetInstruction> instructions,
-    IReadOnlyDictionary<string, int>? labelInstructionIndices = null) {
+    IReadOnlyDictionary<string, int>? labelInstructionIndices = null,
+    int frameSizeBytes = 0) {
   public X86Mode Mode { get; } = mode;
   public X86TargetAbi Abi { get; } = abi;
   public IReadOnlyList<X86TargetInstruction> Instructions { get; } = instructions;
   public IReadOnlyDictionary<string, int> LabelInstructionIndices { get; }
     = labelInstructionIndices ?? new Dictionary<string, int>(StringComparer.Ordinal);
+  public int FrameSizeBytes { get; } = frameSizeBytes;
 }
