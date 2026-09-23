@@ -3,9 +3,12 @@ using PowerBasic.Compiler.Backend;
 namespace PowerBasic.Compiler.Backend.Targets;
 
 public sealed class X86MachineTarget : IMachineTarget {
+  private readonly X86Mode _mode;
+
   public X86MachineTarget(X86Mode mode, X86Abi abi) {
     if ((mode == X86Mode.Bit32) != (abi.PointerBits == 32))
       throw new ArgumentException("ABI and machine mode disagree.", nameof(abi));
+    this._mode = mode;
     this.Description = new(mode == X86Mode.Bit64 ? "x86-64" : "x86-32", abi.PointerBits, abi.PointerBits);
     this.Abi = abi;
     this.Encoder = new X86InstructionEncoder(mode);
@@ -18,5 +21,9 @@ public sealed class X86MachineTarget : IMachineTarget {
   public IMachineEmitter Emitter { get; }
 
   public IMachineFunctionLowerer CreateLowerer(SelectionTarget selectionTarget)
-    => new X86MachineLowering(selectionTarget);
+    => new X86MachineLowering(selectionTarget with {
+      CpuLevel = this._mode == X86Mode.Bit64
+        ? Math.Max(selectionTarget.CpuLevel, 686)
+        : Math.Max(selectionTarget.CpuLevel, 386)
+    });
 }

@@ -122,7 +122,9 @@ public sealed class X86TargetTests {
   [Test]
   public void MachineTargetOwnsTheLoweringContract() {
     var target = (X86MachineTarget)IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.X86_64)!;
-    Assert.That(target.CreateLowerer(SelectionTarget.Baseline), Is.TypeOf<X86MachineLowering>());
+    var lowerer = (X86MachineLowering)target.CreateLowerer(SelectionTarget.Baseline);
+    Assert.That(lowerer, Is.Not.Null);
+    Assert.That(lowerer.Target, Is.EqualTo(new MachineTargetDescription("x86-64", 64, 64)));
     Assert.That(new X86MachineSelector(SelectionTarget.Baseline), Is.Not.Null);
     Assert.That(new X86MachineAllocator(SelectionTarget.Baseline), Is.Not.Null);
     Assert.That(new X86MachineScheduler(SelectionTarget.Baseline), Is.Not.Null);

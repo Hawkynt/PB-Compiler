@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Asm;
+using PowerBasic.Compiler.Backend.Targets;
 
 namespace PowerBasic.Compiler.Backend;
 
@@ -6,7 +7,8 @@ namespace PowerBasic.Compiler.Backend;
 public sealed record IrMachineFunction(
     Ir.IrFunction Source,
     MFunction Function,
-    IReadOnlyDictionary<int, Reg> Allocation);
+    IReadOnlyDictionary<int, Reg> Allocation,
+    MachineTargetDescription Target);
 
 /// <summary>
 /// The machine-side compilation product. Selection produces virtual-register machine SSA;

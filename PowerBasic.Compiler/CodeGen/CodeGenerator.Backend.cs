@@ -383,23 +383,22 @@ public sealed partial class CodeGenerator {
     // invariant that ended the whole compilation. `Shifted 3 : Shifted 5` under $OPTIMIZE SPEED is
     // the case - SPEED is also what stops the direct definition being callable, because OptRegParm
     // may still convert it.
-    var allocated = new List<(ProcedureSymbol Proc, IrFunction Fn, MFunction Machine,
-      IReadOnlyDictionary<int, Reg> Alloc)>();
+    var allocated = new List<(ProcedureSymbol Proc, IrFunction Fn, IrMachineFunction Machine)>();
     foreach (var (proc, irFn, mfn) in candidates) {
       if (!IrMachinePipeline.TryAllocateFunction(irFn, mfn, this.SelectionTarget, out var machineProduct, out var allocationError)) {
         this._backendDeclines.Add((proc.Name, allocationError ?? "allocation: unknown"));
         continue;                                 // a value live across a CALL has no register - decline
       }
-      allocated.Add((proc, irFn, machineProduct!.Function, machineProduct.Allocation));
+      allocated.Add((proc, irFn, machineProduct!));
     }
 
     PruneStrandedCallers(allocated, a => a.Proc, a => a.Fn);
 
-    foreach (var (proc, irFn, mfn, alloc) in allocated)
+    foreach (var (proc, irFn, machine) in allocated)
       // O0070 is optimizer-gated here, after the last middle-end sweep. The IR proof deliberately
       // says nothing about the ABI or future spills; MachineEmitter re-checks both against the final
       // machine function before actually omitting BP.
-      this._backendProcs[proc] = (new IrMachineFunction(irFn, mfn, alloc),
+      this._backendProcs[proc] = (machine,
         this.Optimize && FrameElision.IsCandidate(irFn));
 
     // An allocation failure can strand a source caller, and a removed source callee can strand an

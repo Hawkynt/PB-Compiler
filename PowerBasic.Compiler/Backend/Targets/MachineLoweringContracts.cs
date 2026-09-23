@@ -9,6 +9,8 @@ namespace PowerBasic.Compiler.Backend.Targets;
 /// production routing may need to select a call-graph candidate before pruning stranded callers.
 /// </summary>
 public interface IMachineFunctionLowerer {
+  MachineTargetDescription Target { get; }
+
   bool TrySelect(IrFunction function, out MFunction? selected, out string? error);
 
   bool TryAllocate(IrFunction source, MFunction selected,
@@ -50,10 +52,17 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
   private readonly X86MachinePostAllocation _postAllocation = new();
 
   public X86MachineLowering(SelectionTarget target) {
+    this.Target = target.CpuLevel >= 686
+      ? new("x86-64", 64, 64)
+      : target.CpuLevel >= 386
+        ? new("x86-32", 32, 32)
+        : new("x86-16", 16, 16);
     this._selector = new(target);
     this._allocator = new(target);
     this._scheduler = new(target);
   }
+
+  public MachineTargetDescription Target { get; }
 
   public bool TrySelect(IrFunction function, out MFunction? selected, out string? error) {
     ArgumentNullException.ThrowIfNull(function);
@@ -82,7 +91,7 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       return false;
     }
     this._postAllocation.Run(selected, allocation);
-    machine = new IrMachineFunction(source, selected, allocation);
+    machine = new IrMachineFunction(source, selected, allocation, this.Target);
     error = null;
     return true;
   }
