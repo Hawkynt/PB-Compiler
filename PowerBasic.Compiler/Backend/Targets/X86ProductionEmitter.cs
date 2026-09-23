@@ -25,7 +25,8 @@ public static class X86ProductionEmitter {
 
     var target = new X86TargetMachineEmitter(new X86InstructionEncoder(X86Mode.Bit16));
     var code = target.Emit(function.HostedFunction, preserveFramePointer: !allowFrameElision);
-    assembler.AppendMachineCode(code, symbol => calleeLabel?.Invoke(symbol));
+    assembler.AppendMachineCode(code, symbol =>
+      calleeLabel?.Invoke(symbol) ?? dataCellOf?.Invoke(symbol)?.Label);
     // The runtime exit sequence is target policy, not instruction selection.  It is appended only
     // after the target emitter has finished the function and therefore cannot reintroduce a legacy
     // body-emission fallback.

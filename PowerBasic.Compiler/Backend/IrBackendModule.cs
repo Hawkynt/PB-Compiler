@@ -56,7 +56,7 @@ public sealed class IrBackendModule {
       return false;
     }
 
-    if (Options.Target is IrBackendTarget.X86_32 or IrBackendTarget.X86_64) {
+    if (Options.Target is IrBackendTarget.X86_16 or IrBackendTarget.X86_32 or IrBackendTarget.X86_64) {
       var targetModel = IrBackendTargetContract.CreateMachineTarget(Options.Target);
       if (targetModel is null) {
         errors = [$"target '{Options.Target}' has no machine target contract"];

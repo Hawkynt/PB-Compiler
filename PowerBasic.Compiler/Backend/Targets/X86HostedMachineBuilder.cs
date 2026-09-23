@@ -69,7 +69,7 @@ public static class X86HostedMachineBuilder {
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);
           else if (TryAddress(instruction.Operands[1], function, registers, out var loadAddress))
             target = new(X86TargetOpcode.Mov, [Register(instruction.Operands[0])], Address: loadAddress);
-          else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot
+          else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell
                    && instruction.Operands[1] is MOperand.Register storeRegister
                    && TryAddress(instruction.Operands[0], function, registers, out var storeAddress))
             target = new(X86TargetOpcode.Mov, [Register(storeRegister.Reg)], Address: storeAddress,
@@ -312,6 +312,20 @@ public static class X86HostedMachineBuilder {
         MRegSize.Qword => 64,
         _ => 80,
       });
+      return true;
+    }
+    if (operand is MOperand.DataCell cell) {
+      address = new(null, null, 1, cell.Disp, cell.Size switch {
+        MRegSize.Byte => 8,
+        MRegSize.Word => 16,
+        MRegSize.Dword => 32,
+        MRegSize.Qword => 64,
+        _ => 80,
+      }, cell.Name);
+      return true;
+    }
+    if (operand is MOperand.DataOffset offset) {
+      address = new(null, null, 1, offset.Disp, 0, offset.Name);
       return true;
     }
     address = default;
