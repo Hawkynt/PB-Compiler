@@ -116,6 +116,20 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Sar:
           bytes.AddRange(encoder.ShiftRegister(instruction.Registers[0], 7, checked((int)instruction.Immediate)));
           break;
+        case X86TargetOpcode.Rcl:
+          bytes.AddRange(encoder.ShiftRegister(instruction.Registers[0], 2, checked((int)instruction.Immediate)));
+          break;
+        case X86TargetOpcode.Rcr:
+          bytes.AddRange(encoder.ShiftRegister(instruction.Registers[0], 3, checked((int)instruction.Immediate)));
+          break;
+        case X86TargetOpcode.Shld:
+          bytes.AddRange(encoder.DoubleShift(instruction.Registers[0], instruction.Registers[1], right: false,
+            checked((int)instruction.Immediate)));
+          break;
+        case X86TargetOpcode.Shrd:
+          bytes.AddRange(encoder.DoubleShift(instruction.Registers[0], instruction.Registers[1], right: true,
+            checked((int)instruction.Immediate)));
+          break;
         case X86TargetOpcode.Cwd:
           bytes.AddRange(encoder.Cwd());
           break;

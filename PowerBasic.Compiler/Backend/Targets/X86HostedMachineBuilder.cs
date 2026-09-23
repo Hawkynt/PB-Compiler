@@ -154,6 +154,26 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Cbw:
           target = new(X86TargetOpcode.Cbw, []);
           return true;
+        case MOpcode.Shl or MOpcode.Shr or MOpcode.Sar or MOpcode.Rcl or MOpcode.Rcr
+            when instruction.Operands.Count == 2
+            && instruction.Operands[0] is MOperand.Register
+            && instruction.Operands[1] is MOperand.Immediate shift:
+          target = new(instruction.Opcode switch {
+            MOpcode.Shl => X86TargetOpcode.Shl,
+            MOpcode.Shr => X86TargetOpcode.Shr,
+            MOpcode.Sar => X86TargetOpcode.Sar,
+            MOpcode.Rcl => X86TargetOpcode.Rcl,
+            _ => X86TargetOpcode.Rcr,
+          }, [Register(instruction.Operands[0])], shift.Value);
+          return true;
+        case MOpcode.Shld or MOpcode.Shrd
+            when instruction.Operands.Count == 3
+            && instruction.Operands[0] is MOperand.Register
+            && instruction.Operands[1] is MOperand.Register
+            && instruction.Operands[2] is MOperand.Immediate doubleShift:
+          target = new(instruction.Opcode == MOpcode.Shld ? X86TargetOpcode.Shld : X86TargetOpcode.Shrd,
+            [Register(instruction.Operands[0]), Register(instruction.Operands[1])], doubleShift.Value);
+          return true;
         case MOpcode.Jmp when instruction.Operands[0] is MOperand.LabelRef label:
           target = new(X86TargetOpcode.Jmp, [], Symbol: label.Name);
           return true;

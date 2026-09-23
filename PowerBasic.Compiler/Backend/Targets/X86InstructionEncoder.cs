@@ -222,6 +222,20 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return [.. bytes];
   }
 
+  public byte[] DoubleShift(MachineRegister destination, MachineRegister source, bool right, int count) {
+    Validate(destination);
+    Validate(source);
+    var rex = Rex(destination, source, w: mode == X86Mode.Bit64);
+    var bytes = new List<byte>(5);
+    if (rex is { } prefix)
+      bytes.Add(prefix);
+    bytes.Add(0x0F);
+    bytes.Add((byte)(right ? 0xAC : 0xA4));
+    bytes.Add(ModRm(source.Encoding, destination.Encoding));
+    bytes.Add((byte)count);
+    return [.. bytes];
+  }
+
   public byte[] Cwd() => mode == X86Mode.Bit16 ? [0x99] : [0x99];
   public byte[] Cbw() => mode == X86Mode.Bit16 ? [0x98] : [0x98];
   public byte[] Nop() => [0x90];
