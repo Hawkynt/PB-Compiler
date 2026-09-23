@@ -256,6 +256,15 @@ public static class X86HostedMachineBuilder {
             _ => X86TargetOpcode.Idiv,
           }, [Register(instruction.Operands[0])]);
           return true;
+        case MOpcode.Mul or MOpcode.Div or MOpcode.Idiv
+            when instruction.Operands.Count >= 1
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var unaryMemoryAddress):
+          target = new(instruction.Opcode switch {
+            MOpcode.Mul => X86TargetOpcode.Mul,
+            MOpcode.Div => X86TargetOpcode.Div,
+            _ => X86TargetOpcode.Idiv,
+          }, [], Address: unaryMemoryAddress);
+          return true;
         case MOpcode.Imul when instruction.Operands.Count == 2
             && instruction.Operands[0] is MOperand.Register
             && instruction.Operands[1] is MOperand.Register:
@@ -312,7 +321,7 @@ public static class X86HostedMachineBuilder {
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var indirectAddress):
           target = new(X86TargetOpcode.JmpIndirect, [], Address: indirectAddress);
           return true;
-        case MOpcode.CallFar when instruction.Operands.Count == 1
+        case MOpcode.CallFar when instruction.Operands.Count >= 1
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var farAddress):
           target = new(X86TargetOpcode.CallFar, [], Address: farAddress);
           return true;

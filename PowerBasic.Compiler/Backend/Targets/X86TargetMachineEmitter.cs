@@ -321,7 +321,19 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           bytes.AddRange(encoder.UnaryMultiplyDivide(instruction.Registers[0], 6));
           break;
         case X86TargetOpcode.Idiv:
-          bytes.AddRange(encoder.UnaryMultiplyDivide(instruction.Registers[0], 7));
+          if (instruction.Address is { } idivAddress) {
+            var idivBytes = encoder.IndirectMemory(idivAddress, 7);
+            bytes.AddRange(idivBytes); AddAddressRelocation(idivAddress, offset, idivBytes.Length);
+          } else
+            bytes.AddRange(encoder.UnaryMultiplyDivide(instruction.Registers[0], 7));
+          break;
+        case X86TargetOpcode.Mul when instruction.Address is { } mulAddress:
+          var mulBytes = encoder.IndirectMemory(mulAddress, 4);
+          bytes.AddRange(mulBytes); AddAddressRelocation(mulAddress, offset, mulBytes.Length);
+          break;
+        case X86TargetOpcode.Div when instruction.Address is { } divAddress:
+          var divBytes = encoder.IndirectMemory(divAddress, 6);
+          bytes.AddRange(divBytes); AddAddressRelocation(divAddress, offset, divBytes.Length);
           break;
         case X86TargetOpcode.Imul when instruction.Registers.Count >= 2:
           bytes.AddRange(encoder.ImulRegister(instruction.Registers[0], instruction.Registers[1]));
