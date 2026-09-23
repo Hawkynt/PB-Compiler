@@ -314,10 +314,10 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Dec:
           bytes.AddRange(encoder.UnaryRegister(instruction.Registers[0], 1));
           break;
-        case X86TargetOpcode.Mul:
+        case X86TargetOpcode.Mul when instruction.Address is null:
           bytes.AddRange(encoder.UnaryMultiplyDivide(instruction.Registers[0], 4));
           break;
-        case X86TargetOpcode.Div:
+        case X86TargetOpcode.Div when instruction.Address is null:
           bytes.AddRange(encoder.UnaryMultiplyDivide(instruction.Registers[0], 6));
           break;
         case X86TargetOpcode.Idiv:
