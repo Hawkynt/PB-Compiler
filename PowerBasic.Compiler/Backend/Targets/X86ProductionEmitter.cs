@@ -32,7 +32,7 @@ public static class X86ProductionEmitter {
     // segment relocations and inline-assembly blocks, so it is intentionally emitted by the
     // target facade rather than by CodeGenerator itself.
     if (function.Target.Name.Equals("x86-16", StringComparison.OrdinalIgnoreCase)) {
-      MachineEmitter.EmitFunction(assembler, function, parameterOffsets,
+      X86DosMachineEmitter.EmitFunction(assembler, function, parameterOffsets,
         calleeCleanupBytes, calleeLabel, dataCellOf, emitEpilogue, alignLoops,
         allowFrameElision, registerSpills, emitInlineAsm);
       return;
@@ -41,4 +41,23 @@ public static class X86ProductionEmitter {
     throw new NotSupportedException(
       $"the hosted x86 emitter cannot append '{function.Target.Name}' machine code to a DOS image");
   }
+}
+
+/// <summary>Target-owned DOS image adapter retained for labels and segment fixups.</summary>
+internal static class X86DosMachineEmitter {
+  public static void EmitFunction(
+      Assembler assembler,
+      IrMachineFunction function,
+      int[] parameterOffsets,
+      int calleeCleanupBytes,
+      Func<string, Label?>? calleeLabel,
+      Func<string, Mem?>? dataCellOf,
+      Action<Assembler>? emitEpilogue,
+      bool alignLoops,
+      bool allowFrameElision,
+      IReadOnlyList<Reg>? registerSpills,
+      Func<string, IAsmSymbolResolver, bool>? emitInlineAsm)
+    => MachineEmitter.EmitFunction(assembler, function, parameterOffsets, calleeCleanupBytes,
+      calleeLabel, dataCellOf, emitEpilogue, alignLoops, allowFrameElision, registerSpills,
+      emitInlineAsm);
 }
