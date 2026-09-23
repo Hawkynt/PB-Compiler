@@ -13,9 +13,12 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
     void AddAddressRelocation(X86TargetAddress address, int instructionOffset, int encodedLength) {
       if (address.Symbol is not { Length: > 0 } symbol || address.Base is not null || address.Index is not null)
         return;
-      var width = function.Mode == X86Mode.Bit16 ? 2 : 4;
-      var kind = function.Mode == X86Mode.Bit16
-        ? MachineRelocationKind.Absolute16 : MachineRelocationKind.Absolute32;
+      var width = function.Mode switch { X86Mode.Bit16 => 2, X86Mode.Bit64 => 8, _ => 4 };
+      var kind = function.Mode switch {
+        X86Mode.Bit16 => MachineRelocationKind.Absolute16,
+        X86Mode.Bit64 => MachineRelocationKind.Absolute64,
+        _ => MachineRelocationKind.Absolute32,
+      };
       relocations.Add(new MachineRelocation(instructionOffset + encodedLength - width, kind, symbol,
         address.Displacement));
     }
@@ -23,9 +26,12 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         int immediateWidth) {
       if (address.Symbol is not { Length: > 0 } symbol || address.Base is not null || address.Index is not null)
         return;
-      var width = function.Mode == X86Mode.Bit16 ? 2 : 4;
-      var kind = function.Mode == X86Mode.Bit16
-        ? MachineRelocationKind.Absolute16 : MachineRelocationKind.Absolute32;
+      var width = function.Mode switch { X86Mode.Bit16 => 2, X86Mode.Bit64 => 8, _ => 4 };
+      var kind = function.Mode switch {
+        X86Mode.Bit16 => MachineRelocationKind.Absolute16,
+        X86Mode.Bit64 => MachineRelocationKind.Absolute64,
+        _ => MachineRelocationKind.Absolute32,
+      };
       relocations.Add(new MachineRelocation(instructionOffset + encodedLength - immediateWidth - width,
         kind, symbol, address.Displacement));
     }
