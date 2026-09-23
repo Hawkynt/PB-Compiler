@@ -1,6 +1,7 @@
 using System.Linq;
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.Backend.Targets;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -288,7 +289,7 @@ public sealed partial class CodeGenerator {
       // alloca pointed at the TOP of its block rather than the bottom, so element 0 sat at the block's
       // high end and every later one climbed out of the frame (see InstructionSelector.SelectAlloca);
       // and the routed prologue never zeroed the frame, which PB requires and the direct path does
-      // with REP STOSW (see MachineEmitter.EmitFunction). Both are fixed, both show only on an array -
+      // with REP STOSW (see the x86 production emitter). Both are fixed, both show only on an array -
       // a scalar is one slot and is written before it is read - and the whole corpus now agrees.
       // Dynamic strings use one-word handles too. Their ownership transfers and releases are made
       // explicit by IrLowering, so the selector sees the same ordinary pointer load/store/call shapes
@@ -605,7 +606,7 @@ public sealed partial class CodeGenerator {
   /// <summary>Emits the module body from the back end, ending in the implicit END the direct path also emits.</summary>
   private void EmitBackendMain() {
     var machine = this._backendMain!;
-    MachineEmitter.EmitFunction(this._asm, machine, [], 0, this.CalleeLabel, this.DataCellOf,
+    X86ProductionEmitter.EmitFunction(this._asm, machine, machine.Allocation, [], 0, this.CalleeLabel, this.DataCellOf,
       asm => {
         asm.Mov(Asm.Reg.AL, (Asm.Imm)0);
         asm.Jmp(this._rt.Exit);
@@ -1307,7 +1308,7 @@ public sealed partial class CodeGenerator {
     // its leading arguments never reached the stack, and the pushes that spilled them are discarded by
     // the epilogue's MOV SP,BP rather than popped.
     var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
-    MachineEmitter.EmitFunction(asm, machine, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
+    X86ProductionEmitter.EmitFunction(asm, machine, machine.Allocation, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
       alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame, registerSpills: spillRegs,
       emitInlineAsm: this.EmitRoutedInlineAsm);
     this.EmitBackendSemanticMerges();

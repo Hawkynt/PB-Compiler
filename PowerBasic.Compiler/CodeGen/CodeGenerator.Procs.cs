@@ -49,7 +49,7 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// True when <paramref name="proc"/>'s convention is the ONE the x86-16 back end's
-  /// <see cref="Backend.MachineEmitter.EmitFunction"/> emits: arguments pushed left to right at
+  /// the x86 production emitter emits: arguments pushed left to right at
   /// [BP+4..], callee-cleans via <c>RET n</c>, nothing in a register. That is BASIC and PASCAL.
   ///
   /// <para>

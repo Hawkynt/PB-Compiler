@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.Backend.Targets;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -126,8 +127,9 @@ public sealed partial class CodeGenerator {
       if (this.Optimize && this.Cpu486)
         this._asm.AlignCode(16);
       this._asm.MarkLabel(this._asm.Lbl(helper.Function.Name));
-      MachineEmitter.EmitFunction(
-        this._asm, helper.MachineProduct, helper.ParameterOffsets, helper.ParameterBytes,
+      X86ProductionEmitter.EmitFunction(
+        this._asm, helper.MachineProduct, helper.MachineProduct.Allocation,
+        helper.ParameterOffsets, helper.ParameterBytes,
         this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops,
         allowFrameElision: helper.ElideFrame,
