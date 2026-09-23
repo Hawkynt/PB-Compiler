@@ -32,7 +32,7 @@ public static class X86HostedMachineBuilder {
     foreach (var block in machine.Function.Blocks) {
       labels[blockLabels[block.Label]] = instructions.Count;
       foreach (var (instruction, index) in block.Instructions.Select((item, index) => (item, index))) {
-        if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, blockLabels,
+        if (!TryBuildInstruction(instruction, selectedMode, registers, machine.Function, machine.Allocation, blockLabels,
               out var targetInstruction, out var instructionError)) {
           error = $"block '{block.Label}' instruction #{index}: {instruction.Opcode} " +
             $"({string.Join("|", instruction.Operands.Select(operand => operand.GetType().Name))})" +
@@ -57,14 +57,19 @@ public static class X86HostedMachineBuilder {
       X86Mode mode,
       X86TargetRegisterFile registers,
       X86MachineFunction function,
+      IReadOnlyDictionary<int, Reg> allocation,
       IReadOnlyDictionary<string, string> blockLabels,
       out X86TargetInstruction? target,
       out string? error) {
     target = null;
     error = null;
     MachineRegister Register(MOperand operand) {
-      if (operand is not MOperand.Register { Reg: var register } || register.IsVirtual)
+      if (operand is not MOperand.Register { Reg: var register })
         throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
+      if (register.IsVirtual && !allocation.TryGetValue(register.VirtualId, out var physical))
+        throw new InvalidOperationException("hosted x86 lowering requires allocated physical registers");
+      if (register.IsVirtual)
+        register = MReg.Physical_(physical, register.Size);
       return registers.RegisterFor(register);
     }
     MachineRegister RegisterValue(MReg register) => Register(new MOperand.Register(register));
@@ -72,31 +77,31 @@ public static class X86HostedMachineBuilder {
     try {
       switch (instruction.Opcode) {
         case MOpcode.InlineAsm when instruction.Operands.FirstOrDefault() is MOperand.InlineAsmText asm:
-          return TryExpandInlineAsm(instruction, asm, mode, registers, function, out target);
+          return TryExpandInlineAsm(instruction, asm, mode, registers, function, allocation, out target);
         case MOpcode.Mov when instruction.Operands.Count == 2
-            && TryAddress(instruction.Operands[0], function, registers, out var immediateAddress)
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var immediateAddress)
             && instruction.Operands[1] is MOperand.Immediate immediateMemory:
           target = new(X86TargetOpcode.MoveMemoryImmediate, [], immediateMemory.Value, immediateAddress);
           return true;
         case MOpcode.Mov when instruction.Operands.Count == 2
-            && TryAddress(instruction.Operands[0], function, registers, out var symbolAddress)
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var symbolAddress)
             && instruction.Operands[1] is MOperand.DataOffset dataOffset:
           target = new(X86TargetOpcode.MoveMemorySymbol, [], Address: symbolAddress, Symbol: dataOffset.Name);
           return true;
         case MOpcode.Mov when instruction.Operands.Count == 2
-            && TryAddress(instruction.Operands[0], function, registers, out var destinationAddress)
-            && TryAddress(instruction.Operands[1], function, registers, out var sourceAddress):
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var destinationAddress)
+            && TryAddress(instruction.Operands[1], function, registers, allocation, out var sourceAddress):
           target = new(X86TargetOpcode.MoveMemoryToMemory, [], Address: destinationAddress,
             SourceAddress: sourceAddress);
           return true;
         case MOpcode.Mov when instruction.Operands.Count == 2:
           if (instruction.Operands[1] is MOperand.Immediate immediate)
             target = new(X86TargetOpcode.MoveImmediate, [Register(instruction.Operands[0])], immediate.Value);
-          else if (TryAddress(instruction.Operands[1], function, registers, out var loadAddress))
+          else if (TryAddress(instruction.Operands[1], function, registers, allocation, out var loadAddress))
             target = new(X86TargetOpcode.Mov, [Register(instruction.Operands[0])], Address: loadAddress);
           else if (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell
                    && instruction.Operands[1] is MOperand.Register storeRegister
-                   && TryAddress(instruction.Operands[0], function, registers, out var storeAddress))
+                   && TryAddress(instruction.Operands[0], function, registers, allocation, out var storeAddress))
             target = new(X86TargetOpcode.Mov, [RegisterValue(storeRegister.Reg)], Address: storeAddress,
               Immediate: 1);
           else
@@ -104,7 +109,7 @@ public static class X86HostedMachineBuilder {
               [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
           return true;
         case MOpcode.Lea when instruction.Operands.Count == 2
-            && TryAddress(instruction.Operands[1], function, registers, out var leaAddress):
+            && TryAddress(instruction.Operands[1], function, registers, allocation, out var leaAddress):
           target = new(X86TargetOpcode.Lea, [Register(instruction.Operands[0])], Address: leaAddress);
           return true;
         case MOpcode.Xchg when instruction.Operands.Count == 2
@@ -117,14 +122,14 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Add when instruction.Operands.Count == 2
             && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell)
             && instruction.Operands[1] is MOperand.Register addRegister
-            && TryAddress(instruction.Operands[0], function, registers, out var addAddress):
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var addAddress):
           target = new(X86TargetOpcode.Add, [RegisterValue(addRegister.Reg)], Address: addAddress);
           return true;
         case MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor or MOpcode.Cmp
             when instruction.Operands.Count == 2
             && (instruction.Operands[0] is MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell)
             && instruction.Operands[1] is MOperand.Register memoryRegister
-            && TryAddress(instruction.Operands[0], function, registers, out var memoryAluAddress):
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var memoryAluAddress):
           target = new(instruction.Opcode switch {
             MOpcode.Sub => X86TargetOpcode.Sub,
             MOpcode.And => X86TargetOpcode.And,
@@ -245,11 +250,11 @@ public static class X86HostedMachineBuilder {
           target = new(X86TargetOpcode.JmpIndirect, [Register(instruction.Operands[0])]);
           return true;
         case MOpcode.JmpIndirect when instruction.Operands.Count == 1
-            && TryAddress(instruction.Operands[0], function, registers, out var indirectAddress):
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var indirectAddress):
           target = new(X86TargetOpcode.JmpIndirect, [], Address: indirectAddress);
           return true;
         case MOpcode.CallFar when instruction.Operands.Count == 1
-            && TryAddress(instruction.Operands[0], function, registers, out var farAddress):
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var farAddress):
           target = new(X86TargetOpcode.CallFar, [], Address: farAddress);
           return true;
         case MOpcode.JmpIndexed when instruction.Operands.Count >= 2
@@ -293,7 +298,7 @@ public static class X86HostedMachineBuilder {
           return true;
         case MOpcode.Fld or MOpcode.Fstp or MOpcode.Fild or MOpcode.Fistp
             when instruction.Operands.Count == 1
-            && TryAddress(instruction.Operands[0], function, registers, out var memoryAddress):
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var memoryAddress):
           target = new(instruction.Opcode switch {
             MOpcode.Fld => X86TargetOpcode.Fld,
             MOpcode.Fstp => X86TargetOpcode.Fstp,
@@ -304,7 +309,7 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Fadd or MOpcode.Fsub or MOpcode.Fmul or MOpcode.Fdiv or MOpcode.Fcomp
             or MOpcode.Fiadd or MOpcode.Fisub or MOpcode.Fimul or MOpcode.Fidiv
             when instruction.Operands.Count == 1
-            && TryAddress(instruction.Operands[0], function, registers, out var arithmeticAddress):
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var arithmeticAddress):
           target = new(instruction.Opcode switch {
             MOpcode.Fadd => X86TargetOpcode.Fadd,
             MOpcode.Fsub => X86TargetOpcode.Fsub,
@@ -321,11 +326,11 @@ public static class X86HostedMachineBuilder {
           target = new(X86TargetOpcode.Push, [], immediatePush.Value);
           return true;
         case MOpcode.Push when instruction.Operands.Count == 1
-            && TryAddress(instruction.Operands[0], function, registers, out var pushAddress):
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var pushAddress):
           target = new(X86TargetOpcode.Push, [], Address: pushAddress);
           return true;
         case MOpcode.Pop when instruction.Operands.Count == 1
-            && TryAddress(instruction.Operands[0], function, registers, out var popAddress):
+            && TryAddress(instruction.Operands[0], function, registers, allocation, out var popAddress):
           target = new(X86TargetOpcode.Pop, [], Address: popAddress);
           return true;
         case MOpcode.Push when instruction.Operands.Count == 1:
@@ -347,12 +352,19 @@ public static class X86HostedMachineBuilder {
   }
 
   private static bool TryAddress(MOperand.Memory memory, X86TargetRegisterFile registers,
+      IReadOnlyDictionary<int, Reg> allocation,
       out X86TargetAddress address) {
     static MachineRegister? Convert(MReg? register, X86TargetRegisterFile file)
       => register is { IsVirtual: false } value && (uint)value.Physical.Index() < (uint)file.Registers.Count
         ? file.Registers[value.Physical.Index()]
         : null;
-    address = new(Convert(memory.Base, registers), Convert(memory.Index, registers), (byte)memory.Scale,
+    static MachineRegister? ConvertAllocated(MReg? register, X86TargetRegisterFile file,
+        IReadOnlyDictionary<int, Reg> map) {
+      if (register is not { } value) return null;
+      if (value.IsVirtual && !map.TryGetValue(value.VirtualId, out var physical)) return null;
+      return file.RegisterFor(value.IsVirtual ? MReg.Physical_(physical, value.Size) : value);
+    }
+    address = new(ConvertAllocated(memory.Base, registers, allocation), ConvertAllocated(memory.Index, registers, allocation), (byte)memory.Scale,
       memory.Disp, memory.Size switch {
         MRegSize.Byte => 8,
         MRegSize.Word => 16,
@@ -364,9 +376,10 @@ public static class X86HostedMachineBuilder {
   }
 
   private static bool TryAddress(MOperand operand, X86MachineFunction function,
-      X86TargetRegisterFile registers, out X86TargetAddress address) {
+      X86TargetRegisterFile registers, IReadOnlyDictionary<int, Reg> allocation,
+      out X86TargetAddress address) {
     if (operand is MOperand.Memory memory)
-      return TryAddress(memory, registers, out address);
+      return TryAddress(memory, registers, allocation, out address);
     if (operand is MOperand.StackSlot slot) {
       var slotOffset = 0;
       for (var index = 0; index <= slot.Index && index < function.StackSlots.Count; ++index)
@@ -413,7 +426,8 @@ public static class X86HostedMachineBuilder {
   }
 
   private static bool TryExpandInlineAsm(MInstr instruction, MOperand.InlineAsmText asm, X86Mode mode,
-      X86TargetRegisterFile registers, X86MachineFunction function, out X86TargetInstruction? target) {
+      X86TargetRegisterFile registers, X86MachineFunction function,
+      IReadOnlyDictionary<int, Reg> allocation, out X86TargetInstruction? target) {
     target = null;
     var text = asm.Text.Trim();
     if (text.Length == 0)
@@ -424,7 +438,7 @@ public static class X86HostedMachineBuilder {
       .ToUpperInvariant();
     if (mnemonic is "AESENC" or "AESDEC" or "AESIMC" or "PCLMULQDQ") {
       var vectorOperands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
-        .Select(operand => TryMachineRegister(operand.Reg, registers)).ToArray();
+        .Select(operand => TryMachineRegister(operand.Reg, registers, allocation)).ToArray();
       if (vectorOperands.Any(register => register is null) || vectorOperands.Length < 2)
         return false;
       var xmm0 = vectorOperands[0]!.Value;
@@ -437,11 +451,11 @@ public static class X86HostedMachineBuilder {
       }, [xmm0, xmm1], Immediate: 0);
       return true;
     }
-    if (TryExpandVectorAsm(mnemonic, instruction, registers, out target))
+    if (TryExpandVectorAsm(mnemonic, instruction, registers, allocation, out target))
       return true;
     if (mnemonic is "POPCNT" or "BSF" or "BSR" or "BEXTR" or "ANDN" or "BLSI" or "BLSR" or "BZHI" or "PEXT" or "PDEP" or "MULX") {
       var registerOperands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
-        .Select(operand => TryMachineRegister(operand.Reg, registers)).ToArray();
+        .Select(operand => TryMachineRegister(operand.Reg, registers, allocation)).ToArray();
       var requiredRegisters = mnemonic is "BLSI" or "BLSR" or "POPCNT" or "BSF" or "BSR" ? 2 : 3;
       if (registerOperands.Length >= requiredRegisters && registerOperands.All(register => register is not null)) {
         target = new(mnemonic switch {
@@ -460,7 +474,7 @@ public static class X86HostedMachineBuilder {
         return true;
       }
       var source = instruction.Operands.Skip(1).FirstOrDefault();
-      if (source is null || !TryAddress(source, function, registers, out var address))
+      if (source is null || !TryAddress(source, function, registers, allocation, out var address))
         return false;
       var destination = registers.Registers[0] with { Bits = mode == X86Mode.Bit64 ? 64 : mode == X86Mode.Bit32 ? 32 : 16 };
       target = new(mnemonic switch {
@@ -507,7 +521,8 @@ public static class X86HostedMachineBuilder {
   }
 
   private static bool TryExpandVectorAsm(string mnemonic, MInstr instruction,
-      X86TargetRegisterFile registers, out X86TargetInstruction? target) {
+      X86TargetRegisterFile registers, IReadOnlyDictionary<int, Reg> allocation,
+      out X86TargetInstruction? target) {
     target = null;
     var operation = mnemonic switch {
       "MOVDQA" or "MOVDQU" or "MOVQ" => X86VectorOpcode.Move,
@@ -527,7 +542,7 @@ public static class X86HostedMachineBuilder {
     if (operation is not { } selected)
       return false;
     var operands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
-      .Select(operand => TryMachineRegister(operand.Reg, registers)).ToArray();
+      .Select(operand => TryMachineRegister(operand.Reg, registers, allocation)).ToArray();
     if (operands.Any(register => register is null) || operands.Length < 2)
       return false;
     var vectorOperands = operands.Select(register => register!.Value).ToArray();
@@ -543,9 +558,13 @@ public static class X86HostedMachineBuilder {
     return true;
   }
 
-  private static MachineRegister? TryMachineRegister(MReg register, X86TargetRegisterFile registers) {
-    if (register.IsVirtual)
-      return null;
+  private static MachineRegister? TryMachineRegister(MReg register, X86TargetRegisterFile registers,
+      IReadOnlyDictionary<int, Reg>? allocation = null) {
+    if (register.IsVirtual) {
+      if (allocation is null || !allocation.TryGetValue(register.VirtualId, out var physical))
+        return null;
+      register = MReg.Physical_(physical, register.Size);
+    }
     if (register.Physical.IsMmx() || register.Physical.IsXmm() || register.Physical.IsYmm() || register.Physical.IsZmm()) {
       var index = register.Physical.Index();
       var (prefix, bits) = register.Physical.IsMmx() ? ("mm", 64)
