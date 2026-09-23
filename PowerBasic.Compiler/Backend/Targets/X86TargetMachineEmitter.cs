@@ -41,7 +41,7 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Cmp:
           bytes.AddRange(encoder.CompareImmediate(instruction.Registers[0], checked((int)instruction.Immediate)));
           break;
-        case X86TargetOpcode.Push:
+        case X86TargetOpcode.Push when instruction.Registers.Count == 1:
           bytes.AddRange(encoder.Push(instruction.Registers[0]));
           break;
         case X86TargetOpcode.Pop:
