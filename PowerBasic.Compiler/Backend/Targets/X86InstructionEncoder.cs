@@ -70,6 +70,61 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
   public byte[] CompareImmediate(MachineRegister destination, int value)
     => AluImmediate(destination, value, extension: 7);
 
+  public byte[] AluRegister(MachineRegister destination, MachineRegister source, int opcode) {
+    Validate(destination);
+    Validate(source);
+    var rex = Rex(destination, source, w: mode == X86Mode.Bit64);
+    var bytes = new List<byte>(3);
+    if (rex is { } prefix)
+      bytes.Add(prefix);
+    bytes.Add((byte)opcode);
+    bytes.Add(ModRm(source.Encoding, destination.Encoding));
+    return [.. bytes];
+  }
+
+  public byte[] UnaryRegister(MachineRegister register, int extension) {
+    Validate(register);
+    var rex = RexRm(register, w: mode == X86Mode.Bit64);
+    var bytes = new List<byte>(3);
+    if (rex is { } prefix)
+      bytes.Add(prefix);
+    bytes.Add(0xF7);
+    bytes.Add(ModRm(extension, register.Encoding));
+    return [.. bytes];
+  }
+
+  public byte[] UnaryMultiplyDivide(MachineRegister register, int extension) {
+    Validate(register);
+    var rex = RexRm(register, w: mode == X86Mode.Bit64);
+    var bytes = new List<byte>(3);
+    if (rex is { } prefix)
+      bytes.Add(prefix);
+    bytes.Add(0xF7);
+    bytes.Add(ModRm(extension, register.Encoding));
+    return [.. bytes];
+  }
+
+  public byte[] ShiftRegister(MachineRegister register, int extension, int count) {
+    Validate(register);
+    var rex = RexRm(register, w: mode == X86Mode.Bit64);
+    var bytes = new List<byte>(4);
+    if (rex is { } prefix)
+      bytes.Add(prefix);
+    if (count == 1) {
+      bytes.Add(0xD1);
+      bytes.Add(ModRm(extension, register.Encoding));
+    } else {
+      bytes.Add(0xC1);
+      bytes.Add(ModRm(extension, register.Encoding));
+      bytes.Add((byte)count);
+    }
+    return [.. bytes];
+  }
+
+  public byte[] Cwd() => mode == X86Mode.Bit16 ? [0x99] : [0x99];
+  public byte[] Cbw() => mode == X86Mode.Bit16 ? [0x98] : [0x98];
+  public byte[] Nop() => [0x90];
+
   public byte[] PushImmediate(int value) {
     if (value is >= sbyte.MinValue and <= sbyte.MaxValue)
       return [0x6A, (byte)value];

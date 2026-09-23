@@ -79,6 +79,68 @@ public static class X86HostedMachineBuilder {
         case MOpcode.Cmp when instruction.Operands[1] is MOperand.Immediate compare:
           target = new(X86TargetOpcode.CompareImmediate, [Register(instruction.Operands[0])], compare.Value);
           return true;
+        case MOpcode.Add when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Add, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
+        case MOpcode.Sub when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Sub, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
+        case MOpcode.And when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.And, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
+        case MOpcode.Or when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Or, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
+        case MOpcode.Xor when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Xor, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
+        case MOpcode.Cmp when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Cmp, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
+        case MOpcode.Adc when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Adc, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
+        case MOpcode.Sbb when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Sbb, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
+        case MOpcode.Test when instruction.Operands.Count == 2 && instruction.Operands[1] is MOperand.Register:
+          target = new(X86TargetOpcode.Test, [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
+          return true;
+        case MOpcode.Neg or MOpcode.Not or MOpcode.Inc or MOpcode.Dec
+            when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Register:
+          target = new(instruction.Opcode switch {
+            MOpcode.Neg => X86TargetOpcode.Neg,
+            MOpcode.Not => X86TargetOpcode.Not,
+            MOpcode.Inc => X86TargetOpcode.Inc,
+            _ => X86TargetOpcode.Dec,
+          }, [Register(instruction.Operands[0])]);
+          return true;
+        case MOpcode.Mul or MOpcode.Div or MOpcode.Idiv
+            when instruction.Operands.Count == 1 && instruction.Operands[0] is MOperand.Register:
+          target = new(instruction.Opcode switch {
+            MOpcode.Mul => X86TargetOpcode.Mul,
+            MOpcode.Div => X86TargetOpcode.Div,
+            _ => X86TargetOpcode.Idiv,
+          }, [Register(instruction.Operands[0])]);
+          return true;
+        case MOpcode.Cwd:
+          target = new(X86TargetOpcode.Cwd, []);
+          return true;
+        case MOpcode.Cbw:
+          target = new(X86TargetOpcode.Cbw, []);
+          return true;
+        case MOpcode.Jmp when instruction.Operands[0] is MOperand.LabelRef label:
+          target = new(X86TargetOpcode.Jmp, [], Symbol: label.Name);
+          return true;
+        case MOpcode.Jcc when instruction.Operands[0] is MOperand.LabelRef label:
+          target = new(X86TargetOpcode.Jcc, [], (long)(instruction.Condition ?? Condition.Equal), Symbol: label.Name);
+          return true;
+        case MOpcode.Call when instruction.Operands[0] is MOperand.LabelRef label:
+          target = new(X86TargetOpcode.Call, [], Symbol: label.Name);
+          return true;
+        case MOpcode.Ret:
+          target = new(X86TargetOpcode.Ret, []);
+          return true;
         case MOpcode.Push when instruction.Operands.Count == 1:
           target = new(X86TargetOpcode.PushRegister, [Register(instruction.Operands[0])]);
           return true;
