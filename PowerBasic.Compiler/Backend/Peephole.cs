@@ -469,7 +469,7 @@ public static class Peephole {
 
   /// <summary>
   /// The two rewrites that follow from the block ORDER, which is the order
-  /// <see cref="X86HostedTargetEmitter"/> lays the blocks out in and therefore the order the labels land in:
+  /// hosted target machine emission lays the blocks out in and therefore the order the labels land in:
   /// a <c>JMP</c> to the block laid out next is the fallthrough and is deleted, and a
   /// <c>Jcc next / JMP away</c> pair is <c>J!cc away</c>. Both leave the successor set alone - the
   /// same two blocks are reachable on the same two conditions - and neither can be done during

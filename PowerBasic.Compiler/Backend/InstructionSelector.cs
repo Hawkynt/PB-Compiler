@@ -1864,7 +1864,7 @@ public sealed partial class InstructionSelector {
   /// instruction. <c>! LEA BX, GetStrLoc</c> parses as <c>LEA BX, [BP+0]</c> and does not parse at all
   /// as <c>LEA BX, &lt;label&gt;</c>; <c>INC</c>, <c>CMP</c> and <c>XCHG</c> against a documented string
   /// export are the same shape. Each of those ENDED the compilation out of
-  /// <c>X86HostedTargetEmitter.EmitInlineAsm</c>, where the direct emitter reports a diagnostic and carries on.
+  /// the hosted target machine lowering, where unsupported text is routed to semantic emulation.
   /// The parse therefore runs once more here, through <see cref="AsmNameKinds"/> - which answers the
   /// same KINDS the emitter's own resolver will - and the failure becomes a decline, so the direct
   /// emitter takes the function and issues exactly the diagnostic it always did.
@@ -2021,7 +2021,7 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
-  /// Answers the effect analysis' questions about identifiers the same way <c>X86HostedTargetEmitter</c>'s own
+  /// Answers the effect analysis' questions about identifiers the same way the hosted target machine lowering's own
   /// resolver will answer the real assembly: a name the lowering paired with a block is a code label,
   /// any other bound name is storage, and an unbound one is a runtime export - code again.
   ///

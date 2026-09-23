@@ -257,7 +257,7 @@ public static class PostRegisterAllocationPeepholes {
     => Resolve(left, allocation) is { } a && Resolve(right, allocation) is { } b && a == b && left.Size == right.Size;
 
   /// <summary>
-  /// Resolves the register exactly as <see cref="X86HostedTargetEmitter"/> will emit it. The allocator stores a
+  /// Resolves the register exactly as the hosted target machine emitter will emit it. The allocator stores a
   /// byte virtual as its containing word register (AX/CX/DX/BX), but emission names the addressable low
   /// byte. Comparing the container here would miss self-copies such as <c>v:byte(AX) &lt;- AL</c> and,
   /// worse, could let the overwritten-copy rule delete the definition feeding that apparent copy.

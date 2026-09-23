@@ -158,7 +158,7 @@ public static class LateLoadStoreOptimization {
   };
 
   /// <summary>
-  /// Resolves the register exactly as <see cref="X86HostedTargetEmitter"/> will name it. Byte virtuals are
+  /// Resolves the register exactly as the hosted target machine emitter will name it. Byte virtuals are
   /// allocated in AX/CX/DX/BX but emitted through their low-byte aliases AL/CL/DL/BL; keeping that
   /// distinction here is what lets the value facts participate in precise physical-alias tracking.
   /// </summary>

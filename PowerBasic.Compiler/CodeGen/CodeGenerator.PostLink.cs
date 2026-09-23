@@ -46,7 +46,7 @@ public sealed partial class CodeGenerator {
       ReferenceEqualityComparer.Instance);
 
     // MAIN does not wrap each routed function with a synthetic end label. Recover that one missing
-    // boundary from the complete bound-label map: X86HostedTargetEmitter binds exactly one label per block,
+    // boundary from the complete bound-label map: hosted target machine emission binds exactly one label per block,
     // and the first later label is therefore the next procedure/thunk/data region. The final block's
     // epilogue lies before it and remains part of the block as required.
     foreach (var (procedure, backend) in this.BackendProcs()) {
@@ -98,7 +98,7 @@ public sealed partial class CodeGenerator {
       if (matches.Length == 0)
         return null;
       // Two equally named labels after the current cursor are possible across different procedures.
-      // The first is the current machine block because X86HostedTargetEmitter binds blocks in list order; the
+      // The first is the current machine block because hosted target machine emission binds blocks in list order; the
       // monotonic cursor prevents a later function's same-spelled "entry" from being chosen early.
       var match = matches[0];
       lastBlockStart = match.Offset;

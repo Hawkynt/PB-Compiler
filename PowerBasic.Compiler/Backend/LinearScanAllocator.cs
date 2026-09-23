@@ -42,7 +42,7 @@ public sealed partial class LinearScanAllocator {
   /// <para>
   /// Without this a base was drawn from <see cref="_addressing"/> like any other, and SI or DI is a
   /// legal answer there - so an indexed access whose base was allocated after BX had gone would emit
-  /// <c>[SI+DI]</c> and end the compilation inside <c>X86HostedTargetEmitter.EmitInstruction</c>, where
+  /// <c>[SI+DI]</c> and end the compilation inside the hosted target machine lowering, where
   /// nothing can decline any more. Measured over the whole corpus, all 53 indexed operands do get BX
   /// today, which is why nothing had met it: there is never more than one indexed base live at once,
   /// and BX is simply the first addressing register the pool offers. That is luck rather than a

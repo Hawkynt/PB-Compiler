@@ -397,7 +397,7 @@ public sealed partial class CodeGenerator {
 
     foreach (var (proc, irFn, machine) in allocated)
       // O0070 is optimizer-gated here, after the last middle-end sweep. The IR proof deliberately
-      // says nothing about the ABI or future spills; X86HostedTargetEmitter re-checks both against the final
+      // says nothing about the ABI or future spills; hosted target machine emission re-checks both against the final
       // machine function before actually omitting BP.
       this._backendProcs[proc] = (machine,
         this.Optimize && FrameElision.IsCandidate(irFn));
@@ -944,7 +944,7 @@ public sealed partial class CodeGenerator {
   /// <para>
   /// It has to be asked HERE and not left to emission, which is what
   /// <see cref="ExternalCalleeDecline"/> already does for a user procedure - it skips <c>rt_</c> names
-  /// entirely, so a stale bridge row reached <c>X86HostedTargetEmitter</c>, where nothing can decline any
+  /// entirely, so a stale bridge row reached hosted target machine emission, where nothing can decline any
   /// more.
   /// </para>
   /// </summary>
@@ -1110,7 +1110,7 @@ public sealed partial class CodeGenerator {
   /// <c>g.total</c>. Resolving that to either would alias two variables onto one cell, so the resolver
   /// is right to refuse - it simply had nowhere to say so. A rank-2 <c>SHARED</c> pair like that, read
   /// and written from a SUB, raised "no data cell for global 'g.total'" out of
-  /// <c>X86HostedTargetEmitter.ResolveData</c> in both optimizer modes.
+  /// the target machine data resolver in both optimizer modes.
   /// </para>
   /// </summary>
   private bool DataGlobalsResolve(IrFunction fn, out string? unaddressable) {
