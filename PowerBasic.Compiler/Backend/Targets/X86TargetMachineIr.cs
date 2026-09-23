@@ -26,14 +26,7 @@ public readonly record struct X86TargetAddress(
     MachineRegister? Index,
     byte Scale,
     int Displacement,
-    int WidthBits = 0) {
-  public X86TargetAddress {
-    if (Scale is not (1 or 2 or 4 or 8))
-      throw new ArgumentOutOfRangeException(nameof(Scale));
-    if (Base is null && Index is null && Displacement == 0)
-      throw new ArgumentException("An address must contain a base, index, or displacement.");
-  }
-}
+    int WidthBits = 0);
 
 /// <summary>Explicit ABI facts consumed by lowering and emission.</summary>
 public sealed record X86TargetAbi(
