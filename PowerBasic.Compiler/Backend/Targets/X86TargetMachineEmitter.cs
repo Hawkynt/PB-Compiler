@@ -281,6 +281,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Imul when instruction.Registers.Count >= 2:
           bytes.AddRange(encoder.ImulRegister(instruction.Registers[0], instruction.Registers[1]));
           break;
+        case X86TargetOpcode.Imul when instruction.Registers.Count == 1:
+          bytes.AddRange(encoder.UnaryMultiplyDivide(instruction.Registers[0], 5));
+          break;
         case X86TargetOpcode.Shl:
           bytes.AddRange(encoder.ShiftRegister(instruction.Registers[0], 4, checked((int)instruction.Immediate)));
           break;

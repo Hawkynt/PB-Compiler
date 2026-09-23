@@ -186,6 +186,10 @@ public static class X86HostedMachineBuilder {
           target = new(X86TargetOpcode.Imul,
             [Register(instruction.Operands[0]), Register(instruction.Operands[1])]);
           return true;
+        case MOpcode.Imul when instruction.Operands.Count == 1
+            && instruction.Operands[0] is MOperand.Register:
+          target = new(X86TargetOpcode.Imul, [Register(instruction.Operands[0])]);
+          return true;
         case MOpcode.Cwd:
           target = new(X86TargetOpcode.Cwd, []);
           return true;
