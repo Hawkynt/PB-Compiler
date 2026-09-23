@@ -41,6 +41,14 @@ public sealed class X86TargetTests {
   }
 
   [Test]
+  public void X86_64EncoderRejectsHighByteWhenRexIsRequired() {
+    var encoder = new X86InstructionEncoder(X86Mode.Bit64);
+    Assert.That(() => encoder.MoveRegister(
+      X86RegisterFile.Ah, X86RegisterFile.Gpr64LowBytes[8]),
+      Throws.ArgumentException.With.Message.Contains("REX"));
+  }
+
+  [Test]
   public void X86_32_UsesCdeclAndFrameShell() {
     var target = new X86MachineTarget(X86Mode.Bit32, X86Abi.I386Cdecl);
     var code = target.Emitter.EmitFunction([]).Bytes;

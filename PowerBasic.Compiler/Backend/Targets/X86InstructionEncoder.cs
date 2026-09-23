@@ -127,6 +127,8 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     var rex = (byte)(0x40 | (w ? 8 : 0) | (register.Encoding >= 8 ? 4 : 0)
       | (address.Base is { Encoding: >= 8 } ? 1 : 0)
       | (address.Index is { Encoding: >= 8 } ? 2 : 0));
+    if (rex != 0x40 && IsLegacyHighByte(register))
+      throw new ArgumentException("AH/CH/DH/BH cannot be used with a REX prefix.", nameof(register));
     return rex == 0x40 ? null : rex;
   }
 
@@ -373,13 +375,20 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     var rex = (byte)(0x40 | (w ? 0x08 : 0)
       | (source.Encoding >= 8 ? 0x04 : 0)
       | (destination.Encoding >= 8 ? 0x01 : 0));
+    if (rex != 0x40 && (IsLegacyHighByte(destination) || IsLegacyHighByte(source)))
+      throw new ArgumentException("AH/CH/DH/BH cannot be used with a REX prefix.");
     return rex == 0x40 ? null : rex;
   }
 
   private static byte? RexRm(MachineRegister register, bool w) {
     var rex = (byte)(0x40 | (w ? 0x08 : 0) | (register.Encoding >= 8 ? 0x01 : 0));
+    if (rex != 0x40 && IsLegacyHighByte(register))
+      throw new ArgumentException("AH/CH/DH/BH cannot be used with a REX prefix.", nameof(register));
     return rex == 0x40 ? null : rex;
   }
+
+  private static bool IsLegacyHighByte(MachineRegister register)
+    => register.Bits == 8 && register.Encoding is >= 4 and <= 7 && register.AliasGroup is >= 0 and <= 3;
 
   private void Validate(MachineRegister register) {
     var bits = mode switch { X86Mode.Bit16 => 16, X86Mode.Bit64 => 64, _ => 32 };
