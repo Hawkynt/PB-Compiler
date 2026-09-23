@@ -40,7 +40,10 @@ public readonly record struct MachineRegister(string Name, int Encoding, int Bit
   public override string ToString() => this.Name;
 }
 
-public readonly record struct MachineCode(byte[] Bytes, IReadOnlyList<MachineRelocation> Relocations);
+public readonly record struct MachineCode(
+    byte[] Bytes,
+    IReadOnlyList<MachineRelocation> Relocations,
+    IReadOnlyDictionary<string, int>? Labels = null);
 
 public readonly record struct MachineRelocation(
     int Offset,
@@ -49,6 +52,8 @@ public readonly record struct MachineRelocation(
     int Addend = 0);
 
 public enum MachineRelocationKind {
+  Relative16,
+  Absolute16,
   Relative32,
   Absolute32,
   Absolute64,
