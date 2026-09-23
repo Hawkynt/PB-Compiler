@@ -20,9 +20,9 @@ public static class X86ProductionEmitter {
     ArgumentNullException.ThrowIfNull(function);
     if (function.HostedFunction is null) {
       var shape = string.Join(", ", function.Function.AllInstructions
-        .Select(instruction => $"{instruction.Opcode}({string.Join("|", instruction.Operands.Select(operand => operand.GetType().Name))})")
+        .Select((instruction, index) => $"#{index}:{instruction.Opcode}({string.Join("|", instruction.Operands.Select(operand => operand.GetType().Name))})")
         .Distinct()
-        .Take(12));
+        .Take(64));
       throw new NotSupportedException($"x86 machine function '{function.Source.Name}' contains an unlowered opcode or operand: {shape}");
     }
     if (!function.Target.Name.Equals("x86-16", StringComparison.OrdinalIgnoreCase))
