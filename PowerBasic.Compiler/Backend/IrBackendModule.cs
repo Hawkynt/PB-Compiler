@@ -48,6 +48,29 @@ public sealed class IrBackendModule {
     return true;
   }
 
+  public bool TryEmitMos6502(out IReadOnlyDictionary<string, MachineCode> emitted,
+      out IReadOnlyList<string> errors) {
+    emitted = new Dictionary<string, MachineCode>(StringComparer.Ordinal);
+    errors = [];
+    if (this.Options.Target != IrBackendTarget.Mos6502 || this.Machine is null) {
+      errors = ["MOS 6502 emission requires a MOS 6502 machine module"];
+      return false;
+    }
+    var target = IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.Mos6502);
+    if (target is not Mos6502MachineTarget mosTarget) {
+      errors = ["MOS 6502 machine target is unavailable"];
+      return false;
+    }
+    var output = new Dictionary<string, MachineCode>(StringComparer.Ordinal);
+    foreach (var function in this.Machine.Functions) {
+      output[function.Source.Name] = mosTarget.Emitter is Mos6502MachineEmitter emitter
+        ? emitter.EmitFunction(function.Function)
+        : mosTarget.Emitter.EmitFunction([]);
+    }
+    emitted = output;
+    return true;
+  }
+
   /// <summary>Completes the explicit Low IR → Machine SSA → Machine IR boundary.</summary>
   public bool TryLowerMachine(out IReadOnlyList<string> errors) {
     var target = IrBackendTargetContract.SelectionTarget(Options);

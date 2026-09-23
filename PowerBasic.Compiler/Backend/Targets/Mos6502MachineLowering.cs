@@ -14,7 +14,10 @@ public sealed class Mos6502MachineLowering : IMachineFunctionLowerer {
     foreach (var block in function.Blocks) {
       var machineBlock = new MBlock(block.Label);
       foreach (var instruction in block.Instructions) {
-        if (instruction is IrRet)
+        if (instruction is IrRet { Value: IrConstantInt result })
+          machineBlock.Instructions.Add(new MInstr(MOpcode.Mov,
+            [new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte)), new MOperand.Immediate(result.Value)], MInstrEffect.None));
+        else if (instruction is IrRet)
           machineBlock.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
         else if (instruction is IrBinary { Rhs: IrConstantInt constant } binary
                  && binary.Op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor)
