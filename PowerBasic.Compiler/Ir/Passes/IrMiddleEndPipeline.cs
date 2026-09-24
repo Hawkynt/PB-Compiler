@@ -22,9 +22,9 @@ public static class IrMiddleEndPipeline {
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
       IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false,
       IIrArithmeticCostModel? arithmeticCostModel = null,
-      IIrCallCostModel? callCostModel = null,
       int minimumIntegerStorageBits = 16,
-      bool recoverIntegerArithmetic = false)
+      bool recoverIntegerArithmetic = false,
+      IIrCallCostModel? callCostModel = null)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     .InEarlyModulePhase(IrMiddleEndPhase.Canonicalization)
     .AddEarlyModuleConservativeWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
@@ -153,10 +153,10 @@ public static class IrMiddleEndPipeline {
       bool optimizeForSpeed = false,
       bool optimizeForSize = false,
       IIrArithmeticCostModel? arithmeticCostModel = null,
-      IIrCallCostModel? callCostModel = null,
       int minimumIntegerStorageBits = 16,
       bool recoverIntegerArithmetic = false,
-      TargetCost? targetCost = null) {
+      TargetCost? targetCost = null,
+      IIrCallCostModel? callCostModel = null) {
     ArgumentNullException.ThrowIfNull(module);
 
     Func<IrPassManager> pipeline = optimize
