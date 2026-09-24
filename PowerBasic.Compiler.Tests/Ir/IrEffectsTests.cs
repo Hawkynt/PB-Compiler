@@ -60,4 +60,63 @@ public sealed class IrEffectsTests {
 
     Assert.That(effects, Is.EqualTo(IrEffectSummary.UnknownExternal));
   }
+  private sealed class UnclassifiedInstruction : IrInstruction {
+    public UnclassifiedInstruction() : base(IrType.Void) { }
+  }
+
+  [Test]
+  public void ForInstruction_GivenCoreOperations_ThenEffectsAreExplicit() {
+    var slot = new IrAlloca(IrType.I16);
+    var add = new IrBinary(IrBinaryOp.Add,
+      new IrConstantInt(IrType.I16, 1), new IrConstantInt(IrType.I16, 2));
+    var div = new IrBinary(IrBinaryOp.SDiv,
+      new IrConstantInt(IrType.I16, 1), new IrConstantInt(IrType.I16, 2));
+    var load = new IrLoad(IrType.I16, slot);
+    var store = new IrStore(new IrConstantInt(IrType.I16, 3), slot);
+
+    Assert.Multiple(() => {
+      Assert.That(IrEffects.ForInstruction(add).CanCse, Is.True);
+      Assert.That(IrEffects.ForInstruction(div).Effects.HasFlag(IrEffectKind.MayTrap), Is.True);
+      Assert.That(IrEffects.ForInstruction(div).CanDiscard, Is.False);
+      Assert.That(IrEffects.ForInstruction(load).MayReadMemory, Is.True);
+      Assert.That(IrEffects.ForInstruction(load).CanDiscard, Is.True);
+      Assert.That(IrEffects.ForInstruction(load).CanCse, Is.False);
+      Assert.That(IrEffects.ForInstruction(store).DefinesMemory, Is.True);
+      Assert.That(IrEffects.ForInstruction(store).CanDiscard, Is.False);
+      Assert.That(IrEffects.ForInstruction(slot).CanDiscard, Is.True);
+      Assert.That(IrEffects.ForInstruction(slot).CanCse, Is.False);
+    });
+  }
+
+  [Test]
+  public void ForInstruction_GivenATypeWithNoEffectContract_ThenItFailsClosed() {
+    Assert.That(
+      () => IrEffects.ForInstruction(new UnclassifiedInstruction()),
+      Throws.TypeOf<NotSupportedException>());
+  }
+
+  [Test]
+  public void Dce_GivenUnusedPotentiallyTrappingDivision_ThenItIsKept() {
+    var divisor = new IrArgument(IrType.I16, 0, "divisor");
+    var function = new IrFunction("f", IrType.Void, [divisor]);
+    var builder = new IrBuilder(function.CreateBlock("entry"));
+    var division = builder.SDiv(new IrConstantInt(IrType.I16, 10), divisor);
+    builder.Ret();
+
+    Assert.That(Dce.Run(function), Is.Zero);
+    Assert.That(division.Parent, Is.Not.Null);
+  }
+
+  [Test]
+  public void Dce_GivenUnusedEffectFreeExternalCall_ThenItIsRemoved() {
+    var sqrt = new IrFunction("llvm.sqrt.f64", IrType.F64, [new IrArgument(IrType.F64, 0)]);
+    var function = new IrFunction("f", IrType.Void);
+    var builder = new IrBuilder(function.CreateBlock("entry"));
+    var call = builder.Call(IrType.F64, sqrt, new IrConstantFloat(IrType.F64, 4));
+    builder.Ret();
+
+    Assert.That(Dce.Run(function), Is.EqualTo(1));
+    Assert.That(call.Parent, Is.Null);
+  }
+
 }

@@ -3,10 +3,10 @@ using PowerBasic.Compiler.Ir.Analysis;
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
-/// Dead-code elimination: removes instructions with no users and no side effects,
-/// cascading through operands as they become unused. Stores, calls and terminators
-/// are never removed (their effect or control transfer is observable). This is what
-/// sweeps up the residue InstCombine and mem2reg leave behind.
+/// Dead-code elimination: removes unused instructions whose central effect contract says they may
+/// be discarded, cascading through operands as they become unused. Ordinary reads and effect-free
+/// calls may disappear; writes, traps, lifetime changes, synchronization, IO and other observable
+/// effects remain. Terminators are structural and are never removed here.
 /// </summary>
 public static class Dce {
 
@@ -34,7 +34,8 @@ public static class Dce {
     var worklist = new Queue<IrInstruction>(fn.AllInstructions);
     while (worklist.Count > 0) {
       var inst = worklist.Dequeue();
-      if (inst.Parent is null || !inst.HasNoUsers || HasSideEffects(inst))
+      if (inst.Parent is null || !inst.HasNoUsers || inst.IsTerminator
+          || !IrEffects.ForInstruction(inst).CanDiscard)
         continue;
 
       foreach (var operand in inst.Operands)         // operands may now be dead
@@ -46,6 +47,4 @@ public static class Dce {
     return removed;
   }
 
-  private static bool HasSideEffects(IrInstruction inst) =>
-    inst is IrStore or IrCall or IrInlineAsm || inst.IsTerminator;
 }

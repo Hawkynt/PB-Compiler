@@ -24,8 +24,38 @@ public enum IrEffectKind : ushort {
 /// </summary>
 public readonly record struct IrEffectSummary(IrEffectKind Effects, bool Deterministic) {
 
+  private const IrEffectKind _MEMORY_READ_EFFECTS =
+    IrEffectKind.ReadsMemory | IrEffectKind.MaySynchronize | IrEffectKind.Volatile | IrEffectKind.Atomic;
+
+  private const IrEffectKind _MEMORY_DEFINITION_EFFECTS =
+    IrEffectKind.WritesMemory | IrEffectKind.MayAllocate | IrEffectKind.MayRelease
+    | IrEffectKind.MaySynchronize | IrEffectKind.Volatile | IrEffectKind.Atomic;
+
+  private const IrEffectKind _NON_DISCARDABLE_EFFECTS =
+    _MEMORY_DEFINITION_EFFECTS | IrEffectKind.MayTrap | IrEffectKind.PerformsIo
+    | IrEffectKind.MayThrow | IrEffectKind.MayBlock;
+
   /// <summary>True when the operation has no modeled observable effects.</summary>
   public bool IsEffectFree => this.Effects == IrEffectKind.None;
+
+  /// <summary>True when the operation may observe the modeled memory state.</summary>
+  public bool MayReadMemory => (this.Effects & _MEMORY_READ_EFFECTS) != 0;
+
+  /// <summary>
+  /// True when the operation creates a new MemorySSA state or acts as an ordering barrier.
+  /// Allocation/release, synchronization, volatile and atomic operations are definitions even when a
+  /// narrower contract does not also spell them as ordinary writes.
+  /// </summary>
+  public bool DefinesMemory => (this.Effects & _MEMORY_DEFINITION_EFFECTS) != 0;
+
+  /// <summary>True when the operation participates in the modeled memory state at all.</summary>
+  public bool MayAccessMemory => this.MayReadMemory || this.DefinesMemory;
+
+  /// <summary>
+  /// True when an unused result may be discarded. Ordinary non-volatile reads are deliberately
+  /// discardable; writes, lifetime changes, traps, synchronization, IO, exceptions and blocking are not.
+  /// </summary>
+  public bool CanDiscard => (this.Effects & _NON_DISCARDABLE_EFFECTS) == 0;
 
   /// <summary>True when repeated equal calls may be value-numbered together.</summary>
   public bool CanCse => this.Deterministic && this.IsEffectFree;
@@ -56,6 +86,12 @@ public static class IrEffects {
     "sqrt", "sin", "cos", "tan", "atan", "log", "exp", "pow",
   };
 
+  private static readonly IrEffectSummary _pureDeterministic = new(IrEffectKind.None, Deterministic: true);
+  private static readonly IrEffectSummary _pureUnique = new(IrEffectKind.None, Deterministic: false);
+  private static readonly IrEffectSummary _read = new(IrEffectKind.ReadsMemory, Deterministic: false);
+  private static readonly IrEffectSummary _write = new(IrEffectKind.WritesMemory, Deterministic: false);
+  private static readonly IrEffectSummary _mayTrap = new(IrEffectKind.MayTrap, Deterministic: true);
+
   /// <summary>
   /// Returns the checked contract for an external declaration. Unknown runtime/library calls remain maximally
   /// conservative; the only effect-free externals currently admitted are the floating math intrinsics already
@@ -69,7 +105,7 @@ public static class IrEffects {
     var bare = name[5..];
     var width = bare.IndexOf(".f", StringComparison.Ordinal);
     return _pureMathIntrinsics.Contains(width > 0 ? bare[..width] : bare)
-      ? new(IrEffectKind.None, Deterministic: true)
+      ? _pureDeterministic
       : IrEffectSummary.UnknownExternal;
   }
 
@@ -81,5 +117,33 @@ public static class IrEffects {
   public static IrEffectSummary ForCall(IrFunction callee) {
     ArgumentNullException.ThrowIfNull(callee);
     return callee.IsDeclaration ? ForExternalCall(callee.Name) : IrEffectSummary.UnknownExternal;
+  }
+
+  /// <summary>
+  /// Returns the target-independent effect contract for one IR instruction.
+  ///
+  /// <para>
+  /// This switch is intentionally exhaustive rather than ending in a conservative fallback. Adding a new
+  /// instruction without deciding its semantics must fail immediately in effect-aware code; silently calling
+  /// it pure or opaque would merely choose a different class of miscompile.
+  /// </para>
+  /// </summary>
+  public static IrEffectSummary ForInstruction(IrInstruction instruction) {
+    ArgumentNullException.ThrowIfNull(instruction);
+    return instruction switch {
+      IrBinary { Op: IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem or IrBinaryOp.FDiv }
+        => _mayTrap,
+      IrBinary or IrCmp or IrCast or IrGep or IrFarPtr or IrPhi or IrSelect
+        => _pureDeterministic,
+      IrAlloca => _pureUnique,
+      IrLoad => _read,
+      IrStore => _write,
+      IrInlineAsm => IrEffectSummary.UnknownExternal,
+      IrCall { Callee: IrFunction callee } => ForCall(callee),
+      IrCall => IrEffectSummary.UnknownExternal,
+      IrRet or IrBr or IrCondBr or IrSwitch or IrIndirectBr or IrUnreachable => _pureDeterministic,
+      _ => throw new NotSupportedException(
+        $"No effect contract is defined for IR instruction '{instruction.GetType().Name}'."),
+    };
   }
 }

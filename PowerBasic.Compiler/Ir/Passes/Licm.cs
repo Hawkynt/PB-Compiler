@@ -94,9 +94,7 @@ public static class Licm {
 
   /// <summary>Pure and trap-free: safe to execute unconditionally in the entering block.</summary>
   private static bool IsSpeculatable(IrInstruction inst) => inst switch {
-    IrBinary b => b.Op is not (IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem or IrBinaryOp.FDiv),
-    IrCmp or IrCast or IrGep => true,
-    IrCall { Callee: IrFunction callee } => IrEffects.ForCall(callee).CanSpeculate,
+    IrBinary or IrCmp or IrCast or IrGep or IrCall => IrEffects.ForInstruction(inst).CanSpeculate,
     _ => false,                                      // loads, stores, allocas, phis, terminators
   };
 }

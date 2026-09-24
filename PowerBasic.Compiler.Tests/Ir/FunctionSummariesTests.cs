@@ -139,6 +139,27 @@ public sealed class FunctionSummariesTests {
   }
 
   [Test]
+  public void DeadPureCall_GivenTheCalleeMayTrap_ThenTheCallStays() {
+    var divisor = new IrArgument(IrType.I16, 0, "divisor");
+    var module = new IrModule("t");
+    var divide = module.AddFunction(new IrFunction("Divide", IrType.I16, [divisor]));
+    var divideEntry = divide.AddBlock(new IrBasicBlock("entry"));
+    divideEntry.Append(new IrBinary(IrBinaryOp.SDiv,
+      new IrConstantInt(IrType.I16, 10), divisor));
+    divideEntry.Append(new IrRet(new IrConstantInt(IrType.I16, 0)));
+
+    var main = module.AddFunction(new IrFunction("main", IrType.Void));
+    var mainEntry = main.AddBlock(new IrBasicBlock("entry"));
+    var call = mainEntry.Append(new IrCall(IrType.I16, divide,
+      [new IrConstantInt(IrType.I16, 0)]));
+    mainEntry.Append(new IrRet());
+
+    Assert.That(FunctionSummaries.Compute(module).For(divide).CanDiscard, Is.False);
+    Assert.That(FunctionSummaries.RemoveDeadPureCalls(module), Is.Zero);
+    Assert.That(call.Parent, Is.Not.Null);
+  }
+
+  [Test]
   public void DeadPureCall_GivenTheCalleePrints_ThenTheCallStays() {
     var module = new IrModule("t");
     var external = module.AddFunction(new IrFunction("rt_print_nl", IrType.Void));

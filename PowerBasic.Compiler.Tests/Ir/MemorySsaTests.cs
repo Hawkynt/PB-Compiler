@@ -110,4 +110,48 @@ public sealed class MemorySsaTests {
     Assert.That(phi, Is.Not.Null);
     Assert.That(memory.GetClobberingAccess(load), Is.SameAs(phi));
   }
+  [Test]
+  public void Build_GivenEffectFreeCall_ThenItDoesNotVersionMemory() {
+    var fn = new IrFunction("f", IrType.I16);
+    var sqrt = new IrFunction("llvm.sqrt.f64", IrType.F64, [new IrArgument(IrType.F64, 0)]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var slot = b.Alloca(IrType.I16);
+    var store = b.Store(new IrConstantInt(IrType.I16, 7), slot);
+    var call = b.Call(IrType.F64, sqrt, new IrConstantFloat(IrType.F64, 4));
+    var load = b.Load(IrType.I16, slot);
+    b.Ret(load);
+
+    var memory = IrMemorySsa.Build(fn);
+    var storeAccess = memory.AccessFor(store);
+
+    Assert.Multiple(() => {
+      Assert.That(call.Parent, Is.Not.Null);
+      Assert.That(memory.AccessFor(call), Is.Null);
+      Assert.That(storeAccess, Is.TypeOf<IrMemoryDef>());
+      Assert.That(((IrMemoryUse)memory.AccessFor(load)!).DefiningAccess, Is.SameAs(storeAccess));
+      Assert.That(memory.GetClobberingAccess(load), Is.SameAs(storeAccess));
+    });
+  }
+
+  [Test]
+  public void Build_GivenOpaqueCall_ThenItVersionsMemory() {
+    var fn = new IrFunction("f", IrType.I16);
+    var opaque = new IrFunction("opaque", IrType.Void);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var slot = b.Alloca(IrType.I16);
+    b.Store(new IrConstantInt(IrType.I16, 7), slot);
+    var call = b.Call(IrType.Void, opaque);
+    var load = b.Load(IrType.I16, slot);
+    b.Ret(load);
+
+    var memory = IrMemorySsa.Build(fn);
+    var callAccess = memory.AccessFor(call);
+
+    Assert.Multiple(() => {
+      Assert.That(callAccess, Is.TypeOf<IrMemoryDef>());
+      Assert.That(((IrMemoryUse)memory.AccessFor(load)!).DefiningAccess, Is.SameAs(callAccess));
+      Assert.That(memory.GetClobberingAccess(load), Is.SameAs(callAccess));
+    });
+  }
+
 }

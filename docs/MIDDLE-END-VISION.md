@@ -104,7 +104,9 @@ Volatile / Atomic
 Deterministic
 ```
 
-The first explicit vocabulary now exists as `IrEffectKind`, `IrEffectSummary` and `IrEffects`. The initial external-call table intentionally preserves existing behavior: the checked LLVM floating math intrinsics are deterministic, effect-free and speculatable; every unmodeled runtime/library call remains maximally conservative. GVN, LICM and the compatibility queries in `FunctionSummaries` consume that one semantic source instead of separate whitelists.
+The first explicit vocabulary now exists as `IrEffectKind`, `IrEffectSummary` and `IrEffects`. The initial external-call table intentionally preserves existing behavior: the checked LLVM floating math intrinsics are deterministic, effect-free and speculatable; every unmodeled runtime/library call remains maximally conservative.
+
+That contract now also classifies every IR instruction explicitly. DCE and dead-loop elimination use discardability, LICM/GVN use speculation/CSE properties, MemorySSA derives uses and definitions from memory effects, dependence analysis asks about memory participation, and function summaries propagate the same operation facts through the call graph. There is deliberately no default instruction case: introducing a new IR operation without defining its effects fails closed instead of silently inheriting purity or opacity.
 
 PB's runtime semantics make conservatism essential: a routine that looks like a read may still consume or release a string handle. `rt_str_len`, `rt_str_dup`, printing, memcpy and unknown externals therefore remain outside the effect-free contract until their exact semantics are modeled deliberately.
 
@@ -196,7 +198,7 @@ The PR now has a production analysis substrate rather than only a sketch:
 5. Shared value/memory analyses include MemorySSA, branch-refined integer ranges, FP domains, bootstrap scalar evolution and known bits.
 6. Scalar evolution exposes additive `{start,+,step}` recurrences and bounded exact trip-count proofs using fixed-width integer semantics; `CountedLoop` and migrated loop consumers reuse those facts.
 7. Migrated transforms include correlation, pointer-check elimination, GVN, LICM, integer/FP range folding, reciprocal loop reasoning and IV simplification. CFG-preserving transforms preserve `IrAnalysisSets.Cfg` rather than manually maintaining a key list.
-8. `DemandedBits` consumes the known-bits domain; GVN/LICM consume the central external-call effect contract.
+8. `DemandedBits` consumes the known-bits domain; DCE, dead-loop elimination, GVN, LICM, MemorySSA, dependence analysis and function summaries consume the central IR-operation/effect contract.
 9. Verification deliberately remains independent of the analysis cache: `VerifyEachPass` must catch an incorrect preservation claim instead of trusting it.
 10. No new external dependency has been introduced and the standard pass order has not been reordered.
 

@@ -77,11 +77,12 @@ public sealed class IrMemoryPhi : IrMemoryAccess {
 /// Function-local Memory SSA overlay.
 ///
 /// <para>
-/// Stores, calls and inline assembly are memory definitions; ordinary loads are memory uses. Memory
-/// phis are placed at the iterated dominance frontier of blocks containing definitions, then the
-/// graph is renamed down the dominator tree exactly like ordinary SSA. Calls and inline assembly are
-/// deliberately opaque barriers. PB-specific precision lives in <see cref="IrAliasAnalysis"/>, not in
-/// the graph construction.
+/// Memory uses and definitions are derived from <see cref="IrEffects"/> rather than instruction-class
+/// folklore. Ordinary loads are uses; stores and opaque calls/assembly are definitions; an effect-free
+/// call is absent from the memory graph. Memory phis are placed at the iterated dominance frontier of
+/// blocks containing definitions, then the graph is renamed down the dominator tree exactly like
+/// ordinary SSA. PB-specific location precision lives in <see cref="IrAliasAnalysis"/>, not in the
+/// graph construction.
 /// </para>
 ///
 /// <para>
@@ -109,7 +110,7 @@ public sealed class IrMemorySsa {
     ArgumentNullException.ThrowIfNull(dominators);
     var definitionBlocks = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
     foreach (var block in dominators.ReversePostorder)
-      if (block.Instructions.Any(IsMemoryDef))
+      if (block.Instructions.Any(IsMemoryDefinition))
         definitionBlocks.Add(block);
 
     this.PlacePhis(definitionBlocks, dominators);
@@ -237,16 +238,15 @@ public sealed class IrMemorySsa {
     IrMemoryAccess current = this._phis.TryGetValue(block, out var phi) ? phi : incoming;
 
     foreach (var instruction in block.Instructions) {
-      if (instruction is IrLoad) {
-        this._accesses.Add(instruction, new IrMemoryUse(instruction, current));
+      var effects = IrEffects.ForInstruction(instruction);
+      if (effects.DefinesMemory) {
+        var definition = new IrMemoryDef(instruction, current);
+        this._accesses.Add(instruction, definition);
+        current = definition;
         continue;
       }
-      if (!IsMemoryDef(instruction))
-        continue;
-
-      var definition = new IrMemoryDef(instruction, current);
-      this._accesses.Add(instruction, definition);
-      current = definition;
+      if (effects.MayReadMemory)
+        this._accesses.Add(instruction, new IrMemoryUse(instruction, current));
     }
 
     foreach (var successor in block.Successors)
@@ -269,6 +269,6 @@ public sealed class IrMemorySsa {
     return children;
   }
 
-  private static bool IsMemoryDef(IrInstruction instruction)
-    => instruction is IrStore or IrCall or IrInlineAsm;
+  private static bool IsMemoryDefinition(IrInstruction instruction)
+    => IrEffects.ForInstruction(instruction).DefinesMemory;
 }

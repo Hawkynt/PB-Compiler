@@ -98,7 +98,7 @@ public static class IrLoopDependenceAnalysis {
       return null;
 
     var accesses = CollectAccesses(fn, loop);
-    var complete = !HasUnknownMemoryCall(loop);
+    var complete = !HasUnknownMemoryEffect(loop);
     if (!TryInduction(loop, out var start, out var step))
       return new(loop.Header, loop.Counter, loop.Trips, accesses, [], false);
 
@@ -161,11 +161,11 @@ public static class IrLoopDependenceAnalysis {
     return result;
   }
 
-  private static bool HasUnknownMemoryCall(CountedLoop loop) {
+  private static bool HasUnknownMemoryEffect(CountedLoop loop) {
     foreach (var block in loop.Region)
       foreach (var instruction in block.Instructions)
-        if (instruction is IrCall call
-            && (call.Callee is not IrFunction callee || !IrEffects.ForCall(callee).CanCse))
+        if ((instruction is IrCall or IrInlineAsm)
+            && IrEffects.ForInstruction(instruction).MayAccessMemory)
           return true;
     return false;
   }

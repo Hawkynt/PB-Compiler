@@ -7,16 +7,16 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// ask "does calling this touch memory?" instead of assuming the worst.
 ///
 /// <para>
-/// Today a call is a wall: <see cref="Dce"/> treats every call as side-effecting, so a call whose
-/// result nothing uses survives even when the callee does nothing but arithmetic. That is the right
-/// default and the wrong answer for the many small BASIC FUNCTIONs that only compute.
+/// A function-local pass cannot in general see through an internal call, so this module analysis
+/// propagates callee facts through the call graph. That is what allows an unused call to a small BASIC
+/// FUNCTION to disappear without pretending every call is harmless.
 /// </para>
 /// <para>
-/// The summary is deliberately coarse — two bits, reads and writes — because that is what the
-/// consumers actually need and because a coarse fact computed correctly beats a precise one computed
-/// optimistically. It is a fixpoint over the call graph: a function writes memory if it stores, or
-/// calls something that writes. Anything it cannot see through makes it maximally impure: an external
-/// declaration, an indirect call, an armed error handler, inline assembly. The one exception is the
+/// The summary is deliberately coarse: memory reads, memory definitions and whether an unused call
+/// may be discarded. Those are derived from the shared operation-effect contract and propagated to
+/// callers by fixpoint. Anything it cannot see through remains maximally conservative: an unmodeled
+/// external declaration, an indirect call, an armed error handler or inline assembly. The checked
+/// exception is the
 /// checked effect contract in <see cref="IrEffects.ForExternalCall"/> - externals whose semantics are
 /// known rather than guessed - which is also what lets <see cref="Gvn"/> number a call and
 /// <see cref="Licm"/> hoist one.
@@ -30,9 +30,9 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </summary>
 public sealed class FunctionSummaries {
 
-  /// <summary>What calling a function may do to memory.</summary>
-  public readonly record struct Summary(bool ReadsMemory, bool WritesMemory) {
-    /// <summary>True when the call has no memory observation or mutation and can be removed if its result is unused.</summary>
+  /// <summary>What calling a function may do to memory, plus whether an unused call may disappear.</summary>
+  public readonly record struct Summary(bool ReadsMemory, bool WritesMemory, bool CanDiscard) {
+    /// <summary>True when the body neither reads nor writes modeled memory.</summary>
     public bool IsPure => !this.ReadsMemory && !this.WritesMemory;
   }
 
@@ -54,18 +54,19 @@ public sealed class FunctionSummaries {
 
   /// <summary>The summary for a function - maximally impure for anything not in the module.</summary>
   public Summary For(IrFunction function)
-    => this._summaries.TryGetValue(function, out var summary) ? summary : new(true, true);
+    => this._summaries.TryGetValue(function, out var summary)
+      ? summary
+      : FromEffects(IrEffectSummary.UnknownExternal);
 
   /// <summary>Computes summaries for every function in <paramref name="module"/>.</summary>
   public static FunctionSummaries Compute(IrModule module) {
     var result = new FunctionSummaries();
     foreach (var function in module.Functions) {
-      var opaque = function.IsDeclaration
-        ? !IsPureExternal(function.Name)         // a declaration is a wall unless its effect contract proves otherwise
-        : function.HasErrorHandler || function.HasInlineAsm;
-      result._summaries[function] = opaque
-        ? new(true, true)                        // nothing here can be seen through
-        : new(false, false);                     // optimistic: only ever made worse below
+      result._summaries[function] = function.IsDeclaration
+        ? FromEffects(IrEffects.ForCall(function))
+        : function.HasErrorHandler || function.HasInlineAsm
+          ? FromEffects(IrEffectSummary.UnknownExternal)
+          : new(false, false, true);             // optimistic: only ever made worse below
     }
 
     for (var changed = true; changed;) {
@@ -74,7 +75,7 @@ public sealed class FunctionSummaries {
         if (function.IsDeclaration)
           continue;
         var current = result._summaries[function];
-        if (current is { ReadsMemory: true, WritesMemory: true })
+        if (current is { ReadsMemory: true, WritesMemory: true, CanDiscard: false })
           continue;
 
         var merged = current;
@@ -89,24 +90,25 @@ public sealed class FunctionSummaries {
     return result;
   }
 
-  private static Summary Merge(Summary current, IrInstruction instruction, FunctionSummaries known) => instruction switch {
-    IrLoad => current with { ReadsMemory = true },
-    IrStore => current with { WritesMemory = true },
-    IrInlineAsm => new(true, true),
-    // An indirect call could be anything. A direct one contributes its callee's summary, which for a
-    // recursive cycle is whatever has been established so far - correct because the fixpoint only ever
-    // adds, so a cycle settles at the union of everything reachable round it.
-    IrCall call => call.Callee is IrFunction callee
-      ? Union(current, known.For(callee))
-      : new(true, true),
-    _ => current,
-  };
+  private static Summary Merge(Summary current, IrInstruction instruction, FunctionSummaries known) {
+    // A defined direct callee contributes the fixpoint fact for its body. Declarations and indirect
+    // calls use the same operation contract as every other consumer.
+    if (instruction is IrCall call && call.Callee is IrFunction callee && !callee.IsDeclaration)
+      return Union(current, known.For(callee));
+    return Union(current, FromEffects(IrEffects.ForInstruction(instruction)));
+  }
+
+  private static Summary FromEffects(IrEffectSummary effects)
+    => new(effects.MayReadMemory, effects.DefinesMemory, effects.CanDiscard);
 
   private static Summary Union(Summary a, Summary b)
-    => new(a.ReadsMemory || b.ReadsMemory, a.WritesMemory || b.WritesMemory);
+    => new(
+      a.ReadsMemory || b.ReadsMemory,
+      a.WritesMemory || b.WritesMemory,
+      a.CanDiscard && b.CanDiscard);
 
   /// <summary>
-  /// Removes calls whose result nothing uses and whose callee writes no memory. Returns how many went.
+  /// Removes calls whose result nothing uses and whose callee has no non-discardable effects. Returns how many went.
   ///
   /// This is the first consumer of the summaries and the reason they exist: a BASIC FUNCTION that only
   /// computes is exactly the shape the optimizer leaves behind after propagating its result away, and
@@ -130,7 +132,7 @@ public sealed class FunctionSummaries {
         if (instruction is IrCall { Callee: IrFunction callee } call
             && call.HasNoUsers
             && !callee.NoInline
-            && summaries.For(callee).IsPure) {
+            && summaries.For(callee).CanDiscard) {
           call.EraseFromParent();
           ++removed;
         }

@@ -122,6 +122,35 @@ public sealed class DeadLoopEliminationTests {
       "the optimized IR must retain the loop-invariant Error 6 path:\n" + IrPrinter.Print(main));
   }
 
+  [Test]
+  public void LoopWithPotentiallyTrappingDivision_WhenDeletingDeadLoops_ThenItSurvives() {
+    var divisor = new IrArgument(IrType.I16, 0, "divisor");
+    var fn = new IrFunction("f", IrType.Void, [divisor]);
+    var entry = fn.CreateBlock("entry");
+    var header = fn.CreateBlock("header");
+    var body = fn.CreateBlock("body");
+    var exit = fn.CreateBlock("exit");
+
+    new IrBuilder(entry).Br(header);
+    var headerBuilder = new IrBuilder(header);
+    var counter = headerBuilder.Phi(IrType.I16);
+    headerBuilder.CondBr(
+      headerBuilder.Cmp(IrCmpPred.Slt, counter, new IrConstantInt(IrType.I16, 4)),
+      body, exit);
+
+    var bodyBuilder = new IrBuilder(body);
+    var division = bodyBuilder.SDiv(new IrConstantInt(IrType.I16, 10), divisor);
+    var next = bodyBuilder.Add(counter, new IrConstantInt(IrType.I16, 1));
+    bodyBuilder.Br(header);
+    counter.AddIncoming(new IrConstantInt(IrType.I16, 0), entry);
+    counter.AddIncoming(next, body);
+    new IrBuilder(exit).Ret();
+
+    Assert.That(DeadLoopElimination.Run(fn), Is.Zero);
+    Assert.That(division.Parent, Is.SameAs(body));
+    Assert.That(HasLoop(fn), Is.True);
+  }
+
   /// <summary>
   /// The loops that must survive SPEED: one whose body prints, and one whose counter is read after
   /// it. Neither is unobservable, and a pass that deleted either would still pass a test that only
