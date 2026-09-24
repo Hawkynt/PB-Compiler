@@ -984,45 +984,58 @@ public sealed partial class IrLowering {
 
   /// <summary>The address of one array element in PowerBASIC's first-subscript-fastest layout.</summary>
   private (IrValue Address, PbType Element) ElementAddress(CallOrIndexExpr expr, bool farAllowed = false) {
-    if (!this._model.VariableBindings.TryGetValue(expr, out var symbol) || symbol.Type is not ArrayType arr)
-      throw new IrLoweringException($"not an array element: {expr.Name}");
-    if (symbol.ArrayClass == ArrayClass.Absolute)
+    if (!HirArrayAccessBuilder.TryBuild(this._model, expr, this._checkBounds, out var access, out var error))
+      throw new IrLoweringException(error ?? $"unable to build array-element HIR for {expr.Name}");
+    return this.ElementAddress(access, farAllowed);
+  }
+
+  /// <summary>Lowers resolved array-access HIR into target-independent address arithmetic.</summary>
+  private (IrValue Address, PbType Element) ElementAddress(HirArrayElementAccess access, bool farAllowed = false) {
+    var symbol = access.Target;
+    var arr = access.Type;
+
+    if (access.ArrayClass == ArrayClass.Absolute)
       return farAllowed
-        ? this.AbsoluteElementAddress(expr, symbol, arr)
+        ? this.AbsoluteElementAddress(access)
         : throw new IrLoweringException(
             $"the address of an element of the ABSOLUTE array {symbol.Name} (only a direct read or write of one lowers)");
-    // the memory-model classes reach their elements through a segment they compute per access, which
-    // is the same far pointer for the same reason - and no more usable as a near one
-    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
+
+    // The memory-model classes reach their elements through a segment they compute per access. HIR
+    // carries that source-level class; the page/segment arithmetic remains a lower-level decision.
+    if (access.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
       return farAllowed
-        ? this.PagedElementAddress(expr, symbol, arr)
+        ? this.PagedElementAddress(access)
         : throw new IrLoweringException(
-            $"the address of an element of the {symbol.ArrayClass} array {symbol.Name} (only a direct read or write of one lowers)");
-    // An array PARAMETER has no bounds of its own whether or not the array behind it is dynamic: the
-    // callee knows only what the descriptor says, so it reaches every element the descriptor-driven
-    // way. Without this a static array's parameter fell through to the static path, which has no
-    // StaticBounds to use and said "rank mismatch".
-    if (arr.IsDynamic || symbol.Storage == VariableStorage.Parameter)
-      return this.DynamicElementAddress(expr, symbol, arr);
-    if (arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
-      throw new IrLoweringException("rank mismatch");
+            $"the address of an element of the {access.ArrayClass} array {symbol.Name} (only a direct read or write of one lowers)");
+
+    if (access.BoundsSource == HirArrayBoundsSource.Descriptor)
+      return this.DynamicElementAddress(access);
+
+    if (access.StaticBounds.Count != arr.Rank || access.Subscripts.Count != arr.Rank)
+      throw new IrLoweringException($"static array HIR rank mismatch for {symbol.Name}");
     var basePtr = this.SlotFor(symbol);
 
     // Evaluate subscripts in source order, because a subscript expression may call a function or
     // otherwise have observable effects. Only after all relative indexes exist do we fold them from
     // the last dimension inward: rel0 + size0 * (rel1 + size1 * (...)). PowerBASIC stores the first
     // subscript contiguously, so dimension zero has element stride one.
-    var relative = new IrValue[bounds.Count];
-    for (var k = 0; k < bounds.Count; ++k) {
-      var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
-      if (this._checkBounds)
-        this.EmitBoundsCheck(idx, new IrConstantInt(IrType.I32, bounds[k].Lower), new IrConstantInt(IrType.I32, bounds[k].Upper));
-      relative[k] = this._b.Sub(idx, new IrConstantInt(IrType.I32, bounds[k].Lower));
+    var relative = new IrValue[arr.Rank];
+    for (var k = 0; k < arr.Rank; ++k) {
+      var subscript = access.Subscripts[k];
+      var bound = access.StaticBounds[k];
+      var idx = this.Coerce(this.LowerExpr(subscript), this._model.TypeOf(subscript), PbType.Long);
+      if (access.CheckBounds)
+        this.EmitBoundsCheck(
+          idx,
+          new IrConstantInt(IrType.I32, bound.Lower),
+          new IrConstantInt(IrType.I32, bound.Upper));
+      relative[k] = this._b.Sub(idx, new IrConstantInt(IrType.I32, bound.Lower));
     }
 
     IrValue flat = relative[^1];
-    for (var k = bounds.Count - 2; k >= 0; --k) {
-      var size = bounds[k].Upper - bounds[k].Lower + 1;
+    for (var k = arr.Rank - 2; k >= 0; --k) {
+      var bound = access.StaticBounds[k];
+      var size = bound.Upper - bound.Lower + 1;
       flat = this._b.Add(this._b.Mul(flat, new IrConstantInt(IrType.I32, size)), relative[k]);
     }
 
@@ -1264,9 +1277,12 @@ public sealed partial class IrLowering {
   }
 
   /// <summary>The address of one runtime-allocated element in PowerBASIC's first-subscript-fastest layout.</summary>
-  private (IrValue Address, PbType Element) DynamicElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
-    if (expr.Arguments.Count != arr.Rank)
-      throw new IrLoweringException("dynamic array rank mismatch");
+  private (IrValue Address, PbType Element) DynamicElementAddress(HirArrayElementAccess access) {
+    var symbol = access.Target;
+    var arr = access.Type;
+    if (access.BoundsSource != HirArrayBoundsSource.Descriptor || access.Subscripts.Count != arr.Rank)
+      throw new IrLoweringException($"descriptor array HIR rank mismatch for {symbol.Name}");
+
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
     // A parameter's block address is two separate words, so the far pointer is formed at the END from
     // the finished offset - the same shape AbsoluteElementAddress uses - rather than being loaded as a
@@ -1278,11 +1294,12 @@ public sealed partial class IrLowering {
     // nested inside a subscript expression.
     var relative = new IrValue[arr.Rank];
     for (var k = 0; k < arr.Rank; ++k) {
-      var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
+      var subscript = access.Subscripts[k];
+      var idx = this.Coerce(this.LowerExpr(subscript), this._model.TypeOf(subscript), PbType.Long);
       var lo = this._b.Load(IrType.I32, descriptor.Lo[k]);
-      // $ERROR BOUNDS ON over a dynamic array: the dimension is not a compile-time constant, so the
-      // upper bound is reconstructed from the descriptor the REDIM filled in - lo + size - 1
-      if (this._checkBounds) {
+      // $ERROR BOUNDS ON over a descriptor-backed array: reconstruct the upper bound from the
+      // descriptor the DIM/REDIM/caller filled in - lo + size - 1.
+      if (access.CheckBounds) {
         var size = this._b.Load(IrType.I32, descriptor.Size[k]);
         this.EmitBoundsCheck(idx, lo, this._b.Sub(this._b.Add(lo, size), new IrConstantInt(IrType.I32, 1)));
       }
@@ -1324,18 +1341,21 @@ public sealed partial class IrLowering {
   /// has a case for <see cref="IrFarPtr"/> outside the address former.
   /// </para>
   /// </summary>
-  private (IrValue Address, PbType Element) AbsoluteElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
+  private (IrValue Address, PbType Element) AbsoluteElementAddress(HirArrayElementAccess access) {
+    var symbol = access.Target;
+    var arr = access.Type;
     if (!this._absoluteSegments.TryGetValue(symbol, out var segmentCell))
       throw new IrLoweringException($"element of {symbol.Name} before its DIM ... AT was lowered");
-    if (expr.Arguments.Count != arr.Rank)
-      throw new IrLoweringException("ABSOLUTE array rank mismatch");
+    if (access.BoundsSource != HirArrayBoundsSource.Descriptor || access.Subscripts.Count != arr.Rank)
+      throw new IrLoweringException("ABSOLUTE array HIR rank mismatch");
 
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
     var relative = new IrValue[arr.Rank];
     for (var k = 0; k < arr.Rank; ++k) {
-      var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
+      var subscript = access.Subscripts[k];
+      var idx = this.Coerce(this.LowerExpr(subscript), this._model.TypeOf(subscript), PbType.Long);
       var lo = this._b.Load(IrType.I32, descriptor.Lo[k]);
-      if (this._checkBounds) {
+      if (access.CheckBounds) {
         var size = this._b.Load(IrType.I32, descriptor.Size[k]);
         this.EmitBoundsCheck(idx, lo, this._b.Sub(this._b.Add(lo, size), new IrConstantInt(IrType.I32, 1)));
       }

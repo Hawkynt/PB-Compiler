@@ -158,7 +158,7 @@ Pass order still matters inside a group, but dependencies should be stated throu
 ### Must
 
 - Continue migrating existing passes from private analysis reconstruction to the shared analysis manager.
-- Continue the incremental Bound AST -> HIR -> MIR/SSA split. REDIM/ERASE are now the first real slice: binder side tables are consumed once into array-lifecycle HIR carrying resolved symbol identity, array class/type, effective OPTION BASE bounds and PRESERVE intent; SSA lowering consumes that HIR instead of redoing binding. Move additional source-semantic families across the same boundary rather than growing the monolithic direct path.
+- Continue the incremental Bound AST -> HIR -> MIR/SSA split. Array lifetime and element access are now the first real family: binder side tables are consumed once into HIR carrying resolved symbol identity, array class/type, effective static-vs-descriptor bounds, PRESERVE intent and the effective bounds-check policy; SSA lowering consumes those contracts instead of redoing binding. Move additional source-semantic families across the same boundary rather than growing the monolithic direct path.
 - Expand effect identities from the first external-call contracts to IR operations and precisely modeled runtime/library calls.
 - Extend the verifier contracts as new HIR/MIR boundaries are introduced. Optimized SSA and Low IR are now verifier-backed, and machine stages are represented by the machine-side product rather than source-module relabeling.
 - Keep every legacy pass conservatively correct during migration; unknown preservation means invalidate.
@@ -202,14 +202,14 @@ The PR now has a production analysis substrate rather than only a sketch:
 9. Verification deliberately remains independent of the analysis cache: `VerifyEachPass` must catch an incorrect preservation claim instead of trusting it.
 10. The standard pipeline is now partitioned into named, inspectable phases without changing its flattened pass order; bounded function fixed points report the transforms responsible when they fail to converge.
 11. Interprocedural constant propagation, dead-pure-call elimination and aggregate-parameter reduction now consume shared cached module analyses instead of privately rebuilding call-graph facts. Aggregate-parameter reduction invalidates and rebuilds those facts between ABI rewrites inside its own fixed point.
-12. REDIM/ERASE now cross the first concrete Bound AST -> HIR -> SSA slice: array identity, storage class, effective bounds and PRESERVE semantics survive as an explicit HIR operation before descriptor/runtime lowering.
+12. Array operations now cross the first concrete Bound AST -> HIR -> SSA family: REDIM/ERASE retain array identity, storage class, effective bounds and PRESERVE semantics, while element access retains resolved identity, source-order subscripts, static-vs-descriptor bounds and the effective Error 9 checking policy before address/descriptor/page arithmetic is chosen.
 13. `IrValueFacts` now composes branch-refined ranges, known bits, explicit pointer nullness and pointer alignment behind one program-point query surface; `PointerCheckElim` consumes it instead of carrying a private dominator/nullness solver.
 14. Basic-block versioning now runs as an analysis-aware pass and consumes shared alignment assumptions rather than reconstructing pointer-mask facts privately.
 15. No new external dependency has been introduced and the standard pass order has not been reordered.
 
 The target-neutral representation boundaries now carry verifier contracts rather than acting as progress labels. `OptimizedSsa` requires structurally valid SSA; `LowIr` additionally requires an explicit semantic/effect contract for every operation that crosses the boundary. Unknown external calls remain legal through their conservative effect contract, while a new unclassified IR instruction cannot silently reach a backend. Machine SSA/IR are distinct machine-side products: lowering leaves the source `IrModule` at `LowIr` instead of relabeling it after selection/allocation.
 
-The next representation work is the high-level side of the split: introduce the Bound AST -> HIR boundary incrementally for source-semantic operations that currently lose useful identity inside `IrLowering`, then lower HIR -> MIR/SSA through an explicit contract. Production policy is already centralized in `IrMiddleEndPipeline`, so that split can proceed without reintroducing caller-owned optimizer schedules.
+The next representation work is the high-level side of the split: continue extending the Bound AST -> HIR boundary beyond arrays to source-semantic operations that currently lose useful identity inside `IrLowering`, then lower HIR -> MIR/SSA through an explicit contract. Production policy is already centralized in `IrMiddleEndPipeline`, so that split can proceed without reintroducing caller-owned optimizer schedules.
 
 ## Reference architecture
 
