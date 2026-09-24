@@ -6,9 +6,15 @@ The direct emitter is retired from the production compiler route. Normal `CodeGe
 uses the IR/native backend and requires routing to succeed; the routing selector is internal test-oracle
 state rather than public product policy. `pbc --no-x-backend`, `--x-backend`, and `--x-backend-strict` are rejected as retired controls.
 
-The historical direct body emitter remains compiled temporarily only so the test assembly can use it as an
-independent behavioral oracle while those fixtures are converted to fixed expectations or vintage-compiler
-vectors. Production callers cannot select it.
+Production image and unit emission no longer contain a semantic fallback branch. EXE/module bodies and
+PBU/OBJ/LIB procedure bodies must already have an x86-16 machine body; a lowering/selection/allocation
+gap is a compile diagnostic. Unit compilation also no longer runs the old bound-AST optimizer before
+IR lowering, so executable semantics pass through exactly one optimizer: `IrMiddleEndPipeline`.
+
+The historical syntax-emission implementation is still present in the source tree only while shared
+DOS image/runtime/linker infrastructure is extracted from `CodeGenerator` and old direct-vs-routed
+oracle fixtures are converted. It is unreachable from production artifact emission and is now deletion
+work rather than a fallback architecture.
 
 
 The DOS compiler is being migrated to one production path:
@@ -22,7 +28,9 @@ source -> parser/binder -> typed SSA IR -> middle-end -> x86-16 machine IR -> as
 1. the **legacy direct emitter**, which lowers bound syntax straight to x86 while performing target-specific optimizations; and
 2. **whole-program DOS infrastructure** shared by the routed back end: image/data layout, runtime selection, OMF/PBU/PBL linking, labels, literal pools and executable construction.
 
-The first is the retirement target. The second remains until equivalent target-facing infrastructure has been separated from the legacy syntax emitter.
+The first has now been disconnected from EXE/PBU/OBJ/LIB production. The second remains until equivalent
+target-facing infrastructure has been separated into an IR-native DOS artifact builder; once that split
+is complete the syntax-emission files can be deleted without taking the linker/runtime shell with them.
 
 ## Removal gates
 

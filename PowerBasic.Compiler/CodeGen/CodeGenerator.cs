@@ -896,20 +896,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // normal image emission reaches the later runtime setup, so initialize it before any routing query.
     this._rt.Target = this.RuntimeTargetForRuntime();
 
-    // Legacy bound-AST optimizations belong only to the direct-emitter oracle. Production compilation
-    // lowers the bound program first and performs optimization in IrMiddleEndPipeline; letting these
-    // mutate the model beforehand would retain a second middle end whose results the IR path inherits.
-    if (this.Optimize && !this._isUnit && !this.UseExperimentalBackend) {
-      OptPruner.Prune(model);
-      OptLoopFusion.Fuse(model);
-      OptFloatDemotion.Apply(model);
-      this._ipcp = OptIpcp.Analyze(model);
-      this._pureFold = OptPureFold.Analyze(model);
-      this.ScheduleInlineAsmBlocks();
-      if (this.OptimizeSpeed && !this._allowExternalCalls)
-        OptRegParm.Apply(model, this.IsBackendRouted);
-    }
-
+    // Production compilation never mutates executable semantics through the legacy bound-AST
+    // optimizer. The bound program crosses IrLowering once; optimization then belongs exclusively to
+    // IrMiddleEndPipeline and the target machine pipeline.
     // SPEED/SIZE, resolved BEFORE anything can ask the back end a question. The objective is not only
     // an emission setting: SelectionCost hands the selector a cost model under SPEED and null
     // otherwise, so it decides every byte-for-cycles trade the selector may make - the membership
@@ -933,12 +922,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // still opt into that emitter explicitly as a behavioural oracle.
     if (this.RaiseWhenRoutingIsMandatoryAndSomethingDeclined())
       return [];
-
-    // The raw trivial-program shortcut is part of the historical direct emitter. Production has already
-    // committed to the IR/native route above and must not escape it after the mandatory-routing gate.
-    if (!this.UseExperimentalBackend && this.Optimize && !this._allowExternalCalls && !this._isUnit
-        && this.TryLowerTrivialProgram() is { } trivial)
-      return trivial;
 
     var asm = this._asm;
     // peephole / scheduler: record the instruction stream of a standalone program image so a
@@ -1066,30 +1049,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this.PrepareArrayFill(model.MainBody);
     if (this.Optimize)
       this._intervalPoints = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
-    if (this.BackendMain() is not null) {
-      // the x86-16 back end owns the whole module body: its own prologue, its own frame, and the
-      // implicit END emitted at its return sites (docs/X86-BACKEND.md)
-      //
-      // The direct procedure emitter runs after main and reads the FINAL lexical $ERROR state left by
-      // ApplyMeta. Routing main bypasses EmitStatement, so replay those metastatements here; otherwise
-      // a direct callee silently loses (among others) its $ERROR STACK probe and deep recursion walks
-      // through the data/code area instead of raising into main's routed handler.
-      foreach (var meta in model.MainBody.OfType<MetaStmt>())
-        this.ApplyMeta(meta);
-      this.EmitBackendMain();
-    } else {
-      this.BeginFrame(skipZeroing: this.Optimize && !ContainsErrorHandling(model.MainBody));
-      this.EmitChainCommonLoad();             // absorb a CHAIN handoff, when present
-      this._trackResume = ContainsErrorHandling(model.MainBody);
-      foreach (var statement in model.MainBody)
-        this.EmitStatement(statement);
-
-      // implicit END
-      asm.Mov(Reg.AL, (Imm)0);
-      asm.Jmp(this._rt.Exit);
-      this.EndFrame();
-      this._trackResume = false;
+    var backendMain = this.BackendMain();
+    if (backendMain is null) {
+      this.Errors.Add(new(default,
+        "IR/x86-16 compilation reached image emission without a machine body for main"));
+      return [];
     }
+    // The x86-16 back end owns the whole module body: its own prologue, frame and implicit END.
+    // Metastatements are replayed only for target/runtime configuration; executable statements are
+    // never emitted from syntax here.
+    foreach (var meta in model.MainBody.OfType<MetaStmt>())
+      this.ApplyMeta(meta);
+    this.EmitBackendMain();
 
     // pb36 O22 dead procedure elimination: under optimization, only emit the procedures
     // something references (directly, via CODEPTR, or as a lambda) - the rest are
@@ -1136,10 +1107,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       }
     foreach (var proc in model.ProcedureList)
       if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc))) {
-        if (this.IsBackendRouted(proc))
-          this.EmitBackendFunction(proc);   // x86-16 back end owns this whole function (docs/X86-BACKEND.md)
-        else
-          this.EmitProcedure(proc);
+        if (!this.IsBackendRouted(proc)) {
+          this.Errors.Add(new(proc.Position,
+            $"IR/x86-16 compilation reached image emission without a machine body for '{proc.Name}'"));
+          return [];
+        }
+        this.EmitBackendFunction(proc);
       }
 
     this.EmitFarThunks();

@@ -52,6 +52,8 @@ The repository already owns much of the hard machinery: typed SSA values, exact 
 
 The current `PowerBasic.Compiler.Ir` layer therefore spans several boxes in the table above. `IrLowering` lowers the Bound AST directly into a representation that contains source-semantic lowering decisions, MIR-like explicit control flow and SSA/Low-IR operations. That was a sensible bootstrap path; it should now be separated by contracts before more optimization knowledge is added.
 
+Production DOS artifact compilation now has one semantic route: Bound AST -> HIR/IR -> SSA middle end -> Low IR -> x86-16 Machine IR. EXE and UNIT/OBJ/LIB emission no longer fall back to syntax-driven procedure or module-body emission, and unit builds no longer run the legacy bound-AST optimizer. The remaining `CodeGenerator` syntax-emission methods are dead retirement code intertwined with shared DOS runtime/image/linker plumbing; extracting that plumbing is the final deletion step, not a second compiler route.
+
 The first architectural defect being removed is analysis ownership. Historically a pass that needed dominance called `IrDominators.Build(fn)` itself, while `IrPassManager` knew only a delegate and an integer change count. That prevented safe analysis caching and precise invalidation. The production function-pass path now has a shared analysis contract; migration can proceed without changing the proven pass order.
 
 ## Analysis backbone

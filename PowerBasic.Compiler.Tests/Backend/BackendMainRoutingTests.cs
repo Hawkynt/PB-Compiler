@@ -39,12 +39,20 @@ public sealed class BackendMainRoutingTests {
   }
 
   [Test]
-  public void Emit_GivenTheGate_ThenTheDirectPathStillOwnsMainByDefault() {
-    var direct = new CodeGenerator(Bind(_wholeProgram)) { Optimize = true, UseExperimentalBackend = false };
+  public void Emit_GivenTheRetiredBackendSwitch_ThenItCannotReenableTheDirectEmitter() {
+    var generator = new CodeGenerator(Bind(_wholeProgram)) {
+      Optimize = true,
+      UseExperimentalBackend = false,
+    };
 
-    direct.EmitExecutable();
+    var image = generator.EmitExecutable();
 
-    Assert.That(direct.BackendRoutedNames, Is.Empty, "the back end is opt-in");
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      Assert.That(image, Is.Not.Empty);
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"),
+        "the compatibility setter is intentionally a no-op; production compilation is IR-only");
+    });
   }
 
   /// <summary>

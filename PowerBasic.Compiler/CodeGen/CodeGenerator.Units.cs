@@ -119,17 +119,10 @@ public sealed partial class CodeGenerator {
     this._scratch = asm.DefineLabel("cg_scratch");
     this._rt.BindExternal(asm);
 
-    // a $COMPILE UNIT/LIB still optimizes its procedures' bodies (flow/data/statements),
-    // but must NOT change calling semantics or drop any procedure - they are exported for
-    // separate compilation. So only the intra-procedure passes run here: dead-statement
-    // pruning and float demotion. The whole-program passes are deliberately excluded -
-    // IPCP needs every call site (external callers are invisible to a unit), register
-    // parameter passing changes the ABI, and dead-procedure elimination removes exports.
-    if (this.Optimize) {
-      OptPruner.Prune(model);
-      OptFloatDemotion.Apply(model);
-    }
-
+    // Unit compilation uses the exact same Bound AST -> HIR -> SSA -> Low IR -> x86-16 route as
+    // executables. No syntax-level optimizer is allowed to mutate the bound model before lowering:
+    // separate compilation constrains interprocedural legality through module.OwnsProcedureAbi,
+    // while intra-procedure optimization belongs to IrMiddleEndPipeline.
     foreach (var statement in model.MainBody)
       switch (statement) {
         case MetaStmt or EquateStmt or DefTypeStmt or LabelStmt:
@@ -147,20 +140,26 @@ public sealed partial class CodeGenerator {
           break;
       }
 
-    // the same dispatch the executable path uses: a routed procedure is emitted by the x86-16 back
-    // end from its SSA IR, everything else the ordinary way. A unit's exports keep the stack
-    // convention either way, which is what makes the two interchangeable here. Routed functions also
-    // retain their exact byte range so PBU2 can preserve the machine blocks O0276 is allowed to move.
+    // A compiled unit is now an IR/x86-16 product, not a hybrid container. Build the machine map
+    // once and require every source definition to be present before emitting a byte; an unsupported
+    // construct is a compile error rather than permission to re-enter the retired syntax emitter.
+    var backend = this.BackendProcs();
+    foreach (var proc in model.Procedures.Values)
+      if (!proc.IsExternal && !backend.ContainsKey(proc))
+        this.Errors.Add(new(proc.Position,
+          $"IR/x86-16 unit compilation has no machine body for '{proc.Name}': "
+          + (this._backendDeclines.LastOrDefault(d => d.Name.Equals(proc.Name, StringComparison.OrdinalIgnoreCase)).Reason
+             ?? "unknown backend decline")));
+    if (this.Errors.Count > 0)
+      return new PbuFile { Name = name, CpuFlags = this.CpuRequirementFlags() };
+
     foreach (var proc in model.Procedures.Values)
       if (!proc.IsExternal) {
-        if (this.IsBackendRouted(proc)) {
-          var start = this.ProcLabelOf(proc);
-          this.EmitBackendFunction(proc);
-          var end = asm.DefineLabel();
-          asm.MarkLabel(end);
-          this.TrackPostLinkFunction(proc, this.BackendProcs()[proc].Machine.Function, start, end);
-        } else
-          this.EmitProcedure(proc);
+        var start = this.ProcLabelOf(proc);
+        this.EmitBackendFunction(proc);
+        var end = asm.DefineLabel();
+        asm.MarkLabel(end);
+        this.TrackPostLinkFunction(proc, backend[proc].Machine.Function, start, end);
       }
 
     this.EmitFarThunks();
