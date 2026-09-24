@@ -49,10 +49,12 @@ public sealed class IrCallGraph {
     => this._callsTo.TryGetValue(function, out var calls) ? calls : [];
 
   /// <summary>Distinct direct callees referenced by <paramref name="function"/>.</summary>
-  public IEnumerable<IrFunction> DirectCalleesOf(IrFunction function)
-    => this.DirectCallsFrom(function)
-      .Select(call => (IrFunction)call.Callee)
-      .Distinct(ReferenceEqualityComparer.Instance);
+  public IEnumerable<IrFunction> DirectCalleesOf(IrFunction function) {
+    var seen = new HashSet<IrFunction>(ReferenceEqualityComparer.Instance);
+    foreach (var call in this.DirectCallsFrom(function))
+      if (call.Callee is IrFunction callee && seen.Add(callee))
+        yield return callee;
+  }
 
   /// <summary>True when the function contains at least one call whose callee is not a known function value.</summary>
   public bool HasIndirectCallsFrom(IrFunction function) => this._indirectCallers.Contains(function);

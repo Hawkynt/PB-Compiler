@@ -177,7 +177,7 @@ public static class IrEffects {
         || callee.Name is not ("llvm.memcpy.p0.p0.i32" or "llvm.memset.p0.i32"))
       return effects;
 
-    return call.Args[3] is IrConstantInt { Value: 0 }
+    return call.GetOperand(4) is IrConstantInt { Value: 0 }
       ? effects with { Effects = effects.Effects & ~IrEffectKind.Volatile }
       : effects;
   }
