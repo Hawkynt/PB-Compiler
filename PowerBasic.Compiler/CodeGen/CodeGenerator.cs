@@ -876,11 +876,28 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// contribute units on demand (<c>$LINK</c>) - the foreign OMF .LIBs by lazy,
   /// dictionary-driven selective extraction. Link failures surface as compile diagnostics.
   /// </summary>
-  public byte[] EmitExecutable(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries, IReadOnlyList<Emit.Omf.OmfLibrary>? omfLibraries = null) {
+  public byte[] EmitExecutable(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries, IReadOnlyList<Emit.Omf.OmfLibrary>? omfLibraries = null)
+    => this.EmitDosProgram(units, libraries, omfLibraries, emitCom: false);
+
+  /// <summary>
+  /// Emits a flat DOS COM image at the conventional PSP:0100h load address. COM has no relocation
+  /// table, so this form is intentionally standalone: external units/libraries require EXE.
+  /// </summary>
+  public byte[] EmitCom() => this.EmitDosProgram([], [], null, emitCom: true);
+
+  private byte[] EmitDosProgram(
+      IReadOnlyList<PbuFile> units,
+      IReadOnlyList<PblFile> libraries,
+      IReadOnlyList<Emit.Omf.OmfLibrary>? omfLibraries,
+      bool emitCom) {
     ArgumentNullException.ThrowIfNull(units);
     ArgumentNullException.ThrowIfNull(libraries);
     omfLibraries ??= [];
     this._allowExternalCalls = units.Count > 0 || libraries.Count > 0 || omfLibraries.Count > 0;
+    if (emitCom && this._allowExternalCalls) {
+      this.Errors.Add(new(default, "COM output cannot contain linked units/libraries or unresolved externals; use EXE"));
+      return [];
+    }
     var optimizeMeta = this.ResolveOptimizeMetastatement();
 
     // BASICA/GW dead interpreter text, decided before anything rewrites the body: which
@@ -1135,9 +1152,24 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._listingDataLength = asm.Position - this._listingCodeLength;
     this._rt.PlaceBss(asm); // pb36 P3: zero blobs live behind the image
 
-    var image = this._allowExternalCalls ? this.LinkImage(units, libraries, omfLibraries) : asm.ToArray();
+    RelocatableImage? comImage = null;
+    var image = this._allowExternalCalls
+      ? this.LinkImage(units, libraries, omfLibraries)
+      : emitCom
+        ? (comImage = asm.ToRelocatable()).Image
+        : asm.ToArray();
     if (image.Length == 0)
-      return []; // link errors already reported
+      return []; // link/format errors already reported
+
+    if (emitCom) {
+      try {
+        var virtualEnd = this._rt.EnableBss ? asm.Lbl("rt_bss_end").Position : image.Length;
+        return ComWriter.Write(comImage!, virtualEnd);
+      } catch (InvalidDataException e) {
+        this.Errors.Add(new(default, "COM: " + e.Message));
+        return [];
+      }
+    }
 
     // grow the single segment to its full 64 KiB so data + stack always fit,
     // then reserve the far string and array heap segments behind it - under

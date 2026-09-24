@@ -83,7 +83,7 @@ public static class Driver {
         case "--x-backend" or "--x-backend-strict" or "--no-x-backend":
           stderr.WriteLine($"pbc: {args[i]} was removed; the IR/native backend is mandatory");
           return 1;
-        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-c" or "--emit-obj" or "--emit-basic":
+        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-c" or "--emit-obj" or "--emit-com" or "--emit-basic":
           dumpStage = args[i];
           break;
         case "--list":
@@ -261,6 +261,23 @@ public static class Driver {
       if (optimize is { } opt)
         generator.Optimize = opt;
 
+      if (dumpStage == "--emit-com") {
+        if (model.MetaStatements.Any(m => m.Command == "LINK")) {
+          stderr.WriteLine("error: COM output cannot use $LINK; DOS COM has no relocation table (use EXE)");
+          return 1;
+        }
+        var com = generator.EmitCom();
+        if (generator.Errors.Count > 0) {
+          foreach (var error in generator.Errors)
+            stderr.WriteLine($"error: {error}");
+          return 1;
+        }
+        output ??= Path.ChangeExtension(source, ".COM");
+        File.WriteAllBytes(output, com);
+        stdout.WriteLine($"{Path.GetFileName(output)}: {com.Length} bytes");
+        return 0;
+      }
+
       if (dumpStage == "--emit-obj") {
         var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
         var compiledUnit = generator.EmitUnit(unitName);
@@ -281,6 +298,14 @@ public static class Driver {
         if (IsUnitCompile(model)) {
           var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
           listedUnit = generator.EmitUnit(unitName);
+        } else if (IsComCompile(model)) {
+          if (model.MetaStatements.Any(m => m.Command == "LINK")) {
+            stderr.WriteLine("error: COM output cannot use $LINK; DOS COM has no relocation table (use EXE)");
+            return 1;
+          }
+          var image = generator.EmitCom();
+          if (image.Length == 0 && generator.Errors.Count == 0)
+            return 1;
         } else {
           if (!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out var units, out var libraries))
             return 1;
@@ -308,6 +333,13 @@ public static class Driver {
         using var buffer = new MemoryStream();
         compiledUnit.Write(buffer);
         artifact = buffer.ToArray();
+      } else if (IsComCompile(model)) {
+        if (model.MetaStatements.Any(m => m.Command == "LINK")) {
+          stderr.WriteLine("error: COM output cannot use $LINK; DOS COM has no relocation table (use EXE)");
+          return 1;
+        }
+        artifact = generator.EmitCom();
+        output ??= Path.ChangeExtension(source, ".COM");
       } else {
         if (!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out var units, out var libraries))
           return 1;
@@ -332,9 +364,13 @@ public static class Driver {
     }
   }
 
-  /// <summary>$COMPILE UNIT selects unit emission; $COMPILE EXE (the default) is a no-op.</summary>
+  /// <summary>$COMPILE UNIT selects unit emission; EXE remains the default.</summary>
   private static bool IsUnitCompile(SemanticModel model)
     => model.MetaStatements.Any(m => m.Command == "COMPILE" && m.Arguments is [{ } target, ..] && target.Text.Equals("UNIT", StringComparison.OrdinalIgnoreCase));
+
+  /// <summary>$COMPILE COM selects a flat PSP:0100h DOS image.</summary>
+  private static bool IsComCompile(SemanticModel model)
+    => model.MetaStatements.Any(m => m.Command == "COMPILE" && m.Arguments is [{ } target, ..] && target.Text.Equals("COM", StringComparison.OrdinalIgnoreCase));
 
   private static bool TryLoadLinkTargets(SemanticModel model, IReadOnlyList<string> searchDirs, TextWriter stderr, out List<PbuFile> units, out List<PblFile> libraries) {
     units = [];
@@ -436,7 +472,7 @@ public static class Driver {
     w.WriteLine("       pbc lib build <out.PBL|out.LIB> <unit.PBU>...");
     w.WriteLine("       pbc lib list <file.PBL|file.PBU>");
     w.WriteLine();
-    w.WriteLine("A source with $COMPILE UNIT produces a .PBU unit instead of an EXE;");
+    w.WriteLine("A source with $COMPILE UNIT produces .PBU; $COMPILE COM produces flat .COM;");
     w.WriteLine("$LINK \"X.PBU\" / $LINK \"Y.PBL\" directives (relative to the source");
     w.WriteLine("directory) are linked into the executable.");
     w.WriteLine();
@@ -453,6 +489,7 @@ public static class Driver {
     w.WriteLine("  --dump-ast     stop after parsing");
     w.WriteLine("  --dump-bind    stop after semantic analysis");
     w.WriteLine("  --emit-obj     compile to a linkable OMF .OBJ object instead of an EXE");
+    w.WriteLine("  --emit-com     compile to a flat DOS .COM image (no $LINK/segment relocations)");
     w.WriteLine("  --emit-basic   render optimized IR back to readable PowerBASIC");
     w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");
     w.WriteLine("  --emit-c       optimize through the IR middle end and emit portable C99");

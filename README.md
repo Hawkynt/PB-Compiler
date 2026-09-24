@@ -29,8 +29,10 @@ PB-Compiler (`pbc`) reads unmodified BASIC source from the DOS era and emits rea
 binaries you can run on actual DOS or in DOSBox:
 
 - **`.EXE`** — DOS MZ executables for 8086+ real mode,
-- **`.PBU`** — compiled units (`$COMPILE UNIT`),
-- **`.PBL`** — unit libraries (linkable via `$LINK`).
+- **`.COM`** — flat tiny-model DOS executables (`$COMPILE COM` / `--emit-com`),
+- **`.PBU`** — documented PB-Compiler compiled units (`$COMPILE UNIT`),
+- **`.PBL`** — PB-Compiler unit libraries (linkable via `$LINK`),
+- **`.OBJ` / `.LIB`** — DOS Intel OMF objects/libraries for period-compatible linkers.
 
 Two things make it interesting. First, **fidelity**: for the historic dialects
 it doesn't merely *resemble* the genuine compilers — it is driven against the
@@ -58,7 +60,7 @@ real optimization pipeline and a lean backend — that existing programs opt int
 
 ## ✨ Features
 
-- Reads unmodified DOS-era BASIC and emits real DOS MZ `.EXE`, compiled units (`.PBU`) and unit libraries (`.PBL`)
+- Reads unmodified DOS-era BASIC and emits DOS MZ `.EXE`, flat `.COM`, compiled units (`.PBU`/`.PBL`) and Intel OMF `.OBJ`/`.LIB`
 - Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
 - A `pb36` superset that adds language features while leaving existing programs behaving as they did

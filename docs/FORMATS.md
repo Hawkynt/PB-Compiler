@@ -1,11 +1,12 @@
 # Artifact formats
 
-PB-Compiler emits three artifact kinds. The `.EXE` is the standard DOS MZ
-format and runs anywhere; `.PBU`/`.PBL` are **this compiler's own documented
-container formats** — they serve the same role as PowerBASIC 3.5 units and
-libraries ( `$COMPILE UNIT`, `$LINK` ) but are *not* binary-compatible with the
-proprietary originals (see REQUIREMENTS.md W2). All multi-byte integers are
-little-endian. Strings are length-prefixed (u8) ASCII unless noted.
+PB-Compiler emits DOS executable and linkable artifact formats from the same x86-16
+machine pipeline: standard MZ `.EXE`, flat `.COM`, Intel OMF `.OBJ`/`.LIB`,
+and its documented `.PBU`/`.PBL` unit containers. The PBU/PBL formats serve the
+same role as PowerBASIC 3.5 units and libraries (`$COMPILE UNIT`, `$LINK`) but
+are *not* binary-compatible with the proprietary originals (see REQUIREMENTS.md W2).
+All multi-byte integers are little-endian. Strings are length-prefixed (u8) ASCII
+unless noted.
 
 ## .EXE — DOS MZ executable
 
@@ -13,6 +14,18 @@ Standard MZ image: header (incl. relocation table for far segment fixups),
 code segment(s), data segment, BSS via MINALLOC, stack via SS:SP. Entry code
 initializes DS, the string heap and the runtime, then falls into compiled
 main code. `END`/`SYSTEM` terminate via int 21h AH=4Ch.
+
+## .COM — DOS flat executable
+
+A COM file has no header and no relocation table. DOS loads the first byte at
+PSP:0100h and starts with CS=DS=ES=SS equal to the PSP segment. PB-Compiler
+therefore assembles the ordinary x86-16 image relocatably and adds 0100h to each
+internal absolute-offset relocation before writing the file. Relative CALL/JMP/Jcc
+displacements are position-independent and are left unchanged.
+
+COM output is accepted only when the file plus virtual BSS fits in the 0xFF00
+bytes available above the PSP and when no segment or unresolved-external
+relocation remains. `$LINK` therefore requires EXE output.
 
 ## .PBU — compiled unit  (`$COMPILE UNIT`)
 

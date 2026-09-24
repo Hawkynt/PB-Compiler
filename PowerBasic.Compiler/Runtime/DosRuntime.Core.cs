@@ -140,7 +140,9 @@ public sealed partial class DosRuntime {
   private Label ZeroBlob(Assembler asm, string name, int bytes) {
     if (this.EnableBss) {
       var label = asm.Lbl(name);
-      label.IsConstant = true;
+      // A virtual BSS symbol is still an IMAGE ADDRESS: late layout passes and flat COM
+      // rebasing must move every reference to it. Only pure scalar pseudo-labels (such as
+      // rt_bss_words and frame sizes) are IsConstant.
       this._bss.Add((label, bytes));
       return label;
     }
@@ -161,14 +163,12 @@ public sealed partial class DosRuntime {
       cursor += (bytes + 1) & ~1;
     }
     var offLabel = asm.Lbl("rt_bss_off");
-    offLabel.IsConstant = true;
-    offLabel.Position = start;
+    offLabel.Position = start;                    // address: relocates with the image
     var wordsLabel = asm.Lbl("rt_bss_words");
-    wordsLabel.IsConstant = true;
+    wordsLabel.IsConstant = true;                 // count: never relocates
     wordsLabel.Position = (cursor - start) / 2;
     var endLabel = asm.Lbl("rt_bss_end");
-    endLabel.IsConstant = true;
-    endLabel.Position = cursor;
+    endLabel.Position = cursor;                   // address: relocates with the image
   }
 
   /// <summary>Emits the entry stub: segment setup, heap segment registers, FPU init, jump to user main.</summary>
