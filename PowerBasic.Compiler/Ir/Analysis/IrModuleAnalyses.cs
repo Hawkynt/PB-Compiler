@@ -14,4 +14,8 @@ public static class IrModuleAnalyses {
   public static readonly IrModuleAnalysisKey<IrWholeProgramReachability> Reachability = new(
     "whole-program-reachability",
     static (module, analyses) => IrWholeProgramReachability.Build(module, analyses.Get(CallGraph)));
+
+  public static readonly IrModuleAnalysisKey<IrFunctionTargetAnalysis> FunctionTargets = new(
+    "function-targets",
+    static (module, analyses) => new IrFunctionTargetAnalysis(module, analyses.Get(CallGraph)));
 }

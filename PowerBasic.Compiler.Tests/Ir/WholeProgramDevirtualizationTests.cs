@@ -182,10 +182,12 @@ public sealed class WholeProgramDevirtualizationTests {
     Assert.Multiple(() => {
       Assert.That(result.Changes, Is.EqualTo(1));
       Assert.That(result.PreservedAnalyses.IsPreserved(IrModuleAnalyses.CallGraph), Is.True);
+      Assert.That(result.PreservedAnalyses.IsPreserved(IrModuleAnalyses.FunctionTargets), Is.True);
       Assert.That(indirect.Callee, Is.SameAs(target));
       Assert.That(after.DirectCalleesOf(invoke), Is.EqualTo(new[] { target }),
         "the cache retained after the pass must describe the rewritten direct edge");
       Assert.That(analyses.IsCached(IrModuleAnalyses.CallGraph), Is.True);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.FunctionTargets), Is.True);
       Assert.That(IrVerifier.Verify(module), Is.Empty);
     });
   }
