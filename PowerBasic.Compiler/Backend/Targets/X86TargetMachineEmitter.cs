@@ -3,6 +3,21 @@ namespace PowerBasic.Compiler.Backend.Targets;
 /// <summary>Encodes the independent hosted x86 machine representation and its relocations.</summary>
 public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
   private readonly X86VectorInstructionEncoder _vectorEncoder = new();
+
+  private static int AddressWidthBytes(X86Mode mode) => mode switch {
+    X86Mode.Bit16 => 2,
+    X86Mode.Bit32 => 4,
+    X86Mode.Bit64 => 8,
+    _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
+  };
+
+  private static MachineRelocationKind AbsoluteRelocation(X86Mode mode) => mode switch {
+    X86Mode.Bit16 => MachineRelocationKind.Absolute16,
+    X86Mode.Bit32 => MachineRelocationKind.Absolute32,
+    X86Mode.Bit64 => MachineRelocationKind.Absolute64,
+    _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
+  };
+
   public MachineCode Emit(X86TargetMachineFunction function, bool preserveFramePointer = true,
       bool emitReturn = true) {
     ArgumentNullException.ThrowIfNull(function);
@@ -13,12 +28,8 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
     void AddAddressRelocation(X86TargetAddress address, int instructionOffset, int encodedLength) {
       if (address.Symbol is not { Length: > 0 } symbol || address.Base is not null || address.Index is not null)
         return;
-      var width = function.Mode switch { X86Mode.Bit16 => 2, X86Mode.Bit64 => 8, _ => 4 };
-      var kind = function.Mode switch {
-        X86Mode.Bit16 => MachineRelocationKind.Absolute16,
-        X86Mode.Bit64 => MachineRelocationKind.Absolute64,
-        _ => MachineRelocationKind.Absolute32,
-      };
+      var width = AddressWidthBytes(function.Mode);
+      var kind = AbsoluteRelocation(function.Mode);
       relocations.Add(new MachineRelocation(instructionOffset + encodedLength - width, kind, symbol,
         address.Displacement));
     }
@@ -26,12 +37,8 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         int immediateWidth) {
       if (address.Symbol is not { Length: > 0 } symbol || address.Base is not null || address.Index is not null)
         return;
-      var width = function.Mode switch { X86Mode.Bit16 => 2, X86Mode.Bit64 => 8, _ => 4 };
-      var kind = function.Mode switch {
-        X86Mode.Bit16 => MachineRelocationKind.Absolute16,
-        X86Mode.Bit64 => MachineRelocationKind.Absolute64,
-        _ => MachineRelocationKind.Absolute32,
-      };
+      var width = AddressWidthBytes(function.Mode);
+      var kind = AbsoluteRelocation(function.Mode);
       relocations.Add(new MachineRelocation(instructionOffset + encodedLength - immediateWidth - width,
         kind, symbol, address.Displacement));
     }
@@ -47,7 +54,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
       8 => registers.LowBytes[0],
       16 => function.Mode == X86Mode.Bit64 ? registers.Words[0] : registers.Registers[0],
       32 => registers.Dwords[0],
-      _ => registers.Registers[0],
+      64 => registers.Registers[0],
+      _ => throw new ArgumentOutOfRangeException(nameof(widthBits), widthBits,
+        "unsupported x86 scratch-register width"),
     };
     if (preserveFramePointer) {
       bytes.AddRange(encoder.Push(registers.FramePointer));
@@ -191,8 +200,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
             storeMemoryBytes.Length);
           break;
         case X86TargetOpcode.AluMemoryImmediate when instruction.Address is { } aluAddress:
-          var extension = instruction.Operands?.OfType<X86TargetOperand.Immediate>().FirstOrDefault()?.Value ?? 0;
-          var aluImmediateBytes = encoder.AluMemoryImmediate(aluAddress, checked((int)extension), instruction.Immediate);
+          var extension = instruction.Operands?.OfType<X86TargetOperand.Immediate>().SingleOrDefault()
+            ?? throw new InvalidOperationException("memory ALU instruction has no operation extension");
+          var aluImmediateBytes = encoder.AluMemoryImmediate(aluAddress, checked((int)extension.Value), instruction.Immediate);
           bytes.AddRange(aluImmediateBytes);
           AddAddressRelocation(aluAddress, offset, aluImmediateBytes.Length);
           break;
@@ -215,13 +225,9 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.MoveSymbolAddress when instruction.Symbol is { Length: > 0 } addressSymbol:
           var addressBytes = encoder.MoveImmediate(instruction.Registers[0], 0);
           bytes.AddRange(addressBytes);
-          var addressWidth = function.Mode switch { X86Mode.Bit16 => 2, X86Mode.Bit64 => 8, _ => 4 };
+          var addressWidth = AddressWidthBytes(function.Mode);
           relocations.Add(new MachineRelocation(offset + addressBytes.Length - addressWidth,
-            function.Mode switch {
-              X86Mode.Bit16 => MachineRelocationKind.Absolute16,
-              X86Mode.Bit64 => MachineRelocationKind.Absolute64,
-              _ => MachineRelocationKind.Absolute32,
-            }, addressSymbol));
+            AbsoluteRelocation(function.Mode), addressSymbol));
           break;
         case X86TargetOpcode.MemoryShiftCount when instruction.Address is { } memoryShiftAddress:
           var shiftMemoryBytes = encoder.ShiftMemoryCount(memoryShiftAddress, checked((int)instruction.Immediate));
