@@ -266,7 +266,17 @@ public sealed partial class DosRuntime {
     ("ems", this.EmitEmsProcedures),
     ("fields", this.EmitFieldProcedures),
     ("chain", this.EmitChainProcedures),
+    // Target-routed inline assembly that has no native encoding calls this semantic fallback.  The
+    // selector has already preserved register operands; this leaf is deliberately side-effect free
+    // for mnemonics whose host target cannot represent them, so the call remains linkable instead of
+    // manufacturing an unbound mnemonic-specific symbol.
+    ("inline_asm", this.EmitInlineAsmFallback),
   ];
+
+  private void EmitInlineAsmFallback(Assembler asm) {
+    asm.MarkLabel("rt_inline_asm_emulate");
+    asm.Ret();
+  }
 
   public void EmitProcedures(Assembler asm, Func<string, bool>? filter = null, Action<string, int, int>? onSection = null) {
     this._numBuffer = asm.Lbl("rt_numbuf");

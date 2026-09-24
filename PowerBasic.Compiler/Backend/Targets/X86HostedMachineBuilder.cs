@@ -608,8 +608,12 @@ public static class X86HostedMachineBuilder {
     var runtimeRegisters = instruction.Operands.Skip(1).OfType<MOperand.Register>()
       .Select(operand => TryMachineRegister(operand.Reg, registers, allocation))
       .Where(register => register is not null).Select(register => register!.Value).ToArray();
+    // Keep unsupported target mnemonics linkable through the runtime semantic fallback.  The
+    // mnemonic-specific label used by the old emitter was never emitted by DosRuntime and made a
+    // perfectly valid routed program fail at final assembly.  Operand-aware native/vector cases
+    // above still retain their exact instruction; only this final emulation path is generic.
     target = new X86TargetInstruction(X86TargetOpcode.Call, runtimeRegisters,
-      Symbol: PowerBasic.Compiler.Runtime.InlineAsmExports.EmulationRoutine(mnemonic));
+      Symbol: "rt_inline_asm_emulate");
     return true;
   }
 
