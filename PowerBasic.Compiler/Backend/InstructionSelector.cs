@@ -135,6 +135,22 @@ public sealed partial class InstructionSelector {
     return false;
   }
 
+  /// <summary>Moves a scalar memory/immediate value into a virtual register for consumers that
+  /// require a register (switch dispatch, selects, and computed predicates).  Keeping this at the
+  /// selector boundary means those IR constructs do not depend on mem2reg having happened to leave
+  /// the value in a register, while still rejecting wide values that need a pair-specific lowering.</summary>
+  private bool TryMaterializeScalar(MOperand operand, IrType type, out MOperand.Register result) {
+    result = null!;
+    if (type.IsFloat || IsWide(type) || IsQuad(type))
+      return false;
+    if (operand is not (MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell or MOperand.Immediate))
+      return false;
+    var vreg = this.FreshVreg(type);
+    result = new MOperand.Register(vreg);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [result, operand], MovEffect(result, operand)));
+    return true;
+  }
+
   /// <summary>As <see cref="Decline"/>, for the paths that return a null <see cref="X86MachineFunction"/>.</summary>
   private X86MachineFunction? DeclineNull(string reason) {
     this._decline ??= reason;
@@ -610,8 +626,12 @@ public sealed partial class InstructionSelector {
   }
 
   private bool SelectNarrowSwitch(IrSwitch sw) {
-    if (!this.TryOperand(sw.Condition, out var condition) || condition is not MOperand.Register conditionRegister)
-      return this.Decline("switch: condition is not in a register");
+    if (!this.TryOperand(sw.Condition, out var condition))
+      return false;
+    if (condition is not MOperand.Register conditionRegister) {
+      if (!this.TryMaterializeScalar(condition, sw.Condition.Type, out conditionRegister))
+        return this.Decline("switch: condition is not materializable");
+    }
 
     var dispatch = this._current;
     this.EmitEqualityChain(dispatch, conditionRegister,
@@ -2529,8 +2549,11 @@ public sealed partial class InstructionSelector {
     }
     if (!this.TryOperand(sel.Condition, out var cond))
       return false;
-    if (cond is not MOperand.Register)
-      return this.Decline("select: condition is not in a register");
+    if (cond is not MOperand.Register) {
+      if (!this.TryMaterializeScalar(cond, sel.Condition.Type, out var held))
+        return this.Decline("select: condition is not materializable");
+      cond = held;
+    }
 
     // A 32-bit result is a register PAIR, so each arm moves twice - the diamond is the same shape,
     // and both halves have to be written on both paths or the untouched one keeps whatever the
@@ -2603,8 +2626,11 @@ public sealed partial class InstructionSelector {
       return false;
     if (!this.TryOperand(sel.Condition, out var cond))
       return false;
-    if (cond is not MOperand.Register)
-      return this.Decline("select: condition is not in a register");
+    if (cond is not MOperand.Register) {
+      if (!this.TryMaterializeScalar(cond, sel.Condition.Type, out var held))
+        return this.Decline("select: condition is not materializable");
+      cond = held;
+    }
 
     var destination = this.FloatCell(sel);
     var falseBlock = new MBlock($"{this._current.Label}.selfalse{this._splitCount}");

@@ -101,7 +101,10 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
     }
     this._postAllocation.Run(selected, allocation);
     var provisional = new IrMachineFunction(source, selected, allocation, this.Target);
-    X86HostedMachineBuilder.TryBuild(provisional, out var hosted, out var hostedError);
+    if (!X86HostedMachineBuilder.TryBuild(provisional, out var hosted, out var hostedError)) {
+      error = "hosted machine lowering: " + (hostedError ?? "unsupported target instruction");
+      return false;
+    }
     machine = new IrMachineFunction(source, selected, allocation, this.Target, hosted, hostedError);
     error = null;
     return true;
