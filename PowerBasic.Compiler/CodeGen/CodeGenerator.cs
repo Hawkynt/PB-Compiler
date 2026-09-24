@@ -806,7 +806,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// whole image for a marker every epilogue carries.
   /// </para>
   /// </summary>
-  internal bool UseExperimentalBackend { get; set; } = true;
+  // The analysis-aware backend is the sole production and test compilation path.  Keep the old
+  // internal spelling temporarily so downstream test fixtures compile, but make attempts to select
+  // the retired emitter a no-op rather than allowing a second architecture to re-enter the graph.
+  internal bool UseExperimentalBackend {
+    get => true;
+    set { }
+  }
 
   /// <summary>
   /// Routing is MANDATORY: a body the back end does not take is a compile error rather than a quiet
