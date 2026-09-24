@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Hir;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
@@ -1416,8 +1417,18 @@ public sealed partial class IrLowering {
       case RequireStmt rq: this.LowerRequire(rq); break;
       case SelectStmt s: this.LowerSelect(s); break;
       case DimStmt d: this.LowerDim(d); break;
-      case RedimStmt rdm: this.LowerRedim(rdm); break;
-      case EraseStmt er: this.LowerErase(er); break;
+      case RedimStmt rdm:
+        if (!HirArrayLifetimeBuilder.TryBuild(this._model, rdm, out var resizeOperations, out var resizeError))
+          throw new IrLoweringException(resizeError ?? "unable to build REDIM HIR");
+        foreach (var operation in resizeOperations)
+          this.LowerRedim(operation);
+        break;
+      case EraseStmt er:
+        if (!HirArrayLifetimeBuilder.TryBuild(this._model, er, out var eraseOperations, out var eraseError))
+          throw new IrLoweringException(eraseError ?? "unable to build ERASE HIR");
+        foreach (var operation in eraseOperations)
+          this.LowerErase(operation);
+        break;
       case ArraySortStmt sort: this.LowerArraySort(sort); break;
       case ArrayScanStmt scan: this.LowerArrayScan(scan); break;
       case SwapStmt sw: this.LowerSwap(sw); break;
@@ -3701,28 +3712,29 @@ public sealed partial class IrLowering {
   private IrValue ArrayBytes(IrValue count, ArrayType arr)
     => this._b.Mul(count, new IrConstantInt(IrType.I32, Math.Max(arr.Element.Size, 1)));
 
-  private void LowerRedim(RedimStmt r) {
-    foreach (var v in r.Variables) {
-      if (!this._model.RedimBindings.TryGetValue(v, out var symbol) || symbol.Type is not ArrayType { IsDynamic: true } arr)
-        throw new IrLoweringException($"REDIM of non-dynamic array {v.Name}");
-      // an ABSOLUTE array is a view of memory the program does not own; re-DIMing one would allocate
-      // a heap block and quietly stop it being that view
-      if (symbol.ArrayClass == ArrayClass.Absolute)
-        throw new IrLoweringException($"REDIM of the ABSOLUTE array {v.Name}");
-      if (v.ArrayBounds is not { } dims || dims.Count != arr.Rank)
-        throw new IrLoweringException("REDIM rank mismatch");
-      // a memory-model array re-DIMs through its own allocator, not the far array heap. PRESERVE has
-      // no meaning there - the direct emitter refuses it too, and for the same reason: the copy would
-      // have to walk two segment-stepped or page-mapped blocks at once.
-      if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
-        if (r.Preserve)
-          throw new IrLoweringException($"REDIM PRESERVE on the {symbol.ArrayClass} array {v.Name}");
-        this.LowerPagedAllocation(symbol, arr, this._model.ArrayBoundsOf(v));
-        continue;
-      }
+  private void LowerRedim(HirArrayResize operation) {
+    var symbol = operation.Target;
+    var arr = operation.Type;
+    var dims = operation.Bounds
+      .Select(bound => (bound.Lower, bound.Upper))
+      .ToArray();
 
-      this.AllocateDynamicArray(symbol, arr, this._model.ArrayBoundsOf(v), r.Preserve);
+    // an ABSOLUTE array is a view of memory the program does not own; re-DIMing one would allocate
+    // a heap block and quietly stop it being that view
+    if (operation.ArrayClass == ArrayClass.Absolute)
+      throw new IrLoweringException($"REDIM of the ABSOLUTE array {symbol.Name}");
+
+    // a memory-model array re-DIMs through its own allocator, not the far array heap. PRESERVE has
+    // no meaning there - the direct emitter refuses it too, and for the same reason: the copy would
+    // have to walk two segment-stepped or page-mapped blocks at once.
+    if (operation.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+      if (operation.Preserve)
+        throw new IrLoweringException($"REDIM PRESERVE on the {operation.ArrayClass} array {symbol.Name}");
+      this.LowerPagedAllocation(symbol, arr, dims);
+      return;
     }
+
+    this.AllocateDynamicArray(symbol, arr, dims, operation.Preserve);
   }
 
   /// <summary>
@@ -3831,49 +3843,49 @@ public sealed partial class IrLowering {
     }
   }
 
-  private void LowerErase(EraseStmt e) {
-    foreach (var name in e.Arrays) {
-      if (!this._model.VariableBindings.TryGetValue(name, out var symbol) || symbol.Type is not ArrayType arr)
-        throw new IrLoweringException("ERASE of a non-array");
-      // ERASE on an ABSOLUTE array UNMAPS it: the memory is not the program's to free or to zero, so
-      // the only thing to undo is the view itself. Clearing the segment cell is what the direct
-      // emitter does (MOV WORD PTR [slot],0), and a later access then names segment 0 exactly as it
-      // did there. Genuine PBC 3.50 terminates the program on such an access instead, which neither
-      // emitter reproduces - tests/diff/DIFF125.BAS records the oracle and stops short of it.
-      if (symbol.ArrayClass == ArrayClass.Absolute) {
-        if (!this._absoluteSegments.TryGetValue(symbol, out var segmentCell))
-          throw new IrLoweringException($"ERASE of {symbol.Name} before its DIM ... AT was lowered");
-        this._b.Store(new IrConstantInt(IrType.I16, 0), segmentCell);
-        continue;
-      }
-      if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
-        this.LowerPagedErase(symbol, arr);
-        continue;
-      }
-      if (!arr.IsDynamic) {
-        // A static array is not freed - PB zeroes it where it stands, and the storage stays. The
-        // direct emitter writes a REP STOSW over the word-rounded size; the portable spelling of
-        // that is a memset, which the C back end renders as one and an LLVM target lowers itself.
-        this._b.Call(IrType.Void,
-          this.RuntimeFn("llvm.memset.p0.i32", IrType.Void, IrType.Ptr, IrType.I8, IrType.I32, IrType.I1),
-          this.SlotFor(symbol), new IrConstantInt(IrType.I8, 0),
-          new IrConstantInt(IrType.I32, arr.Size), new IrConstantInt(IrType.I1, 0));
-        continue;
-      }
-      // The byte count travels with the pointer: the DOS heap is a bump allocator that can only give
-      // a block back when it is the topmost one, and "is this block on top" is `offset + bytes ==
-      // top`. A malloc/free runtime ignores the second argument, but the IR cannot know which kind of
-      // runtime it is talking to and the size is free to compute here.
-      var descriptor = this.MutableDynDescriptor(symbol, arr.Rank, "ERASE");
-      var count = this.DynElementCount(descriptor, arr.Rank);
-      var block = this._b.Load(IrType.FarPtr, descriptor.Data);
-      if (arr.Element is StringType)
-        this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free_ptr", IrType.Void, IrType.FarPtr, IrType.I32), block, count);
-      else
-        this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.FarPtr, IrType.I32),
-          block, this.ArrayBytes(count, arr));
-      this._b.Store(new IrNullPtr(IrType.FarPtr), descriptor.Data);
+  private void LowerErase(HirArrayErase operation) {
+    var symbol = operation.Target;
+    var arr = operation.Type;
+
+    // ERASE on an ABSOLUTE array UNMAPS it: the memory is not the program's to free or to zero, so
+    // the only thing to undo is the view itself. Clearing the segment cell is what the direct
+    // emitter does (MOV WORD PTR [slot],0), and a later access then names segment 0 exactly as it
+    // did there. Genuine PBC 3.50 terminates the program on such an access instead, which neither
+    // emitter reproduces - tests/diff/DIFF125.BAS records the oracle and stops short of it.
+    if (operation.ArrayClass == ArrayClass.Absolute) {
+      if (!this._absoluteSegments.TryGetValue(symbol, out var segmentCell))
+        throw new IrLoweringException($"ERASE of {symbol.Name} before its DIM ... AT was lowered");
+      this._b.Store(new IrConstantInt(IrType.I16, 0), segmentCell);
+      return;
     }
+
+    if (operation.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+      this.LowerPagedErase(symbol, arr);
+      return;
+    }
+
+    if (!arr.IsDynamic) {
+      // A static array is not freed - PB zeroes it where it stands, and the storage stays. The
+      // direct emitter writes a REP STOSW over the word-rounded size; the portable spelling of
+      // that is a memset, which the C back end renders as one and an LLVM target lowers itself.
+      this._b.Call(IrType.Void,
+        this.RuntimeFn("llvm.memset.p0.i32", IrType.Void, IrType.Ptr, IrType.I8, IrType.I32, IrType.I1),
+        this.SlotFor(symbol), new IrConstantInt(IrType.I8, 0),
+        new IrConstantInt(IrType.I32, arr.Size), new IrConstantInt(IrType.I1, 0));
+      return;
+    }
+
+    // The byte count travels with the pointer: the DOS heap is a bump allocator that can only give
+    // a block back when it is the topmost one, and "is this block on top" is `offset + bytes == top`.
+    var descriptor = this.MutableDynDescriptor(symbol, arr.Rank, "ERASE");
+    var count = this.DynElementCount(descriptor, arr.Rank);
+    var block = this._b.Load(IrType.FarPtr, descriptor.Data);
+    if (arr.Element is StringType)
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free_ptr", IrType.Void, IrType.FarPtr, IrType.I32), block, count);
+    else
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.FarPtr, IrType.I32),
+        block, this.ArrayBytes(count, arr));
+    this._b.Store(new IrNullPtr(IrType.FarPtr), descriptor.Data);
   }
 
   // ---- ARRAY SORT / ARRAY SCAN ---------------------------------------------
