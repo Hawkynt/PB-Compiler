@@ -103,6 +103,9 @@ public static class IrEffects {
     IrEffectKind.ReadsMemory | IrEffectKind.MayRelease, Deterministic: true);
   private static readonly IrEffectSummary _duplicateString = new(
     IrEffectKind.ReadsMemory | IrEffectKind.MayAllocate | IrEffectKind.MayTrap, Deterministic: false);
+  private static readonly IrEffectSummary _consumeAndAllocateString = new(
+    IrEffectKind.ReadsMemory | IrEffectKind.MayAllocate | IrEffectKind.MayRelease | IrEffectKind.MayTrap,
+    Deterministic: false);
   private static readonly IrEffectSummary _release = new(IrEffectKind.MayRelease, Deterministic: false);
   private static readonly IrEffectSummary _allocateZeroed = new(
     IrEffectKind.WritesMemory | IrEffectKind.MayAllocate | IrEffectKind.MayTrap, Deterministic: false);
@@ -132,6 +135,18 @@ public static class IrEffects {
       "rt_str_len" => _consumeString,
       "rt_str_dup" => _duplicateString,
       "rt_str_free" => _release,
+
+      // Core owned-string producers/consumers. The DOS runtime's string ABI explicitly marks
+      // comparison and slicing inputs as consumed. Producers allocate from the compacting string heap
+      // and may raise string-length/out-of-string-space errors; hosted implementations may be weaker,
+      // but the target-independent contract must preserve the strongest observable PB semantics.
+      "rt_str_const" => _duplicateString,
+      "rt_str_concat" or "rt_str_concat_n" or "rt_str_append_var" or "rt_str_append_lit"
+        => _consumeAndAllocateString,
+      "rt_str_compare" or "rt_str_compare_eq" => _consumeString,
+      "rt_str_left" or "rt_str_right" or "rt_str_mid" or "rt_str_mid2" or "rt_str_repeat"
+        => _consumeAndAllocateString,
+      "rt_str_space" or "rt_str_string" or "rt_str_chr" => _allocate,
 
       // Raw memory helpers. memcpy/memset have a volatile operand at the call site; the declaration-level
       // fact is conservatively volatile because this overload cannot inspect that operand.

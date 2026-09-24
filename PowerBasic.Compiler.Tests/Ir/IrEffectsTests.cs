@@ -100,6 +100,56 @@ public sealed class IrEffectsTests {
   }
 
 
+
+  [Test]
+  public void ForExternalCall_GivenCoreOwnedStringOperations_ThenOwnershipAndAllocationAreExplicit() {
+    var literal = IrEffects.ForExternalCall("rt_str_const");
+    var concat = IrEffects.ForExternalCall("rt_str_concat");
+    var compare = IrEffects.ForExternalCall("rt_str_compare");
+    var slice = IrEffects.ForExternalCall("rt_str_mid");
+    var chr = IrEffects.ForExternalCall("rt_str_chr");
+
+    Assert.Multiple(() => {
+      Assert.That(literal.Effects,
+        Is.EqualTo(IrEffectKind.ReadsMemory | IrEffectKind.MayAllocate | IrEffectKind.MayTrap));
+      Assert.That(literal.CanDiscard, Is.False);
+
+      Assert.That(concat.Effects, Is.EqualTo(
+        IrEffectKind.ReadsMemory | IrEffectKind.MayAllocate | IrEffectKind.MayRelease | IrEffectKind.MayTrap));
+      Assert.That(concat.DefinesMemory, Is.True);
+      Assert.That(concat.CanDiscard, Is.False);
+
+      Assert.That(compare.Effects,
+        Is.EqualTo(IrEffectKind.ReadsMemory | IrEffectKind.MayRelease));
+      Assert.That(compare.Deterministic, Is.True);
+      Assert.That(compare.CanDiscard, Is.False,
+        "the comparison result may be unused, but the DOS ABI still consumes both owned handles");
+
+      Assert.That(slice.Effects, Is.EqualTo(
+        IrEffectKind.ReadsMemory | IrEffectKind.MayAllocate | IrEffectKind.MayRelease | IrEffectKind.MayTrap));
+      Assert.That(slice.CanDiscard, Is.False);
+
+      Assert.That(chr.Effects,
+        Is.EqualTo(IrEffectKind.MayAllocate | IrEffectKind.MayTrap));
+      Assert.That(chr.Deterministic, Is.False,
+        "equal character codes still produce distinct owned handles");
+    });
+  }
+
+  [Test]
+  public void Dce_GivenUnusedConsumingStringComparison_ThenItKeepsTheOwnershipEffect() {
+    var compare = new IrFunction("rt_str_compare", IrType.I32, [
+      new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1),
+    ]);
+    var function = new IrFunction("f", IrType.Void);
+    var builder = new IrBuilder(function.CreateBlock("entry"));
+    var call = builder.Call(IrType.I32, compare, new IrNullPtr(), new IrNullPtr());
+    builder.Ret();
+
+    Assert.That(Dce.Run(function), Is.Zero);
+    Assert.That(call.Parent, Is.Not.Null);
+  }
+
   [Test]
   public void ForExternalCall_GivenPagedArrayRuntimeEntries_ThenReportsAllocationMappingAndQueryEffects() {
     var hugeAlloc = IrEffects.ForExternalCall("rt_huge_alloc");
