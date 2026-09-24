@@ -28,23 +28,22 @@ public static class PointerCheckElim {
     return IrFunctionPassPipeline.RunStandalone(fn, "ptrcheck", Run);
   }
 
-  /// <summary>Runs null-check elimination using the shared dominator analysis.</summary>
+  /// <summary>Runs null-check elimination through the shared program-point fact facade.</summary>
   public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
     ArgumentNullException.ThrowIfNull(fn);
     ArgumentNullException.ThrowIfNull(analyses);
     if (!ReferenceEquals(fn, analyses.Function))
       throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
-    if (analyses.Get(IrAnalyses.Dominators) is not { } dom)
-      return IrPassResult.Unchanged;
 
+    var facts = analyses.Get(IrAnalyses.Facts);
     var decided = new List<(IrCmp Cmp, bool Outcome)>();
-    foreach (var block in dom.ReversePostorder)
+    foreach (var block in fn.Blocks)
       foreach (var cmp in block.Instructions.OfType<IrCmp>()) {
-        if (cmp.HasNoUsers || !TryNullTest(cmp, out var value, out var trueMeansNull))
+        if (cmp.HasNoUsers || !IrNullnessAnalysis.TryNullTest(cmp, out _, out _))
           continue;
-        if (KnownNullness(value, block, dom) is not { } isNull)
+        if (facts.Decide(cmp, block) is not { } outcome)
           continue;
-        decided.Add((cmp, isNull == trueMeansNull));
+        decided.Add((cmp, outcome));
       }
 
     foreach (var (cmp, outcome) in decided)
@@ -54,39 +53,4 @@ public static class PointerCheckElim {
       : IrPassResult.ChangedPreservingSets(decided.Count, IrAnalysisSets.Cfg);
   }
 
-  private static bool? KnownNullness(IrValue value, IrBasicBlock block, IrDominators dom) {
-    for (var at = dom.ImmediateDominatorOf(block); at is not null; at = dom.ImmediateDominatorOf(at)) {
-      if (at.Terminator is IrCondBr branch
-          && branch.Condition is IrCmp guard
-          && TryNullTest(guard, out var guarded, out var trueMeansNull)
-          && ReferenceEquals(guarded, value)) {
-        if (dom.EdgeDominates(at, branch.IfTrue, block))
-          return trueMeansNull;
-        if (dom.EdgeDominates(at, branch.IfFalse, block))
-          return !trueMeansNull;
-      }
-      if (ReferenceEquals(at, dom.ImmediateDominatorOf(at)))
-        break;
-    }
-    return null;
-  }
-
-  private static bool TryNullTest(IrCmp cmp, out IrValue value, out bool trueMeansNull) {
-    value = null!;
-    trueMeansNull = false;
-    if (cmp.Pred is not (IrCmpPred.Eq or IrCmpPred.Ne))
-      return false;
-
-    if (cmp.Lhs.Type.IsPointer && cmp.Rhs is IrNullPtr) {
-      value = cmp.Lhs;
-      trueMeansNull = cmp.Pred == IrCmpPred.Eq;
-      return true;
-    }
-    if (cmp.Rhs.Type.IsPointer && cmp.Lhs is IrNullPtr) {
-      value = cmp.Rhs;
-      trueMeansNull = cmp.Pred == IrCmpPred.Eq;
-      return true;
-    }
-    return false;
-  }
 }

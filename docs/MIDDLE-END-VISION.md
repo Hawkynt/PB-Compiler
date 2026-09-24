@@ -118,7 +118,7 @@ Range analysis is only one abstract domain. The long-term query should look conc
 
 This does not mean one giant mutable `ValueFacts` object. Independent domains remain independently computable and invalidatable, with common query/fixed-point infrastructure so passes cooperate instead of duplicating propagation engines.
 
-The current shared domains already include branch-refined integer ranges, FP domains adapted from those ranges, and a bounded `IrKnownBitsAnalysis` for known-zero/known-one facts. Known bits covers constants, bitwise logic, integer truncation/extension, selects and conservative phi meets. `DemandedBits` is its first consumer and can now recognize a neutral demanded-bit mask proved by a non-literal SSA expression.
+The current shared domains include branch-refined integer ranges, FP domains adapted from those ranges, bounded known-zero/known-one bits, and explicit-guard pointer nullness. `IrValueFacts` is now the common program-point query facade over those independently cached domains; it owns no second lattice, and analysis dependency invalidation prevents the facade from surviving a stale prerequisite. `DemandedBits` consumes known bits directly where that domain-specific API is sufficient, while pointer-check elimination is the first transform migrated to the combined fact facade.
 
 ## Guards and speculation
 
@@ -166,7 +166,7 @@ Pass order still matters inside a group, but dependencies should be stated throu
 ### Should
 
 - Extend scalar evolution beyond bootstrap additive recurrences and exact canonical trip counts where consumers justify the extra lattice complexity.
-- Grow known-bit/alignment/null/type information as reusable abstract domains with branch-local refinement where useful.
+- Grow the reusable fact domains beyond the new range/known-bits/nullness facade: alignment, dynamic type sets, pointer bases and object identity are still missing, and guard assumptions should feed those domains rather than live in transform-private maps.
 - Continue unifying alias/mod-ref and escape/object-identity queries. MemorySSA now consumes a shared `IrModRefAnalysis`: module-owned function analyses refine direct internal calls with cached function summaries, while standalone analyses deliberately keep them opaque. Function mutations conservatively invalidate module facts until cross-unit preservation becomes explicit.
 - Continue migrating module transforms onto the module analysis manager. The direct call graph, function summaries and conservative whole-program reachability are now first-class cached analyses with dependency invalidation; remaining interprocedural transforms still need precise preservation contracts.
 - Separate target-independent legality from target profitability through cost-model interfaces.
@@ -203,7 +203,8 @@ The PR now has a production analysis substrate rather than only a sketch:
 10. The standard pipeline is now partitioned into named, inspectable phases without changing its flattened pass order; bounded function fixed points report the transforms responsible when they fail to converge.
 11. Interprocedural constant propagation and dead-pure-call elimination now consume shared cached module analyses instead of privately rebuilding call-graph facts.
 12. REDIM/ERASE now cross the first concrete Bound AST -> HIR -> SSA slice: array identity, storage class, effective bounds and PRESERVE semantics survive as an explicit HIR operation before descriptor/runtime lowering.
-13. No new external dependency has been introduced and the standard pass order has not been reordered.
+13. `IrValueFacts` now composes branch-refined ranges, known bits and explicit pointer nullness behind one program-point query surface; `PointerCheckElim` consumes it instead of carrying a private dominator/nullness solver.
+14. No new external dependency has been introduced and the standard pass order has not been reordered.
 
 The target-neutral representation boundaries now carry verifier contracts rather than acting as progress labels. `OptimizedSsa` requires structurally valid SSA; `LowIr` additionally requires an explicit semantic/effect contract for every operation that crosses the boundary. Unknown external calls remain legal through their conservative effect contract, while a new unclassified IR instruction cannot silently reach a backend. Machine SSA/IR are distinct machine-side products: lowering leaves the source `IrModule` at `LowIr` instead of relabeling it after selection/allocation.
 

@@ -35,6 +35,17 @@ public static class IrAnalyses {
   public static IrAnalysisKey<IrKnownBitsAnalysis> KnownBits { get; } =
     new("known-bits", static (function, _) => new IrKnownBitsAnalysis(function));
 
+  /// <summary>Explicit-guard pointer nullness derived from CFG dominance.</summary>
+  public static IrAnalysisKey<IrNullnessAnalysis> Nullness { get; } =
+    new("nullness", static (_, analyses) => new IrNullnessAnalysis(analyses.Get(Dominators)));
+
+  /// <summary>Common program-point facade over range, known-bits and nullness domains.</summary>
+  public static IrAnalysisKey<IrValueFacts> Facts { get; } =
+    new("value-facts", static (_, analyses) => new IrValueFacts(
+      analyses.Get(Ranges),
+      analyses.Get(KnownBits),
+      analyses.Get(Nullness)));
+
   /// <summary>
   /// Shared memory read/write projection. Module-owned runs refine direct internal calls through cached
   /// function summaries; standalone function runs conservatively keep those calls opaque.
