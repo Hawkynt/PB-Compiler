@@ -115,7 +115,7 @@ public static class IrMiddleEndPipeline {
     .AddModuleAnalyzedWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
       module => Inliner.Run(module, optimizeForSpeed: true))
-    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "ctxclone", ContextSensitiveCloning.Run)
+    .AddModuleAnalyzedWhen(includeModulePasses && optimizeForSpeed, "ctxclone", ContextSensitiveCloning.Run)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "inline-context",
       module => Inliner.Run(module, optimizeForSpeed: true))
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "libcalls", LibraryCallRecognition.Run)
