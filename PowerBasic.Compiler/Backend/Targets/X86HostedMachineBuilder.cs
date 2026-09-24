@@ -666,6 +666,7 @@ public static class X86HostedMachineBuilder {
         target = new(mnemonic == "PUSH" ? X86TargetOpcode.Push : X86TargetOpcode.Pop, [], Address: address);
         return true;
       }
+      error = $"inline assembly '{mnemonic}' operand shape is not supported by the hosted x86 target";
       return true;
     }
 
@@ -684,6 +685,8 @@ public static class X86HostedMachineBuilder {
         target = new(X86TargetOpcode.Mov, [storeRegister], Immediate: 1, Address: storeAddress);
       else if (destination.Address is { } memoryAddress && source.Immediate is { } memoryImmediate)
         target = new(X86TargetOpcode.MoveMemoryImmediate, [], memoryImmediate, memoryAddress);
+      if (target is null)
+        error = "inline assembly 'MOV' operand shape is not supported by the hosted x86 target";
       return true;
     }
 
@@ -711,6 +714,8 @@ public static class X86HostedMachineBuilder {
     else if (destination.Address is { } immediateAddress && source.Immediate is { } addressImmediate)
       target = new(X86TargetOpcode.AluMemoryImmediate, [], addressImmediate, immediateAddress,
         Operands: [new X86TargetOperand.Immediate(MemoryAluExtension(opcode))]);
+    if (target is null)
+      error = $"inline assembly '{mnemonic}' operand shape is not supported by the hosted x86 target";
     return true;
   }
 
