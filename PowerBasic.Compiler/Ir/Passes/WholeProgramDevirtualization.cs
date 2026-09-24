@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -24,25 +26,54 @@ public static class WholeProgramDevirtualization {
   /// <summary>Replaces provably singleton indirect callees with their direct <see cref="IrFunction"/>.</summary>
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
+    return Run(module, new IrModuleAnalysisManager(module)).Changes;
+  }
 
-    var resolver = new TargetResolver(module);
+  /// <summary>
+  /// Analysis-aware whole-program entry. Each successful rewrite exposes a new direct call edge, so
+  /// the pass invalidates module facts immediately and restarts from a fresh cached call graph. The
+  /// final no-change sweep leaves that graph valid and explicitly preserved for following module passes.
+  /// </summary>
+  public static IrModulePassResult Run(IrModule module, IrModuleAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(module, analyses.Module))
+      throw new ArgumentException("Module analysis manager belongs to a different module.", nameof(analyses));
+
     var changed = 0;
-    foreach (var function in module.Functions) {
-      if (function.IsDeclaration || function.HasErrorHandler || function.HasInlineAsm)
-        continue;
+    for (;;) {
+      var callGraph = analyses.Get(IrModuleAnalyses.CallGraph);
+      var resolver = new TargetResolver(module, callGraph);
+      IrCall? rewrite = null;
+      IrFunction? target = null;
 
-      foreach (var call in function.AllInstructions.OfType<IrCall>().ToList()) {
-        if (call.Callee is IrFunction)
-          continue;
-        var target = resolver.ResolveUnique(call.Callee);
-        if (target is null || !SignatureMatches(call, target))
+      foreach (var function in module.Functions) {
+        if (function.IsDeclaration || function.HasErrorHandler || function.HasInlineAsm)
           continue;
 
-        call.SetOperand(0, target);
-        ++changed;
+        foreach (var call in function.AllInstructions.OfType<IrCall>()) {
+          if (call.Callee is IrFunction)
+            continue;
+          var candidate = resolver.ResolveUnique(call.Callee);
+          if (candidate is null || !SignatureMatches(call, candidate))
+            continue;
+          rewrite = call;
+          target = candidate;
+          break;
+        }
+        if (rewrite is not null)
+          break;
       }
+
+      if (rewrite is null)
+        return changed == 0
+          ? IrModulePassResult.Unchanged
+          : IrModulePassResult.ChangedPreserving(changed, IrModuleAnalyses.CallGraph);
+
+      rewrite.SetOperand(0, target!);
+      ++changed;
+      analyses.Invalidate(IrModulePreservedAnalyses.None);
     }
-    return changed;
   }
 
   /// <summary>
@@ -64,10 +95,10 @@ public static class WholeProgramDevirtualization {
     return true;
   }
 
-  private sealed class TargetResolver(IrModule module) {
+  private sealed class TargetResolver(IrModule module, IrCallGraph callGraph) {
 
-    private readonly IrModule _module = module;
     private readonly HashSet<IrFunction> _functions = new(module.Functions, ReferenceEqualityComparer.Instance);
+    private readonly IrCallGraph _callGraph = callGraph;
     private readonly Dictionary<IrValue, TargetSet> _cache = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<IrValue> _active = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<IrFunction, IrDominators> _dominators = new(ReferenceEqualityComparer.Instance);
@@ -104,12 +135,10 @@ public static class WholeProgramDevirtualization {
 
     private TargetSet ResolveArgument(IrArgument argument) {
       var owner = argument.Parent;
-      if (owner is null || !IpConstantProp.IsFullyVisible(this._module, owner))
+      if (owner is null || !this._callGraph.IsFullyVisible(owner))
         return TargetSet.Unknown;
 
-      var calls = owner.Users.OfType<IrCall>()
-        .Where(call => ReferenceEquals(call.Callee, owner))
-        .ToList();
+      var calls = this._callGraph.DirectCallsTo(owner);
       if (calls.Count == 0)
         return TargetSet.Unknown;
 
