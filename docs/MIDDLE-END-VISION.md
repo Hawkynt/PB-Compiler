@@ -104,11 +104,11 @@ Volatile / Atomic
 Deterministic
 ```
 
-The first explicit vocabulary now exists as `IrEffectKind`, `IrEffectSummary` and `IrEffects`. The initial external-call table intentionally preserves existing behavior: the checked LLVM floating math intrinsics are deterministic, effect-free and speculatable; every unmodeled runtime/library call remains maximally conservative.
+The first explicit vocabulary now exists as `IrEffectKind`, `IrEffectSummary` and `IrEffects`. The checked LLVM floating math intrinsics are deterministic, effect-free and speculatable; every unmodeled runtime/library call remains maximally conservative. The table now also records the first PB-specific ownership/mod-ref contracts: borrowed versus consuming string length, string duplication/free, raw memory compare/copy/set, dynamic-array allocation/reallocation/free and runtime-error transfer. Memory intrinsics refine volatility from their call-site flag instead of treating a literal non-volatile copy as a volatile barrier.
 
 That contract now also classifies every IR instruction explicitly. DCE and dead-loop elimination use discardability, LICM/GVN use speculation/CSE properties, MemorySSA derives uses and definitions from memory effects, dependence analysis asks about memory participation, and function summaries propagate the same operation facts through the call graph. There is deliberately no default instruction case: introducing a new IR operation without defining its effects fails closed instead of silently inheriting purity or opacity.
 
-PB's runtime semantics make conservatism essential: a routine that looks like a read may still consume or release a string handle. `rt_str_len`, `rt_str_dup`, printing, memcpy and unknown externals therefore remain outside the effect-free contract until their exact semantics are modeled deliberately.
+PB's runtime semantics make conservatism essential: a routine that looks like a read may still consume or release a string handle. `rt_str_len` is now explicitly a read plus release, while `rt_str_len_borrow` is a deterministic read without a lifetime change. `rt_str_dup` allocates a fresh owned handle and may fail; array lifetime and raw-memory operations similarly carry explicit effects. Printing and all still-unmodeled externals remain opaque until their contracts are established deliberately.
 
 The IR still needs fuller contracts for overflow, floating-point corner cases, invalid shifts/division, pointer/object identity, volatile/atomic behavior, exceptions and observable runtime state. Do not inherit LLVM's poison/undef model accidentally merely because the textual IR resembles LLVM.
 
@@ -198,7 +198,7 @@ The PR now has a production analysis substrate rather than only a sketch:
 5. Shared value/memory analyses include MemorySSA, branch-refined integer ranges, FP domains, bootstrap scalar evolution and known bits. Module analyses now include a cached direct call graph, function summaries and conservative whole-program reachability.
 6. Scalar evolution exposes additive `{start,+,step}` recurrences and bounded exact trip-count proofs using fixed-width integer semantics; `CountedLoop` and migrated loop consumers reuse those facts.
 7. Migrated transforms include correlation, pointer-check elimination, GVN, LICM, integer/FP range folding, reciprocal loop reasoning and IV simplification. CFG-preserving transforms preserve `IrAnalysisSets.Cfg` rather than manually maintaining a key list.
-8. `DemandedBits` consumes the known-bits domain; DCE, dead-loop elimination, GVN, LICM, MemorySSA, dependence analysis and function summaries consume the central IR-operation/effect contract.
+8. `DemandedBits` consumes the known-bits domain; DCE, dead-loop elimination, GVN, LICM, MemorySSA, dependence analysis and function summaries consume the central IR-operation/effect contract, including the first precise PB runtime ownership/mod-ref rows.
 9. Verification deliberately remains independent of the analysis cache: `VerifyEachPass` must catch an incorrect preservation claim instead of trusting it.
 10. The standard pipeline is now partitioned into named, inspectable phases without changing its flattened pass order; bounded function fixed points report the transforms responsible when they fail to converge.
 11. Interprocedural constant propagation and dead-pure-call elimination now consume shared cached module analyses instead of privately rebuilding call-graph facts.

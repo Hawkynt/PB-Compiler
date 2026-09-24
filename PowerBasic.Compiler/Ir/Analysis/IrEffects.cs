@@ -89,16 +89,69 @@ public static class IrEffects {
   private static readonly IrEffectSummary _pureDeterministic = new(IrEffectKind.None, Deterministic: true);
   private static readonly IrEffectSummary _pureUnique = new(IrEffectKind.None, Deterministic: false);
   private static readonly IrEffectSummary _read = new(IrEffectKind.ReadsMemory, Deterministic: false);
+  private static readonly IrEffectSummary _deterministicRead = new(IrEffectKind.ReadsMemory, Deterministic: true);
   private static readonly IrEffectSummary _write = new(IrEffectKind.WritesMemory, Deterministic: false);
+  private static readonly IrEffectSummary _readWrite = new(
+    IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory, Deterministic: false);
   private static readonly IrEffectSummary _mayTrap = new(IrEffectKind.MayTrap, Deterministic: true);
+  private static readonly IrEffectSummary _consumeString = new(
+    IrEffectKind.ReadsMemory | IrEffectKind.MayRelease, Deterministic: true);
+  private static readonly IrEffectSummary _duplicateString = new(
+    IrEffectKind.ReadsMemory | IrEffectKind.MayAllocate | IrEffectKind.MayTrap, Deterministic: false);
+  private static readonly IrEffectSummary _release = new(IrEffectKind.MayRelease, Deterministic: false);
+  private static readonly IrEffectSummary _allocateZeroed = new(
+    IrEffectKind.WritesMemory | IrEffectKind.MayAllocate | IrEffectKind.MayTrap, Deterministic: false);
+  private static readonly IrEffectSummary _allocate = new(
+    IrEffectKind.MayAllocate | IrEffectKind.MayTrap, Deterministic: false);
+  private static readonly IrEffectSummary _reallocate = new(
+    IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory | IrEffectKind.MayAllocate
+    | IrEffectKind.MayRelease | IrEffectKind.MayTrap,
+    Deterministic: false);
+  private static readonly IrEffectSummary _runtimeError = new(
+    IrEffectKind.WritesMemory | IrEffectKind.MayTrap | IrEffectKind.MayThrow,
+    Deterministic: false);
 
   /// <summary>
-  /// Returns the checked contract for an external declaration. Unknown runtime/library calls remain maximally
-  /// conservative; the only effect-free externals currently admitted are the floating math intrinsics already
-  /// proven safe by the existing optimizer contract.
+  /// Returns the checked contract for an external declaration. This table is deliberately semantic,
+  /// not a naming heuristic: every runtime row below has an ownership/mod-ref contract pinned by the
+  /// lowering and runtime ABI. Anything not listed remains maximally conservative.
   /// </summary>
   public static IrEffectSummary ForExternalCall(string name) {
     ArgumentNullException.ThrowIfNull(name);
+
+    var modeled = name switch {
+      // Stable-handle query introduced by O0297: reads the descriptor without consuming it.
+      "rt_str_len_borrow" => _deterministicRead,
+
+      // DOS LEN consumes its owned handle; DUP creates the owned copy lowering feeds it.
+      "rt_str_len" => _consumeString,
+      "rt_str_dup" => _duplicateString,
+      "rt_str_free" => _release,
+
+      // Raw memory helpers. memcpy/memset have a volatile operand at the call site; the declaration-level
+      // fact is conservatively volatile because this overload cannot inspect that operand.
+      "rt_mem_compare" => _deterministicRead,
+      "rt_mem_copy" => _readWrite,
+      "llvm.memcpy.p0.p0.i32" => new(
+        IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory | IrEffectKind.Volatile,
+        Deterministic: false),
+      "llvm.memset.p0.i32" => new(
+        IrEffectKind.WritesMemory | IrEffectKind.Volatile,
+        Deterministic: false),
+
+      // Dynamic-array lifetime. Allocation can raise PB Error 7; PRESERVE copies the old bytes before release.
+      "rt_arr_alloc" or "rt_arr_alloc_ptr" => _allocateZeroed,
+      "rt_arr_alloc_nz" => _allocate,
+      "rt_arr_realloc" or "rt_arr_realloc_ptr" => _reallocate,
+      "rt_arr_free" or "rt_arr_free_ptr" => _release,
+
+      // Raises through ON ERROR on DOS, and terminates on hosted targets. ERR/ERL are observable state.
+      "rt_error" => _runtimeError,
+      _ => default,
+    };
+    if (modeled != default)
+      return modeled;
+
     if (!name.StartsWith("llvm.", StringComparison.Ordinal))
       return IrEffectSummary.UnknownExternal;
 
@@ -107,6 +160,26 @@ public static class IrEffects {
     return _pureMathIntrinsics.Contains(width > 0 ? bare[..width] : bare)
       ? _pureDeterministic
       : IrEffectSummary.UnknownExternal;
+  }
+
+  /// <summary>
+  /// Returns the call-site contract when operands refine a declaration-level effect. The memory intrinsics'
+  /// final i1 controls volatility; a literal false therefore keeps the ordinary mod/ref effect without
+  /// manufacturing a volatile barrier. Unknown/non-literal flags remain conservative.
+  /// </summary>
+  public static IrEffectSummary ForCall(IrCall call) {
+    ArgumentNullException.ThrowIfNull(call);
+    if (call.Callee is not IrFunction callee)
+      return IrEffectSummary.UnknownExternal;
+
+    var effects = ForCall(callee);
+    if (!callee.IsDeclaration || call.ArgCount < 4
+        || callee.Name is not ("llvm.memcpy.p0.p0.i32" or "llvm.memset.p0.i32"))
+      return effects;
+
+    return call.Args[3] is IrConstantInt { Value: 0 }
+      ? effects with { Effects = effects.Effects & ~IrEffectKind.Volatile }
+      : effects;
   }
 
   /// <summary>
@@ -139,8 +212,7 @@ public static class IrEffects {
       IrLoad => _read,
       IrStore => _write,
       IrInlineAsm => IrEffectSummary.UnknownExternal,
-      IrCall { Callee: IrFunction callee } => ForCall(callee),
-      IrCall => IrEffectSummary.UnknownExternal,
+      IrCall call => ForCall(call),
       IrRet or IrBr or IrCondBr or IrSwitch or IrIndirectBr or IrUnreachable => _pureDeterministic,
       _ => throw new NotSupportedException(
         $"No effect contract is defined for IR instruction '{instruction.GetType().Name}'."),

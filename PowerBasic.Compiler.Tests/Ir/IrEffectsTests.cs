@@ -23,10 +23,9 @@ public sealed class IrEffectsTests {
     });
   }
 
-  [TestCase("rt_str_len")]
-  [TestCase("rt_str_dup")]
   [TestCase("rt_print_nl")]
-  [TestCase("llvm.memcpy.p0.p0.i32")]
+  [TestCase("rt_file_open")]
+  [TestCase("llvm.unknown.p0")]
   public void ForExternalCall_GivenUnmodeledRuntimeEntry_ThenItRemainsConservative(string name) {
     var effects = IrEffects.ForExternalCall(name);
 
@@ -47,6 +46,80 @@ public sealed class IrEffectsTests {
       Assert.That(effects.CanSpeculate, Is.False);
       Assert.That(FunctionSummaries.IsPureExternal(name), Is.False);
       Assert.That(FunctionSummaries.IsSpeculatableExternal(name), Is.False);
+    });
+  }
+
+
+  [Test]
+  public void ForExternalCall_GivenModeledOwnershipAndMemoryEntries_ThenReportsTheirExactClass() {
+    var borrow = IrEffects.ForExternalCall("rt_str_len_borrow");
+    var consume = IrEffects.ForExternalCall("rt_str_len");
+    var duplicate = IrEffects.ForExternalCall("rt_str_dup");
+    var release = IrEffects.ForExternalCall("rt_str_free");
+    var compare = IrEffects.ForExternalCall("rt_mem_compare");
+    var allocate = IrEffects.ForExternalCall("rt_arr_alloc");
+    var reallocate = IrEffects.ForExternalCall("rt_arr_realloc");
+    var error = IrEffects.ForExternalCall("rt_error");
+
+    Assert.Multiple(() => {
+      Assert.That(borrow.Effects, Is.EqualTo(IrEffectKind.ReadsMemory));
+      Assert.That(borrow.Deterministic, Is.True);
+      Assert.That(borrow.CanDiscard, Is.True);
+      Assert.That(borrow.DefinesMemory, Is.False);
+
+      Assert.That(consume.Effects, Is.EqualTo(IrEffectKind.ReadsMemory | IrEffectKind.MayRelease));
+      Assert.That(consume.Deterministic, Is.True);
+      Assert.That(consume.CanDiscard, Is.False);
+      Assert.That(consume.DefinesMemory, Is.True);
+
+      Assert.That(duplicate.Effects,
+        Is.EqualTo(IrEffectKind.ReadsMemory | IrEffectKind.MayAllocate | IrEffectKind.MayTrap));
+      Assert.That(duplicate.Deterministic, Is.False);
+      Assert.That(duplicate.CanDiscard, Is.False);
+
+      Assert.That(release.Effects, Is.EqualTo(IrEffectKind.MayRelease));
+      Assert.That(release.DefinesMemory, Is.True);
+
+      Assert.That(compare.Effects, Is.EqualTo(IrEffectKind.ReadsMemory));
+      Assert.That(compare.Deterministic, Is.True);
+      Assert.That(compare.CanDiscard, Is.True);
+
+      Assert.That(allocate.Effects,
+        Is.EqualTo(IrEffectKind.WritesMemory | IrEffectKind.MayAllocate | IrEffectKind.MayTrap));
+      Assert.That(allocate.CanDiscard, Is.False);
+
+      Assert.That(reallocate.Effects, Is.EqualTo(
+        IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory | IrEffectKind.MayAllocate
+        | IrEffectKind.MayRelease | IrEffectKind.MayTrap));
+      Assert.That(reallocate.CanDiscard, Is.False);
+
+      Assert.That(error.Effects,
+        Is.EqualTo(IrEffectKind.WritesMemory | IrEffectKind.MayTrap | IrEffectKind.MayThrow));
+      Assert.That(error.CanDiscard, Is.False);
+    });
+  }
+
+  [Test]
+  public void ForCall_GivenMemoryIntrinsicVolatilityFlag_ThenRefinesTheDeclarationContract() {
+    var memcpy = new IrFunction("llvm.memcpy.p0.p0.i32", IrType.Void, [
+      new IrArgument(IrType.Ptr, 0),
+      new IrArgument(IrType.Ptr, 1),
+      new IrArgument(IrType.I32, 2),
+      new IrArgument(IrType.I1, 3),
+    ]);
+    var dst = new IrAlloca(IrType.I8) { Count = 4 };
+    var src = new IrAlloca(IrType.I8) { Count = 4 };
+    var nonVolatile = new IrCall(IrType.Void, memcpy,
+      [dst, src, new IrConstantInt(IrType.I32, 4), IrBuilder.ConstBool(false)]);
+    var volatileCopy = new IrCall(IrType.Void, memcpy,
+      [dst, src, new IrConstantInt(IrType.I32, 4), IrBuilder.ConstBool(true)]);
+
+    Assert.Multiple(() => {
+      Assert.That(IrEffects.ForExternalCall(memcpy.Name).Effects.HasFlag(IrEffectKind.Volatile), Is.True,
+        "a declaration-only query cannot assume the operand is false");
+      Assert.That(IrEffects.ForCall(nonVolatile).Effects,
+        Is.EqualTo(IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory));
+      Assert.That(IrEffects.ForCall(volatileCopy).Effects.HasFlag(IrEffectKind.Volatile), Is.True);
     });
   }
 

@@ -154,4 +154,51 @@ public sealed class MemorySsaTests {
     });
   }
 
+  [Test]
+  public void Build_GivenBorrowedAndConsumingStringQueries_ThenOwnershipDefinesMemoryOnlyForTheConsumer() {
+    var handle = new IrArgument(IrType.Ptr, 0, "handle");
+    var borrow = new IrFunction("rt_str_len_borrow", IrType.I32, [new IrArgument(IrType.Ptr, 0)]);
+    var consume = new IrFunction("rt_str_len", IrType.I32, [new IrArgument(IrType.Ptr, 0)]);
+    var fn = new IrFunction("f", IrType.Void, [handle]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var borrowedLength = b.Call(IrType.I32, borrow, handle);
+    var consumedLength = b.Call(IrType.I32, consume, handle);
+    b.Ret();
+
+    var memory = IrMemorySsa.Build(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(memory.AccessFor(borrowedLength), Is.TypeOf<IrMemoryUse>(),
+        "borrowed LEN reads the descriptor but keeps the stable handle alive");
+      Assert.That(memory.AccessFor(consumedLength), Is.TypeOf<IrMemoryDef>(),
+        "ordinary LEN releases the owned handle and therefore changes memory lifetime");
+      Assert.That(((IrMemoryDef)memory.AccessFor(consumedLength)!).DefiningAccess,
+        Is.SameAs(((IrMemoryUse)memory.AccessFor(borrowedLength)!).DefiningAccess));
+    });
+  }
+
+  [Test]
+  public void Build_GivenNonVolatileMemcpy_ThenItStillCreatesAModRefDefinitionWithoutAVolatileBarrierFlag() {
+    var memcpy = new IrFunction("llvm.memcpy.p0.p0.i32", IrType.Void, [
+      new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1),
+      new IrArgument(IrType.I32, 2), new IrArgument(IrType.I1, 3),
+    ]);
+    var fn = new IrFunction("f", IrType.Void);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var dst = fn.Entry!.Append(new IrAlloca(IrType.I8) { Count = 4 });
+    var src = fn.Entry!.Append(new IrAlloca(IrType.I8) { Count = 4 });
+    var copy = b.Call(IrType.Void, memcpy,
+      dst, src, new IrConstantInt(IrType.I32, 4), IrBuilder.ConstBool(false));
+    b.Ret();
+
+    var effects = IrEffects.ForInstruction(copy);
+    var memory = IrMemorySsa.Build(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(effects.Effects, Is.EqualTo(IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory));
+      Assert.That(memory.AccessFor(copy), Is.TypeOf<IrMemoryDef>());
+    });
+  }
+
+
 }
