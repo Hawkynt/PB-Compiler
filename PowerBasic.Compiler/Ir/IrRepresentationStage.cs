@@ -26,8 +26,11 @@ internal static class IrRepresentationTransitions {
     ArgumentNullException.ThrowIfNull(module);
     var current = module.RepresentationStage;
     if (next == current) {
-      error = null;
-      return true;
+      var existingErrors = IrRepresentationContract.Verify(module, next);
+      error = existingErrors.Count == 0
+        ? null
+        : $"representation contract {next} is no longer satisfied: {string.Join("; ", existingErrors)}";
+      return existingErrors.Count == 0;
     }
 
     if (next < current) {
@@ -37,6 +40,12 @@ internal static class IrRepresentationTransitions {
 
     if ((int)next != (int)current + 1) {
       error = $"representation stage cannot skip the boundary from {current} to {next}";
+      return false;
+    }
+
+    var errors = IrRepresentationContract.Verify(module, next);
+    if (errors.Count != 0) {
+      error = $"cannot establish {next}: {string.Join("; ", errors)}";
       return false;
     }
 

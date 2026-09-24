@@ -8,6 +8,10 @@ namespace PowerBasic.Compiler.Tests.Backend;
 
 [TestFixture]
 public sealed class X86TargetTests {
+  private sealed class UnclassifiedLowIrInstruction : IrInstruction {
+    public UnclassifiedLowIrInstruction() : base(IrType.Void) { }
+  }
+
   [Test]
   public void X86RegisterFileExposesAliasedScalarViews() {
     Assert.Multiple(() => {
@@ -297,7 +301,7 @@ public sealed class X86TargetTests {
   }
 
   [Test]
-  public void MachinePipelineAdvancesLowIrThroughSelectionAndAllocationBoundaries() {
+  public void MachinePipelineProducesMachineIrWithoutRelabelingItsLowIrSource() {
     var module = new IrModule("empty");
     Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
     Assert.That(IrLowIrLegalization.TryLegalize(module, out _), Is.True);
@@ -307,7 +311,61 @@ public sealed class X86TargetTests {
     Assert.That(errors, Is.Empty);
     Assert.That(machine, Is.Not.Null);
     Assert.That(machine!.Functions, Is.Empty);
-    Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.MachineIr));
+    Assert.Multiple(() => {
+      Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.LowIr),
+        "selection/allocation produce a distinct machine product; the source remains target-neutral");
+      Assert.That(machine.RepresentationStage, Is.EqualTo(IrRepresentationStage.MachineIr));
+    });
+  }
+
+  [Test]
+  public void OptimizedSsaBoundaryRejectsMalformedSsaInsteadOfMerelyRelabelingIt() {
+    var module = new IrModule("malformed");
+    var function = module.AddFunction(new IrFunction("f", IrType.Void));
+    function.CreateBlock("entry").Append(new IrBinary(
+      IrBinaryOp.Add,
+      new IrConstantInt(IrType.I16, 1),
+      new IrConstantInt(IrType.I16, 2)));
+
+    Assert.That(module.TryAdvanceRepresentationStage(
+      IrRepresentationStage.OptimizedSsa, out var error), Is.False);
+
+    Assert.Multiple(() => {
+      Assert.That(error, Does.Contain("does not end in a terminator"));
+      Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.Lowered));
+    });
+  }
+
+  [Test]
+  public void LowIrBoundaryRejectsAnOperationWithoutAnExplicitSemanticContract() {
+    var module = new IrModule("unclassified");
+    var function = module.AddFunction(new IrFunction("f", IrType.Void));
+    var block = function.CreateBlock("entry");
+    block.Append(new UnclassifiedLowIrInstruction());
+    block.Append(new IrRet());
+
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out var ssaError),
+      Is.True, ssaError);
+    Assert.That(IrLowIrLegalization.TryLegalize(module, out var errors), Is.False);
+
+    Assert.Multiple(() => {
+      Assert.That(errors, Has.Some.Contains("UnclassifiedLowIrInstruction"));
+      Assert.That(errors, Has.Some.Contains("semantic contract"));
+      Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.OptimizedSsa));
+    });
+  }
+
+  [Test]
+  public void SourceModuleCannotBeRelabeledAsMachineSsa() {
+    var module = new IrModule("source");
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
+    Assert.That(IrLowIrLegalization.TryLegalize(module, out _), Is.True);
+
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.MachineSsa, out var error), Is.False);
+    Assert.Multiple(() => {
+      Assert.That(error, Does.Contain("machine-product stage"));
+      Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.LowIr));
+    });
   }
 
   [Test]

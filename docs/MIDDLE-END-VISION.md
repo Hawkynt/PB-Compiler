@@ -160,7 +160,7 @@ Pass order still matters inside a group, but dependencies should be stated throu
 - Continue migrating existing passes from private analysis reconstruction to the shared analysis manager.
 - Split `IrLowering` conceptually into Bound AST -> HIR and HIR -> MIR/SSA stages before adding more source-semantic lowering to the existing monolith.
 - Expand effect identities from the first external-call contracts to IR operations and precisely modeled runtime/library calls.
-- Define verifier contracts at every new representation boundary.
+- Extend the verifier contracts as new HIR/MIR boundaries are introduced. Optimized SSA and Low IR are now verifier-backed, and machine stages are represented by the machine-side product rather than source-module relabeling.
 - Keep every legacy pass conservatively correct during migration; unknown preservation means invalidate.
 
 ### Should
@@ -204,7 +204,9 @@ The PR now has a production analysis substrate rather than only a sketch:
 11. Interprocedural constant propagation and dead-pure-call elimination now consume shared cached module analyses instead of privately rebuilding call-graph facts.
 12. No new external dependency has been introduced and the standard pass order has not been reordered.
 
-The next architectural boundary is phase naming below the target-neutral middle end. Production policy is centralized in `IrMiddleEndPipeline`, with `RunNativeModule` and `RunHostedModule` owning restart and inlining choreography; `IrPassManager` only executes registered passes and invalidates shared analyses. The remaining representation split (`Bound AST -> HIR -> MIR/SSA`) can proceed without reintroducing caller-owned optimizer schedules.
+The target-neutral representation boundaries now carry verifier contracts rather than acting as progress labels. `OptimizedSsa` requires structurally valid SSA; `LowIr` additionally requires an explicit semantic/effect contract for every operation that crosses the boundary. Unknown external calls remain legal through their conservative effect contract, while a new unclassified IR instruction cannot silently reach a backend. Machine SSA/IR are distinct machine-side products: lowering leaves the source `IrModule` at `LowIr` instead of relabeling it after selection/allocation.
+
+The next representation work is the high-level side of the split: introduce the Bound AST -> HIR boundary incrementally for source-semantic operations that currently lose useful identity inside `IrLowering`, then lower HIR -> MIR/SSA through an explicit contract. Production policy is already centralized in `IrMiddleEndPipeline`, so that split can proceed without reintroducing caller-owned optimizer schedules.
 
 ## Reference architecture
 

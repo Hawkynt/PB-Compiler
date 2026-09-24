@@ -21,4 +21,11 @@ public sealed class IrMachineModule(Ir.IrModule source, SelectionTarget target,
   public Ir.IrModule Source { get; } = source;
   public SelectionTarget Target { get; } = target;
   public IReadOnlyList<IrMachineFunction> Functions { get; } = functions;
+
+  /// <summary>
+  /// The representation contract of this machine-side product. The source <see cref="Ir.IrModule"/>
+  /// remains target-independent Low IR; selection/allocation produce a distinct object rather than
+  /// relabeling the source module as machine code.
+  /// </summary>
+  public Ir.IrRepresentationStage RepresentationStage { get; } = Ir.IrRepresentationStage.MachineIr;
 }

@@ -117,12 +117,6 @@ public static class IrMachinePipeline {
       return false;
     }
 
-    if (!module.TryAdvanceRepresentationStage(IrRepresentationStage.MachineSsa, out var stageError)
-        || !module.TryAdvanceRepresentationStage(IrRepresentationStage.MachineIr, out stageError)) {
-      errors = [stageError ?? "unable to advance through the machine representation boundaries"];
-      return false;
-    }
-
     machine = new IrMachineModule(module, target, selected);
     errors = [];
     return true;

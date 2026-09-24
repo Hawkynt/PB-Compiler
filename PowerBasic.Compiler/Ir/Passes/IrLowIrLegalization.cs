@@ -8,7 +8,11 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class IrLowIrLegalization {
   public static bool TryLegalize(IrModule module, out IReadOnlyList<string> errors) {
     ArgumentNullException.ThrowIfNull(module);
-    var verification = IrVerifier.Verify(module);
+
+    // The first Low IR legalization slice is intentionally non-destructive. Its useful contract is
+    // nevertheless real: the structural SSA verifier must pass and every operation crossing the
+    // boundary must have explicit target-independent semantics.
+    var verification = IrRepresentationContract.Verify(module, IrRepresentationStage.LowIr);
     if (verification.Count != 0) {
       errors = verification;
       return false;
