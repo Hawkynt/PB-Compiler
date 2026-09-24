@@ -694,8 +694,10 @@ public static class X86HostedMachineBuilder {
     }
 
     if (mnemonic is "PUSH" or "POP") {
-      if (values.Count != 1)
+      if (values.Count != 1) {
+        error = $"inline assembly '{mnemonic}' requires exactly one operand";
         return true;
+      }
       var value = values[0];
       if (mnemonic == "PUSH" && value.Immediate is { } immediate) {
         target = new(X86TargetOpcode.Push, [], immediate);
@@ -713,8 +715,10 @@ public static class X86HostedMachineBuilder {
       return true;
     }
 
-    if (values.Count != 2)
+    if (values.Count != 2) {
+      error = $"inline assembly '{mnemonic}' requires exactly two operands";
       return true;
+    }
     var destination = values[0];
     var source = values[1];
     if (mnemonic == "MOV") {
