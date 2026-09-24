@@ -96,7 +96,7 @@ public static class Licm {
   private static bool IsSpeculatable(IrInstruction inst) => inst switch {
     IrBinary b => b.Op is not (IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem or IrBinaryOp.FDiv),
     IrCmp or IrCast or IrGep => true,
-    IrCall { Callee: IrFunction callee } => IrEffects.ForExternalCall(callee.Name).CanSpeculate,
+    IrCall { Callee: IrFunction callee } => IrEffects.ForCall(callee).CanSpeculate,
     _ => false,                                      // loads, stores, allocas, phis, terminators
   };
 }

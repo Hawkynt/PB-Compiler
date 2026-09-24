@@ -21,7 +21,14 @@ public static class IrMachinePipeline {
       out string? error) {
     ArgumentNullException.ThrowIfNull(function);
     ArgumentNullException.ThrowIfNull(lowerer);
-    return lowerer.TrySelect(function, out selected, out error);
+    var succeeded = lowerer.TrySelect(function, out selected, out error);
+    if (succeeded && selected is null) {
+      error = "selection: lowerer reported success without producing a machine function";
+      return false;
+    }
+    if (!succeeded)
+      selected = null;
+    return succeeded;
   }
 
   /// <summary>Schedules and allocates a selected machine function, then applies late rewrites.</summary>
@@ -43,7 +50,14 @@ public static class IrMachinePipeline {
     ArgumentNullException.ThrowIfNull(source);
     ArgumentNullException.ThrowIfNull(selected);
     ArgumentNullException.ThrowIfNull(lowerer);
-    return lowerer.TryAllocate(source, selected, out machine, out error);
+    var succeeded = lowerer.TryAllocate(source, selected, out machine, out error);
+    if (succeeded && machine is null) {
+      error = "allocation: lowerer reported success without producing a machine function";
+      return false;
+    }
+    if (!succeeded)
+      machine = null;
+    return succeeded;
   }
 
   /// <summary>Selects, schedules, allocates, and performs late machine rewrites for one IR function.</summary>
@@ -88,14 +102,19 @@ public static class IrMachinePipeline {
     }
 
     var selected = new List<IrMachineFunction>();
+    var failures = new List<string>();
     foreach (var function in module.Functions) {
       if (function.IsDeclaration || function.Entry is null)
         continue;
       if (!TryLowerFunction(function, lowerer, out var selectedMachine, out var declineReason)) {
-        errors = [$"function '{function.Name}' was not lowered: {declineReason ?? "unknown machine construct"}"];
-        return false;
+        failures.Add($"function '{function.Name}' was not lowered: {declineReason ?? "unknown machine construct"}");
+        continue;
       }
       selected.Add(selectedMachine!);
+    }
+    if (failures.Count != 0) {
+      errors = failures;
+      return false;
     }
 
     if (!module.TryAdvanceRepresentationStage(IrRepresentationStage.MachineSsa, out var stageError)

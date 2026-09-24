@@ -61,12 +61,13 @@ public sealed class IrBackendModule {
       errors = ["MOS 6502 machine target is unavailable"];
       return false;
     }
-    var output = new Dictionary<string, MachineCode>(StringComparer.Ordinal);
-    foreach (var function in this.Machine.Functions) {
-      output[function.Source.Name] = mosTarget.Emitter is Mos6502MachineEmitter emitter
-        ? emitter.EmitFunction(function.Function)
-        : mosTarget.Emitter.EmitFunction([]);
+    if (mosTarget.Emitter is not Mos6502MachineEmitter emitter) {
+      errors = ["MOS 6502 target has no compatible machine emitter"];
+      return false;
     }
+    var output = new Dictionary<string, MachineCode>(StringComparer.Ordinal);
+    foreach (var function in this.Machine.Functions)
+      output[function.Source.Name] = emitter.EmitFunction(function.Function);
     emitted = output;
     return true;
   }

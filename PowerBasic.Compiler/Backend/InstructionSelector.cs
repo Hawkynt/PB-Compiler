@@ -225,24 +225,30 @@ public sealed partial class InstructionSelector {
         if (instr is IrPhi)
           continue;                 // phis emit no instruction - their edge copies are inserted below
         if (ReferenceEquals(instr, block.Terminator)) {
-          if (!this.SelectTerminator(block.Terminator, folded, mblock))
+          if (!this.SelectTerminator(block.Terminator, folded, mblock)) {
+            this._decline ??= $"terminator: {block.Terminator!.GetType().Name} in block '{block.Label}' could not be lowered";
             return null;
+          }
           break;
         }
         if (ReferenceEquals(instr, folded))
           continue;                 // the compare is folded into the conditional branch below
         if (this._consumed.Contains(instr))
           continue;                 // absorbed by a multi-instruction pattern that emits it later
-        if (!this.SelectInstruction(instr, mblock))
+        if (!this.SelectInstruction(instr, mblock)) {
+          this._decline ??= $"instruction: {instr.GetType().Name} in block '{block.Label}' could not be lowered";
           return null;
+        }
       }
       // a split leaves the cursor on a later block; the phi copies for this predecessor must be
       // inserted there, since that is the block control actually leaves from
       mblocks[block.Label] = this._current;
     }
 
-    if (!this.InsertPhiCopies(fn, mblocks))
+    if (!this.InsertPhiCopies(fn, mblocks)) {
+      this._decline ??= "phi lowering: incoming values could not be materialized";
       return null;
+    }
 
     this._function.VirtualRegisterCount = this._nextVreg;
     if (this._target is { Optimize: true, OptimizeSpeed: true })

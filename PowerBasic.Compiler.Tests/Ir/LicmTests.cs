@@ -111,6 +111,20 @@ public sealed class LicmTests {
   }
 
   [Test]
+  public void Run_DoesNotHoistDefinitionNamedLikeIntrinsic() {
+    var input = new IrArgument(IrType.F64, 0);
+    var intrinsicNamedDefinition = new IrFunction("llvm.sqrt.f64", IrType.F64, [input]);
+    new IrBuilder(intrinsicNamedDefinition.CreateBlock("entry")).Ret(input);
+    IrCall? call = null;
+    var (fn, _, body) = BuildLoopAround(new IrArgument(IrType.I32, 0, "n"),
+      new IrArgument(IrType.F64, 1, "k"),
+      (b, k) => call = b.Call(IrType.F64, intrinsicNamedDefinition, k));
+
+    Assert.That(Licm.Run(fn), Is.EqualTo(0));
+    Assert.That(call!.Parent, Is.SameAs(body));
+  }
+
+  [Test]
   public void Run_DoesNotHoistAStringRuntimeCall() {
     // the same shape with an entry that is NOT on the purity list: rt_str_len consumes (frees) the
     // handle it is given, so hoisting it would leave every iteration after the first reading freed

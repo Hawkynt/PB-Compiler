@@ -165,7 +165,7 @@ public static class IrLoopDependenceAnalysis {
     foreach (var block in loop.Region)
       foreach (var instruction in block.Instructions)
         if (instruction is IrCall call
-            && (call.Callee is not IrFunction callee || !FunctionSummaries.IsPureExternal(callee.Name)))
+            && (call.Callee is not IrFunction callee || !IrEffects.ForCall(callee).CanCse))
           return true;
     return false;
   }

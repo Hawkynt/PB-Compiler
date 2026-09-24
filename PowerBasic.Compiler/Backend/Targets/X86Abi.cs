@@ -1,6 +1,6 @@
 namespace PowerBasic.Compiler.Backend.Targets;
 
-/// <summary>Concrete IA-32 and Intel 64 calling conventions used by machine targets.</summary>
+/// <summary>Concrete x86 calling conventions used by the hosted machine targets.</summary>
 public sealed record X86Abi(
     string Name,
     int PointerBits,
@@ -14,40 +14,119 @@ public sealed record X86Abi(
     X86CallDistance Distance = X86CallDistance.Near) : IMachineAbi {
 
   public static X86Abi For(Ir.IrCallConvention convention, X86Mode mode) {
-    var bits = mode == X86Mode.Bit16 ? 16 : mode == X86Mode.Bit32 ? 32 : 64;
-    var regs = mode == X86Mode.Bit16 ? X86RegisterFile.Gpr16 : mode == X86Mode.Bit32 ? X86RegisterFile.Gpr32 : X86RegisterFile.Gpr64;
-    var ax = regs[0];
-    var fast = mode == X86Mode.Bit64 ? new[] { regs[1], regs[2], regs[8], regs[9] } : new[] { regs[0], regs[2], regs[1] };
-    var sysv64 = mode == X86Mode.Bit64 ? new[] { regs[7], regs[6], regs[2], regs[1], regs[8], regs[9] } : Array.Empty<MachineRegister>();
-    var arguments = convention switch {
-      Ir.IrCallConvention.Fastcall or Ir.IrCallConvention.Watcall => fast,
-      Ir.IrCallConvention.Cdecl when mode == X86Mode.Bit64 => sysv64,
-      _ => Array.Empty<MachineRegister>(),
+    var (bits, regs) = mode switch {
+      X86Mode.Bit16 => (16, X86RegisterFile.Gpr16),
+      X86Mode.Bit32 => (32, X86RegisterFile.Gpr32),
+      X86Mode.Bit64 => (64, X86RegisterFile.Gpr64),
+      _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
     };
+    var ax = regs[0];
+    // These are the conventions this compiler exposes, not a generic synonym table. In 16/32-bit
+    // PB, FASTCALL is AX/DX/BX and WATCALL is AX/DX/BX/CX; WATCALL's fourth register and its
+    // right-to-left overflow are distinct from FASTCALL. In 64-bit mode FASTCALL follows the
+    // Microsoft x64 register set while CDECL follows SysV, matching the two concrete ABIs available
+    // from this target layer.
+    var fast = mode switch {
+      X86Mode.Bit16 or X86Mode.Bit32 => new[] { regs[0], regs[2], regs[3] },
+      X86Mode.Bit64 => new[] { regs[1], regs[2], regs[8], regs[9] },
+      _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
+    };
+    var wat = new[] { regs[0], regs[2], regs[3], regs[1] };
+    var sysv64 = mode == X86Mode.Bit64
+      ? new[] { regs[7], regs[6], regs[2], regs[1], regs[8], regs[9] }
+      : Array.Empty<MachineRegister>();
+    var arguments = convention switch {
+      Ir.IrCallConvention.Fastcall => fast,
+      Ir.IrCallConvention.Watcall => wat,
+      Ir.IrCallConvention.Cdecl when mode == X86Mode.Bit64 => sysv64,
+      Ir.IrCallConvention.Basic or Ir.IrCallConvention.Pascal or Ir.IrCallConvention.Cdecl
+        or Ir.IrCallConvention.Stdcall
+        or Ir.IrCallConvention.BasicClosure => Array.Empty<MachineRegister>(),
+      _ => throw new ArgumentOutOfRangeException(nameof(convention), convention, "unsupported x86 calling convention"),
+    };
+    var argumentOrder = convention switch {
+      Ir.IrCallConvention.Basic or Ir.IrCallConvention.Pascal or Ir.IrCallConvention.BasicClosure
+        => X86StackArgumentOrder.LeftToRight,
+      Ir.IrCallConvention.Fastcall when mode != X86Mode.Bit64 => X86StackArgumentOrder.LeftToRight,
+      Ir.IrCallConvention.Fastcall => X86StackArgumentOrder.RightToLeft,
+      Ir.IrCallConvention.Cdecl or Ir.IrCallConvention.Stdcall or Ir.IrCallConvention.Watcall
+        => X86StackArgumentOrder.RightToLeft,
+      _ => throw new ArgumentOutOfRangeException(nameof(convention), convention, "unsupported x86 calling convention"),
+    };
+    var stackCleanup = convention switch {
+      Ir.IrCallConvention.Cdecl => X86StackCleanup.Caller,
+      Ir.IrCallConvention.Fastcall when mode == X86Mode.Bit64 => X86StackCleanup.Caller,
+      Ir.IrCallConvention.Basic or Ir.IrCallConvention.Pascal or Ir.IrCallConvention.Stdcall
+        or Ir.IrCallConvention.Fastcall or Ir.IrCallConvention.Watcall or Ir.IrCallConvention.BasicClosure
+        => X86StackCleanup.Callee,
+      _ => throw new ArgumentOutOfRangeException(nameof(convention), convention, "unsupported x86 calling convention"),
+    };
+    var distance = convention switch {
+      Ir.IrCallConvention.BasicClosure when mode == X86Mode.Bit16 => X86CallDistance.Far,
+      Ir.IrCallConvention.BasicClosure => throw new NotSupportedException(
+        $"{convention} requires a 16-bit segmented call target"),
+      Ir.IrCallConvention.Basic or Ir.IrCallConvention.Pascal or Ir.IrCallConvention.Cdecl
+        or Ir.IrCallConvention.Stdcall or Ir.IrCallConvention.Fastcall or Ir.IrCallConvention.Watcall
+        => X86CallDistance.Near,
+      _ => throw new ArgumentOutOfRangeException(nameof(convention), convention, "unsupported x86 calling convention"),
+    };
+    var shadowSpace = convention == Ir.IrCallConvention.Fastcall && mode == X86Mode.Bit64 ? 32 : 0;
+    var calleeSaved = mode == X86Mode.Bit64
+      ? convention == Ir.IrCallConvention.Fastcall
+        ? new HashSet<MachineRegister>([regs[3], regs[5], regs[6], regs[7], regs[12], regs[13], regs[14], regs[15]])
+        : new HashSet<MachineRegister>([regs[3], regs[5], regs[12], regs[13], regs[14], regs[15]])
+      : new HashSet<MachineRegister>([regs[3], regs[5], regs[6], regs[7]]);
+    if ((mode != X86Mode.Bit64 && convention is (Ir.IrCallConvention.Fastcall or Ir.IrCallConvention.Watcall))
+        || (mode == X86Mode.Bit64 && convention == Ir.IrCallConvention.Watcall))
+      calleeSaved.Remove(regs[3]);
     return new($"x86-{bits}-{convention.ToString().ToLowerInvariant()}", bits,
-      mode == X86Mode.Bit64 ? 16 : mode == X86Mode.Bit32 ? 4 : 2, 0, arguments, ax,
-      mode == X86Mode.Bit64 ? new HashSet<MachineRegister>([regs[3], regs[5], regs[6], regs[7]])
-        : new HashSet<MachineRegister>([regs[3], regs[5], regs[6], regs[7]]),
-      convention is Ir.IrCallConvention.Basic or Ir.IrCallConvention.Pascal or Ir.IrCallConvention.Fastcall
-        ? X86StackArgumentOrder.LeftToRight : X86StackArgumentOrder.RightToLeft,
-      convention == Ir.IrCallConvention.Cdecl ? X86StackCleanup.Caller : X86StackCleanup.Callee,
-      convention == Ir.IrCallConvention.BasicClosure ? X86CallDistance.Far : X86CallDistance.Near);
+      mode == X86Mode.Bit64 ? 16 : mode == X86Mode.Bit32 ? 4 : 2, shadowSpace, arguments, ax,
+      calleeSaved,
+      argumentOrder, stackCleanup, distance);
   }
 
+  /// <summary>
+  /// Assigns arguments to leading ABI registers and the remaining stack area. Stack offsets are
+  /// relative to the caller's stack pointer immediately before CALL. The offset includes reserved
+  /// shadow space, so left-to-right conventions place the last argument after that area and
+  /// right-to-left conventions place the first overflow argument after it.
+  /// </summary>
   public IReadOnlyList<(int Argument, IReadOnlyList<MachineRegister> Registers, int StackOffset)> PlaceArguments(
       IReadOnlyList<Ir.IrType> types) {
-    var result = new List<(int, IReadOnlyList<MachineRegister>, int)>();
-    var stack = 0;
+    ArgumentNullException.ThrowIfNull(types);
+    var result = new (int Argument, IReadOnlyList<MachineRegister> Registers, int StackOffset)[types.Count];
+    var stackArguments = new List<(int Argument, int Bytes)>();
     var register = 0;
     foreach (var (type, index) in types.Select((type, index) => (type, index))) {
+      if (type.IsVoid)
+        throw new NotSupportedException($"{this.Name} cannot pass void argument #{index}");
+      if (this.ArgumentRegisters.Count != 0 && type.IsIeeeFloat)
+        throw new NotSupportedException(
+          $"{this.Name} does not model floating-point argument registers (argument {index}: {type})");
       var bits = Math.Max(type.Bits, type.IsPointer ? this.PointerBits : 8);
       var parts = Math.Max(1, (bits + this.PointerBits - 1) / this.PointerBits);
+      if (this.ArgumentRegisters.Count != 0 && parts != 1)
+        throw new NotSupportedException(
+          $"{this.Name} register arguments must fit one {this.PointerBits}-bit register (argument {index}: {type})");
       var regs = register + parts <= this.ArgumentRegisters.Count
         ? this.ArgumentRegisters.Skip(register).Take(parts).ToArray()
         : Array.Empty<MachineRegister>();
-      if (regs.Any()) register += parts;
-      else { result.Add((index, regs, stack)); stack += parts * (this.PointerBits / 8); continue; }
-      result.Add((index, regs, -1));
+      if (regs.Length != 0) {
+        register += parts;
+        result[index] = (index, regs, -1);
+      } else {
+        var bytes = parts * (this.PointerBits / 8);
+        stackArguments.Add((index, bytes));
+      }
+    }
+
+    var stackOffset = this.ShadowSpaceBytes;
+    var pushOrder = this.ArgumentOrder == X86StackArgumentOrder.RightToLeft
+      ? stackArguments.OrderBy(argument => argument.Argument)
+      : stackArguments.OrderByDescending(argument => argument.Argument);
+    foreach (var (index, bytes) in pushOrder) {
+      result[index] = (index, [], stackOffset);
+      stackOffset += bytes;
     }
     return result;
   }

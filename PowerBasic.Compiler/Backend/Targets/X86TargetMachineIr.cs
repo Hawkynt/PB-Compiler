@@ -7,7 +7,8 @@ public sealed class X86TargetRegisterFile {
     this.Registers = mode switch {
       X86Mode.Bit64 => X86RegisterFile.Gpr64,
       X86Mode.Bit32 => X86RegisterFile.Gpr32,
-      _ => X86RegisterFile.Gpr16,
+      X86Mode.Bit16 => X86RegisterFile.Gpr16,
+      _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
     };
     this.Words = mode == X86Mode.Bit64 ? X86RegisterFile.Gpr64Words : X86RegisterFile.Gpr16;
     this.Dwords = mode == X86Mode.Bit64 ? X86RegisterFile.Gpr64Dwords : X86RegisterFile.Gpr32;
@@ -52,7 +53,7 @@ public sealed class X86TargetRegisterFile {
     return register.Size switch {
       MRegSize.Word => this.Words[index],
       MRegSize.Dword => this.Dwords[index],
-      _ => this.Registers[index],
+      _ => throw new ArgumentOutOfRangeException(nameof(register), register.Size, "unsupported x86 register width"),
     };
   }
 }
@@ -60,26 +61,24 @@ public sealed class X86TargetRegisterFile {
 /// <summary>Explicit SIMD register classes.  They are not aliases for the scalar allocator.</summary>
 public enum X86VectorRegisterClass { Mmx64, Xmm128, Ymm256, Zmm512 }
 
-public sealed class X86VectorRegisterFile(X86VectorRegisterClass registerClass) {
-  public X86VectorRegisterClass Class { get; } = registerClass;
-  public int WidthBits => registerClass switch {
-    X86VectorRegisterClass.Mmx64 => 64,
-    X86VectorRegisterClass.Xmm128 => 128,
-    X86VectorRegisterClass.Ymm256 => 256,
-    _ => 512,
-  };
-  public IReadOnlyList<MachineRegister> Registers { get; } = Enumerable.Range(0,
-    registerClass == X86VectorRegisterClass.Mmx64 ? 8 : registerClass == X86VectorRegisterClass.Zmm512 ? 32 : 16)
-    .Select(index => new MachineRegister(
-      registerClass == X86VectorRegisterClass.Mmx64 ? $"mm{index}" :
-      registerClass == X86VectorRegisterClass.Xmm128 ? $"xmm{index}" :
-      registerClass == X86VectorRegisterClass.Ymm256 ? $"ymm{index}" : $"zmm{index}", index,
-      registerClass switch {
-        X86VectorRegisterClass.Mmx64 => 64,
-        X86VectorRegisterClass.Xmm128 => 128,
-        X86VectorRegisterClass.Ymm256 => 256,
-        _ => 512,
-      })).ToArray();
+public sealed class X86VectorRegisterFile {
+  public X86VectorRegisterFile(X86VectorRegisterClass registerClass) {
+    this.Class = registerClass;
+    (var prefix, var width, var count) = registerClass switch {
+      X86VectorRegisterClass.Mmx64 => ("mm", 64, 8),
+      X86VectorRegisterClass.Xmm128 => ("xmm", 128, 16),
+      X86VectorRegisterClass.Ymm256 => ("ymm", 256, 16),
+      X86VectorRegisterClass.Zmm512 => ("zmm", 512, 32),
+      _ => throw new ArgumentOutOfRangeException(nameof(registerClass), registerClass, "unsupported vector register class"),
+    };
+    this.WidthBits = width;
+    this.Registers = Enumerable.Range(0, count)
+      .Select(index => new MachineRegister($"{prefix}{index}", index, width)).ToArray();
+  }
+
+  public X86VectorRegisterClass Class { get; }
+  public int WidthBits { get; }
+  public IReadOnlyList<MachineRegister> Registers { get; }
 }
 
 /// <summary>Target-specific memory address; no segment-register or 16-bit addressing assumptions.</summary>

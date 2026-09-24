@@ -89,7 +89,7 @@ public static class Gvn {
       IrCast x => $"x{x.Op}:{x.Type}({this.Operand(x.Value)})",
       IrGep g => $"g({this.Operand(g.BasePtr)},{this.Operand(g.ByteOffset)})",
       IrLoad load => $"l{load.Type}({this.Operand(load.Pointer)})@{this.MemoryVersion(load)}",
-      IrCall { Callee: IrFunction callee } call when IrEffects.ForExternalCall(callee.Name).CanCse
+      IrCall { Callee: IrFunction callee } call when IrEffects.ForCall(callee).CanCse
         => $"r{callee.Name}({string.Join(',', call.Args.Select(this.Operand))})",
       _ => null,                                       // stores/other calls/allocas/phis/terminators are not numbered
     };

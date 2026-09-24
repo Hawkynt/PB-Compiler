@@ -14,22 +14,21 @@ public sealed class Mos6502MachineLowering : IMachineFunctionLowerer {
     foreach (var block in function.Blocks) {
       var machineBlock = new MBlock(block.Label);
       foreach (var instruction in block.Instructions) {
-        if (instruction is IrRet { Value: IrConstantInt constantResult })
+        if (instruction is IrRet { Value: IrConstantInt { Type.Bits: <= 8 } constantResult })
           machineBlock.Instructions.Add(new MInstr(MOpcode.Mov,
             [new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte)), new MOperand.Immediate(constantResult.Value)], MInstrEffect.None));
-        else if (instruction is IrRet)
+        else if (instruction is IrRet { Value: null })
           machineBlock.Instructions.Add(new MInstr(MOpcode.Ret, [], MInstrEffect.None));
-        else if (instruction is IrInlineAsm asm)
-          machineBlock.Instructions.Add(new MInstr(MOpcode.Call,
-            [new MOperand.LabelRef(PowerBasic.Compiler.Runtime.InlineAsmExports.EmulationRoutine(
-              asm.Text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "asm"))],
-            MInstrEffect.None));
         else if (instruction is IrBinary { Rhs: IrConstantInt constant } binary
                  && binary.Op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor)
           machineBlock.Instructions.Add(new MInstr(binary.Op switch {
             IrBinaryOp.Add => MOpcode.Add, IrBinaryOp.Sub => MOpcode.Sub,
             IrBinaryOp.And => MOpcode.And, IrBinaryOp.Or => MOpcode.Or, _ => MOpcode.Xor,
           }, [new MOperand.Immediate(constant.Value)], MInstrEffect.None));
+        else {
+          error = $"selection: {instruction.GetType().Name} in block '{block.Label}' has no MOS 6502 lowering";
+          return false;
+        }
       }
       result.Blocks.Add(machineBlock);
     }

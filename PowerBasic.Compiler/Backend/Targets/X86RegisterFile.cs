@@ -71,7 +71,8 @@ public static class X86RegisterFile {
     var registers = mode switch {
       X86Mode.Bit16 => Gpr16,
       X86Mode.Bit64 => Gpr64,
-      _ => Gpr32,
+      X86Mode.Bit32 => Gpr32,
+      _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
     };
     if ((uint)encoding >= (uint)registers.Count)
       throw new ArgumentOutOfRangeException(nameof(encoding));
@@ -79,6 +80,10 @@ public static class X86RegisterFile {
   }
 
   public static MachineRegister Get(X86Mode mode, X86RegisterView view, int encoding) {
+    _ = mode switch {
+      X86Mode.Bit16 or X86Mode.Bit32 or X86Mode.Bit64 => mode,
+      _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
+    };
     var registers = (mode, view) switch {
       (_, X86RegisterView.LowByte) when mode == X86Mode.Bit64 => Gpr64LowBytes,
       (_, X86RegisterView.LowByte) => LowBytes,
@@ -87,7 +92,7 @@ public static class X86RegisterFile {
       (_, X86RegisterView.Word) => Gpr16,
       (X86Mode.Bit64, X86RegisterView.Dword) => Gpr64Dwords,
       (_, X86RegisterView.Dword) => Gpr32,
-      (_, X86RegisterView.Qword) => Gpr64,
+      (X86Mode.Bit64, X86RegisterView.Qword) => Gpr64,
       _ => throw new ArgumentOutOfRangeException(nameof(view)),
     };
     if ((uint)encoding >= (uint)registers.Count)

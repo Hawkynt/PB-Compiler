@@ -14,16 +14,28 @@ public static class X86HostedMachineBuilder {
     hosted = null;
     error = null;
     var mode = machine.Target.Name switch {
-      "x86-64" => X86Mode.Bit64,
+      "x86-64" => (X86Mode?)X86Mode.Bit64,
       "x86-32" => X86Mode.Bit32,
       "x86-16" => X86Mode.Bit16,
-      var unsupported => throw new ArgumentOutOfRangeException(
-        nameof(machine), machine.Target, $"target '{unsupported}' is not an x86 hosted target"),
+      _ => null,
     };
-    var selectedMode = mode;
+    if (mode is null) {
+      error = $"target '{machine.Target.Name}' is not an x86 hosted target";
+      return false;
+    }
+    var selectedMode = mode.Value;
 
     var registers = new X86TargetRegisterFile(selectedMode);
-    var abi = X86Abi.For(machine.Source.Convention, selectedMode);
+    X86Abi abi;
+    try {
+      abi = X86Abi.For(machine.Source.Convention, selectedMode);
+    } catch (NotSupportedException exception) {
+      error = "ABI lowering: " + exception.Message;
+      return false;
+    } catch (ArgumentException exception) {
+      error = "ABI lowering: " + exception.Message;
+      return false;
+    }
     var instructions = new List<X86TargetInstruction>();
     var labels = new Dictionary<string, int>(StringComparer.Ordinal);
     var blockLabels = machine.Function.Blocks.ToDictionary(
@@ -44,11 +56,18 @@ public static class X86HostedMachineBuilder {
       }
     }
 
+    IReadOnlyList<(int Argument, IReadOnlyList<MachineRegister> Registers, int StackOffset)> argumentLocations;
+    try {
+      argumentLocations = abi.PlaceArguments(machine.Source.Parameters.Select(parameter => parameter.Type).ToArray());
+    } catch (NotSupportedException exception) {
+      error = "ABI lowering: " + exception.Message;
+      return false;
+    }
     hosted = new X86TargetMachineFunction(selectedMode,
       new X86TargetAbi(selectedMode, abi.Name, abi.StackAlignment, abi.ShadowSpaceBytes,
         abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters), instructions, labels,
       machine.Function.StackSlots.Sum(size => (size + 1) & ~1),
-      abi.PlaceArguments(machine.Source.Parameters.Select(parameter => parameter.Type).ToArray()));
+      argumentLocations);
     return true;
   }
 

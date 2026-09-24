@@ -6,8 +6,9 @@ public sealed class X86MachineEmitter(IMachineInstructionEncoder encoder, IMachi
     var bytes = new List<byte>();
     var framePointer = abi.PointerBits switch {
       16 => X86RegisterFile.Gpr16[5],
+      32 => X86RegisterFile.Gpr32[5],
       64 => X86RegisterFile.Gpr64[5],
-      _ => X86RegisterFile.Gpr32[5],
+      _ => throw new ArgumentOutOfRangeException(nameof(abi), abi.PointerBits, "unsupported x86 pointer width"),
     };
     if (preserveFramePointer) {
       bytes.AddRange(encoder.Push(framePointer));

@@ -30,7 +30,9 @@ public sealed class Mos6502MachineEmitter(IMachineInstructionEncoder encoder) : 
       else if (instruction.Opcode == MOpcode.Call && instruction.Operands is [MOperand.LabelRef label]) {
         relocations.Add(new MachineRelocation(bytes.Count + 1, MachineRelocationKind.Absolute16, label.Name));
         bytes.AddRange([0x20, 0x00, 0x00]);
-      }
+      } else
+        throw new NotSupportedException(
+          $"MOS 6502 emitter cannot encode {instruction.Opcode} with {instruction.Operands.Count} operands");
     }
     if (frame is not null) {
       // Preserve the ABI return register while restoring callee-saved pseudo-registers.

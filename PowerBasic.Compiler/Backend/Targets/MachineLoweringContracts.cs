@@ -105,8 +105,40 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       error = "hosted machine lowering: " + (hostedError ?? "unsupported target instruction");
       return false;
     }
+    if (hosted is null) {
+      error = "hosted machine lowering: succeeded without producing a target function";
+      return false;
+    }
+    if (!TryValidateEncoding(hosted, this.Target.Name, out var encodingError)) {
+      error = "x86 encoding: " + encodingError;
+      return false;
+    }
     machine = new IrMachineFunction(source, selected, allocation, this.Target, hosted, hostedError);
     error = null;
     return true;
+  }
+
+  private static bool TryValidateEncoding(X86TargetMachineFunction function, string targetName, out string? error) {
+    var mode = targetName switch {
+      "x86-16" => X86Mode.Bit16,
+      "x86-32" => X86Mode.Bit32,
+      "x86-64" => X86Mode.Bit64,
+      _ => throw new ArgumentOutOfRangeException(nameof(targetName), targetName, "not an x86 target"),
+    };
+    try {
+      _ = new X86TargetMachineEmitter(new X86InstructionEncoder(mode))
+        .Emit(function, preserveFramePointer: true, emitReturn: true);
+      error = null;
+      return true;
+    } catch (ArgumentException exception) {
+      error = exception.Message;
+      return false;
+    } catch (InvalidOperationException exception) {
+      error = exception.Message;
+      return false;
+    } catch (NotSupportedException exception) {
+      error = exception.Message;
+      return false;
+    }
   }
 }

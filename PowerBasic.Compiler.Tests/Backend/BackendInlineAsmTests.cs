@@ -66,6 +66,33 @@ public sealed class BackendInlineAsmTests {
     Assert.That(LinearScanAllocator.Allocate(m), Is.Not.Null, "and it allocates, so the function routes");
   }
 
+  [Test]
+  public void InlineAsm_GivenAnUnloweredMnemonic_ThenMandatoryRoutingReportsTheMissingSemantics() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("! DAA\nEND\n", "T.BAS", Dialect.Pb36),
+      "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+
+    var generator = new CodeGenerator(model) { Optimize = false };
+    _ = generator.EmitExecutable();
+
+    Assert.That(generator.Errors.Any(error => error.Message.Contains(
+      "inline assembly mnemonic 'DAA' has no semantic lowering", StringComparison.OrdinalIgnoreCase)), Is.True,
+      "an unsupported instruction must fail routing instead of becoming a no-op runtime call");
+  }
+
+  [Test]
+  public void InlineAsm_GivenAnUnmodeledOperandOnAMappedMnemonic_ThenMandatoryRoutingReportsIt() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("! NOP AX\nEND\n", "T.BAS", Dialect.Pb36),
+      "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+
+    var generator = new CodeGenerator(model) { Optimize = false };
+    _ = generator.EmitExecutable();
+
+    Assert.That(generator.Errors.Any(error => error.Message.Contains(
+      "has operands that this lowering does not model", StringComparison.OrdinalIgnoreCase)), Is.True);
+  }
+
   /// <summary>The asm writes a BASIC local, and BASIC reads what it wrote - through the routed path.</summary>
   [Test]
   public void InlineAsm_GivenItWritesALocal_ThenTheRoutedProgramBehavesLikeTheDirectOne() {

@@ -12,6 +12,9 @@ public enum IrEffectKind : ushort {
   MaySynchronize = 1 << 5,
   PerformsIo = 1 << 6,
   Volatile = 1 << 7,
+  MayThrow = 1 << 8,
+  MayBlock = 1 << 9,
+  Atomic = 1 << 10,
 }
 
 /// <summary>
@@ -39,7 +42,10 @@ public readonly record struct IrEffectSummary(IrEffectKind Effects, bool Determi
     | IrEffectKind.MayTrap
     | IrEffectKind.MaySynchronize
     | IrEffectKind.PerformsIo
-    | IrEffectKind.Volatile,
+    | IrEffectKind.Volatile
+    | IrEffectKind.MayThrow
+    | IrEffectKind.MayBlock
+    | IrEffectKind.Atomic,
     Deterministic: false);
 }
 
@@ -65,5 +71,15 @@ public static class IrEffects {
     return _pureMathIntrinsics.Contains(width > 0 ? bare[..width] : bare)
       ? new(IrEffectKind.None, Deterministic: true)
       : IrEffectSummary.UnknownExternal;
+  }
+
+  /// <summary>
+  /// Returns the checked contract for a direct call. Name-based runtime contracts apply only to
+  /// declarations: a definition named like an LLVM intrinsic is still an ordinary function body.
+  /// Until its body summary is available, treat it conservatively.
+  /// </summary>
+  public static IrEffectSummary ForCall(IrFunction callee) {
+    ArgumentNullException.ThrowIfNull(callee);
+    return callee.IsDeclaration ? ForExternalCall(callee.Name) : IrEffectSummary.UnknownExternal;
   }
 }

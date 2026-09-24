@@ -85,6 +85,22 @@ public sealed class GvnTests {
   }
 
   [Test]
+  public void Run_DoesNotMergeCallsToDefinitionNamedLikeIntrinsic() {
+    var input = new IrArgument(IrType.F64, 0, "input");
+    var intrinsicNamedDefinition = new IrFunction("llvm.sin.f64", IrType.F64, [input]);
+    new IrBuilder(intrinsicNamedDefinition.CreateBlock("entry")).Ret(input);
+    var x = new IrArgument(IrType.F64, 0, "x");
+    var fn = new IrFunction("f", IrType.F64, [x]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var first = b.Call(IrType.F64, intrinsicNamedDefinition, x);
+    var second = b.Call(IrType.F64, intrinsicNamedDefinition, x);
+    b.Ret(b.Binary(IrBinaryOp.FAdd, first, second));
+
+    Assert.That(Gvn.Run(fn), Is.EqualTo(0));
+    Assert.That(Count<IrCall>(fn), Is.EqualTo(2));
+  }
+
+  [Test]
   public void Run_DoesNotMergeTwoCallsToAStringRuntimeEntry() {
     // the boundary that keeps the purity list honest: rt_str_len looks like a pure read and is not
     // one - the DOS entry FREES the handle it is given, so merging two of them would free one block

@@ -38,11 +38,25 @@ public sealed class IrEffectsTests {
       Assert.That(effects.Effects.HasFlag(IrEffectKind.MayTrap), Is.True);
       Assert.That(effects.Effects.HasFlag(IrEffectKind.MaySynchronize), Is.True);
       Assert.That(effects.Effects.HasFlag(IrEffectKind.PerformsIo), Is.True);
+      Assert.That(effects.Effects.HasFlag(IrEffectKind.MayThrow), Is.True);
+      Assert.That(effects.Effects.HasFlag(IrEffectKind.MayBlock), Is.True);
+      Assert.That(effects.Effects.HasFlag(IrEffectKind.Atomic), Is.True);
       Assert.That(effects.Deterministic, Is.False);
       Assert.That(effects.CanCse, Is.False);
       Assert.That(effects.CanSpeculate, Is.False);
       Assert.That(FunctionSummaries.IsPureExternal(name), Is.False);
       Assert.That(FunctionSummaries.IsSpeculatableExternal(name), Is.False);
     });
+  }
+
+  [Test]
+  public void ForCall_GivenDefinedFunctionWithIntrinsicName_ThenItDoesNotUseExternalNameContract() {
+    var parameter = new IrArgument(IrType.F64, 0);
+    var function = new IrFunction("llvm.sin.f64", IrType.F64, [parameter]);
+    new IrBuilder(function.CreateBlock("entry")).Ret(parameter);
+
+    var effects = IrEffects.ForCall(function);
+
+    Assert.That(effects, Is.EqualTo(IrEffectSummary.UnknownExternal));
   }
 }
