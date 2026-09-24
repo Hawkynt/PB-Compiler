@@ -176,6 +176,16 @@ public sealed class TargetCostTests {
     Assert.That(Cost(CpuTier.Pentium).MaxFullUnrollTrips, Is.EqualTo(8));
   }
 
+
+  [Test]
+  public void IndirectCallPromotion_GivenHistoricalProfileBoundary_ThenTargetCostOwnsTheThirtyPercentPolicy() {
+    foreach (var tier in Enum.GetValues<CpuTier>())
+      Assert.Multiple(() => {
+        Assert.That(Cost(tier, CostObjective.Balanced).PreferIndirectCallPromotion(29, 100), Is.False);
+        Assert.That(Cost(tier, CostObjective.Balanced).PreferIndirectCallPromotion(30, 100), Is.True);
+      });
+  }
+
   [Test]
   public void AlignHotLoops_GivenTierAndObjective_WhenAsked_ThenOnlySpeedOn486Plus() {
     Assert.That(Cost(CpuTier.I80386, CostObjective.Speed).AlignHotLoops, Is.False);

@@ -22,6 +22,7 @@ public static class IrMiddleEndPipeline {
   public static IrPassManager Standard(bool optimizeForSpeed = false, bool includeModulePasses = true,
       IrDataLayoutTarget? dataLayoutTarget = null, bool enableFpLookupTables = false, bool optimizeForSize = false,
       IIrArithmeticCostModel? arithmeticCostModel = null,
+      IIrCallCostModel? callCostModel = null,
       int minimumIntegerStorageBits = 16,
       bool recoverIntegerArithmetic = false)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
@@ -107,7 +108,8 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("switchform", (fn, _) => Conservative(() => SwitchFormation.Run(fn)))
     .InModulePhase(IrMiddleEndPhase.Interprocedural)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)
-    .AddModuleConservativeWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "icp",
+      module => IndirectCallPromotion.Run(module, callCostModel))
     .AddModuleAnalyzedWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
     .AddModuleAnalyzedWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
     .AddModuleAnalyzedWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
@@ -151,13 +153,16 @@ public static class IrMiddleEndPipeline {
       bool optimizeForSpeed = false,
       bool optimizeForSize = false,
       IIrArithmeticCostModel? arithmeticCostModel = null,
+      IIrCallCostModel? callCostModel = null,
       int minimumIntegerStorageBits = 16,
       bool recoverIntegerArithmetic = false,
       TargetCost? targetCost = null) {
     ArgumentNullException.ThrowIfNull(module);
 
     Func<IrPassManager> pipeline = optimize
-      ? () => Standard(optimizeForSpeed, arithmeticCostModel: arithmeticCostModel,
+      ? () => Standard(optimizeForSpeed,
+          arithmeticCostModel: arithmeticCostModel,
+          callCostModel: callCostModel ?? targetCost,
           minimumIntegerStorageBits: minimumIntegerStorageBits,
           recoverIntegerArithmetic: recoverIntegerArithmetic)
       : () => Legalize(recoverIntegerArithmetic);

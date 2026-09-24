@@ -42,7 +42,7 @@ public enum CostObjective {
 /// <c>Optimize</c>-gated. Cycle figures are representative period numbers for the named core (Intel timing
 /// tables): exactness is not the point, the ordering of the trade-offs across tiers is.
 /// </remarks>
-public sealed class TargetCost : IIrArithmeticCostModel {
+public sealed class TargetCost : IIrArithmeticCostModel, IIrCallCostModel {
   public CpuTier Tier { get; }
   public CostObjective Objective { get; }
 
@@ -190,6 +190,14 @@ public sealed class TargetCost : IIrArithmeticCostModel {
   /// </remarks>
   public bool PreferShiftAddMultiply(int setBits) =>
     setBits >= 1 && 2 * setBits * this.ShiftAddCycles < this.Mul16Cycles;
+
+  /// <summary>
+  /// O0271 indirect-call promotion profitability. The current per-target model intentionally preserves
+  /// the established 30% threshold while moving ownership of that policy out of the transform. This is
+  /// the extension point for future tier/objective-specific branch/code-growth pricing.
+  /// </summary>
+  public bool PreferIndirectCallPromotion(ulong targetCount, ulong totalCount)
+    => IrDefaultCallCostModel.Instance.PreferIndirectCallPromotion(targetCount, totalCount);
 
   /// <summary>
   /// O0338's target-specific break-even: <c>N * FDIV</c> versus one reciprocal <c>FDIV</c> plus

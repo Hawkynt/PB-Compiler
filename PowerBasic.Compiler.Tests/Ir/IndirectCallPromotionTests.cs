@@ -7,6 +7,14 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class IndirectCallPromotionTests {
 
+  private sealed class AlwaysPromoteCost : IIrCallCostModel {
+    public bool PreferIndirectCallPromotion(ulong targetCount, ulong totalCount) => true;
+  }
+
+  private sealed class NeverPromoteCost : IIrCallCostModel {
+    public bool PreferIndirectCallPromotion(ulong targetCount, ulong totalCount) => false;
+  }
+
   private static IrConstantInt Const(long value) => new(IrType.I16, value);
 
   private static (IrModule Module, IrFunction Target, IrFunction Caller, IrArgument Handler, IrCall Call, IrBinary Use)
@@ -59,6 +67,34 @@ public sealed class IndirectCallPromotionTests {
     call.SetIndirectTargetProfile(new IrIndirectCallProfile(100, new IrIndirectCallTarget(target, count)));
 
     Assert.That(IndirectCallPromotion.Run(module) > 0, Is.EqualTo(expected));
+  }
+
+
+  [Test]
+  public void Run_GivenCustomCostModel_ThenProfitabilityIsSeparatedFromLegality() {
+    var (allowedModule, allowedTarget, _, _, allowedCall, _) = Program();
+    allowedCall.SetIndirectTargetProfile(
+      new IrIndirectCallProfile(100, new IrIndirectCallTarget(allowedTarget, 1)));
+
+    var (vetoedModule, vetoedTarget, _, _, vetoedCall, _) = Program();
+    vetoedCall.SetIndirectTargetProfile(
+      new IrIndirectCallProfile(100, new IrIndirectCallTarget(vetoedTarget, 99)));
+
+    Assert.Multiple(() => {
+      Assert.That(IndirectCallPromotion.Run(allowedModule, new AlwaysPromoteCost()), Is.EqualTo(1),
+        "an otherwise legal candidate may be admitted by target profitability even below the historical threshold");
+      Assert.That(IndirectCallPromotion.Run(vetoedModule, new NeverPromoteCost()), Is.Zero,
+        "a legal hot candidate may be declined without changing the transform's legality rules");
+    });
+  }
+
+  [Test]
+  public void Run_GivenIllegalForeignTarget_ThenCostModelCannotOverrideLegality() {
+    var (module, _, _, _, call, _) = Program();
+    var foreign = new IrFunction("foreign", IrType.I16, [new IrArgument(IrType.I16, 0, "x")]);
+    call.SetIndirectTargetProfile(new IrIndirectCallProfile(100, new IrIndirectCallTarget(foreign, 99)));
+
+    Assert.That(IndirectCallPromotion.Run(module, new AlwaysPromoteCost()), Is.Zero);
   }
 
   [Test]
