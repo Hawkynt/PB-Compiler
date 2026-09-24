@@ -17,8 +17,10 @@ all.
 
 The general form is now first-class: `$COMPILE COM` (or `--emit-com`) runs the
 same mandatory Bound AST → IR → SSA middle-end → Low IR → x86-16 machine pipeline
-as EXE output, assembles a relocatable image, and applies the COM load bias of
-`0100h` to every internal absolute offset. PC-relative branches/calls are unchanged.
+as EXE output. The assembler is given a synthetic 0100h origin prefix, so labels,
+jump tables, virtual BSS addresses and every ordinary fixup are resolved at the
+actual DOS COM addresses from the start; the writer then strips that prefix.
+PC-relative branches/calls remain naturally position-independent.
 
 COM deliberately has no fallback representation. A load-time segment relocation,
 unresolved external symbol, linked unit/library, or image/BSS footprint that would
@@ -68,8 +70,8 @@ segment. Anything else keeps the MZ path.
 
 - DOS loads the file at PSP:0100h with CS=DS=ES=SS; the existing startup saves
   the PSP segment and initializes the runtime from CS exactly as on EXE.
-- Internal absolute offsets are rebased by +0100h from assembler relocation
-  records; relative transfers need no patch.
+- The assembler resolves internal absolute offsets against an origin of 0100h;
+  relative transfers need no special patch.
 - Segment and unresolved-external relocations are rejected because COM has no
   relocation table.
 - The file image plus virtual BSS must fit in the remaining 0xFF00 bytes of the

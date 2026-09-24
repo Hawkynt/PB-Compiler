@@ -60,7 +60,8 @@ public sealed class IrOnlyProductionPipelineTests {
 
     Assert.Multiple(() => {
       Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
-      Assert.That(generator.BackendDeclines, Is.Empty);
+      Assert.That(generator.BackendDeclines.Where(d => !d.Name.Equals("main", StringComparison.OrdinalIgnoreCase)), Is.Empty,
+        "UNIT has no module body; only real procedure declines matter");
       Assert.That(generator.BackendRoutedNames, Does.Contain("AddOne"));
       Assert.That(unit.Code, Is.Not.Empty);
       Assert.That(unit.Exports.Select(e => e.Name), Does.Contain("AddOne"));

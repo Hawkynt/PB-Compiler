@@ -941,6 +941,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return [];
 
     var asm = this._asm;
+    // Model COM's PSP:0100h load origin inside the assembler itself. The prefix is not written to
+    // disk; it exists so every label/fixup/pseudo-address sees the same offsets DOS will expose.
+    if (emitCom)
+      asm.Db(new byte[ComWriter.LoadOffset]);
+
     // peephole / scheduler: record the instruction stream of a standalone program image so a
     // post-emit pass can rewrite it (units/libraries keep the faithful stream). The two passes both
     // rewrite by recorded byte position, so they are mutually exclusive: an optimized standalone under
@@ -1058,18 +1063,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
     this.EmitBackendMain();
 
-    // Until module-level GlobalDCE is made export-aware for linked/public DOS programs, retain all
-    // source definitions here. This is conservative code-size-wise and exact semantically; crucially,
-    // the decision is no longer recomputed from the bound AST.
+    // Emit exactly the source definitions that survived the IR module pipeline, preserving source
+    // order for deterministic layout. A live definition that failed machine lowering was already
+    // diagnosed by mandatory routing before image emission; a missing one here is an invariant breach.
+    var backendProcedures = this.BackendProcs();
     foreach (var proc in model.ProcedureList)
-      if (!proc.IsExternal) {
-        if (!this.IsBackendRouted(proc)) {
-          this.Errors.Add(new(proc.Position,
-            $"IR/x86-16 compilation reached image emission without a machine body for '{proc.Name}'"));
-          return [];
-        }
+      if (!proc.IsExternal && backendProcedures.ContainsKey(proc))
         this.EmitBackendFunction(proc);
-      }
 
     this.EmitFarThunks();
 

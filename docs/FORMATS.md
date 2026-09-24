@@ -18,10 +18,10 @@ main code. `END`/`SYSTEM` terminate via int 21h AH=4Ch.
 ## .COM — DOS flat executable
 
 A COM file has no header and no relocation table. DOS loads the first byte at
-PSP:0100h and starts with CS=DS=ES=SS equal to the PSP segment. PB-Compiler
-therefore assembles the ordinary x86-16 image relocatably and adds 0100h to each
-internal absolute-offset relocation before writing the file. Relative CALL/JMP/Jcc
-displacements are position-independent and are left unchanged.
+PSP:0100h and starts with CS=DS=ES=SS equal to the PSP segment. PB-Compiler therefore assembles the ordinary x86-16 image with a synthetic 0100h
+origin prefix. All labels, absolute addresses, jump tables and virtual BSS symbols
+are resolved at their final DOS offsets; the writer validates relocation legality
+and strips the prefix. Relative CALL/JMP/Jcc displacements are position-independent.
 
 COM output is accepted only when the file plus virtual BSS fits in the 0xFF00
 bytes available above the PSP and when no segment or unresolved-external

@@ -262,6 +262,23 @@ public sealed partial class CodeGenerator {
       recoverIntegerArithmetic: true,
       targetCost: this.Cost);
 
+    // Once production emission is IR-only, whole-program dead function/global elimination belongs
+    // here instead of in CodeGenerator's bound-AST reachability pass. It is legal only for a
+    // self-contained executable: UNIT exports and linked foreign objects may name source procedures
+    // that have no visible IR caller.
+    var sourceDefinitionsBeforeGlobalDce = model.ProcedureList
+      .Where(p => !p.IsExternal && p.Body is not null)
+      .Select(Ir.IrLowering.IrNameOf)
+      .Where(name => module.FindFunction(name) is { IsDeclaration: false })
+      .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var eliminatedByGlobalDce = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    if (this.Optimize && !this._isUnit && !this._allowExternalCalls) {
+      GlobalDce.Run(module);
+      foreach (var name in sourceDefinitionsBeforeGlobalDce)
+        if (module.FindFunction(name) is null)
+          eliminatedByGlobalDce.Add(name);
+    }
+
     // O0284 on native x86 uses ABI-preserving entry thunks. The source-visible procedures keep their
     // original signatures while private helpers carry the one varying context parameter.
     this.PrepareBackendSemanticMerges(module);
@@ -278,6 +295,10 @@ public sealed partial class CodeGenerator {
 
     var candidates = new List<(ProcedureSymbol Proc, IrFunction Fn, X86MachineFunction Machine)>();
     foreach (var proc in model.ProcedureList) {
+      var irName = Ir.IrLowering.IrNameOf(proc);
+      if (eliminatedByGlobalDce.Contains(irName))
+        continue; // intentionally absent: IR whole-program reachability proved it dead
+
       // The filter admits a SHAPE the ABI can express; whether the body can be compiled at all is the
       // selector's question, and it declines what it cannot do. It used to demand a signed 16-bit
       // function with signed 16-bit parameters - the truth when the back end knew only integers. It

@@ -9,6 +9,7 @@ public sealed class ComWriterTests {
   [Test]
   public void Write_GivenInternalAbsoluteOffset_ThenRebasesItByPspLoadOffset() {
     var asm = new Assembler();
+    asm.Db(new byte[ComWriter.LoadOffset]);
     var data = asm.DefineLabel();
     asm.Mov(Reg.AX, Imm.OffsetOf(data));
     asm.MarkLabel(data);
@@ -26,6 +27,7 @@ public sealed class ComWriterTests {
   [Test]
   public void Write_GivenRelativeBranch_ThenItsDisplacementIsNotRebased() {
     var asm = new Assembler();
+    asm.Db(new byte[ComWriter.LoadOffset]);
     var target = asm.DefineLabel();
     asm.Jmp(target);
     asm.Nop();
@@ -35,12 +37,14 @@ public sealed class ComWriterTests {
     var relocatable = asm.ToRelocatable();
     var com = ComWriter.Write(relocatable);
 
-    Assert.That(com, Is.EqualTo(relocatable.Image), "PC-relative control flow is load-address independent");
+    Assert.That(com, Is.EqualTo(relocatable.Image[ComWriter.LoadOffset..]),
+      "PC-relative control flow is load-address independent");
   }
 
   [Test]
   public void Write_GivenSegmentRelocation_ThenRejectsComAsUnrepresentable() {
     var asm = new Assembler();
+    asm.Db(new byte[ComWriter.LoadOffset]);
     asm.Mov(Reg.AX, Imm.Segment());
 
     var error = Assert.Throws<InvalidDataException>(() => ComWriter.Write(asm.ToRelocatable()));
@@ -50,10 +54,10 @@ public sealed class ComWriterTests {
 
   [Test]
   public void Write_GivenVirtualBssPastFfff_ThenRejectsTheImage() {
-    var image = new RelocatableImage([0x90], [], new Dictionary<string, int>());
+    var image = new RelocatableImage(new byte[ComWriter.LoadOffset + 1], [], new Dictionary<string, int>());
 
     var error = Assert.Throws<InvalidDataException>(
-      () => ComWriter.Write(image, ComWriter.MaximumImageBytes + 1));
+      () => ComWriter.Write(image, 0x10001));
 
     Assert.That(error!.Message, Does.Contain("virtual BSS"));
   }
