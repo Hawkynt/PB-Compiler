@@ -929,8 +929,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // a different program from the one it shipped, it emitted one. ResolveOptimizeObjective's own
     // summary already promised "before backend selection and emission"; this is that promise.
     //
-    // Nothing in an ordinary build moves. The only statement between here and the old position is
-    // TryLowerTrivialProgram, which reads neither flag.
     this.ResolveOptimizeObjective(optimizeMeta);
 
     // Asked HERE, after the optimizer has had its say about calling conventions and before a single
