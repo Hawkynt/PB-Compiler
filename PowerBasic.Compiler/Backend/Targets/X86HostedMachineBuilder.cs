@@ -78,7 +78,7 @@ public static class X86HostedMachineBuilder {
     try {
       switch (instruction.Opcode) {
         case MOpcode.InlineAsm when instruction.Operands.OfType<MOperand.InlineAsmText>().FirstOrDefault() is { } asm:
-          return TryExpandInlineAsm(instruction, asm, mode, registers, function, allocation, out target);
+          return TryExpandInlineAsm(instruction, asm, mode, registers, function, allocation, out target, out error);
         case MOpcode.Mov when instruction.Operands.Count == 2
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var immediateAddress)
             && instruction.Operands[1] is MOperand.Immediate immediateMemory:
@@ -443,6 +443,12 @@ public static class X86HostedMachineBuilder {
     } catch (InvalidOperationException ex) {
       error = ex.Message;
       return false;
+    } catch (IndexOutOfRangeException ex) {
+      error = $"malformed {instruction.Opcode} operand list: {ex.Message}";
+      return false;
+    } catch (NotSupportedException ex) {
+      error = ex.Message;
+      return false;
     }
   }
 
@@ -464,7 +470,7 @@ public static class X86HostedMachineBuilder {
         MRegSize.Word => 16,
         MRegSize.Dword => 32,
         MRegSize.Qword => 64,
-        _ => 80,
+        _ => throw new ArgumentOutOfRangeException(nameof(memory), memory.Size, "unsupported x86 memory width"),
       });
     // Absolute displacement-only memory operands are valid in all hosted modes.
     return true;
@@ -484,7 +490,7 @@ public static class X86HostedMachineBuilder {
         MRegSize.Word => 16,
         MRegSize.Dword => 32,
         MRegSize.Qword => 64,
-        _ => 80,
+        _ => throw new ArgumentOutOfRangeException(nameof(operand), slot.Size, "unsupported x86 stack-slot width"),
       });
       return true;
     }
@@ -494,7 +500,7 @@ public static class X86HostedMachineBuilder {
         MRegSize.Word => 16,
         MRegSize.Dword => 32,
         MRegSize.Qword => 64,
-        _ => 80,
+        _ => throw new ArgumentOutOfRangeException(nameof(operand), cell.Size, "unsupported x86 data-cell width"),
       }, cell.Name);
       return true;
     }
@@ -512,7 +518,7 @@ public static class X86HostedMachineBuilder {
           MRegSize.Word => 16,
           MRegSize.Dword => 32,
           MRegSize.Qword => 64,
-          _ => 80,
+          _ => throw new ArgumentOutOfRangeException(nameof(operand), parameter.Size, "unsupported x86 parameter width"),
         });
       return true;
     }
@@ -522,13 +528,19 @@ public static class X86HostedMachineBuilder {
 
   private static bool TryExpandInlineAsm(MInstr instruction, MOperand.InlineAsmText asm, X86Mode mode,
       X86TargetRegisterFile registers, X86MachineFunction function,
-      IReadOnlyDictionary<int, Reg> allocation, out X86TargetInstruction? target) {
+      IReadOnlyDictionary<int, Reg> allocation, out X86TargetInstruction? target, out string? error) {
     target = null;
+    error = null;
     var text = asm.Text.Trim();
     if (text.Length == 0)
       return true;
     var mnemonic = text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)[0]
       .ToUpperInvariant();
+    if (TryExpandScalarAsm(instruction, asm, mnemonic, mode, registers, function, allocation,
+          out target, out error))
+      return true;
+    if (error is not null)
+      return false;
     if (mnemonic is "AESENC" or "AESDEC" or "AESIMC" or "PCLMULQDQ") {
       var vectorOperands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
         .Select(operand => TryMachineRegister(operand.Reg, registers, allocation)).ToArray();
@@ -603,18 +615,204 @@ public static class X86HostedMachineBuilder {
       "FLDL2T" => new X86TargetInstruction(X86TargetOpcode.Fldl2t, []),
       _ => null,
     };
+    if (target is not null && !HasNoTextOperands(text)) {
+      target = null;
+      error = $"inline assembly '{mnemonic}' has operands that this lowering does not model";
+      return false;
+    }
     if (target is not null)
       return true;
-    var runtimeRegisters = instruction.Operands.Skip(1).OfType<MOperand.Register>()
-      .Select(operand => TryMachineRegister(operand.Reg, registers, allocation))
-      .Where(register => register is not null).Select(register => register!.Value).ToArray();
-    // Keep unsupported target mnemonics linkable through the runtime semantic fallback.  The
-    // mnemonic-specific label used by the old emitter was never emitted by DosRuntime and made a
-    // perfectly valid routed program fail at final assembly.  Operand-aware native/vector cases
-    // above still retain their exact instruction; only this final emulation path is generic.
-    target = new X86TargetInstruction(X86TargetOpcode.Call, runtimeRegisters,
-      Symbol: "rt_inline_asm_emulate");
+    error = $"inline assembly mnemonic '{mnemonic}' has no semantic lowering for {mode}";
+    return false;
+  }
+
+  private static bool TryExpandScalarAsm(MInstr instruction, MOperand.InlineAsmText asm,
+      string mnemonic, X86Mode mode, X86TargetRegisterFile registers, X86MachineFunction function,
+      IReadOnlyDictionary<int, Reg> allocation, out X86TargetInstruction? target, out string? error) {
+    target = null;
+    error = null;
+    if (mnemonic is not ("MOV" or "ADD" or "SUB" or "AND" or "OR" or "XOR" or "CMP" or "TEST"
+        or "ADC" or "SBB" or "PUSH" or "POP"))
+      return false;
+
+    var separator = asm.Text.IndexOfAny([' ', '\t']);
+    var operandText = separator < 0 ? "" : asm.Text[(separator + 1)..];
+    var parser = new TextAssembler(new Assembler());
+    if (!parser.TryParseOperands(operandText, new InlineAsmLabelResolver(), out var parsed, out var parseError)) {
+      error = $"inline assembly '{mnemonic}' operands cannot be lowered: {parseError}";
+      return true;
+    }
+    var values = new List<InlineAsmValue>(parsed.Count);
+    for (var index = 0; index < parsed.Count; ++index) {
+      if (!TryInlineAsmValue(parsed[index], index, asm, instruction, mode, registers, function, allocation,
+            out var value, out error))
+        return true;
+      values.Add(value);
+    }
+
+    if (mnemonic is "PUSH" or "POP") {
+      if (values.Count != 1)
+        return true;
+      var value = values[0];
+      if (mnemonic == "PUSH" && value.Immediate is { } immediate) {
+        target = new(X86TargetOpcode.Push, [], immediate);
+        return true;
+      }
+      if (value.Register is { } register) {
+        target = new(mnemonic == "PUSH" ? X86TargetOpcode.Push : X86TargetOpcode.Pop, [register]);
+        return true;
+      }
+      if (value.Address is { } address) {
+        target = new(mnemonic == "PUSH" ? X86TargetOpcode.Push : X86TargetOpcode.Pop, [], Address: address);
+        return true;
+      }
+      return true;
+    }
+
+    if (values.Count != 2)
+      return true;
+    var destination = values[0];
+    var source = values[1];
+    if (mnemonic == "MOV") {
+      if (destination.Register is { } destinationRegister && source.Register is { } sourceRegister)
+        target = new(X86TargetOpcode.Mov, [destinationRegister, sourceRegister]);
+      else if (destination.Register is { } register && source.Immediate is { } immediate)
+        target = new(X86TargetOpcode.Mov, [register], immediate);
+      else if (destination.Register is { } loadRegister && source.Address is { } loadAddress)
+        target = new(X86TargetOpcode.Mov, [loadRegister], Address: loadAddress);
+      else if (destination.Address is { } storeAddress && source.Register is { } storeRegister)
+        target = new(X86TargetOpcode.Mov, [storeRegister], Immediate: 1, Address: storeAddress);
+      else if (destination.Address is { } memoryAddress && source.Immediate is { } memoryImmediate)
+        target = new(X86TargetOpcode.MoveMemoryImmediate, [], memoryImmediate, memoryAddress);
+      return true;
+    }
+
+    var opcode = mnemonic switch {
+      "ADD" => X86TargetOpcode.Add,
+      "SUB" => X86TargetOpcode.Sub,
+      "AND" => X86TargetOpcode.And,
+      "OR" => X86TargetOpcode.Or,
+      "XOR" => X86TargetOpcode.Xor,
+      "CMP" => X86TargetOpcode.Cmp,
+      "TEST" => X86TargetOpcode.Test,
+      "ADC" => X86TargetOpcode.Adc,
+      "SBB" => X86TargetOpcode.Sbb,
+      _ => throw new InvalidOperationException($"unexpected scalar inline-asm mnemonic '{mnemonic}'"),
+    };
+    if (destination.Register is { } aluRegister && source.Register is { } aluSource)
+      target = new(opcode, [aluRegister, aluSource]);
+    else if (destination.Register is { } immediateRegister && source.Immediate is { } immediateValue)
+      target = new(opcode, [immediateRegister], immediateValue);
+    else if (destination.Register is { } memoryRegister && source.Address is { } sourceAddress)
+      target = new(opcode == X86TargetOpcode.Cmp ? X86TargetOpcode.CompareRegisterMemory : X86TargetOpcode.RegisterMemoryAlu,
+        [memoryRegister], Immediate: opcode == X86TargetOpcode.Cmp ? 0 : RegisterMemoryOpcode(opcode), Address: sourceAddress);
+    else if (destination.Address is { } destinationAddress && source.Register is { } addressRegister)
+      target = new(opcode, [addressRegister], Address: destinationAddress);
+    else if (destination.Address is { } immediateAddress && source.Immediate is { } addressImmediate)
+      target = new(X86TargetOpcode.AluMemoryImmediate, [], addressImmediate, immediateAddress,
+        Operands: [new X86TargetOperand.Immediate(MemoryAluExtension(opcode))]);
     return true;
+  }
+
+  private static int RegisterMemoryOpcode(X86TargetOpcode opcode) => opcode switch {
+    X86TargetOpcode.Add => 0x03,
+    X86TargetOpcode.Sub => 0x2B,
+    X86TargetOpcode.And => 0x23,
+    X86TargetOpcode.Or => 0x0B,
+    X86TargetOpcode.Xor => 0x33,
+    X86TargetOpcode.Adc => 0x13,
+    X86TargetOpcode.Sbb => 0x1B,
+    _ => throw new ArgumentOutOfRangeException(nameof(opcode), opcode, "unsupported register-memory ALU opcode"),
+  };
+
+  private static int MemoryAluExtension(X86TargetOpcode opcode) => opcode switch {
+    X86TargetOpcode.Add => 0,
+    X86TargetOpcode.Or => 1,
+    X86TargetOpcode.Adc => 2,
+    X86TargetOpcode.Sbb => 3,
+    X86TargetOpcode.And => 4,
+    X86TargetOpcode.Sub => 5,
+    X86TargetOpcode.Xor => 6,
+    X86TargetOpcode.Cmp => 7,
+    _ => throw new ArgumentOutOfRangeException(nameof(opcode), opcode, "unsupported memory ALU extension"),
+  };
+
+  private static bool TryInlineAsmValue(TextAssembler.ParsedAsmOperand parsed, int index,
+      MOperand.InlineAsmText asm, MInstr instruction, X86Mode mode, X86TargetRegisterFile registers,
+      X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation,
+      out InlineAsmValue value, out string? error) {
+    error = null;
+    value = default;
+    switch (parsed) {
+      case TextAssembler.ParsedAsmRegister register:
+        var size = register.Register.IsByte() ? MRegSize.Byte
+          : register.Register.IsDword() ? MRegSize.Dword : MRegSize.Word;
+        value = new(TryMachineRegister(MReg.Physical_(register.Register, size), registers, allocation), null, null);
+        if (value.Register is null)
+          error = $"inline assembly register '{register.Register}' is not representable in {mode}";
+        return value.Register is not null;
+      case TextAssembler.ParsedAsmImmediate immediate:
+        value = new(null, null, immediate.Value);
+        return true;
+      case TextAssembler.ParsedAsmLabel label:
+        var nameIndex = asm.Names.ToList().FindIndex(name =>
+          name.Equals(label.Label?.Name, StringComparison.OrdinalIgnoreCase));
+        if (nameIndex < 0 || nameIndex + 1 >= instruction.Operands.Count
+            || !TryAddress(instruction.Operands[nameIndex + 1], function, registers, allocation, out var address)) {
+          error = $"inline assembly operand '{label.Label?.Name}' has no routable storage";
+          return false;
+        }
+        value = new(null, address, null);
+        return true;
+      case TextAssembler.ParsedAsmMemory memory:
+        if (!TryMemoryAddress(memory.Memory, mode, registers, out var memoryAddress)) {
+          error = "inline assembly memory operand is not representable by the hosted x86 target";
+          return false;
+        }
+        value = new(null, memoryAddress, null);
+        return true;
+      default:
+        error = $"inline assembly operand #{index + 1} is not supported by the hosted x86 target";
+        return false;
+    }
+  }
+
+  private static bool TryMemoryAddress(Mem memory, X86Mode mode, X86TargetRegisterFile registers,
+      out X86TargetAddress address) {
+    static MachineRegister? Convert(Reg? register, X86TargetRegisterFile file) {
+      if (register is not { } value)
+        return null;
+      var size = value.IsByte() ? MRegSize.Byte : value.IsDword() ? MRegSize.Dword : MRegSize.Word;
+      return TryMachineRegister(MReg.Physical_(value, size), file);
+    }
+    address = new(Convert(memory.Base, registers), Convert(memory.Index, registers), (byte)memory.Scale,
+      memory.Displacement, memory.Size switch {
+        OperandSize.Byte => 8,
+        OperandSize.Word => 16,
+        OperandSize.Dword => 32,
+        OperandSize.Qword => 64,
+        OperandSize.None => mode switch {
+          X86Mode.Bit16 => 16,
+          X86Mode.Bit32 or X86Mode.Bit64 => 32,
+          _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
+        },
+        _ => throw new ArgumentOutOfRangeException(nameof(memory), memory.Size, "unsupported inline-asm memory width"),
+      });
+    return true;
+  }
+
+  private readonly record struct InlineAsmValue(MachineRegister? Register, X86TargetAddress? Address, long? Immediate);
+
+  private sealed class InlineAsmLabelResolver : IAsmSymbolResolver {
+    public bool TryResolve(string name, out AsmSymbol symbol) {
+      symbol = AsmSymbol.OfLabel(new Label(name));
+      return true;
+    }
+  }
+
+  private static bool HasNoTextOperands(string text) {
+    var separator = text.IndexOfAny([' ', '\t']);
+    return separator < 0 || text[(separator + 1)..].Trim().Length == 0;
   }
 
   private static bool TryExpandVectorAsm(string mnemonic, MInstr instruction,

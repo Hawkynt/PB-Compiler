@@ -2,6 +2,13 @@ namespace PowerBasic.Compiler.Backend.Targets;
 
 /// <summary>Small, specification-derived x86 encoder used by the target machine emitter.</summary>
 public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEncoder {
+  private readonly int _modeBits = mode switch {
+    X86Mode.Bit16 => 16,
+    X86Mode.Bit32 => 32,
+    X86Mode.Bit64 => 64,
+    _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
+  };
+
   public byte[] Ret() => [0xC3];
 
   public byte[] Push(MachineRegister register) {
@@ -48,7 +55,8 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     return mode switch {
       X86Mode.Bit16 => [0x81, (byte)(0xC0 | (extension << 3) | 4), .. BitConverter.GetBytes((ushort)bytes)],
       X86Mode.Bit32 => [0x81, (byte)(0xC0 | (extension << 3) | 4), .. BitConverter.GetBytes(bytes)],
-      _ => [0x48, 0x81, (byte)(0xC0 | (extension << 3) | 4), .. BitConverter.GetBytes(bytes)],
+      X86Mode.Bit64 => [0x48, 0x81, (byte)(0xC0 | (extension << 3) | 4), .. BitConverter.GetBytes(bytes)],
+      _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
     };
   }
 
@@ -188,7 +196,13 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
       bytes.AddRange(BitConverter.GetBytes(displacement));
   }
 
-  private static int ScaleBits(byte scale) => scale switch { 1 => 0, 2 => 1, 4 => 2, 8 => 3, _ => 0 };
+  private static int ScaleBits(byte scale) => scale switch {
+    1 => 0,
+    2 => 1,
+    4 => 2,
+    8 => 3,
+    _ => throw new ArgumentOutOfRangeException(nameof(scale), scale, "x86 SIB scale must be 1, 2, 4, or 8"),
+  };
 
   private static void AppendModRm(List<byte> bytes, int reg, int rm, int displacement, bool forceDisp) {
     var mod = forceDisp ? 1 : displacement == 0 ? 0 : displacement is >= sbyte.MinValue and <= sbyte.MaxValue ? 1 : 2;
@@ -461,8 +475,7 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
     => register.Bits == 8 && register.Encoding is >= 4 and <= 7 && register.AliasGroup is >= 0 and <= 3;
 
   private void Validate(MachineRegister register) {
-    var bits = mode switch { X86Mode.Bit16 => 16, X86Mode.Bit64 => 64, _ => 32 };
-    if (register.Bits > bits || register.Bits is not (8 or 16 or 32 or 64))
+    if (register.Bits > this._modeBits || register.Bits is not (8 or 16 or 32 or 64))
       throw new ArgumentException("Register width does not match the target mode.", nameof(register));
   }
 }
