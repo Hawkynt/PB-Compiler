@@ -683,7 +683,7 @@ public static class X86HostedMachineBuilder {
       out X86TargetInstruction? target, out string? error) {
     target = null;
     error = null;
-    var text = asm.Text.Trim();
+    var text = InlineAsmCode(asm.Text).Trim();
     if (text.Length == 0)
       return true;
     var mnemonic = text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)[0]
@@ -718,8 +718,9 @@ public static class X86HostedMachineBuilder {
       var registerOperands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
         .Select(operand => TryMachineRegister(operand.Reg, registers, allocation)).ToArray();
       if (registerOperands.Length < 2) {
-        var separator = asm.Text.IndexOfAny([' ', '\t']);
-        var operandText = separator < 0 ? "" : asm.Text[(separator + 1)..];
+        var code = InlineAsmCode(asm.Text);
+        var separator = code.IndexOfAny([' ', '\t']);
+        var operandText = separator < 0 ? "" : code[(separator + 1)..];
         var parser = new TextAssembler(new Assembler());
         if (parser.TryParseOperands(operandText, new InlineAsmLabelResolver(), out var parsed, out _))
           registerOperands = parsed.OfType<TextAssembler.ParsedAsmRegister>()
@@ -806,8 +807,9 @@ public static class X86HostedMachineBuilder {
     };
     if (condition == 16)
       return false;
-    var separator = asm.Text.IndexOfAny([' ', '\t']);
-    var operandText = separator < 0 ? "" : asm.Text[(separator + 1)..];
+    var code = InlineAsmCode(asm.Text);
+    var separator = code.IndexOfAny([' ', '\t']);
+    var operandText = separator < 0 ? "" : code[(separator + 1)..];
     var parser = new TextAssembler(new Assembler());
     if (!parser.TryParseOperands(operandText, new InlineAsmLabelResolver(), out var parsed, out var parseError)) {
       error = $"inline assembly '{mnemonic}' operands cannot be lowered: {parseError}";
@@ -838,8 +840,9 @@ public static class X86HostedMachineBuilder {
         or "ADC" or "SBB" or "PUSH" or "POP"))
       return false;
 
-    var separator = asm.Text.IndexOfAny([' ', '\t']);
-    var operandText = separator < 0 ? "" : asm.Text[(separator + 1)..];
+    var code = InlineAsmCode(asm.Text);
+    var separator = code.IndexOfAny([' ', '\t']);
+    var operandText = separator < 0 ? "" : code[(separator + 1)..];
     var parser = new TextAssembler(new Assembler());
     if (!parser.TryParseOperands(operandText, new InlineAsmLabelResolver(), out var parsed, out var parseError)) {
       error = $"inline assembly '{mnemonic}' operands cannot be lowered: {parseError}";
@@ -1022,6 +1025,27 @@ public static class X86HostedMachineBuilder {
     }
   }
 
+  /// <summary>
+  /// Removes an assembler ';' comment without treating semicolons inside quoted DB/DW strings as
+  /// comment starts. InlineAsmText intentionally retains the source spelling for diagnostics; every
+  /// hosted semantic parser must consume this code-only view instead.
+  /// </summary>
+  private static string InlineAsmCode(string text) {
+    var quoted = false;
+    for (var index = 0; index < text.Length; ++index) {
+      var ch = text[index];
+      if (ch == '"') {
+        if (quoted && index + 1 < text.Length && text[index + 1] == '"') {
+          ++index;
+          continue;
+        }
+        quoted = !quoted;
+      } else if (ch == ';' && !quoted)
+        return text[..index];
+    }
+    return text;
+  }
+
   private static bool HasNoTextOperands(string text) {
     var separator = text.IndexOfAny([' ', '\t']);
     return separator < 0 || text[(separator + 1)..].Trim().Length == 0;
@@ -1051,8 +1075,9 @@ public static class X86HostedMachineBuilder {
     var operands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
       .Select(operand => TryMachineRegister(operand.Reg, registers, allocation)).ToArray();
     if (operands.Length < 2) {
-      var separator = asm.Text.IndexOfAny([' ', '\t']);
-      var operandText = separator < 0 ? "" : asm.Text[(separator + 1)..];
+      var code = InlineAsmCode(asm.Text);
+      var separator = code.IndexOfAny([' ', '\t']);
+      var operandText = separator < 0 ? "" : code[(separator + 1)..];
       var parser = new TextAssembler(new Assembler());
       if (!parser.TryParseOperands(operandText, new InlineAsmLabelResolver(), out var parsed, out _))
         return false;

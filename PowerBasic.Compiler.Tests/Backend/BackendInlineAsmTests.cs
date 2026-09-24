@@ -67,6 +67,25 @@ public sealed class BackendInlineAsmTests {
   }
 
   [Test]
+  public void InlineAsm_GivenATrailingAssemblerComment_ThenCommentIsNotAnOperand() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      ! NOP ; assembler comment
+      PRINT "ok"
+      END
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+
+    var generator = new CodeGenerator(model) { Optimize = true };
+    var image = generator.EmitExecutable();
+
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+      Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("ok"));
+    });
+  }
+
+  [Test]
   public void InlineAsm_GivenAnUnloweredMnemonic_ThenMandatoryRoutingReportsTheMissingSemantics() {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("! DAA\nEND\n", "T.BAS", Dialect.Pb36),
       "T.BAS", Dialect.Pb36), Dialect.Pb36);
