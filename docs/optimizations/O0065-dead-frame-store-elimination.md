@@ -27,9 +27,15 @@ intra-block overwrite scan.
 An `IrAlloca` qualifies for the whole-function rule only when:
 
 - it is compiler-generated storage (`IsSourceVariable == false`);
-- its pointer use graph contains only loads, stores through the pointer, and GEPs;
-- no derived pointer is passed to a call, returned, stored as a value, cast, merged,
-  or otherwise escapes the explicit memory graph.
+- its pointer use graph contains only loads, stores through the pointer, GEPs, and
+  pointer-preserving bitcasts;
+- no derived pointer is passed to a call, returned, stored as a value, converted through
+  an integer, merged, bound to opaque assembly, or otherwise escapes the explicit memory graph.
+
+The capture proof is now supplied by shared `IrPointerEscapeAnalysis`, while
+`IrPointerIdentityAnalysis` maps loads/stores back to their root alloca across GEPs and
+pointer-preserving bitcasts. O0065 still owns the separate policy that source-variable
+allocas are excluded.
 
 For every store into such an object, the pass asks whether **any** load derived
 from the same alloca may alias the bytes written by the store. If none can, the

@@ -107,6 +107,32 @@ public sealed class RedundantMemoryTests {
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
+
+  [Test]
+  public void InterveningStoreThroughBitcastOfDistinctAlloca_DoesNotBlockForwarding() {
+    var v = new IrArgument(IrType.I32, 0, "v");
+    var w = new IrArgument(IrType.I32, 1, "w");
+    var fn = new IrFunction("f", IrType.I32, [v, w]);
+    var entry = fn.CreateBlock("entry");
+    var b = new IrBuilder(entry);
+    var first = b.Alloca(IrType.I32);
+    var second = b.Alloca(IrType.I32);
+    var firstAddress = b.Gep(first, IrBuilder.ConstI32(0));
+    var secondAddress = entry.Append(new IrCast(IrCastOp.BitCast, second, IrType.Ptr));
+    b.Store(v, firstAddress);
+    b.Store(w, secondAddress);
+    b.Ret(b.Load(IrType.I32, firstAddress));
+
+    RedundantMemory.Run(fn);
+    Dce.Run(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(IrPrinter.Print(fn), Does.Contain("ret i32 %v"));
+      Assert.That(fn.AllInstructions.OfType<IrLoad>(), Is.Empty);
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
   [Test]
   public void Pipeline_ArrayStoreThenRead_FoldsThroughMemory() {
     var unit = Parser.Parse(Lexer.Tokenize("DIM a%(0 TO 3)\na%(1) = 5\nx% = a%(1)\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);

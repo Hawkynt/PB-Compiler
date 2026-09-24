@@ -55,6 +55,10 @@ public static class IrAnalyses {
   public static IrAnalysisKey<IrPointerIdentityAnalysis> PointerIdentity { get; } =
     new("pointer-identity", static (_, _) => new IrPointerIdentityAnalysis());
 
+  /// <summary>Conservative pointer capture/escape facts over explicit derived-pointer use graphs.</summary>
+  public static IrAnalysisKey<IrPointerEscapeAnalysis> PointerEscape { get; } =
+    new("pointer-escape", static (_, _) => new IrPointerEscapeAnalysis());
+
   /// <summary>
   /// Shared memory read/write projection. Module-owned runs refine direct internal calls through cached
   /// function summaries; standalone function runs conservatively keep those calls opaque.

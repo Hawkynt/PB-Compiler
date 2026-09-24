@@ -12,7 +12,7 @@ public static class DeadStoreElim {
 
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    return RunCore(fn);
+    return IrFunctionPassPipeline.RunStandalone(fn, "dse", Run);
   }
 
   /// <summary>
@@ -22,14 +22,21 @@ public static class DeadStoreElim {
   internal static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
     ArgumentNullException.ThrowIfNull(fn);
     ArgumentNullException.ThrowIfNull(analyses);
-    var removed = RunCore(fn);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
+    var identities = analyses.Get(IrAnalyses.PointerIdentity);
+    var escape = analyses.Get(IrAnalyses.PointerEscape);
+    var removed = RunCore(fn, identities, escape);
     return removed == 0
       ? IrPassResult.Unchanged
       : IrPassResult.ChangedPreservingSets(removed, IrAnalysisSets.Cfg);
   }
 
-  private static int RunCore(IrFunction fn) {
-    var removed = RemoveUnreadPrivateFrameStores(fn);
+  private static int RunCore(
+      IrFunction fn,
+      IrPointerIdentityAnalysis identities,
+      IrPointerEscapeAnalysis escape) {
+    var removed = RemoveUnreadPrivateFrameStores(fn, identities, escape);
     foreach (var block in fn.Blocks) {
       var pending = new List<IrStore>();             // written but not yet observed
 
@@ -37,7 +44,7 @@ public static class DeadStoreElim {
         switch (inst) {
           case IrStore store:
             foreach (var dead in pending.ToList())
-              if (IrAliasAnalysis.CompletelyOverwrites(store, dead)) {
+              if (IrAliasAnalysis.CompletelyOverwrites(store, dead, identities)) {
                 dead.EraseFromParent();
                 pending.Remove(dead);
                 ++removed;
@@ -46,7 +53,8 @@ public static class DeadStoreElim {
             break;
           case IrLoad load:
             pending.RemoveAll(store =>
-              IrAliasAnalysis.MayAlias(store.Pointer, store.Value.Type, load.Pointer, load.Type));
+              IrAliasAnalysis.MayAlias(
+                store.Pointer, store.Value.Type, load.Pointer, load.Type, identities));
             break;
           case IrCall:
             pending.Clear();                         // a call may read any memory visible to it
@@ -63,17 +71,20 @@ public static class DeadStoreElim {
   /// alias is dead on every control-flow path, even when branches, loops or unrelated calls
   /// separate it from function exit.
   /// </summary>
-  private static int RemoveUnreadPrivateFrameStores(IrFunction fn) {
+  private static int RemoveUnreadPrivateFrameStores(
+      IrFunction fn,
+      IrPointerIdentityAnalysis identities,
+      IrPointerEscapeAnalysis escape) {
     var privateFrames = fn.AllInstructions
       .OfType<IrAlloca>()
-      .Where(IsPrivateFrameObject)
+      .Where(alloca => !alloca.IsSourceVariable && escape.DoesNotEscape(alloca))
       .ToHashSet(ReferenceEqualityComparer.Instance);
     if (privateFrames.Count == 0)
       return 0;
 
     var loadsByFrame = new Dictionary<IrAlloca, List<IrLoad>>(ReferenceEqualityComparer.Instance);
     foreach (var load in fn.AllInstructions.OfType<IrLoad>()) {
-      var root = RootAlloca(load.Pointer);
+      var root = identities.TryResolve(load.Pointer)?.Root as IrAlloca;
       if (root is null || !privateFrames.Contains(root))
         continue;
       if (!loadsByFrame.TryGetValue(root, out var loads))
@@ -83,12 +94,13 @@ public static class DeadStoreElim {
 
     var removed = 0;
     foreach (var store in fn.AllInstructions.OfType<IrStore>().ToList()) {
-      var root = RootAlloca(store.Pointer);
+      var root = identities.TryResolve(store.Pointer)?.Root as IrAlloca;
       if (root is null || !privateFrames.Contains(root))
         continue;
       if (loadsByFrame.TryGetValue(root, out var loads)
           && loads.Any(load =>
-            IrAliasAnalysis.MayAlias(store.Pointer, store.Value.Type, load.Pointer, load.Type)))
+            IrAliasAnalysis.MayAlias(
+              store.Pointer, store.Value.Type, load.Pointer, load.Type, identities)))
         continue;
       store.EraseFromParent();
       ++removed;
@@ -96,38 +108,5 @@ public static class DeadStoreElim {
     return removed;
   }
 
-  /// <summary>
-  /// Source-variable storage is intentionally excluded: O0065 owns compiler-generated frame cells.
-  /// For those cells the address must remain inside a load/store/GEP graph; a call argument, return,
-  /// pointer store, cast, phi or any other use makes the address observable and declines the proof.
-  /// </summary>
-  private static bool IsPrivateFrameObject(IrAlloca alloca)
-    => !alloca.IsSourceVariable
-      && PointerDoesNotEscape(alloca, new HashSet<IrValue>(ReferenceEqualityComparer.Instance));
 
-  private static bool PointerDoesNotEscape(IrValue pointer, HashSet<IrValue> seen) {
-    if (!seen.Add(pointer))
-      return true;
-
-    foreach (var user in pointer.Users)
-      switch (user) {
-        case IrLoad load when ReferenceEquals(load.Pointer, pointer):
-          break;
-        case IrStore store when ReferenceEquals(store.Pointer, pointer)
-            && !ReferenceEquals(store.Value, pointer):
-          break;
-        case IrGep gep when ReferenceEquals(gep.BasePtr, pointer)
-            && PointerDoesNotEscape(gep, seen):
-          break;
-        default:
-          return false;
-      }
-    return true;
-  }
-
-  private static IrAlloca? RootAlloca(IrValue pointer) {
-    while (pointer is IrGep gep)
-      pointer = gep.BasePtr;
-    return pointer as IrAlloca;
-  }
 }
