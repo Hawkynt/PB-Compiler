@@ -8,10 +8,10 @@ public sealed class X86ModeValidationTests {
   public void HostedEmitterRejectsUnknownMachineModes() {
     var mode = (X86Mode)99;
     var abi = new X86TargetAbi(mode, "invalid", 1, 0, [],
-      new MachineRegister("rax", 0, 64));
+      new MachineRegister("rax", 0, 64), new HashSet<MachineRegister>());
     var function = new X86TargetMachineFunction(mode, abi, []);
 
     Assert.That(() => new X86TargetMachineEmitter(new X86InstructionEncoder(X86Mode.Bit64))
-      .Emit(function), Throws.ArgumentOutOfRangeException);
+      .Emit(function), Throws.TypeOf<ArgumentOutOfRangeException>());
   }
 }

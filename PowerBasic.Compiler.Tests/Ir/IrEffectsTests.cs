@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir.Analysis;
+using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;

@@ -171,14 +171,14 @@ public sealed class X86TargetTests {
   [Test]
   public void X86TargetConfiguration_GivenUnknownEnumValues_ThenRejectsThem() {
     Assert.Multiple(() => {
-      Assert.That(() => new X86InstructionEncoder((X86Mode)123), Throws.ArgumentOutOfRangeException);
+      Assert.That(() => new X86InstructionEncoder((X86Mode)123), Throws.TypeOf<ArgumentOutOfRangeException>());
       Assert.That(() => new X86MachineTarget((X86Mode)123, X86Abi.I8086Cdecl),
-        Throws.ArgumentOutOfRangeException);
-      Assert.That(() => new X86TargetRegisterFile((X86Mode)123), Throws.ArgumentOutOfRangeException);
+        Throws.TypeOf<ArgumentOutOfRangeException>());
+      Assert.That(() => new X86TargetRegisterFile((X86Mode)123), Throws.TypeOf<ArgumentOutOfRangeException>());
       Assert.That(() => new X86VectorRegisterFile((X86VectorRegisterClass)123),
-        Throws.ArgumentOutOfRangeException);
+        Throws.TypeOf<ArgumentOutOfRangeException>());
       Assert.That(() => X86Abi.For((IrCallConvention)123, X86Mode.Bit64),
-        Throws.ArgumentOutOfRangeException);
+        Throws.TypeOf<ArgumentOutOfRangeException>());
     });
   }
 
@@ -378,7 +378,7 @@ public sealed class X86TargetTests {
   public void X86MachineLoweringRejectsNonX86TargetFamilies() {
     Assert.That(
       () => new X86MachineLowering(new SelectionTarget(TargetFamily: MachineTargetFamily.Mos6502)),
-      Throws.ArgumentOutOfRangeException);
+      Throws.TypeOf<ArgumentOutOfRangeException>());
   }
 
   [Test]
@@ -407,11 +407,11 @@ public sealed class X86TargetTests {
   public void Mos6502Emitter_GivenUnselectedOpcode_ThenThrowsInsteadOfDroppingIt() {
     var function = new X86MachineFunction("unsupported");
     var block = new MBlock("entry");
-    block.Instructions.Add(new MInstr(MOpcode.Nop, [], MInstrEffect.None));
+    block.Instructions.Add(new MInstr(MOpcode.InlineAsm, [], MInstrEffect.None));
     function.Blocks.Add(block);
     var target = new Mos6502MachineTarget();
 
-    Assert.Throws<NotSupportedException>(() => target.Emitter.EmitFunction(function));
+    Assert.Throws<NotSupportedException>(() => ((Mos6502MachineEmitter)target.Emitter).EmitFunction(function));
   }
 
   [Test]

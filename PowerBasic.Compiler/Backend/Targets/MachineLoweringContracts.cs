@@ -80,7 +80,21 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       error = "selection: input IR failed verification: " + string.Join("; ", verification);
       return false;
     }
-    if (this._selector.TrySelect(function, out var declineReason) is not { } machine) {
+    X86MachineFunction? machine;
+    string? declineReason;
+    try {
+      machine = this._selector.TrySelect(function, out declineReason);
+    } catch (NotSupportedException exception) {
+      error = $"selection: unsupported construct: {exception.Message}";
+      return false;
+    } catch (InvalidOperationException exception) {
+      error = $"selection: invalid construct: {exception.Message}";
+      return false;
+    } catch (ArgumentException exception) {
+      error = $"selection: invalid operand: {exception.Message}";
+      return false;
+    }
+    if (machine is null) {
       error = "selection: " + (declineReason ?? "unknown machine construct");
       return false;
     }
