@@ -75,6 +75,11 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       error = "selection: declaration";
       return false;
     }
+    var verification = IrVerifier.Verify(function);
+    if (verification.Count != 0) {
+      error = "selection: input IR failed verification: " + string.Join("; ", verification);
+      return false;
+    }
     if (this._selector.TrySelect(function, out var declineReason) is not { } machine) {
       error = "selection: " + (declineReason ?? "unknown machine construct");
       return false;

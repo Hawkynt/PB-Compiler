@@ -359,6 +359,22 @@ public sealed class X86TargetTests {
   }
 
   [Test]
+  public void X86MachineLowering_GivenMalformedInputIr_ThenReturnsVerifierDiagnostics() {
+    var function = new IrFunction("malformed", IrType.Void);
+    var block = function.CreateBlock("entry");
+    block.Append(new IrBinary(IrBinaryOp.Add,
+      new IrConstantInt(IrType.I16, 1), new IrConstantInt(IrType.I16, 2)));
+    var lowerer = new X86MachineLowering(SelectionTarget.Baseline);
+
+    Assert.That(lowerer.TrySelect(function, out var selected, out var error), Is.False);
+    Assert.Multiple(() => {
+      Assert.That(selected, Is.Null);
+      Assert.That(error, Does.Contain("input IR failed verification"));
+      Assert.That(error, Does.Contain("entry"));
+    });
+  }
+
+  [Test]
   public void X86MachineLoweringRejectsNonX86TargetFamilies() {
     Assert.That(
       () => new X86MachineLowering(new SelectionTarget(TargetFamily: MachineTargetFamily.Mos6502)),
