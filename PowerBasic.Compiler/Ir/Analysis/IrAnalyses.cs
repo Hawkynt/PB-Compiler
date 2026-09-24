@@ -35,8 +35,16 @@ public static class IrAnalyses {
   public static IrAnalysisKey<IrKnownBitsAnalysis> KnownBits { get; } =
     new("known-bits", static (function, _) => new IrKnownBitsAnalysis(function));
 
+  /// <summary>
+  /// Shared memory read/write projection. Module-owned runs refine direct internal calls through cached
+  /// function summaries; standalone function runs conservatively keep those calls opaque.
+  /// </summary>
+  public static IrAnalysisKey<IrModRefAnalysis> ModRef { get; } =
+    new("mod-ref", static (_, analyses) => new IrModRefAnalysis(
+      analyses.ModuleAnalyses?.Get(IrModuleAnalyses.FunctionSummaries)));
+
   /// <summary>SSA overlay for memory definitions, uses and merge points.</summary>
   public static IrAnalysisKey<IrMemorySsa> MemorySsa { get; } =
     new("memory-ssa", static (function, analyses) =>
-      IrMemorySsa.Build(function, analyses.Get(Dominators)));
+      IrMemorySsa.Build(function, analyses.Get(Dominators), analyses.Get(ModRef)));
 }

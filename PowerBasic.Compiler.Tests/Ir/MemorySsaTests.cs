@@ -201,4 +201,65 @@ public sealed class MemorySsaTests {
   }
 
 
+  [Test]
+  public void SharedMemorySsa_GivenInternalPureAndReadOnlyCalls_ThenUsesCachedModuleModRefFacts() {
+    var module = new IrModule("modref");
+    var global = module.AddGlobal(new IrGlobalVariable("g", IrType.I16));
+
+    var pure = module.AddFunction(new IrFunction("pure", IrType.I16));
+    var pureBuilder = new IrBuilder(pure.CreateBlock("entry"));
+    pureBuilder.Ret(new IrConstantInt(IrType.I16, 3));
+
+    var reader = module.AddFunction(new IrFunction("reader", IrType.I16));
+    var readerBuilder = new IrBuilder(reader.CreateBlock("entry"));
+    readerBuilder.Ret(readerBuilder.Load(IrType.I16, global));
+
+    var writer = module.AddFunction(new IrFunction("writer", IrType.Void));
+    var writerBuilder = new IrBuilder(writer.CreateBlock("entry"));
+    writerBuilder.Store(new IrConstantInt(IrType.I16, 9), global);
+    writerBuilder.Ret();
+
+    var caller = module.AddFunction(new IrFunction("caller", IrType.I16));
+    var b = new IrBuilder(caller.CreateBlock("entry"));
+    var initialStore = b.Store(new IrConstantInt(IrType.I16, 7), global);
+    var pureCall = b.Call(IrType.I16, pure);
+    var readCall = b.Call(IrType.I16, reader);
+    var loadBeforeWrite = b.Load(IrType.I16, global);
+    var writeCall = b.Call(IrType.Void, writer);
+    var loadAfterWrite = b.Load(IrType.I16, global);
+    b.Ret(loadAfterWrite);
+
+    var moduleAnalyses = new IrModuleAnalysisManager(module);
+    var functionAnalyses = new IrAnalysisManager(caller, moduleAnalyses);
+    var memory = functionAnalyses.Get(IrAnalyses.MemorySsa);
+
+    Assert.Multiple(() => {
+      Assert.That(memory.AccessFor(pureCall), Is.Null,
+        "a direct internal function proven memory-free is not a MemorySSA wall");
+      Assert.That(memory.AccessFor(readCall), Is.TypeOf<IrMemoryUse>(),
+        "an internal read-only function observes memory without defining a new version");
+      Assert.That(memory.AccessFor(writeCall), Is.TypeOf<IrMemoryDef>(),
+        "an internal writer still creates a memory definition");
+      Assert.That(memory.GetClobberingAccess(loadBeforeWrite), Is.SameAs(memory.AccessFor(initialStore)));
+      Assert.That(memory.GetClobberingAccess(loadAfterWrite), Is.SameAs(memory.AccessFor(writeCall)));
+      Assert.That(moduleAnalyses.IsCached(IrModuleAnalyses.FunctionSummaries), Is.True);
+    });
+  }
+
+  [Test]
+  public void StandaloneMemorySsa_GivenInternalCallWithoutModuleOwnership_ThenKeepsItOpaque() {
+    var callee = new IrFunction("internal", IrType.Void);
+    new IrBuilder(callee.CreateBlock("entry")).Ret();
+    var caller = new IrFunction("caller", IrType.Void);
+    var b = new IrBuilder(caller.CreateBlock("entry"));
+    var call = b.Call(IrType.Void, callee);
+    b.Ret();
+
+    var memory = IrMemorySsa.Build(caller);
+
+    Assert.That(memory.AccessFor(call), Is.TypeOf<IrMemoryDef>(),
+      "a standalone function analysis has no closed module proof and must fail conservative");
+  }
+
+
 }

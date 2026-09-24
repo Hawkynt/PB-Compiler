@@ -167,7 +167,7 @@ Pass order still matters inside a group, but dependencies should be stated throu
 
 - Extend scalar evolution beyond bootstrap additive recurrences and exact canonical trip counts where consumers justify the extra lattice complexity.
 - Grow known-bit/alignment/null/type information as reusable abstract domains with branch-local refinement where useful.
-- Make MemorySSA, alias/mod-ref and escape analysis share explicit memory/effect semantics.
+- Continue unifying alias/mod-ref and escape/object-identity queries. MemorySSA now consumes a shared `IrModRefAnalysis`: module-owned function analyses refine direct internal calls with cached function summaries, while standalone analyses deliberately keep them opaque. Function mutations conservatively invalidate module facts until cross-unit preservation becomes explicit.
 - Continue migrating module transforms onto the module analysis manager. The direct call graph, function summaries and conservative whole-program reachability are now first-class cached analyses with dependency invalidation; remaining interprocedural transforms still need precise preservation contracts.
 - Separate target-independent legality from target profitability through cost-model interfaces.
 - Move the huge standard pipeline into named, testable phase/fixed-point groups while retaining the proven relative ordering where required.
@@ -195,7 +195,7 @@ The PR now has a production analysis substrate rather than only a sketch:
 2. `IrPreservedAnalyses` / `IrPassResult` carry exact preservation and named preservation sets; stale prerequisites invalidate dependents transitively.
 3. `IrFunctionPassPipeline` is the function-pass execution core behind `IrPassManager`; legacy delegates remain conservative.
 4. Shared CFG analyses include dominators/frontiers, post-dominators/frontiers and an explicit natural-loop forest; module passes execute through a shared module analysis manager.
-5. Shared value/memory analyses include MemorySSA, branch-refined integer ranges, FP domains, bootstrap scalar evolution and known bits. Module analyses now include a cached direct call graph, function summaries and conservative whole-program reachability.
+5. Shared value/memory analyses include MemorySSA, mod/ref, branch-refined integer ranges, FP domains, bootstrap scalar evolution and known bits. Module analyses now include a cached direct call graph, function summaries and conservative whole-program reachability. MemorySSA can refine internal-call memory behavior from those module summaries without weakening standalone conservatism.
 6. Scalar evolution exposes additive `{start,+,step}` recurrences and bounded exact trip-count proofs using fixed-width integer semantics; `CountedLoop` and migrated loop consumers reuse those facts.
 7. Migrated transforms include correlation, pointer-check elimination, GVN, LICM, integer/FP range folding, reciprocal loop reasoning and IV simplification. CFG-preserving transforms preserve `IrAnalysisSets.Cfg` rather than manually maintaining a key list.
 8. `DemandedBits` consumes the known-bits domain; DCE, dead-loop elimination, GVN, LICM, MemorySSA, dependence analysis and function summaries consume the central IR-operation/effect contract, including the first precise PB runtime ownership/mod-ref rows.

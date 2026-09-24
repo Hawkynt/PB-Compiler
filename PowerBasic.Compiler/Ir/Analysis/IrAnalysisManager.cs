@@ -10,13 +10,20 @@ public sealed class IrAnalysisManager {
   private readonly Dictionary<IrAnalysisKey, HashSet<IrAnalysisKey>> _dependencies = new();
   private readonly Stack<IrAnalysisKey> _computing = new();
 
-  public IrAnalysisManager(IrFunction function) {
+  public IrAnalysisManager(IrFunction function, IrModuleAnalysisManager? moduleAnalyses = null) {
     ArgumentNullException.ThrowIfNull(function);
     this.Function = function;
+    this.ModuleAnalyses = moduleAnalyses;
   }
 
   /// <summary>The function whose analyses are owned by this manager.</summary>
   public IrFunction Function { get; }
+
+  /// <summary>
+  /// Module analysis owner enclosing this function-analysis lifetime, when the pipeline is executing
+  /// as part of a module. Standalone function entry points deliberately leave this null.
+  /// </summary>
+  public IrModuleAnalysisManager? ModuleAnalyses { get; }
 
   /// <summary>Gets a cached analysis result, computing and caching it on first use.</summary>
   public TResult Get<TResult>(IrAnalysisKey<TResult> analysis) {

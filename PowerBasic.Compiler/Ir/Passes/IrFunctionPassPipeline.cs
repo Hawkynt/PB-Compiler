@@ -54,13 +54,23 @@ public sealed class IrFunctionPassPipeline {
   }
 
   /// <summary>Runs the pipeline to a bounded fixed point while retaining analyses that passes explicitly preserve.</summary>
-  public int RunToFixpoint(IrFunction function, int maxIterations = 16) {
+  public int RunToFixpoint(IrFunction function, int maxIterations = 16)
+    => this.RunToFixpoint(function, moduleAnalyses: null, maxIterations: maxIterations);
+
+  /// <summary>
+  /// Module-owned fixed point. Function analyses may consume cached module facts; every function mutation
+  /// conservatively invalidates those facts before the next transform can query them.
+  /// </summary>
+  internal int RunToFixpoint(
+      IrFunction function,
+      IrModuleAnalysisManager? moduleAnalyses,
+      int maxIterations = 16) {
     ArgumentNullException.ThrowIfNull(function);
     this.LastFixpointDiagnostic = null;
     if (maxIterations <= 0 || function.HasErrorHandler || function.HasInlineAsm)
       return 0;
 
-    var analyses = new IrAnalysisManager(function);
+    var analyses = new IrAnalysisManager(function, moduleAnalyses);
     var total = 0;
     for (var i = 0; i < maxIterations; ++i) {
       var changes = this.Run(function, analyses);
@@ -89,6 +99,9 @@ public sealed class IrFunctionPassPipeline {
       if (result.Changes > 0) {
         this._lastChangedPasses.Add(new(phase, IrPassScope.Function, name));
         analyses.Invalidate(result.PreservedAnalyses);
+        // Function transforms do not yet report cross-unit preservation. Invalidating module facts here
+        // is conservative but prevents a later function pass from consuming a stale call graph/summary.
+        analyses.ModuleAnalyses?.Invalidate(IrModulePreservedAnalyses.None);
       }
 
       if (!this.VerifyEachPass)

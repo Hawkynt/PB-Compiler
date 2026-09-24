@@ -77,9 +77,10 @@ public sealed class IrMemoryPhi : IrMemoryAccess {
 /// Function-local Memory SSA overlay.
 ///
 /// <para>
-/// Memory uses and definitions are derived from <see cref="IrEffects"/> rather than instruction-class
-/// folklore. Ordinary loads are uses; stores and opaque calls/assembly are definitions; an effect-free
-/// call is absent from the memory graph. Memory phis are placed at the iterated dominance frontier of
+/// Memory uses and definitions are derived from shared <see cref="IrModRefAnalysis"/> rather than
+/// instruction-class folklore. Ordinary loads are uses; stores and opaque calls/assembly are definitions;
+/// module-owned pipelines can additionally prove internal calls read-only or memory-free from cached
+/// function summaries. Memory phis are placed at the iterated dominance frontier of
 /// blocks containing definitions, then the graph is renamed down the dominator tree exactly like
 /// ordinary SSA. PB-specific location precision lives in <see cref="IrAliasAnalysis"/>, not in the
 /// graph construction.
@@ -99,10 +100,13 @@ public sealed class IrMemorySsa {
     = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrBasicBlock, IrMemoryPhi> _phis
     = new(ReferenceEqualityComparer.Instance);
+  private readonly IrModRefAnalysis _modRef;
 
   private readonly record struct MemoryLocation(IrValue Pointer, IrType Type);
 
-  private IrMemorySsa(IrFunction function, IrDominators? dominators) {
+  private IrMemorySsa(IrFunction function, IrDominators? dominators, IrModRefAnalysis modRef) {
+    ArgumentNullException.ThrowIfNull(modRef);
+    this._modRef = modRef;
     this.LiveOnEntry = new IrMemoryLiveOnEntry();
     if (function.Entry is null)
       return;
@@ -127,13 +131,17 @@ public sealed class IrMemorySsa {
   /// <summary>Builds the Memory SSA overlay for <paramref name="function"/>.</summary>
   public static IrMemorySsa Build(IrFunction function) {
     ArgumentNullException.ThrowIfNull(function);
-    return new(function, IrDominators.Build(function));
+    return new(function, IrDominators.Build(function), new IrModRefAnalysis(functionSummaries: null));
   }
 
-  /// <summary>Builds the Memory SSA overlay while reusing an already computed dominator result.</summary>
-  internal static IrMemorySsa Build(IrFunction function, IrDominators? dominators) {
+  /// <summary>Builds the Memory SSA overlay while reusing shared dominator and mod/ref analyses.</summary>
+  internal static IrMemorySsa Build(
+      IrFunction function,
+      IrDominators? dominators,
+      IrModRefAnalysis modRef) {
     ArgumentNullException.ThrowIfNull(function);
-    return new(function, dominators);
+    ArgumentNullException.ThrowIfNull(modRef);
+    return new(function, dominators, modRef);
   }
 
   /// <summary>The memory access attached to an instruction, or null for a non-memory/unreachable instruction.</summary>
@@ -238,14 +246,14 @@ public sealed class IrMemorySsa {
     IrMemoryAccess current = this._phis.TryGetValue(block, out var phi) ? phi : incoming;
 
     foreach (var instruction in block.Instructions) {
-      var effects = IrEffects.ForInstruction(instruction);
-      if (effects.DefinesMemory) {
+      var effects = this._modRef.ForInstruction(instruction);
+      if (effects.WritesMemory) {
         var definition = new IrMemoryDef(instruction, current);
         this._accesses.Add(instruction, definition);
         current = definition;
         continue;
       }
-      if (effects.MayReadMemory)
+      if (effects.ReadsMemory)
         this._accesses.Add(instruction, new IrMemoryUse(instruction, current));
     }
 
@@ -269,6 +277,6 @@ public sealed class IrMemorySsa {
     return children;
   }
 
-  private static bool IsMemoryDefinition(IrInstruction instruction)
-    => IrEffects.ForInstruction(instruction).DefinesMemory;
+  private bool IsMemoryDefinition(IrInstruction instruction)
+    => this._modRef.ForInstruction(instruction).WritesMemory;
 }

@@ -148,7 +148,7 @@ public sealed class IrPassManager {
     void RunFunctions() {
       foreach (var fn in module.Functions)
         if (!fn.IsDeclaration)
-          this.RunToFixpoint(fn, this.FunctionFixpointIterationBudget);
+          this._functionPasses.RunToFixpoint(fn, moduleAnalyses, this.FunctionFixpointIterationBudget);
     }
   }
 }
