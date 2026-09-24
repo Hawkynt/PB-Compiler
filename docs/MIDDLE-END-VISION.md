@@ -151,7 +151,7 @@ canonical HIR fixed point
   -> allocation/scheduling/layout
 ```
 
-Pass order still matters inside a group, but dependencies should be stated through required analyses and representation contracts rather than encoded only in comments. Fixed-point groups should have explicit iteration budgets and diagnostics for non-convergence.
+Pass order still matters inside a group, but dependencies should be stated through required analyses and representation contracts rather than encoded only in comments. The production plan now assigns every transform to an inspectable named phase while preserving the historical flattened order. Function optimization still uses the proven whole-pipeline bounded fixed point during this migration; exhausting that budget now emits an explicit diagnostic naming the transforms that continued to change the final sweep. Per-phase fixed points can therefore be introduced later as deliberate scheduling changes rather than accidentally as part of the structural refactor.
 
 ## Migration plan
 
@@ -200,7 +200,8 @@ The PR now has a production analysis substrate rather than only a sketch:
 7. Migrated transforms include correlation, pointer-check elimination, GVN, LICM, integer/FP range folding, reciprocal loop reasoning and IV simplification. CFG-preserving transforms preserve `IrAnalysisSets.Cfg` rather than manually maintaining a key list.
 8. `DemandedBits` consumes the known-bits domain; DCE, dead-loop elimination, GVN, LICM, MemorySSA, dependence analysis and function summaries consume the central IR-operation/effect contract.
 9. Verification deliberately remains independent of the analysis cache: `VerifyEachPass` must catch an incorrect preservation claim instead of trusting it.
-10. No new external dependency has been introduced and the standard pass order has not been reordered.
+10. The standard pipeline is now partitioned into named, inspectable phases without changing its flattened pass order; bounded function fixed points report the transforms responsible when they fail to converge.
+11. No new external dependency has been introduced and the standard pass order has not been reordered.
 
 The next architectural boundary is phase naming below the target-neutral middle end. Production policy is centralized in `IrMiddleEndPipeline`, with `RunNativeModule` and `RunHostedModule` owning restart and inlining choreography; `IrPassManager` only executes registered passes and invalidates shared analyses. The remaining representation split (`Bound AST -> HIR -> MIR/SSA`) can proceed without reintroducing caller-owned optimizer schedules.
 

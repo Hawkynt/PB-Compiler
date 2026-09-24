@@ -183,6 +183,83 @@ public sealed class IrPassManagerTests {
     return IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
   }
 
+
+  [Test]
+  public void Standard_Plan_HasNamedPhasesWithoutChangingTheHistoricalFlattenedOrder() {
+    var manager = IrMiddleEndPipeline.Standard(
+      optimizeForSpeed: true,
+      includeModulePasses: true,
+      dataLayoutTarget: new IrDataLayoutTarget(32, 16, 32768, 64, 8),
+      enableFpLookupTables: true,
+      optimizeForSize: true,
+      recoverIntegerArithmetic: true);
+
+    var functionPlan = manager.PassPlan.Where(pass => pass.Scope == IrPassScope.Function).ToArray();
+    var expected = new[] {
+      "integer-recovery", "storagenarrow", "mem2reg", "storagenarrow-ssa",
+      "structpack", "fieldreorder", "hotcold", "aos2soa", "transpose", "arrayfusion",
+      "arraycontract", "prefixscan", "ptrcompress", "cachepad", "arraypad", "arrayalign",
+      "looptemp-reuse", "overflow-version", "ownershipbatch", "unroll",
+      "instcombine", "demandedbits", "sccp", "correlate", "bbversion", "ptrcheck",
+      "rangefold", "specnarrow", "conversion-rangefold", "overflow-coalesce", "sroa",
+      "aggregate-sroa", "storagenarrow2", "mem2reg2", "storagenarrow-ssa2", "strcow",
+      "ownership-elision", "fpsimplify", "reassociate", "fpfast", "eqsat", "verified-arith",
+      "polynomial", "demote", "ivsimplify", "phicong", "gvn", "memopt", "dse",
+      "interchange", "licm", "reciprocal-reuse", "unswitch", "loopversion", "dce",
+      "allocsink", "closed-form", "deadloop", "ifconv", "simplifycfg", "tailrec", "switchform",
+    };
+
+    Assert.Multiple(() => {
+      Assert.That(functionPlan.Select(pass => pass.Name), Is.EqualTo(expected),
+        "phase naming must not silently reorder the proven production pipeline");
+      Assert.That(manager.PassPlan.Any(pass => pass.Phase == IrMiddleEndPhase.Unspecified), Is.False,
+        "every production transform belongs to an explicit phase");
+      Assert.That(manager.PassPlan.Single(pass => pass.Scope == IrPassScope.EarlyModule).Phase,
+        Is.EqualTo(IrMiddleEndPhase.Canonicalization));
+      Assert.That(manager.PassPlan.Where(pass => pass.Scope == IrPassScope.Module)
+        .All(pass => pass.Phase == IrMiddleEndPhase.Interprocedural), Is.True);
+    });
+
+    Assert.Multiple(() => {
+      Assert.That(functionPlan.Single(pass => pass.Name == "mem2reg").Phase,
+        Is.EqualTo(IrMiddleEndPhase.SsaPreparation));
+      Assert.That(functionPlan.Single(pass => pass.Name == "structpack").Phase,
+        Is.EqualTo(IrMiddleEndPhase.DataLayout));
+      Assert.That(functionPlan.Single(pass => pass.Name == "instcombine").Phase,
+        Is.EqualTo(IrMiddleEndPhase.ScalarSimplification));
+      Assert.That(functionPlan.Single(pass => pass.Name == "strcow").Phase,
+        Is.EqualTo(IrMiddleEndPhase.MemoryAndObjects));
+      Assert.That(functionPlan.Single(pass => pass.Name == "gvn").Phase,
+        Is.EqualTo(IrMiddleEndPhase.ArithmeticSimplification));
+      Assert.That(functionPlan.Single(pass => pass.Name == "dse").Phase,
+        Is.EqualTo(IrMiddleEndPhase.MemoryOptimization));
+      Assert.That(functionPlan.Single(pass => pass.Name == "licm").Phase,
+        Is.EqualTo(IrMiddleEndPhase.LoopOptimization));
+      Assert.That(functionPlan.Single(pass => pass.Name == "switchform").Phase,
+        Is.EqualTo(IrMiddleEndPhase.LateScalarCleanup));
+    });
+  }
+
+  [Test]
+  public void RunToFixpoint_GivenAnExhaustedBudget_ThenReportsTheNonConvergingPasses() {
+    var fn = new IrFunction("never-settles", IrType.Void);
+    var manager = new IrPassManager()
+      .InFunctionPhase(IrMiddleEndPhase.ScalarSimplification)
+      .AddAnalyzed("oscillating-probe", (_, _) => IrPassResult.Changed(1));
+
+    Assert.That(manager.RunToFixpoint(fn, maxIterations: 3), Is.EqualTo(3));
+
+    var diagnostic = manager.LastFixpointDiagnostic;
+    Assert.That(diagnostic, Is.Not.Null);
+    Assert.Multiple(() => {
+      Assert.That(diagnostic!.FunctionName, Is.EqualTo("never-settles"));
+      Assert.That(diagnostic.IterationBudget, Is.EqualTo(3));
+      Assert.That(diagnostic.CompletedIterations, Is.EqualTo(3));
+      Assert.That(diagnostic.ChangedPasses.Select(pass => pass.Name), Is.EqualTo(new[] { "oscillating-probe" }));
+      Assert.That(diagnostic.ChangedPasses.Single().Phase, Is.EqualTo(IrMiddleEndPhase.ScalarSimplification));
+    });
+  }
+
   [Test]
   public void Standard_OverLoweredProgram_OptimizesToAVerifiedFixpoint() {
     var fn = Lower(

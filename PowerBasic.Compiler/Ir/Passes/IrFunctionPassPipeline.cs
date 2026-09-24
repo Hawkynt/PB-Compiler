@@ -8,17 +8,32 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// </summary>
 public sealed class IrFunctionPassPipeline {
 
-  private readonly List<(string Name, Func<IrFunction, IrAnalysisManager, IrPassResult> Run)> _passes = [];
+  private readonly List<(IrMiddleEndPhase Phase, string Name, Func<IrFunction, IrAnalysisManager, IrPassResult> Run)> _passes = [];
+  private readonly List<IrPassDescriptor> _lastChangedPasses = [];
+
+  /// <summary>The registered function-pass plan in execution order.</summary>
+  public IReadOnlyList<IrPassDescriptor> Plan
+    => this._passes.Select(pass => new IrPassDescriptor(pass.Phase, IrPassScope.Function, pass.Name)).ToArray();
+
+  /// <summary>The most recent bounded fixed-point exhaustion, or null when the last run converged.</summary>
+  public IrFixpointDiagnostic? LastFixpointDiagnostic { get; private set; }
 
   /// <summary>When true, verifies the function after every pass.</summary>
   public bool VerifyEachPass { get; set; }
 
   /// <summary>Adds an analysis-aware transform.</summary>
-  public IrFunctionPassPipeline Add(string name, Func<IrFunction, IrAnalysisManager, IrPassResult> pass) {
+  public IrFunctionPassPipeline Add(string name, Func<IrFunction, IrAnalysisManager, IrPassResult> pass)
+    => this.Add(IrMiddleEndPhase.Unspecified, name, pass);
+
+  /// <summary>Adds an analysis-aware transform to an explicit production phase.</summary>
+  public IrFunctionPassPipeline Add(
+      IrMiddleEndPhase phase,
+      string name,
+      Func<IrFunction, IrAnalysisManager, IrPassResult> pass) {
     if (string.IsNullOrWhiteSpace(name))
       throw new ArgumentException("Pass name cannot be empty.", nameof(name));
     ArgumentNullException.ThrowIfNull(pass);
-    this._passes.Add((name, pass));
+    this._passes.Add((phase, name, pass));
     return this;
   }
 
@@ -41,6 +56,7 @@ public sealed class IrFunctionPassPipeline {
   /// <summary>Runs the pipeline to a bounded fixed point while retaining analyses that passes explicitly preserve.</summary>
   public int RunToFixpoint(IrFunction function, int maxIterations = 16) {
     ArgumentNullException.ThrowIfNull(function);
+    this.LastFixpointDiagnostic = null;
     if (maxIterations <= 0 || function.HasErrorHandler || function.HasInlineAsm)
       return 0;
 
@@ -50,7 +66,13 @@ public sealed class IrFunctionPassPipeline {
       var changes = this.Run(function, analyses);
       total += changes;
       if (changes == 0)
-        break;
+        return total;
+      if (i == maxIterations - 1)
+        this.LastFixpointDiagnostic = new(
+          function.Name,
+          maxIterations,
+          i + 1,
+          this._lastChangedPasses.ToArray());
     }
     return total;
   }
@@ -60,11 +82,14 @@ public sealed class IrFunctionPassPipeline {
       return 0;
 
     var total = 0;
-    foreach (var (name, run) in this._passes) {
+    this._lastChangedPasses.Clear();
+    foreach (var (phase, name, run) in this._passes) {
       var result = run(function, analyses);
       total += result.Changes;
-      if (result.Changes > 0)
+      if (result.Changes > 0) {
+        this._lastChangedPasses.Add(new(phase, IrPassScope.Function, name));
         analyses.Invalidate(result.PreservedAnalyses);
+      }
 
       if (!this.VerifyEachPass)
         continue;

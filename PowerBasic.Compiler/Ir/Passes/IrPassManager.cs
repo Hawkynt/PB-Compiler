@@ -16,8 +16,21 @@ public sealed class IrVerificationException(string pass, IReadOnlyList<string> e
 public sealed class IrPassManager {
 
   private readonly IrFunctionPassPipeline _functionPasses = new();
-  private readonly IrModulePassPipeline _earlyModulePasses = new();
-  private readonly IrModulePassPipeline _modulePasses = new();
+  private readonly IrModulePassPipeline _earlyModulePasses = new(IrPassScope.EarlyModule);
+  private readonly IrModulePassPipeline _modulePasses = new(IrPassScope.Module);
+  private IrMiddleEndPhase _functionPhase = IrMiddleEndPhase.Unspecified;
+  private IrMiddleEndPhase _earlyModulePhase = IrMiddleEndPhase.Unspecified;
+  private IrMiddleEndPhase _modulePhase = IrMiddleEndPhase.Unspecified;
+
+  /// <summary>The complete registered plan, grouped by execution scope but preserving order within each scope.</summary>
+  public IReadOnlyList<IrPassDescriptor> PassPlan
+    => [.. this._earlyModulePasses.Plan, .. this._functionPasses.Plan, .. this._modulePasses.Plan];
+
+  /// <summary>The last function fixed-point exhaustion reported by the execution core.</summary>
+  public IrFixpointDiagnostic? LastFixpointDiagnostic => this._functionPasses.LastFixpointDiagnostic;
+
+  /// <summary>Bound on complete function-pipeline sweeps used by production module runs.</summary>
+  public int FunctionFixpointIterationBudget { get; init; } = 16;
 
   /// <summary>When true, verifies the function after each pass and throws on any error.</summary>
   public bool VerifyEachPass {
@@ -28,9 +41,27 @@ public sealed class IrPassManager {
   /// <summary>The optimization objective this pipeline applies; propagated to the module for late passes.</summary>
   public bool OptimizeForSpeed { get; init; }
 
+  /// <summary>Selects the phase assigned to subsequently registered function transforms.</summary>
+  public IrPassManager InFunctionPhase(IrMiddleEndPhase phase) {
+    this._functionPhase = phase;
+    return this;
+  }
+
+  /// <summary>Selects the phase assigned to subsequently registered early module transforms.</summary>
+  public IrPassManager InEarlyModulePhase(IrMiddleEndPhase phase) {
+    this._earlyModulePhase = phase;
+    return this;
+  }
+
+  /// <summary>Selects the phase assigned to subsequently registered interprocedural transforms.</summary>
+  public IrPassManager InModulePhase(IrMiddleEndPhase phase) {
+    this._modulePhase = phase;
+    return this;
+  }
+
   /// <summary>Adds a function pass that consumes the shared analysis manager and reports preservation.</summary>
   public IrPassManager AddAnalyzed(string name, Func<IrFunction, IrAnalysisManager, IrPassResult> pass) {
-    this._functionPasses.Add(name, pass);
+    this._functionPasses.Add(this._functionPhase, name, pass);
     return this;
   }
 
@@ -43,7 +74,7 @@ public sealed class IrPassManager {
   public IrPassManager AddEarlyModuleAnalyzed(
       string name,
       Func<IrModule, IrModuleAnalysisManager, IrModulePassResult> pass) {
-    this._earlyModulePasses.Add(name, pass);
+    this._earlyModulePasses.Add(this._earlyModulePhase, name, pass);
     return this;
   }
 
@@ -69,7 +100,7 @@ public sealed class IrPassManager {
   public IrPassManager AddModuleAnalyzed(
       string name,
       Func<IrModule, IrModuleAnalysisManager, IrModulePassResult> pass) {
-    this._modulePasses.Add(name, pass);
+    this._modulePasses.Add(this._modulePhase, name, pass);
     return this;
   }
 
@@ -117,7 +148,7 @@ public sealed class IrPassManager {
     void RunFunctions() {
       foreach (var fn in module.Functions)
         if (!fn.IsDeclaration)
-          this.RunToFixpoint(fn);
+          this.RunToFixpoint(fn, this.FunctionFixpointIterationBudget);
     }
   }
 }
