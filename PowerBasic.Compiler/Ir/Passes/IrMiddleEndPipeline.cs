@@ -108,7 +108,7 @@ public static class IrMiddleEndPipeline {
     .InModulePhase(IrMiddleEndPhase.Interprocedural)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)
     .AddModuleConservativeWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
-    .AddModuleConservativeWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
+    .AddModuleAnalyzedWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
     .AddModuleAnalyzedWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "inline-speed",

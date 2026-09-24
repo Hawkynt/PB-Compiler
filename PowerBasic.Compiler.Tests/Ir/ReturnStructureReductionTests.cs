@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
@@ -159,6 +160,36 @@ public sealed class ReturnStructureReductionTests {
     Assert.That(ReturnStructureReduction.Run(module), Is.Zero);
     Assert.Multiple(() => {
       Assert.That(store.Parent, Is.Not.Null);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+
+  [Test]
+  public void AnalysisAwareRun_PreservesGraphFactsButInvalidatesFunctionSummaries() {
+    var module = new IrModule("retstruct");
+    var callee = AddSretFunction(module, "Make", out var sret);
+    var cb = new IrBuilder(callee.CreateBlock("entry"));
+    cb.Store(IrBuilder.ConstI32(10), sret);
+    var second = cb.Gep(sret, IrBuilder.ConstI32(4));
+    cb.Store(IrBuilder.ConstI32(20), second);
+    cb.Ret();
+    AddCaller(module, "caller", callee, 8, 0);
+
+    var analyses = new IrModuleAnalysisManager(module);
+    analyses.Get(IrModuleAnalyses.CallGraph);
+    analyses.Get(IrModuleAnalyses.Reachability);
+    analyses.Get(IrModuleAnalyses.FunctionSummaries);
+
+    var result = ReturnStructureReduction.Run(module, analyses);
+    analyses.Invalidate(result.PreservedAnalyses);
+
+    Assert.Multiple(() => {
+      Assert.That(result.Changes, Is.EqualTo(1));
+      Assert.That(analyses.IsCached(IrModuleAnalyses.CallGraph), Is.True);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.Reachability), Is.True);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.FunctionSummaries), Is.False,
+        "removing the last observable result-field write can change the callee's mod/ref summary");
       Assert.That(IrVerifier.Verify(module), Is.Empty);
     });
   }

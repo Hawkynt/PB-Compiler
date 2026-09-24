@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -39,15 +41,30 @@ public static class ReturnStructureReduction {
 
   /// <summary>Reduces every eligible structure-returning function; returns the number of stores removed.</summary>
   public static int Run(IrModule module) {
+    ArgumentNullException.ThrowIfNull(module);
+    return Run(module, new IrModuleAnalysisManager(module)).Changes;
+  }
+
+  /// <summary>
+  /// Analysis-aware O0281 entry. Store removal leaves call-graph/reachability shape unchanged but can
+  /// change function memory summaries, so only the graph-derived module facts are preserved.
+  /// </summary>
+  public static IrModulePassResult Run(IrModule module, IrModuleAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(module, analyses.Module))
+      throw new ArgumentException("Module analysis manager belongs to a different module.", nameof(analyses));
+
+    var callGraph = analyses.Get(IrModuleAnalyses.CallGraph);
     var removed = 0;
     foreach (var function in module.Functions.ToList()) {
       if (function.IsDeclaration || function.HasErrorHandler || function.HasInlineAsm)
         continue;
       var sret = StructReturnParameter(function);
-      if (sret is null || !IsFullyVisible(module, function))
+      if (sret is null || !callGraph.IsFullyVisible(function))
         continue;
 
-      var calls = CallsTo(function).ToList();
+      var calls = callGraph.DirectCallsTo(function);
       if (calls.Count == 0
           || !TryDescribeCallers(function, sret, calls, out var resultSize, out var observed)
           || !TryDescribeCallee(sret, resultSize, out var writes, out var internallyRead))
@@ -59,7 +76,13 @@ public static class ReturnStructureReduction {
           ++removed;
         }
     }
-    return removed;
+
+    return removed == 0
+      ? IrModulePassResult.Unchanged
+      : IrModulePassResult.ChangedPreserving(
+        removed,
+        IrModuleAnalyses.CallGraph,
+        IrModuleAnalyses.Reachability);
   }
 
   private static IrArgument? StructReturnParameter(IrFunction function) {
@@ -68,27 +91,6 @@ public static class ReturnStructureReduction {
     var parameter = function.Parameters[^1];
     return parameter.Type.IsPointer && parameter.Name == StructReturnParameterName ? parameter : null;
   }
-
-  /// <summary>
-  /// The transform needs a closed call graph for the candidate. An address-taken function, the entry
-  /// point, or a call from outside this module invalidates the caller census.
-  /// </summary>
-  private static bool IsFullyVisible(IrModule module, IrFunction function) {
-    if (function.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
-      return false;
-    foreach (var user in function.Users)
-      if (user is not IrCall call || !ReferenceEquals(call.Callee, function))
-        return false;
-    foreach (var user in function.Users) {
-      var owner = user.Parent?.Parent;
-      if (owner is null || !module.Functions.Contains(owner))
-        return false;
-    }
-    return true;
-  }
-
-  private static IEnumerable<IrCall> CallsTo(IrFunction function)
-    => function.Users.OfType<IrCall>().Where(call => ReferenceEquals(call.Callee, function));
 
   /// <summary>
   /// Proves every call writes into a same-sized local byte aggregate and collects every scalar region
