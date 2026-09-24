@@ -2097,8 +2097,23 @@ public sealed partial class InstructionSelector {
       return this.SelectGlobalGep(global, offset, destOp);
     if (!this.TryOperand(gep.BasePtr, out var baseOp))
       return false;
-    if (baseOp is not MOperand.Register baseReg)
-      return this.Decline("gep: non-register base");
+    // Descriptor-based and by-reference arrays frequently carry their base pointer in a
+    // frame/data cell.  Treating that cell as an address operand used to decline the complete
+    // function even though the target can materialize the near pointer in one MOV and then apply
+    // the same offset arithmetic as for an SSA register base.
+    if (baseOp is not MOperand.Register baseReg) {
+      if (baseOp is not (MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell))
+        return this.Decline("gep: non-register base");
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, baseOp],
+        MovEffect(destOp, baseOp)));
+      if (offset is MOperand.Immediate displacement && displacement.Value == 0)
+        return true;
+      var source = offset;
+      this._current.Instructions.Add(new MInstr(MOpcode.Add, [destOp, source],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [0, 1] : [0],
+          ReadsFlags: false, WritesFlags: true, ReadsMemory: source.IsMemoryAccess(), WritesMemory: false)));
+      return true;
+    }
     // LEA dest, [base + offset]: a constant offset folds into the displacement, a register offset becomes the index
     var mem = offset switch {
       MOperand.Immediate disp => new MOperand.Memory(baseReg.Reg, null, 1, (int)disp.Value, MRegSize.Word),
