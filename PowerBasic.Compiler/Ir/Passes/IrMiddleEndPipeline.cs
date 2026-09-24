@@ -109,7 +109,7 @@ public static class IrMiddleEndPipeline {
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)
     .AddModuleConservativeWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
     .AddModuleConservativeWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
-    .AddModuleConservativeWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
+    .AddModuleAnalyzedWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
       module => Inliner.Run(module, optimizeForSpeed: true))

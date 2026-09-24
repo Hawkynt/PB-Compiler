@@ -88,6 +88,25 @@ public sealed class IrModuleAnalysesTests {
     });
   }
 
+
+  [Test]
+  public void CallGraph_GivenACalleeAlsoPassedAsData_ThenTheFunctionIsNotFullyVisible() {
+    var callback = new IrArgument(IrType.Ptr, 0, "callback");
+    var module = new IrModule("escaped") { OwnsProcedureAbi = true };
+    var target = module.AddFunction(new IrFunction("target", IrType.Void, [callback]));
+    new IrBuilder(target.CreateBlock("entry")).Ret();
+
+    var main = VoidFunction(module, "main");
+    var builder = new IrBuilder(main.CreateBlock("entry"));
+    builder.Call(IrType.Void, target, target);
+    builder.Ret();
+
+    var graph = new IrModuleAnalysisManager(module).Get(IrModuleAnalyses.CallGraph);
+
+    Assert.That(graph.IsFullyVisible(target), Is.False,
+      "the direct call does not make the simultaneous data use disappear");
+  }
+
   [Test]
   public void AnalysisAwareConsumers_GivenSharedManager_ThenPopulateTheModuleCache() {
     var module = new IrModule("consumers");

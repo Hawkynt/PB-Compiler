@@ -72,6 +72,8 @@ public sealed class IrCallGraph {
     foreach (var user in function.Users) {
       if (user is not IrCall call || !ReferenceEquals(call.Callee, function))
         return false;
+      if (call.Args.Any(argument => ReferenceEquals(argument, function)))
+        return false; // the call also carries the function as data, so that use can escape independently
       if (user.Parent?.Parent is not { } owner || !this._functions.Contains(owner))
         return false;
     }
