@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -10,12 +12,27 @@ public static class SpeculativeDevirtualization {
   /// Speculatively devirtualizes indirect calls for which the module provides one unambiguous static
   /// candidate. A candidate is signature-compatible and has its address used as data; a unique use in
   /// the caller wins over the module-wide heuristic. The original call remains on the mismatch path.
+  /// Exact singleton target sets are deliberately excluded: O0279 can devirtualize those without a
+  /// guard, and speculative code growth would only obscure a proof the shared analysis already owns.
   /// </summary>
   public static int Run(IrModule module) {
+    ArgumentNullException.ThrowIfNull(module);
+    return Run(module, new IrModuleAnalysisManager(module)).Changes;
+  }
+
+  /// <summary>Analysis-aware O0307 entry using shared complete target-set facts.</summary>
+  public static IrModulePassResult Run(IrModule module, IrModuleAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(module, analyses.Module))
+      throw new ArgumentException("Module analysis manager belongs to a different module.", nameof(analyses));
+
+    var exactTargets = analyses.Get(IrModuleAnalyses.FunctionTargets);
     var sites = module.Functions
       .Where(function => !function.IsDeclaration && !function.HasErrorHandler && !function.HasInlineAsm)
       .SelectMany(function => function.AllInstructions.OfType<IrCall>()
-        .Where(call => call.Callee is not IrFunction)
+        .Where(call => call.Callee is not IrFunction
+          && exactTargets.ResolveUnique(call.Callee) is null)
         .Select(call => (Function: function, Call: call)))
       .ToList();
 
@@ -32,7 +49,8 @@ public static class SpeculativeDevirtualization {
     foreach (var (call, candidate) in plans)
       if (VersionCall(call, candidate))
         ++changed;
-    return changed;
+
+    return changed == 0 ? IrModulePassResult.Unchanged : IrModulePassResult.Changed(changed);
   }
 
   private static IrFunction? CandidateFor(IrModule module, IrFunction caller, IrCall call) {

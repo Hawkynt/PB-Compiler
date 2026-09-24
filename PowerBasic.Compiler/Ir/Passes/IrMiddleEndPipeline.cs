@@ -110,7 +110,7 @@ public static class IrMiddleEndPipeline {
     .AddModuleConservativeWhen(includeModulePasses, "icp", IndirectCallPromotion.Run)
     .AddModuleAnalyzedWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
     .AddModuleAnalyzedWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
-    .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
+    .AddModuleAnalyzedWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "inline-speed",
       module => Inliner.Run(module, optimizeForSpeed: true))
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "ctxclone", ContextSensitiveCloning.Run)
