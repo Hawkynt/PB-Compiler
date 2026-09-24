@@ -11,6 +11,10 @@ public sealed class X86InstructionEncoder(X86Mode mode) : IMachineInstructionEnc
 
   public byte[] Ret() => [0xC3];
 
+  public byte[] Ret(ushort stackBytes) => stackBytes == 0
+    ? this.Ret()
+    : [0xC2, (byte)stackBytes, (byte)(stackBytes >> 8)];
+
   public byte[] Push(MachineRegister register) {
     Validate(register);
     if (register.Encoding < 8)

@@ -113,12 +113,49 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       error = "target: " + targetError;
       return false;
     }
-    this._scheduler.Schedule(selected);
-    if (this._allocator.TryAllocate(selected, out var allocationReason) is not { } allocation) {
-      error = "allocation: " + (allocationReason ?? "register allocation failed");
+    IReadOnlyDictionary<int, Reg>? allocation;
+    try {
+      this._scheduler.Schedule(selected);
+    } catch (NotSupportedException exception) {
+      error = $"scheduling: unsupported instruction: {exception.Message}";
+      return false;
+    } catch (InvalidOperationException exception) {
+      error = $"scheduling: invalid machine function: {exception.Message}";
+      return false;
+    } catch (ArgumentException exception) {
+      error = $"scheduling: invalid operand: {exception.Message}";
       return false;
     }
-    this._postAllocation.Run(selected, allocation);
+
+    try {
+      allocation = this._allocator.TryAllocate(selected, out var allocationReason);
+      if (allocation is null) {
+        error = "allocation: " + (allocationReason ?? "register allocation failed");
+        return false;
+      }
+    } catch (NotSupportedException exception) {
+      error = $"allocation: unsupported machine function: {exception.Message}";
+      return false;
+    } catch (InvalidOperationException exception) {
+      error = $"allocation: invalid machine function: {exception.Message}";
+      return false;
+    } catch (ArgumentException exception) {
+      error = $"allocation: invalid operand: {exception.Message}";
+      return false;
+    }
+
+    try {
+      this._postAllocation.Run(selected, allocation);
+    } catch (NotSupportedException exception) {
+      error = $"post-allocation: unsupported instruction: {exception.Message}";
+      return false;
+    } catch (InvalidOperationException exception) {
+      error = $"post-allocation: invalid machine function: {exception.Message}";
+      return false;
+    } catch (ArgumentException exception) {
+      error = $"post-allocation: invalid operand: {exception.Message}";
+      return false;
+    }
     var provisional = new IrMachineFunction(source, selected, allocation, this.Target);
     if (!X86HostedMachineBuilder.TryBuild(provisional, out var hosted, out var hostedError)) {
       error = "hosted machine lowering: " + (hostedError ?? "unsupported target instruction");
@@ -156,6 +193,9 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       error = exception.Message;
       return false;
     } catch (NotSupportedException exception) {
+      error = exception.Message;
+      return false;
+    } catch (OverflowException exception) {
       error = exception.Message;
       return false;
     }

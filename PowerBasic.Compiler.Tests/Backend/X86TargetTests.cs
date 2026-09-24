@@ -374,6 +374,66 @@ public sealed class X86TargetTests {
     });
   }
 
+  [TestCase(-2, "negative stack slot")]
+  [TestCase(int.MaxValue, "exceeds the supported frame size")]
+  public void X86HostedMachineBuilder_GivenInvalidFrameSize_ThenReturnsDiagnostic(int slotSize, string expected) {
+    var source = new IrFunction("invalid-frame", IrType.Void);
+    var selected = new X86MachineFunction("invalid-frame");
+    selected.StackSlots.Add(slotSize);
+    var machine = new IrMachineFunction(source, selected, new Dictionary<int, Reg>(),
+      new MachineTargetDescription("x86-16", 16, 16));
+
+    Assert.That(X86HostedMachineBuilder.TryBuild(machine, out var hosted, out var error), Is.False);
+    Assert.Multiple(() => {
+      Assert.That(hosted, Is.Null);
+      Assert.That(error, Does.Contain(expected));
+    });
+  }
+
+  [TestCase(IrCallConvention.Basic, 6, 8)]
+  [TestCase(IrCallConvention.Pascal, 6, 8)]
+  [TestCase(IrCallConvention.Cdecl, 0, 4)]
+  [TestCase(IrCallConvention.Stdcall, 6, 4)]
+  public void X86MachineLowering_GivenStackParameter_ThenLoadsItsAbiHomeAndUsesReturnCleanup(
+      IrCallConvention convention, int calleePopBytes, int parameterOffset) {
+    var arguments = Enumerable.Range(0, 3).Select(index => new IrArgument(IrType.I16, index)).ToArray();
+    var function = new IrFunction("identity", IrType.I16, arguments) { Convention = convention };
+    new IrBuilder(function.CreateBlock("entry")).Ret(arguments[0]);
+
+    Assert.That(IrMachinePipeline.TryLowerFunction(function, SelectionTarget.Baseline,
+      out var machine, out var error), Is.True, error);
+    var hosted = machine!.HostedFunction!;
+    var parameterLoad = hosted.Instructions.First(instruction => instruction.Opcode == X86TargetOpcode.Mov
+      && instruction.Address?.Base == X86RegisterFile.Gpr16[5]);
+    var bytes = new X86TargetMachineEmitter(new X86InstructionEncoder(X86Mode.Bit16))
+      .Emit(hosted, emitReturn: false).Bytes;
+
+    Assert.Multiple(() => {
+      Assert.That(parameterLoad.Address!.Value.Displacement, Is.EqualTo(parameterOffset));
+      Assert.That(hosted.Abi.CalleePopBytes, Is.EqualTo(calleePopBytes));
+      Assert.That(bytes[^(calleePopBytes == 0 ? 2 : 4)..], Is.EqualTo(calleePopBytes == 0
+        ? new byte[] { 0x5D, 0xC3 }
+        : new byte[] { 0x5D, 0xC2, (byte)calleePopBytes, 0x00 }));
+    });
+  }
+
+  [Test]
+  public void X86HostedMachineBuilder_GivenRegisterArgumentConvention_ThenDeclinesWithoutProducingAnUninitializedHome() {
+    var source = new IrFunction("fastcall", IrType.Void, [new IrArgument(IrType.I16, 0)]) {
+      Convention = IrCallConvention.Fastcall,
+    };
+    var selected = new X86MachineFunction("fastcall");
+    var machine = new IrMachineFunction(source, selected, new Dictionary<int, Reg>(),
+      new MachineTargetDescription("x86-16", 16, 16));
+
+    Assert.That(X86HostedMachineBuilder.TryBuild(machine, out var hosted, out var error), Is.False);
+    Assert.Multiple(() => {
+      Assert.That(hosted, Is.Null);
+      Assert.That(error, Does.Contain("register-argument parameter homes are not implemented"));
+      Assert.That(error, Does.Contain("fastcall"));
+    });
+  }
+
   [Test]
   public void X86MachineLoweringRejectsNonX86TargetFamilies() {
     Assert.That(

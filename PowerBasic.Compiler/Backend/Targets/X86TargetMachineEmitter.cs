@@ -21,6 +21,17 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
   public MachineCode Emit(X86TargetMachineFunction function, bool preserveFramePointer = true,
       bool emitReturn = true) {
     ArgumentNullException.ThrowIfNull(function);
+    var returnPopBytes = function.Abi.StackCleanup switch {
+      X86StackCleanup.Caller when function.Abi.CalleePopBytes == 0 => (ushort)0,
+      X86StackCleanup.Caller => throw new InvalidOperationException(
+        "caller-clean ABI cannot attach a callee-pop byte count"),
+      X86StackCleanup.Callee when function.Abi.CalleePopBytes is >= 0 and <= ushort.MaxValue
+        => (ushort)function.Abi.CalleePopBytes,
+      X86StackCleanup.Callee => throw new InvalidOperationException(
+        $"callee-pop byte count {function.Abi.CalleePopBytes} is outside the RET immediate range"),
+      var cleanup => throw new ArgumentOutOfRangeException(nameof(function), cleanup,
+        "unsupported x86 stack-cleanup policy"),
+    };
     var bytes = new List<byte>();
     var relocations = new List<MachineRelocation>();
     var labels = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -422,12 +433,16 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
         case X86TargetOpcode.Fldl2e: bytes.Add(0xD9); bytes.Add(0xEA); break;
         case X86TargetOpcode.Fldl2t: bytes.Add(0xD9); bytes.Add(0xE9); break;
         case X86TargetOpcode.Fld when instruction.Address is { } fldAddress:
-          var fldBytes = encoder.X87Memory(fldAddress, fldAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9, 0);
+          var fldBytes = encoder.X87Memory(fldAddress,
+            fldAddress.WidthBits == 80 ? (byte)0xDB : fldAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9,
+            fldAddress.WidthBits == 80 ? 5 : 0);
           bytes.AddRange(fldBytes);
           AddAddressRelocation(fldAddress, offset, fldBytes.Length);
           break;
         case X86TargetOpcode.Fstp when instruction.Address is { } fstpAddress:
-          var fstpBytes = encoder.X87Memory(fstpAddress, fstpAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9, 3);
+          var fstpBytes = encoder.X87Memory(fstpAddress,
+            fstpAddress.WidthBits == 80 ? (byte)0xDB : fstpAddress.WidthBits == 64 ? (byte)0xDD : (byte)0xD9,
+            fstpAddress.WidthBits == 80 ? 7 : 3);
           bytes.AddRange(fstpBytes);
           AddAddressRelocation(fstpAddress, offset, fstpBytes.Length);
           break;
@@ -547,7 +562,7 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
           break;
         case X86TargetOpcode.Ret:
           AppendFunctionEpilogue();
-          bytes.AddRange(encoder.Ret());
+          bytes.AddRange(encoder.Ret(returnPopBytes));
           break;
         default:
           throw new NotSupportedException($"x86 target opcode '{instruction.Opcode}' is not encodable");
@@ -556,7 +571,7 @@ public sealed class X86TargetMachineEmitter(X86InstructionEncoder encoder) {
 
     if (emitReturn) {
       AppendFunctionEpilogue();
-      bytes.AddRange(encoder.Ret());
+      bytes.AddRange(encoder.Ret(returnPopBytes));
     }
     foreach (var label in function.LabelInstructionIndices.Where(pair => pair.Value == function.Instructions.Count))
       labels[label.Key] = bytes.Count;

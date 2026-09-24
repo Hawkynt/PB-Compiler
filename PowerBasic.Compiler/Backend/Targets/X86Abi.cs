@@ -103,30 +103,37 @@ public sealed record X86Abi(
       if (this.ArgumentRegisters.Count != 0 && type.IsIeeeFloat)
         throw new NotSupportedException(
           $"{this.Name} does not model floating-point argument registers (argument {index}: {type})");
-      var bits = Math.Max(type.Bits, type.IsPointer ? this.PointerBits : 8);
-      var parts = Math.Max(1, (bits + this.PointerBits - 1) / this.PointerBits);
+      var bits = Math.Max((long)type.Bits, type.IsPointer ? this.PointerBits : 8);
+      var parts = Math.Max(1L, (bits + this.PointerBits - 1) / this.PointerBits);
       if (this.ArgumentRegisters.Count != 0 && parts != 1)
         throw new NotSupportedException(
           $"{this.Name} register arguments must fit one {this.PointerBits}-bit register (argument {index}: {type})");
       var regs = register + parts <= this.ArgumentRegisters.Count
-        ? this.ArgumentRegisters.Skip(register).Take(parts).ToArray()
+        ? this.ArgumentRegisters.Skip(register).Take((int)parts).ToArray()
         : Array.Empty<MachineRegister>();
       if (regs.Length != 0) {
-        register += parts;
+        register += (int)parts;
         result[index] = (index, regs, -1);
       } else {
-        var bytes = parts * (this.PointerBits / 8);
-        stackArguments.Add((index, bytes));
+        var byteCount = parts * (this.PointerBits / 8L);
+        if (byteCount > int.MaxValue)
+          throw new NotSupportedException(
+            $"{this.Name} cannot represent argument {index}'s {byteCount}-byte stack slot");
+        stackArguments.Add((index, (int)byteCount));
       }
     }
 
-    var stackOffset = this.ShadowSpaceBytes;
+    long stackOffset = this.ShadowSpaceBytes;
     var pushOrder = this.ArgumentOrder == X86StackArgumentOrder.RightToLeft
       ? stackArguments.OrderBy(argument => argument.Argument)
       : stackArguments.OrderByDescending(argument => argument.Argument);
     foreach (var (index, bytes) in pushOrder) {
-      result[index] = (index, [], stackOffset);
+      if (stackOffset > int.MaxValue)
+        throw new NotSupportedException($"{this.Name} stack arguments exceed the supported offset range");
+      result[index] = (index, [], (int)stackOffset);
       stackOffset += bytes;
+      if (stackOffset > int.MaxValue)
+        throw new NotSupportedException($"{this.Name} stack arguments exceed the supported offset range");
     }
     return result;
   }

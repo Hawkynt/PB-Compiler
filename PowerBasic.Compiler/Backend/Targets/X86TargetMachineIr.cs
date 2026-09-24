@@ -98,7 +98,9 @@ public sealed record X86TargetAbi(
     int ShadowSpaceBytes,
     IReadOnlyList<MachineRegister> ArgumentRegisters,
     MachineRegister ReturnRegister,
-    IReadOnlySet<MachineRegister> CalleeSavedRegisters);
+    IReadOnlySet<MachineRegister> CalleeSavedRegisters,
+    X86StackCleanup StackCleanup = X86StackCleanup.Caller,
+    int CalleePopBytes = 0);
 
 /// <summary>Target machine instruction independent of the legacy DOS assembler.</summary>
 public sealed record X86TargetInstruction(

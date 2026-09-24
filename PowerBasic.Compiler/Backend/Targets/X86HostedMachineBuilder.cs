@@ -11,6 +11,29 @@ public static class X86HostedMachineBuilder {
   public static bool TryBuild(IrMachineFunction machine, out X86TargetMachineFunction? hosted,
       out string? error) {
     ArgumentNullException.ThrowIfNull(machine);
+    try {
+      return TryBuildCore(machine, out hosted, out error);
+    } catch (NotSupportedException exception) {
+      hosted = null;
+      error = "unsupported hosted x86 construct: " + exception.Message;
+      return false;
+    } catch (InvalidOperationException exception) {
+      hosted = null;
+      error = "invalid hosted x86 machine function: " + exception.Message;
+      return false;
+    } catch (ArgumentException exception) {
+      hosted = null;
+      error = "invalid hosted x86 operand: " + exception.Message;
+      return false;
+    } catch (OverflowException exception) {
+      hosted = null;
+      error = "hosted x86 integer overflow: " + exception.Message;
+      return false;
+    }
+  }
+
+  private static bool TryBuildCore(IrMachineFunction machine, out X86TargetMachineFunction? hosted,
+      out string? error) {
     hosted = null;
     error = null;
     var mode = machine.Target.Name switch {
@@ -36,8 +59,86 @@ public static class X86HostedMachineBuilder {
       error = "ABI lowering: " + exception.Message;
       return false;
     }
+    if (abi.Distance != X86CallDistance.Near) {
+      error = $"ABI lowering: {abi.Name} requires far-return prologue and epilogue support";
+      return false;
+    }
+
+    IReadOnlyList<(int Argument, IReadOnlyList<MachineRegister> Registers, int StackOffset)> argumentLocations;
+    try {
+      argumentLocations = abi.PlaceArguments(machine.Source.Parameters.Select(parameter => parameter.Type).ToArray());
+    } catch (NotSupportedException exception) {
+      error = "ABI lowering: " + exception.Message;
+      return false;
+    }
+    var registerArguments = argumentLocations.Where(location => location.Registers.Count != 0).ToArray();
+    if (registerArguments.Length != 0 && selectedMode != X86Mode.Bit16) {
+      error = $"ABI lowering: register-argument parameter homes are not implemented for {abi.Name} in {selectedMode}";
+      return false;
+    }
+
+    var returnAddressAndSavedFrameBytes = 2 * (abi.PointerBits / 8);
+    machine.Function.IncomingParameterOffsets.Clear();
+    foreach (var location in argumentLocations)
+      if (location.StackOffset >= 0)
+        machine.Function.IncomingParameterOffsets.Add(location.Argument,
+          checked(returnAddressAndSavedFrameBytes + location.StackOffset));
+
+    long existingFrameSize = 0;
+    foreach (var size in machine.Function.StackSlots) {
+      if (size < 0) {
+        error = $"frame layout: negative stack slot size {size}";
+        return false;
+      }
+      existingFrameSize += (size + 1L) & ~1L;
+      if (existingFrameSize > int.MaxValue) {
+        error = $"frame layout: {existingFrameSize} bytes exceeds the supported frame size";
+        return false;
+      }
+    }
+
+    var registerHomes = new Dictionary<int, int>();
+    var homeSize = abi.PointerBits / 8;
+    foreach (var (location, homeIndex) in registerArguments.Select((location, index) => (location, index))) {
+      var offset = checked(-(int)(existingFrameSize + (long)(homeIndex + 1) * homeSize));
+      machine.Function.StackSlots.Add(homeSize);
+      machine.Function.IncomingParameterOffsets.Add(location.Argument, offset);
+      registerHomes.Add(location.Argument, offset);
+    }
+
     var instructions = new List<X86TargetInstruction>();
     var labels = new Dictionary<string, int>(StringComparer.Ordinal);
+    foreach (var location in registerArguments) {
+      if (location.Registers.Count != 1) {
+        error = $"ABI lowering: {abi.Name} register argument #{location.Argument} occupies multiple registers";
+        return false;
+      }
+      var incomingRegister = registers.Registers[location.Registers[0].Encoding];
+      var home = new X86TargetAddress(registers.FramePointer, null, 1,
+        registerHomes[location.Argument], incomingRegister.Bits);
+      instructions.Add(new(X86TargetOpcode.Mov, [incomingRegister], Immediate: 1, Address: home));
+    }
+    foreach (var (virtualId, argumentIndex, byteDelta) in machine.Function.ArgumentLoads) {
+      if (!machine.Allocation.TryGetValue(virtualId, out var physical))
+        continue;
+      var size = physical.Size() switch {
+        OperandSize.Byte => MRegSize.Byte,
+        OperandSize.Word => MRegSize.Word,
+        OperandSize.Dword => MRegSize.Dword,
+        _ => throw new NotSupportedException($"ABI argument {argumentIndex} uses unsupported register size {physical.Size()}"),
+      };
+      var destination = registers.RegisterFor(MReg.Physical_(physical, size));
+      var width = size switch {
+        MRegSize.Byte => 8,
+        MRegSize.Word => 16,
+        MRegSize.Dword => 32,
+        _ => throw new ArgumentOutOfRangeException(nameof(size), size, "unsupported ABI argument width"),
+      };
+      var displacement = checked(machine.Function.IncomingParameterOffsets[argumentIndex] + byteDelta);
+      instructions.Add(new(X86TargetOpcode.Mov, [destination], Address:
+        new(registers.FramePointer, null, 1, displacement, width)));
+    }
+
     var blockLabels = machine.Function.Blocks.ToDictionary(
       block => block.Label, block => machine.Function.Name + "$" + block.Label,
       StringComparer.Ordinal);
@@ -56,17 +157,39 @@ public static class X86HostedMachineBuilder {
       }
     }
 
-    IReadOnlyList<(int Argument, IReadOnlyList<MachineRegister> Registers, int StackOffset)> argumentLocations;
-    try {
-      argumentLocations = abi.PlaceArguments(machine.Source.Parameters.Select(parameter => parameter.Type).ToArray());
-    } catch (NotSupportedException exception) {
-      error = "ABI lowering: " + exception.Message;
+    long frameSize = 0;
+    foreach (var size in machine.Function.StackSlots) {
+      if (size < 0) {
+        error = $"frame layout: negative stack slot size {size}";
+        return false;
+      }
+      frameSize += (size + 1L) & ~1L;
+      if (frameSize > int.MaxValue) {
+        error = $"frame layout: {frameSize} bytes exceeds the supported frame size";
+        return false;
+      }
+    }
+
+    var calleePopBytes = 0;
+    if (abi.StackCleanup == X86StackCleanup.Callee) {
+      for (var index = 0; index < argumentLocations.Count; ++index) {
+        var location = argumentLocations[index];
+        var type = machine.Source.Parameters[index].Type;
+        var bits = Math.Max(type.Bits, type.IsPointer ? abi.PointerBits : 8);
+        var bytes = Math.Max(1, (bits + abi.PointerBits - 1) / abi.PointerBits) * (abi.PointerBits / 8);
+        calleePopBytes = Math.Max(calleePopBytes, checked(location.StackOffset + bytes));
+      }
+    }
+    if (calleePopBytes > ushort.MaxValue) {
+      error = $"ABI lowering: callee cleanup of {calleePopBytes} bytes exceeds the RET immediate range";
       return false;
     }
+
     hosted = new X86TargetMachineFunction(selectedMode,
       new X86TargetAbi(selectedMode, abi.Name, abi.StackAlignment, abi.ShadowSpaceBytes,
-        abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters), instructions, labels,
-      machine.Function.StackSlots.Sum(size => (size + 1) & ~1),
+        abi.ArgumentRegisters, abi.ReturnRegister, abi.CalleeSavedRegisters,
+        abi.StackCleanup, calleePopBytes), instructions, labels,
+      (int)frameSize,
       argumentLocations);
     return true;
   }
@@ -469,6 +592,9 @@ public static class X86HostedMachineBuilder {
     } catch (NotSupportedException ex) {
       error = ex.Message;
       return false;
+    } catch (OverflowException ex) {
+      error = $"integer overflow while lowering {instruction.Opcode}: {ex.Message}";
+      return false;
     }
   }
 
@@ -490,6 +616,7 @@ public static class X86HostedMachineBuilder {
         MRegSize.Word => 16,
         MRegSize.Dword => 32,
         MRegSize.Qword => 64,
+        MRegSize.Tbyte => 80,
         _ => throw new ArgumentOutOfRangeException(nameof(memory), memory.Size, "unsupported x86 memory width"),
       });
     // Absolute displacement-only memory operands are valid in all hosted modes.
@@ -510,6 +637,7 @@ public static class X86HostedMachineBuilder {
         MRegSize.Word => 16,
         MRegSize.Dword => 32,
         MRegSize.Qword => 64,
+        MRegSize.Tbyte => 80,
         _ => throw new ArgumentOutOfRangeException(nameof(operand), slot.Size, "unsupported x86 stack-slot width"),
       });
       return true;
@@ -520,6 +648,7 @@ public static class X86HostedMachineBuilder {
         MRegSize.Word => 16,
         MRegSize.Dword => 32,
         MRegSize.Qword => 64,
+        MRegSize.Tbyte => 80,
         _ => throw new ArgumentOutOfRangeException(nameof(operand), cell.Size, "unsupported x86 data-cell width"),
       }, cell.Name);
       return true;
@@ -529,15 +658,17 @@ public static class X86HostedMachineBuilder {
       return true;
     }
     if (operand is MOperand.ParamCell parameter) {
-      // Stack-only routed ABIs place the first incoming word at BP+4.  Wide parameters carry
-      // their own byte delta, so this remains correct for the split LONG/DOUBLE forms emitted by
-      // the selector without reintroducing a source-procedure frame dependency.
-      address = new(registers.FramePointer, null, 1, 4 + parameter.ArgumentIndex * 2 + parameter.ByteDelta,
+      if (!function.IncomingParameterOffsets.TryGetValue(parameter.ArgumentIndex, out var parameterOffset)) {
+        address = default;
+        return false;
+      }
+      address = new(registers.FramePointer, null, 1, parameterOffset + parameter.ByteDelta,
         parameter.Size switch {
           MRegSize.Byte => 8,
           MRegSize.Word => 16,
-          MRegSize.Dword => 32,
-          MRegSize.Qword => 64,
+        MRegSize.Dword => 32,
+        MRegSize.Qword => 64,
+        MRegSize.Tbyte => 80,
           _ => throw new ArgumentOutOfRangeException(nameof(operand), parameter.Size, "unsupported x86 parameter width"),
         });
       return true;
@@ -581,11 +712,21 @@ public static class X86HostedMachineBuilder {
         return true;
       }
     }
-    if (TryExpandVectorAsm(mnemonic, instruction, registers, allocation, out target))
+    if (TryExpandVectorAsm(mnemonic, asm, instruction, registers, allocation, out target))
       return true;
     if (mnemonic is "POPCNT" or "BSF" or "BSR" or "BEXTR" or "ANDN" or "BLSI" or "BLSR" or "BZHI" or "PEXT" or "PDEP" or "MULX") {
       var registerOperands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
         .Select(operand => TryMachineRegister(operand.Reg, registers, allocation)).ToArray();
+      if (registerOperands.Length < 2) {
+        var separator = asm.Text.IndexOfAny([' ', '\t']);
+        var operandText = separator < 0 ? "" : asm.Text[(separator + 1)..];
+        var parser = new TextAssembler(new Assembler());
+        if (parser.TryParseOperands(operandText, new InlineAsmLabelResolver(), out var parsed, out _))
+          registerOperands = parsed.OfType<TextAssembler.ParsedAsmRegister>()
+            .Select(register => TryMachineRegister(MReg.Physical_(register.Register,
+              register.Register.IsByte() ? MRegSize.Byte : register.Register.IsDword() ? MRegSize.Dword : MRegSize.Word),
+              registers, allocation)).ToArray();
+      }
       var requiredRegisters = mnemonic is "BLSI" or "BLSR" or "POPCNT" or "BSF" or "BSR" ? 2 : 3;
       if (registerOperands.Length >= requiredRegisters && registerOperands.All(register => register is not null)) {
         target = new(mnemonic switch {
@@ -886,7 +1027,7 @@ public static class X86HostedMachineBuilder {
     return separator < 0 || text[(separator + 1)..].Trim().Length == 0;
   }
 
-  private static bool TryExpandVectorAsm(string mnemonic, MInstr instruction,
+  private static bool TryExpandVectorAsm(string mnemonic, MOperand.InlineAsmText asm, MInstr instruction,
       X86TargetRegisterFile registers, IReadOnlyDictionary<int, Reg> allocation,
       out X86TargetInstruction? target) {
     target = null;
@@ -909,6 +1050,16 @@ public static class X86HostedMachineBuilder {
       return false;
     var operands = instruction.Operands.Skip(1).OfType<MOperand.Register>()
       .Select(operand => TryMachineRegister(operand.Reg, registers, allocation)).ToArray();
+    if (operands.Length < 2) {
+      var separator = asm.Text.IndexOfAny([' ', '\t']);
+      var operandText = separator < 0 ? "" : asm.Text[(separator + 1)..];
+      var parser = new TextAssembler(new Assembler());
+      if (!parser.TryParseOperands(operandText, new InlineAsmLabelResolver(), out var parsed, out _))
+        return false;
+      operands = parsed.OfType<TextAssembler.ParsedAsmRegister>()
+        .Select(register => TryMachineRegister(MReg.Physical_(register.Register,
+          register.Register.IsMmx() ? MRegSize.Qword : MRegSize.Tbyte), registers, allocation)).ToArray();
+    }
     if (operands.Any(register => register is null) || operands.Length < 2)
       return false;
     var vectorOperands = operands.Select(register => register!.Value).ToArray();

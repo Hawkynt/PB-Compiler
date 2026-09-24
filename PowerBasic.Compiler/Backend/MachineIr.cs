@@ -425,6 +425,9 @@ public sealed class X86MachineFunction(string name) {
   /// </summary>
   public List<(int VirtualId, int ArgumentIndex, int ByteDelta)> ArgumentLoads { get; } = [];
 
+  /// <summary>Target-frame displacements for incoming stack parameters, populated by hosted ABI lowering.</summary>
+  public Dictionary<int, int> IncomingParameterOffsets { get; } = [];
+
   /// <summary>
   /// Whether <see cref="ArgumentLoads"/> is the authoritative plan. Selection always builds one, so an
   /// EMPTY table means every parameter was spilled into its own incoming cell and the prologue loads
@@ -465,6 +468,8 @@ public sealed class X86MachineFunction(string name) {
     };
     copy.StackSlots.AddRange(this.StackSlots);
     copy.ArgumentLoads.AddRange(this.ArgumentLoads);
+    foreach (var (argument, offset) in this.IncomingParameterOffsets)
+      copy.IncomingParameterOffsets.Add(argument, offset);
     copy.MovedValues.UnionWith(this.MovedValues);
     foreach (var block in this.Blocks) {
       var cloned = new MBlock(block.Label) { ExecutionCount = block.ExecutionCount };
@@ -485,6 +490,9 @@ public sealed class X86MachineFunction(string name) {
     this.StackSlots.AddRange(other.StackSlots);
     this.ArgumentLoads.Clear();
     this.ArgumentLoads.AddRange(other.ArgumentLoads);
+    this.IncomingParameterOffsets.Clear();
+    foreach (var (argument, offset) in other.IncomingParameterOffsets)
+      this.IncomingParameterOffsets.Add(argument, offset);
     this.MovedValues.Clear();
     this.MovedValues.UnionWith(other.MovedValues);
     this.Blocks.Clear();
