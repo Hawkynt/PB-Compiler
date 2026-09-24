@@ -108,8 +108,8 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("switchform", (fn, _) => Conservative(() => SwitchFormation.Run(fn)))
     .InModulePhase(IrMiddleEndPhase.Interprocedural)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)
-    .AddModuleConservativeWhen(includeModulePasses, "icp",
-      module => IndirectCallPromotion.Run(module, callCostModel))
+    .AddModuleAnalyzedWhen(includeModulePasses, "icp",
+      (module, analyses) => IndirectCallPromotion.Run(module, analyses, callCostModel))
     .AddModuleAnalyzedWhen(includeModulePasses, "return-structure-reduction", ReturnStructureReduction.Run)
     .AddModuleAnalyzedWhen(includeModulePasses, "argstruct", ArgumentStructureReduction.Run)
     .AddModuleAnalyzedWhen(includeModulePasses && optimizeForSpeed, "spec-devirt", SpeculativeDevirtualization.Run)

@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -12,21 +14,44 @@ public static class IndirectCallPromotion {
   /// <summary>Promotes eligible indirect calls in <paramref name="module"/>; returns the number changed.</summary>
   public static int Run(IrModule module, IIrCallCostModel? costModel = null) {
     ArgumentNullException.ThrowIfNull(module);
+    return Run(module, new IrModuleAnalysisManager(module), costModel).Changes;
+  }
+
+  /// <summary>
+  /// Analysis-aware promotion. Exact singleton callees belong to O0279 and are excluded before profile
+  /// profitability is considered; O0271 only versions calls whose target remains incomplete.
+  /// </summary>
+  public static IrModulePassResult Run(
+      IrModule module,
+      IrModuleAnalysisManager analyses,
+      IIrCallCostModel? costModel = null) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(module, analyses.Module))
+      throw new ArgumentException("Module analysis manager belongs to a different module.", nameof(analyses));
     costModel ??= IrDefaultCallCostModel.Instance;
 
-    var promoted = 0;
+    var exactTargets = analyses.Get(IrModuleAnalyses.FunctionTargets);
+
+    // Decide the complete sweep before mutating anything. Promotion adds comparisons/direct calls that
+    // are themselves function-value users; allowing those new users to perturb later target/profitability
+    // decisions would make the result depend on traversal order and would consult stale cached facts.
+    var plans = new List<(IrFunction Function, IrCall Call, IrFunction Target)>();
     foreach (var function in module.Functions) {
       if (function.IsDeclaration || function.HasErrorHandler || function.HasInlineAsm)
         continue;
-
-      foreach (var call in function.AllInstructions.OfType<IrCall>().ToArray()) {
-        if (!TrySelectTarget(module, call, costModel, out var target))
+      foreach (var call in function.AllInstructions.OfType<IrCall>()) {
+        if (call.Callee is IrFunction || exactTargets.ResolveUnique(call.Callee) is not null)
           continue;
-        Promote(call, target, function);
-        ++promoted;
+        if (TrySelectTarget(module, call, costModel, out var target))
+          plans.Add((function, call, target));
       }
     }
-    return promoted;
+
+    foreach (var (function, call, target) in plans)
+      Promote(call, target, function);
+
+    return plans.Count == 0 ? IrModulePassResult.Unchanged : IrModulePassResult.Changed(plans.Count);
   }
 
   private static bool TrySelectTarget(

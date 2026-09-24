@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
@@ -118,6 +119,49 @@ public sealed class IndirectCallPromotionTests {
     call.SetIndirectTargetProfile(new IrIndirectCallProfile(100, new IrIndirectCallTarget(stale, 90)));
 
     Assert.That(IndirectCallPromotion.Run(module), Is.Zero);
+  }
+
+
+  [Test]
+  public void AnalysisAwareRun_GivenExactSingletonTarget_ThenLeavesTheCallForWpdWithoutProfileGuard() {
+    var module = new IrModule("t");
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var target = module.AddFunction(new IrFunction("target", IrType.I16, [x]));
+    new IrBuilder(target.CreateBlock("entry")).Ret(x);
+
+    var callback = new IrArgument(IrType.Ptr, 0, "callback");
+    var value = new IrArgument(IrType.I16, 1, "value");
+    var invoke = module.AddFunction(new IrFunction("invoke", IrType.I16, [callback, value]));
+    var invokeEntry = invoke.CreateBlock("entry");
+    var indirect = invokeEntry.Append(new IrCall(IrType.I16, callback, [value]));
+    indirect.SetIndirectTargetProfile(new IrIndirectCallProfile(
+      100, new IrIndirectCallTarget(target, 100)));
+    invokeEntry.Append(new IrRet(indirect));
+
+    var main = module.AddFunction(new IrFunction("main", IrType.Void));
+    var mainEntry = main.CreateBlock("entry");
+    mainEntry.Append(new IrCall(IrType.I16, invoke, [target, Const(1)]));
+    mainEntry.Append(new IrCall(IrType.I16, invoke, [target, Const(2)]));
+    mainEntry.Append(new IrRet());
+
+    var analyses = new IrModuleAnalysisManager(module);
+    var promoted = IndirectCallPromotion.Run(module, analyses);
+
+    Assert.Multiple(() => {
+      Assert.That(promoted.Changes, Is.Zero);
+      Assert.That(invokeEntry.Terminator, Is.TypeOf<IrRet>(),
+        "an exact target should not pay for a profile guard and fallback");
+      Assert.That(indirect.Callee, Is.SameAs(callback));
+      Assert.That(analyses.IsCached(IrModuleAnalyses.FunctionTargets), Is.True);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.CallGraph), Is.True);
+    });
+
+    var devirtualized = WholeProgramDevirtualization.Run(module, analyses);
+    Assert.Multiple(() => {
+      Assert.That(devirtualized.Changes, Is.EqualTo(1));
+      Assert.That(indirect.Callee, Is.SameAs(target));
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
   }
 
   [Test]
