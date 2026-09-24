@@ -3134,15 +3134,19 @@ public sealed partial class IrLowering {
           aa.Address, new IrConstantInt(IrType.I32, afz.Length));
       case CallOrIndexExpr ci when this._model.IntrinsicBindings.TryGetValue(ci, out var info):
         return this.LowerStringIntrinsic(ci, info.Name);
-      // a user FUNCTION whose result is a string - its IR result already IS the handle
-      case CallOrIndexExpr uc when this._model.CallBindings.TryGetValue(uc, out var proc) && proc.IsFunction:
-        return this._procMap is not null && this._procMap.TryGetValue(proc, out var callee)
-          ? this.EmitCall(callee, proc, this.PositionalArguments(uc, uc.Arguments))
-          : throw new IrLoweringException($"call to {proc.Name} outside the modelled subset");
-      case NameExpr bare when this._model.CallBindings.TryGetValue(bare, out var bareProc) && bareProc.IsFunction:
-        return this._procMap is not null && this._procMap.TryGetValue(bareProc, out var bareCallee)
-          ? this.EmitCall(bareCallee, bareProc, [])
-          : throw new IrLoweringException($"call to {bareProc.Name} outside the modelled subset");
+      // a user FUNCTION whose result is a string - its HIR result already identifies the bound call
+      case CallOrIndexExpr uc
+        when HirDirectCallBuilder.TryBuild(this._model, uc, uc.Arguments, out var stringCall, out _)
+             && stringCall is { IsFunction: true, ReturnType: StringType }:
+        return this._procMap is not null && this._procMap.TryGetValue(stringCall.Target, out var callee)
+          ? this.EmitCall(callee, stringCall)
+          : throw new IrLoweringException($"call to {stringCall.Target.Name} outside the modelled subset");
+      case NameExpr bare
+        when HirDirectCallBuilder.TryBuild(this._model, bare, [], out var bareStringCall, out _)
+             && bareStringCall is { IsFunction: true, ReturnType: StringType }:
+        return this._procMap is not null && this._procMap.TryGetValue(bareStringCall.Target, out var bareCallee)
+          ? this.EmitCall(bareCallee, bareStringCall)
+          : throw new IrLoweringException($"call to {bareStringCall.Target.Name} outside the modelled subset");
       // The same branching ternary the numeric side lowers, over a string HANDLE. It has to be here
       // as well as there because a string is not a value this lowering loads with LowerExpr - the arms
       // are string EXPRESSIONS, and only LowerStringExpr knows how to produce one.
@@ -4816,10 +4820,12 @@ public sealed partial class IrLowering {
         this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), invoked);
       return;
     }
-    if (this._procMap is null || !this._model.CallBindings.TryGetValue(c, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
-      throw new IrLoweringException($"call to unsupported procedure {c.Name}");
-    var result = this.EmitCall(callee, proc, this.PositionalArguments(c, c.Arguments));
-    if (proc is { IsFunction: true, ReturnType: StringType })
+    if (!HirDirectCallBuilder.TryBuild(this._model, c, c.Arguments, out var directCall, out var directError))
+      throw new IrLoweringException(directError ?? $"call to unsupported procedure {c.Name}");
+    if (this._procMap is null || !this._procMap.TryGetValue(directCall.Target, out var callee))
+      throw new IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset");
+    var result = this.EmitCall(callee, directCall);
+    if (directCall is { IsFunction: true, ReturnType: StringType })
       this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), result);
   }
 
@@ -5072,12 +5078,12 @@ public sealed partial class IrLowering {
 
   private IrValue LowerNameRead(NameExpr name) {
     // a parameterless FUNCTION is called by naming it - "PRINT Counter%" is a call, not a read
-    if (this._model.CallBindings.TryGetValue(name, out var proc)) {
-      if (this._procMap is null || !this._procMap.TryGetValue(proc, out var callee))
-        throw new IrLoweringException($"call to {proc.Name} outside the modelled subset");
-      if (!proc.IsFunction)
+    if (HirDirectCallBuilder.TryBuild(this._model, name, [], out var directCall, out _)) {
+      if (this._procMap is null || !this._procMap.TryGetValue(directCall.Target, out var callee))
+        throw new IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset");
+      if (!directCall.IsFunction)
         throw new IrLoweringException("SUB used in expression position");
-      return this.EmitCall(callee, proc, []);
+      return this.EmitCall(callee, directCall);
     }
     if (!this._model.VariableBindings.TryGetValue(name, out var symbol))
       return this.LowerErrorPseudoVariable(name.Name)
@@ -6238,39 +6244,13 @@ public sealed partial class IrLowering {
   private IrValue LowerCallExpr(CallOrIndexExpr call) {
     if (this._model.ProcPtrCalls.TryGetValue(call, out var signature))
       return this.LowerClosureCall(call, signature);   // f(args) through a delegate
-    if (this._procMap is null || !this._model.CallBindings.TryGetValue(call, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
-      throw new IrLoweringException($"unsupported call/index {call.Name}");   // array index / intrinsic
-    if (!proc.IsFunction)
+    if (!HirDirectCallBuilder.TryBuild(this._model, call, call.Arguments, out var directCall, out var directError))
+      throw new IrLoweringException(directError ?? $"unsupported call/index {call.Name}");   // array index / intrinsic
+    if (this._procMap is null || !this._procMap.TryGetValue(directCall.Target, out var callee))
+      throw new IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset");
+    if (!directCall.IsFunction)
       throw new IrLoweringException("SUB used in expression position");
-    return this.EmitCall(callee, proc, this.PositionalArguments(call, call.Arguments));
-  }
-
-  /// <summary>
-  /// The arguments of a call in PARAMETER order, with every default filled in.
-  ///
-  /// <para>
-  /// pb36 named arguments and default values are resolved by the binder, not by either back end: it
-  /// records the complete positional list against the call node, and every consumer - the direct
-  /// emitter, the inliner, the constant propagator, the decompiler - reads it from there. This path
-  /// did not, so a call that named its arguments passed them in the order they were WRITTEN, and one
-  /// that omitted a defaulted argument passed one fewer than the callee takes. The second failed
-  /// loudly ("argument count mismatch"); the first would not have.
-  /// </para>
-  /// </summary>
-  private IReadOnlyList<Expression> PositionalArguments(object callSite, IReadOnlyList<Expression> written) {
-    if (this._model.ReorderedArguments.GetValueOrDefault(callSite) is { } reordered)
-      return reordered;
-    // A call that named no argument gets no entry, so a trailing DEFAULT is still missing here. The
-    // binder leaves that fill to the call site - the default is an expression evaluated there, not a
-    // value baked into the callee - and the direct emitter does it in EmitCall for the same reason.
-    if (!this._model.CallBindings.TryGetValue(callSite, out var proc)
-        || written.Count >= proc.Parameters.Count || proc.IsCdecl
-        || proc.Parameters[written.Count].DefaultValue is null)
-      return written;
-    var filled = new List<Expression>(written);
-    for (var i = written.Count; i < proc.Parameters.Count && proc.Parameters[i].DefaultValue is { } value; ++i)
-      filled.Add(value);
-    return filled;
+    return this.EmitCall(callee, directCall);
   }
 
   /// <summary>
@@ -6305,29 +6285,28 @@ public sealed partial class IrLowering {
     return temp;
   }
 
-  private IrValue EmitCall(IrFunction callee, ProcedureSymbol proc, IReadOnlyList<Expression> arguments) {
-    if (arguments.Count != proc.Parameters.Count)
-      throw new IrLoweringException("argument count mismatch (optional/CDECL not modelled)");
-    var args = new List<IrValue>(arguments.Count);
+  private IrValue EmitCall(IrFunction callee, HirDirectCall directCall) {
+    var args = new List<IrValue>(directCall.Arguments.Count);
     var stringTemporaries = new List<IrValue>();
     var arrayArguments = new List<(IrValue Block, VariableSymbol Symbol, ArrayType Array)>();
-    for (var i = 0; i < arguments.Count; ++i) {
-      var p = proc.Parameters[i];
-      if (p.Type is ProcPtrType) {
-        this.AddClosureArgument(arguments[i], args);   // a delegate crosses as its four words
+    foreach (var argument in directCall.Arguments) {
+      var value = argument.Value;
+      var parameterType = argument.ParameterType;
+      if (parameterType is ProcPtrType) {
+        this.AddClosureArgument(value, args);   // a delegate crosses as its four words
         continue;
       }
-      args.Add(p.Type is UdtType
-        ? this.UdtAddress(arguments[i])                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
-        : p.Type is ArrayType
-          ? this.ArrayDescriptorArgument(arguments[i], arrayArguments)  // an array argument passes a descriptor, never element storage
-        : p.Type is StringType
-          ? this.StringArgument(arguments[i], p.ByVal, stringTemporaries)
-        : p.ByVal
-          ? this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), p.Type)
-          : this.AddressOfArgument(arguments[i], p.Type));
+      args.Add(parameterType is UdtType
+        ? this.UdtAddress(value)                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
+        : parameterType is ArrayType
+          ? this.ArrayDescriptorArgument(value, arrayArguments)  // an array argument passes a descriptor, never element storage
+        : parameterType is StringType
+          ? this.StringArgument(value, argument.ByValue, stringTemporaries)
+        : argument.ByValue
+          ? this.Coerce(this.LowerExpr(value), this._model.TypeOf(value), parameterType)
+          : this.AddressOfArgument(value, parameterType));
     }
-    var call = this._b.Call(callee.ReturnType, callee, IrConventionOf(proc.CallConv), args);
+    var call = this._b.Call(callee.ReturnType, callee, IrConventionOf(directCall.CallConvention), args);
     // The descriptor handed over is a block built for this call, so a REDIM or ERASE inside the
     // callee changed THAT and not the caller's own cells. Reading it back is what makes the caller
     // see the new bounds - which is what genuine PBC 3.50 does, and what tests/diff/DIFF124.BAS pins.
@@ -6338,7 +6317,7 @@ public sealed partial class IrLowering {
     // not a round trip introduced here: the direct emitter does the identical pair - rt_fixdn in the
     // callee's epilogue, rt_fixup where the caller stores the result - and pbvFixDigits is a runtime
     // cell, so neither half may be folded away.
-    var result = proc.ReturnType is BcdType { IsFixedPoint: true } fix
+    var result = directCall.ReturnType is BcdType { IsFixedPoint: true } fix
       ? this.Coerce(call, PbType.Ext, fix)
       : call;
     foreach (var temporary in stringTemporaries)
