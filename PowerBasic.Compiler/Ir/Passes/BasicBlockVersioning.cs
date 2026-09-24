@@ -40,25 +40,37 @@ public static class BasicBlockVersioning {
   /// false copy; the pass manager reaches further candidates at fixpoint.
   /// </summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return IrFunctionPassPipeline.RunStandalone(fn, "bbversion", Run);
+  }
+
+  /// <summary>Runs BBV through the shared range/alignment fact infrastructure.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
     if (fn.Entry is null || fn.HasErrorHandler || fn.HasInlineAsm)
-      return 0;
-    if (IrRangeAnalysis.Build(fn) is not { } ranges)
-      return 0;
+      return IrPassResult.Unchanged;
+
+    if (analyses.Get(IrAnalyses.Ranges) is not { } ranges
+        || analyses.Get(IrAnalyses.Dominators) is not { } dominators)
+      return IrPassResult.Unchanged;
+    var facts = analyses.Get(IrAnalyses.Facts);
 
     var addressed = fn.AddressTakenBlocks();
-    var dominators = ranges.Dominators;
     foreach (var guard in fn.Blocks.ToList()) {
       if (!dominators.IsReachable(guard))
         continue;
       if (guard.Terminator is not IrCondBr branch || ReferenceEquals(branch.IfTrue, branch.IfFalse))
         continue;
-      if (TryMatch(guard, branch, addressed, dominators, ranges) is not { } match)
+      if (TryMatch(guard, branch, addressed, dominators, ranges, facts) is not { } match)
         continue;
 
       Version(fn, branch, match);
-      return 1;
+      return IrPassResult.Changed(1);
     }
-    return 0;
+    return IrPassResult.Unchanged;
   }
 
   private sealed record IncomingEdge(IrBasicBlock From, bool IsDirect);
@@ -85,14 +97,13 @@ public static class BasicBlockVersioning {
 
   private sealed record ScalarComparison(IrValue Value, IrCmpPred Pred, IrConstantInt Constant);
 
-  private sealed record AlignmentCheck(IrValue Pointer, ulong Mask, bool IsZero);
-
   private static Candidate? TryMatch(
       IrBasicBlock guard,
       IrCondBr branch,
       IReadOnlySet<IrBasicBlock> addressed,
       IrDominators dominators,
-      IrRangeAnalysis ranges) {
+      IrRangeAnalysis ranges,
+      IrValueFacts facts) {
     foreach (var (trueJoin, trueEdge) in JoinCandidates(guard, branch.IfTrue))
       foreach (var (falseJoin, falseEdge) in JoinCandidates(guard, branch.IfFalse)) {
         if (!ReferenceEquals(trueJoin, falseJoin))
@@ -114,7 +125,7 @@ public static class BasicBlockVersioning {
           if (HasParallelBoundaryEdges(region))
             continue;                                // phis are predecessor-indexed, not parallel-edge-indexed
 
-          var (comparisons, conditionUsedAsGuard) = Facts(branch, guard, region, ranges);
+          var (comparisons, conditionUsedAsGuard) = Facts(branch, guard, region, ranges, facts);
           var versionTrue = conditionUsedAsGuard || comparisons.Any(fact => fact.WhenTrue is not null);
           var versionFalse = conditionUsedAsGuard || comparisons.Any(fact => fact.WhenFalse is not null);
           if (!versionTrue && !versionFalse)
@@ -172,7 +183,8 @@ public static class BasicBlockVersioning {
       IrCondBr branch,
       IrBasicBlock guard,
       IReadOnlyList<IrBasicBlock> region,
-      IrRangeAnalysis ranges) {
+      IrRangeAnalysis ranges,
+      IrValueFacts facts) {
     var inside = BlockSet(region);
     var conditionUsedAsGuard = branch.Condition.Users.Any(user =>
       user.Parent is { } block && inside.Contains(block) && user is IrCondBr or IrSelect);
@@ -181,8 +193,8 @@ public static class BasicBlockVersioning {
     foreach (var comparison in region.SelectMany(block => block.Instructions).OfType<IrCmp>()) {
       if (!IsGuardUse(comparison, inside))
         continue;
-      var whenTrue = Decide(branch, comparison, guard, ranges, outcome: true);
-      var whenFalse = Decide(branch, comparison, guard, ranges, outcome: false);
+      var whenTrue = Decide(branch, comparison, guard, ranges, facts, outcome: true);
+      var whenFalse = Decide(branch, comparison, guard, ranges, facts, outcome: false);
       if (whenTrue is not null || whenFalse is not null)
         comparisons.Add(new(comparison, whenTrue, whenFalse));
     }
@@ -280,13 +292,14 @@ public static class BasicBlockVersioning {
       IrCmp comparison,
       IrBasicBlock guard,
       IrRangeAnalysis ranges,
+      IrValueFacts facts,
       bool outcome) {
     if (branch.Condition is not IrCmp branchComparison)
       return null;
     if (SameComparison(branchComparison, comparison))
       return outcome;
     return DecideRange(branchComparison, comparison, guard, ranges, outcome)
-           ?? DecideAlignment(branchComparison, comparison, outcome);
+           ?? facts.DecideAlignmentUnder(comparison, branchComparison, outcome, guard);
   }
 
   private static bool SameComparison(IrCmp left, IrCmp right)
@@ -387,63 +400,6 @@ public static class BasicBlockVersioning {
       IrCmpPred.Sge or IrCmpPred.Uge => own.Lo >= constant ? true : own.Hi < constant ? false : null,
       _ => null,
     };
-  }
-
-  #endregion
-
-  #region pointer alignment facts
-
-  private static bool? DecideAlignment(IrCmp branchComparison, IrCmp comparison, bool outcome) {
-    if (NormalizeAlignment(branchComparison) is not { } branchFact
-        || NormalizeAlignment(comparison) is not { } candidate
-        || !ReferenceEquals(branchFact.Pointer, candidate.Pointer))
-      return null;
-
-    var knownZero = branchFact.IsZero == outcome;
-    if (knownZero) {
-      if ((candidate.Mask & ~branchFact.Mask) != 0)
-        return null;                                 // only a subset of known-zero low bits is guaranteed zero
-      return candidate.IsZero;
-    }
-
-    if ((branchFact.Mask & ~candidate.Mask) != 0)
-      return null;                                   // a known non-zero bit must remain inside the candidate mask
-    return !candidate.IsZero;
-  }
-
-  private static AlignmentCheck? NormalizeAlignment(IrCmp comparison) {
-    if (comparison.Pred is not (IrCmpPred.Eq or IrCmpPred.Ne))
-      return null;
-
-    IrValue masked;
-    if (comparison.Rhs is IrConstantInt { IsZero: true })
-      masked = comparison.Lhs;
-    else if (comparison.Lhs is IrConstantInt { IsZero: true })
-      masked = comparison.Rhs;
-    else
-      return null;
-
-    if (masked is not IrBinary { Op: IrBinaryOp.And } and)
-      return null;
-
-    IrValue bits;
-    IrConstantInt maskConstant;
-    if (and.Rhs is IrConstantInt right) {
-      bits = and.Lhs;
-      maskConstant = right;
-    } else if (and.Lhs is IrConstantInt left) {
-      bits = and.Rhs;
-      maskConstant = left;
-    } else {
-      return null;
-    }
-
-    if (bits is not IrCast { Op: IrCastOp.PtrToInt } ptrToInt)
-      return null;
-    var mask = maskConstant.ZeroExtended;
-    if (mask == 0 || mask == ulong.MaxValue || (mask & (mask + 1)) != 0)
-      return null;                                   // alignment masks are exactly 2^k - 1
-    return new(ptrToInt.Value, mask, comparison.Pred == IrCmpPred.Eq);
   }
 
   #endregion

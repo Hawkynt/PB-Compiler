@@ -60,7 +60,7 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzedWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
     .AddAnalyzed("sccp", (fn, _) => Conservative(() => Sccp.Run(fn)))
     .AddAnalyzed("correlate", CorrelatedValueProp.Run)
-    .AddAnalyzed("bbversion", (fn, _) => Conservative(() => BasicBlockVersioning.Run(fn)))
+    .AddAnalyzed("bbversion", BasicBlockVersioning.Run)
     .AddAnalyzed("ptrcheck", PointerCheckElim.Run)
     .AddAnalyzed("rangefold", RangeCheckElim.Run)
     .AddAnalyzedWhen(optimizeForSpeed, "specnarrow", (fn, _) => Conservative(() => SpeculativeIntegerNarrowing.Run(fn)))

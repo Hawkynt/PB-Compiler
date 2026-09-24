@@ -39,12 +39,17 @@ public static class IrAnalyses {
   public static IrAnalysisKey<IrNullnessAnalysis> Nullness { get; } =
     new("nullness", static (_, analyses) => new IrNullnessAnalysis(analyses.Get(Dominators)));
 
-  /// <summary>Common program-point facade over range, known-bits and nullness domains.</summary>
+  /// <summary>Pointer low-bit alignment derived from explicit arithmetic and dominating guards.</summary>
+  public static IrAnalysisKey<IrAlignmentAnalysis> Alignment { get; } =
+    new("alignment", static (_, analyses) => new IrAlignmentAnalysis(analyses.Get(Dominators)));
+
+  /// <summary>Common program-point facade over range, known-bits, nullness and alignment domains.</summary>
   public static IrAnalysisKey<IrValueFacts> Facts { get; } =
     new("value-facts", static (_, analyses) => new IrValueFacts(
       analyses.Get(Ranges),
       analyses.Get(KnownBits),
-      analyses.Get(Nullness)));
+      analyses.Get(Nullness),
+      analyses.Get(Alignment)));
 
   /// <summary>
   /// Shared memory read/write projection. Module-owned runs refine direct internal calls through cached
