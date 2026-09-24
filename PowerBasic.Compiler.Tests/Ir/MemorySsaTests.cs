@@ -285,4 +285,33 @@ public sealed class MemorySsaTests {
   }
 
 
+  [Test]
+  public void Build_GivenPagedRuntimeQueryAndMapping_ThenQueryIsAUseAndMappingIsADefinition() {
+    var emsFre = new IrFunction("rt_ems_fre", IrType.I32);
+    var emsMap = new IrFunction("rt_ems_map2", IrType.Void, [
+      new IrArgument(IrType.I16, 0), new IrArgument(IrType.I16, 1),
+    ]);
+    var fn = new IrFunction("f", IrType.I16);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var slot = b.Alloca(IrType.I16);
+    var initialStore = b.Store(new IrConstantInt(IrType.I16, 7), slot);
+    var freeBytes = b.Call(IrType.I32, emsFre);
+    var mapping = b.Call(IrType.Void, emsMap,
+      new IrConstantInt(IrType.I16, 1), new IrConstantInt(IrType.I16, 0));
+    var load = b.Load(IrType.I16, slot);
+    b.Ret(load);
+
+    var memory = IrMemorySsa.Build(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(memory.AccessFor(freeBytes), Is.TypeOf<IrMemoryUse>());
+      Assert.That(((IrMemoryUse)memory.AccessFor(freeBytes)!).DefiningAccess,
+        Is.SameAs(memory.AccessFor(initialStore)));
+      Assert.That(memory.AccessFor(mapping), Is.TypeOf<IrMemoryDef>());
+      Assert.That(((IrMemoryUse)memory.AccessFor(load)!).DefiningAccess,
+        Is.SameAs(memory.AccessFor(mapping)));
+    });
+  }
+
+
 }

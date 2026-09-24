@@ -91,8 +91,13 @@ public static class IrEffects {
   private static readonly IrEffectSummary _read = new(IrEffectKind.ReadsMemory, Deterministic: false);
   private static readonly IrEffectSummary _deterministicRead = new(IrEffectKind.ReadsMemory, Deterministic: true);
   private static readonly IrEffectSummary _write = new(IrEffectKind.WritesMemory, Deterministic: false);
+  private static readonly IrEffectSummary _writeMayTrap = new(
+    IrEffectKind.WritesMemory | IrEffectKind.MayTrap, Deterministic: false);
   private static readonly IrEffectSummary _readWrite = new(
     IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory, Deterministic: false);
+  private static readonly IrEffectSummary _readWriteMayTrap = new(
+    IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory | IrEffectKind.MayTrap,
+    Deterministic: false);
   private static readonly IrEffectSummary _mayTrap = new(IrEffectKind.MayTrap, Deterministic: true);
   private static readonly IrEffectSummary _consumeString = new(
     IrEffectKind.ReadsMemory | IrEffectKind.MayRelease, Deterministic: true);
@@ -144,6 +149,19 @@ public static class IrEffects {
       "rt_arr_alloc_nz" => _allocate,
       "rt_arr_realloc" or "rt_arr_realloc_ptr" => _reallocate,
       "rt_arr_free" or "rt_arr_free_ptr" => _release,
+
+      // HUGE/VIRTUAL/EMS backing stores. These rows mirror DosRuntime.Ems: allocation/release own
+      // external memory, zeroing writes it, page-frame discovery caches runtime state and can raise
+      // Error 7, mapping changes the active EMS window and can raise, and FRE(-11) is a read-only
+      // query of the driver's allocation state.
+      "rt_huge_alloc" => _allocate,
+      "rt_huge_free" => _release,
+      "rt_huge_zero" => _write,
+      "rt_ems_alloc" => _allocate,
+      "rt_ems_free" => _release,
+      "rt_ems_frame" => _readWriteMayTrap,
+      "rt_ems_fre" => _read,
+      "rt_ems_map2" or "rt_ems_zero" => _writeMayTrap,
 
       // Raises through ON ERROR on DOS, and terminates on hosted targets. ERR/ERL are observable state.
       "rt_error" => _runtimeError,

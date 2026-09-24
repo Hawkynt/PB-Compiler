@@ -99,6 +99,47 @@ public sealed class IrEffectsTests {
     });
   }
 
+
+  [Test]
+  public void ForExternalCall_GivenPagedArrayRuntimeEntries_ThenReportsAllocationMappingAndQueryEffects() {
+    var hugeAlloc = IrEffects.ForExternalCall("rt_huge_alloc");
+    var hugeFree = IrEffects.ForExternalCall("rt_huge_free");
+    var hugeZero = IrEffects.ForExternalCall("rt_huge_zero");
+    var emsAlloc = IrEffects.ForExternalCall("rt_ems_alloc");
+    var emsFree = IrEffects.ForExternalCall("rt_ems_free");
+    var emsFrame = IrEffects.ForExternalCall("rt_ems_frame");
+    var emsFreeBytes = IrEffects.ForExternalCall("rt_ems_fre");
+    var emsMap = IrEffects.ForExternalCall("rt_ems_map2");
+    var emsZero = IrEffects.ForExternalCall("rt_ems_zero");
+
+    Assert.Multiple(() => {
+      Assert.That(hugeAlloc.Effects,
+        Is.EqualTo(IrEffectKind.MayAllocate | IrEffectKind.MayTrap));
+      Assert.That(hugeAlloc.DefinesMemory, Is.True);
+      Assert.That(hugeFree.Effects, Is.EqualTo(IrEffectKind.MayRelease));
+      Assert.That(hugeZero.Effects, Is.EqualTo(IrEffectKind.WritesMemory));
+
+      Assert.That(emsAlloc.Effects,
+        Is.EqualTo(IrEffectKind.MayAllocate | IrEffectKind.MayTrap));
+      Assert.That(emsFree.Effects, Is.EqualTo(IrEffectKind.MayRelease));
+      Assert.That(emsFrame.Effects,
+        Is.EqualTo(IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory | IrEffectKind.MayTrap));
+      Assert.That(emsFrame.CanDiscard, Is.False);
+
+      Assert.That(emsFreeBytes.Effects, Is.EqualTo(IrEffectKind.ReadsMemory));
+      Assert.That(emsFreeBytes.Deterministic, Is.False,
+        "free EMS capacity may change after allocation/release");
+      Assert.That(emsFreeBytes.CanDiscard, Is.True,
+        "an unused capacity query has no language-visible side effect");
+      Assert.That(emsFreeBytes.CanCse, Is.False);
+
+      Assert.That(emsMap.Effects,
+        Is.EqualTo(IrEffectKind.WritesMemory | IrEffectKind.MayTrap));
+      Assert.That(emsZero.Effects,
+        Is.EqualTo(IrEffectKind.WritesMemory | IrEffectKind.MayTrap));
+    });
+  }
+
   [Test]
   public void ForCall_GivenMemoryIntrinsicVolatilityFlag_ThenRefinesTheDeclarationContract() {
     var memcpy = new IrFunction("llvm.memcpy.p0.p0.i32", IrType.Void, [
