@@ -262,4 +262,27 @@ public sealed class MemorySsaTests {
   }
 
 
+  [Test]
+  public void SharedMemorySsa_UsesPointerIdentityToSkipBitcastedDistinctObjectStores() {
+    var fn = new IrFunction("f", IrType.I16);
+    var entry = fn.CreateBlock("entry");
+    var b = new IrBuilder(entry);
+    var observed = b.Alloca(IrType.I16);
+    var other = b.Alloca(IrType.I16);
+    var castOther = entry.Append(new IrCast(IrCastOp.BitCast, other, IrType.Ptr));
+    b.Store(new IrConstantInt(IrType.I16, 9), castOther);
+    var load = b.Load(IrType.I16, observed);
+    b.Ret(load);
+
+    var analyses = new IrAnalysisManager(fn);
+    var memory = analyses.Get(IrAnalyses.MemorySsa);
+
+    Assert.Multiple(() => {
+      Assert.That(memory.GetClobberingAccess(load), Is.SameAs(memory.LiveOnEntry),
+        "the store targets a distinct stack object even though its pointer passed through a bitcast");
+      Assert.That(analyses.IsCached(IrAnalyses.PointerIdentity), Is.True);
+    });
+  }
+
+
 }
