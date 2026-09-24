@@ -78,7 +78,8 @@ public static class X86HostedMachineBuilder {
     try {
       switch (instruction.Opcode) {
         case MOpcode.InlineAsm when instruction.Operands.OfType<MOperand.InlineAsmText>().FirstOrDefault() is { } asm:
-          return TryExpandInlineAsm(instruction, asm, mode, registers, function, allocation, out target, out error);
+          return TryExpandInlineAsm(instruction, asm, mode, registers, function, allocation, blockLabels,
+            out target, out error);
         case MOpcode.Mov when instruction.Operands.Count == 2
             && TryAddress(instruction.Operands[0], function, registers, allocation, out var immediateAddress)
             && instruction.Operands[1] is MOperand.Immediate immediateMemory:
@@ -528,7 +529,8 @@ public static class X86HostedMachineBuilder {
 
   private static bool TryExpandInlineAsm(MInstr instruction, MOperand.InlineAsmText asm, X86Mode mode,
       X86TargetRegisterFile registers, X86MachineFunction function,
-      IReadOnlyDictionary<int, Reg> allocation, out X86TargetInstruction? target, out string? error) {
+      IReadOnlyDictionary<int, Reg> allocation, IReadOnlyDictionary<string, string> blockLabels,
+      out X86TargetInstruction? target, out string? error) {
     target = null;
     error = null;
     var text = asm.Text.Trim();
@@ -536,6 +538,10 @@ public static class X86HostedMachineBuilder {
       return true;
     var mnemonic = text.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)[0]
       .ToUpperInvariant();
+    if (TryExpandBranchAsm(asm, mnemonic, blockLabels, out target, out error))
+      return true;
+    if (error is not null)
+      return false;
     if (TryExpandScalarAsm(instruction, asm, mnemonic, mode, registers, function, allocation,
           out target, out error))
       return true;
@@ -624,6 +630,43 @@ public static class X86HostedMachineBuilder {
       return true;
     error = $"inline assembly mnemonic '{mnemonic}' has no semantic lowering for {mode}";
     return false;
+  }
+
+  private static bool TryExpandBranchAsm(MOperand.InlineAsmText asm, string mnemonic,
+      IReadOnlyDictionary<string, string> blockLabels, out X86TargetInstruction? target, out string? error) {
+    target = null;
+    error = null;
+    var condition = mnemonic switch {
+      "JMP" => (int?)null,
+      "JO" => 0, "JNO" => 1, "JB" or "JC" or "JNAE" => 2, "JAE" or "JNB" or "JNC" => 3,
+      "JE" or "JZ" => 4, "JNE" or "JNZ" => 5, "JBE" or "JNA" => 6, "JA" or "JNBE" => 7,
+      "JS" => 8, "JNS" => 9, "JP" or "JPE" => 10, "JNP" or "JPO" => 11,
+      "JL" or "JNGE" => 12, "JGE" or "JNL" => 13, "JLE" or "JNG" => 14, "JG" or "JNLE" => 15,
+      _ => 16,
+    };
+    if (condition == 16)
+      return false;
+    var separator = asm.Text.IndexOfAny([' ', '\t']);
+    var operandText = separator < 0 ? "" : asm.Text[(separator + 1)..];
+    var parser = new TextAssembler(new Assembler());
+    if (!parser.TryParseOperands(operandText, new InlineAsmLabelResolver(), out var parsed, out var parseError)) {
+      error = $"inline assembly '{mnemonic}' operands cannot be lowered: {parseError}";
+      return true;
+    }
+    if (parsed is not [TextAssembler.ParsedAsmLabel label]) {
+      error = $"inline assembly '{mnemonic}' requires a code-label operand";
+      return true;
+    }
+    var name = label.Label?.Name;
+    if (string.IsNullOrWhiteSpace(name)) {
+      error = $"inline assembly '{mnemonic}' has an unnamed branch target";
+      return true;
+    }
+    var symbol = blockLabels.GetValueOrDefault(name, name);
+    target = condition is null
+      ? new(X86TargetOpcode.Jmp, [], Symbol: symbol)
+      : new(X86TargetOpcode.Jcc, [], condition.Value, Symbol: symbol);
+    return true;
   }
 
   private static bool TryExpandScalarAsm(MInstr instruction, MOperand.InlineAsmText asm,
