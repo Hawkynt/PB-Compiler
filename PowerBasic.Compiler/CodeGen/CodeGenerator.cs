@@ -1048,82 +1048,21 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Mov(Mem.Word(asm.Lbl("rt_strmaxlen")), usable);
     }
 
-    // pb36 O23 whole-program data tree-shaking: solve which module globals nothing reachable
-    // reads (dead), the pure stores to them, and - cascading through CODEPTR - which procedures
-    // a now-dead global pointer kept alive. Self-contained main only (a unit or a foreign-linked
-    // main could export/observe a global), so the pb35/unoptimized golden output is untouched.
-    var dataShake = this.Optimize && !this._isUnit && !this._allowExternalCalls
-      ? OptDeadGlobals.Analyze(model, this.IsFullyOwned, this.NumericCheckingPossible())
-      : null;
-    if (dataShake != null) {
-      this._deadGlobals = dataShake.DeadGlobals;
-      this._deadGlobalStores = dataShake.DeadStores;
-    }
-
-    this.PrepareCse(model.MainBody);
-    this.PrepareSccp(model.MainBody);
-    this.PrepareDivMod(model.MainBody);
-    this.PrepareArrayFill(model.MainBody);
-    if (this.Optimize)
-      this._intervalPoints = IntervalRangeAnalysis.AnalyzeProgramPoints(model.MainBody, model);
+    // Artifact assembly consumes the machine product directly. No AST CSE/SCCP/reachability/
+    // inlining pass is allowed to make a second semantic decision after IrMiddleEndPipeline.
     var backendMain = this.BackendMain();
     if (backendMain is null) {
       this.Errors.Add(new(default,
         "IR/x86-16 compilation reached image emission without a machine body for main"));
       return [];
     }
-    // The x86-16 back end owns the whole module body: its own prologue, frame and implicit END.
-    // Metastatements are replayed only for target/runtime configuration; executable statements are
-    // never emitted from syntax here.
-    foreach (var meta in model.MainBody.OfType<MetaStmt>())
-      this.ApplyMeta(meta);
     this.EmitBackendMain();
 
-    // pb36 O22 dead procedure elimination: under optimization, only emit the procedures
-    // something references (directly, via CODEPTR, or as a lambda) - the rest are
-    // unreachable code. Only fully-owned procedures may be dropped: a nested procedure is
-    // private to its container, and in a self-contained main every procedure is ours; a
-    // procedure that a linked foreign object could call by name is kept regardless.
-    // O23 feeds its cascaded live set back here: a procedure kept alive only by a CODEPTR in a
-    // now-dead global's store is dropped too. Without data shaking, plain reachability applies.
-    var liveProcs = dataShake?.LiveProcedures
-      ?? (this.Optimize ? OptReachability.LiveProcedures(model, model.MainBody) : null);
-    // pb36 O6: a procedure inlined at EVERY call site has no surviving real CALL, so it
-    // is purged. FullyInlinedProcedures guarantees every reference inlines (one that does
-    // not poisons it out of the set), and an inlinable leaf makes no calls of its own, so
-    // removing it from the live set cannot strand a still-needed callee. Self-contained
-    // main only (matching O22/O23 ownership), so pb35/unoptimized output is untouched.
-    // $OPTIMIZE SIZE keeps every body: it emits a real CALL at each site instead of inlining
-    // (see TryEmitInlinedFunction), so purging on the strength of "it would inline everywhere"
-    // strands those calls on a label nothing ever binds.
-    if (this.Optimize && !this.OptimizeSize && !this._isUnit && liveProcs != null) {
-      var hasErrorHandling = ContainsErrorHandling(model.MainBody)
-        || model.ProcedureList.Any(p => p.Body is { } b && ContainsErrorHandling(b));
-      var inlinedAway = OptInlining.FullyInlinedProcedures(model, p => this.AnalyzeInlinableLeaf(p) != null && !this.IsBackendRouted(p), this.IsFullyOwned, this.IsNearLValue, hasErrorHandling);
-      foreach (var proc in inlinedAway)
-        liveProcs.Remove(proc);
-    }
-    // The reachability above is an AST walk, and the routed path emits from the IR - inlined, cloned
-    // and specialized since. A procedure the routed code still CALLS keeps its body whatever that walk
-    // concluded: the alternative is a link that stops on a label nothing bound, with no diagnostic to
-    // work from. See BackendCalleeNames for the corpus shape that does it.
-    //
-    // It CLOSES over the live set rather than seeding from every routed body, because routing is
-    // decided for dead procedures too: taking their callees as live would resurrect whole trees the
-    // walk was right to drop. The condition asked is the emission condition on the next line, so the
-    // two cannot drift apart.
-    if (liveProcs != null)
-      for (var changed = true; changed;) {
-        changed = false;
-        var routedCallees = this
-          .BackendCalleeNames(p => liveProcs.Contains(p) || !this.IsFullyOwned(p))
-          .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var proc in model.ProcedureList)
-          if (routedCallees.Contains(Ir.IrLowering.IrNameOf(proc)) && liveProcs.Add(proc))
-            changed = true;
-      }
+    // Until module-level GlobalDCE is made export-aware for linked/public DOS programs, retain all
+    // source definitions here. This is conservative code-size-wise and exact semantically; crucially,
+    // the decision is no longer recomputed from the bound AST.
     foreach (var proc in model.ProcedureList)
-      if (!proc.IsExternal && (liveProcs is null || liveProcs.Contains(proc) || !this.IsFullyOwned(proc))) {
+      if (!proc.IsExternal) {
         if (!this.IsBackendRouted(proc)) {
           this.Errors.Add(new(proc.Position,
             $"IR/x86-16 compilation reached image emission without a machine body for '{proc.Name}'"));
