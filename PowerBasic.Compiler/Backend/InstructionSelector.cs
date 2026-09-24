@@ -536,8 +536,14 @@ public sealed partial class InstructionSelector {
       case IrCondBr valued: {
         if (!this.TryOperand(valued.Condition, out var condition))
           return false;
-        if (condition is not MOperand.Register)
-          return this.Decline("terminator: IrCondBr on a non-register condition");
+        if (condition is not MOperand.Register) {
+          if (condition is not (MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell
+              or MOperand.Immediate))
+            return this.Decline("terminator: IrCondBr on a non-materializable condition");
+          var held = new MOperand.Register(this.FreshVreg(valued.Condition.Type));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [held, condition], MovEffect(held, condition)));
+          condition = held;
+        }
         this.EmitCompare(condition, new MOperand.Immediate(0));
         this.EmitBranch(Condition.NotEqual, valued.IfTrue.Label);
         this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(valued.IfFalse.Label)], MInstrEffect.None));
@@ -554,8 +560,13 @@ public sealed partial class InstructionSelector {
       case IrIndirectBr indirect: {
         if (!this.TryOperand(indirect.Address, out var address))
           return false;
-        if (address is not MOperand.Register)
-          return this.Decline("terminator: IrIndirectBr on an address that is not in a register");
+        if (address is not MOperand.Register) {
+          if (address is not (MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell))
+            return this.Decline("terminator: IrIndirectBr on an address that is not materializable");
+          var target = new MOperand.Register(this.FreshVreg(IrType.Ptr));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [target, address], MovEffect(target, address)));
+          address = target;
+        }
         this._current.Instructions.Add(new MInstr(MOpcode.JmpIndirect, [address],
           new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: false,
             ReadsMemory: false, WritesMemory: false)));
