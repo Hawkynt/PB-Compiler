@@ -60,6 +60,14 @@ public sealed class FunctionSummaries {
 
   /// <summary>Computes summaries for every function in <paramref name="module"/>.</summary>
   public static FunctionSummaries Compute(IrModule module) {
+    ArgumentNullException.ThrowIfNull(module);
+    return Compute(module, IrCallGraph.Build(module));
+  }
+
+  /// <summary>Computes summaries while reusing the module's cached direct-call graph.</summary>
+  internal static FunctionSummaries Compute(IrModule module, IrCallGraph callGraph) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(callGraph);
     var result = new FunctionSummaries();
     foreach (var function in module.Functions) {
       result._summaries[function] = function.IsDeclaration
@@ -80,7 +88,10 @@ public sealed class FunctionSummaries {
 
         var merged = current;
         foreach (var instruction in function.AllInstructions)
-          merged = Merge(merged, instruction, result);
+          if (instruction is not IrCall { Callee: IrFunction })
+            merged = MergeOperation(merged, instruction);
+        foreach (var callee in callGraph.DirectCalleesOf(function))
+          merged = Union(merged, result.For(callee));
         if (merged == current)
           continue;
         result._summaries[function] = merged;
@@ -90,13 +101,8 @@ public sealed class FunctionSummaries {
     return result;
   }
 
-  private static Summary Merge(Summary current, IrInstruction instruction, FunctionSummaries known) {
-    // A defined direct callee contributes the fixpoint fact for its body. Declarations and indirect
-    // calls use the same operation contract as every other consumer.
-    if (instruction is IrCall call && call.Callee is IrFunction callee && !callee.IsDeclaration)
-      return Union(current, known.For(callee));
-    return Union(current, FromEffects(IrEffects.ForInstruction(instruction)));
-  }
+  private static Summary MergeOperation(Summary current, IrInstruction instruction)
+    => Union(current, FromEffects(IrEffects.ForInstruction(instruction)));
 
   private static Summary FromEffects(IrEffectSummary effects)
     => new(effects.MayReadMemory, effects.DefinesMemory, effects.CanDiscard);
@@ -122,8 +128,21 @@ public sealed class FunctionSummaries {
   /// programmer wanted to inspect folds away behind it.
   /// </para>
   /// </summary>
-  public static int RemoveDeadPureCalls(IrModule module) {
-    var summaries = Compute(module);
+  public static int RemoveDeadPureCalls(IrModule module)
+    => RemoveDeadPureCalls(module, Compute(module));
+
+  /// <summary>Analysis-aware module-pass entry using the shared cached function summaries.</summary>
+  public static IrModulePassResult RemoveDeadPureCalls(IrModule module, IrModuleAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(module, analyses.Module))
+      throw new ArgumentException("Module analysis manager belongs to a different module.", nameof(analyses));
+
+    var removed = RemoveDeadPureCalls(module, analyses.Get(IrModuleAnalyses.FunctionSummaries));
+    return removed == 0 ? IrModulePassResult.Unchanged : IrModulePassResult.Changed(removed);
+  }
+
+  private static int RemoveDeadPureCalls(IrModule module, FunctionSummaries summaries) {
     var removed = 0;
     foreach (var function in module.Functions) {
       if (function.IsDeclaration || function.HasErrorHandler || function.HasInlineAsm)

@@ -137,8 +137,8 @@ public static class IrMiddleEndPipeline {
     .AddModuleConservativeWhen(includeModulePasses, "readonly-globals", ReadOnlyGlobals.Run)
     .AddModuleConservativeWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
     .AddModuleConservativeWhen(includeModulePasses, "devirt", WholeProgramDevirtualization.Run)
-    .AddModuleConservativeWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run)
-    .AddModuleConservativeWhen(includeModulePasses, "dead-pure-calls", FunctionSummaries.RemoveDeadPureCalls)
+    .AddModuleAnalyzedWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run)
+    .AddModuleAnalyzedWhen(includeModulePasses, "dead-pure-calls", FunctionSummaries.RemoveDeadPureCalls)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSize, "semantic-merge", SemanticFunctionMerging.Run);
 
   /// <summary>
