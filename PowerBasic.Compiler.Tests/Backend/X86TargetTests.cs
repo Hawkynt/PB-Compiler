@@ -228,6 +228,13 @@ public sealed class X86TargetTests {
   }
 
   [Test]
+  public void X86MachineLoweringRejectsNonX86TargetFamilies() {
+    Assert.That(
+      () => new X86MachineLowering(new SelectionTarget(TargetFamily: MachineTargetFamily.Mos6502)),
+      Throws.ArgumentOutOfRangeException);
+  }
+
+  [Test]
   public void Mos6502OwnsAnInstructionSelector() {
     var target = new Mos6502MachineTarget();
     Assert.That(target.CreateLowerer(SelectionTarget.Baseline), Is.TypeOf<Mos6502MachineLowering>());

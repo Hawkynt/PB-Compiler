@@ -46,6 +46,7 @@ public sealed class X86MachinePostAllocation
 
 /// <summary>Current x86 lowering implementation shared by the 16-, 32- and 64-bit x86 contracts.</summary>
 public sealed class X86MachineLowering : IMachineFunctionLowerer {
+  private readonly MachineTargetFamily _targetFamily;
   private readonly X86MachineSelector _selector;
   private readonly X86MachineAllocator _allocator;
   private readonly X86MachineScheduler _scheduler;
@@ -53,10 +54,13 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
 
   public X86MachineLowering(SelectionTarget target) {
     this.Target = target.TargetFamily switch {
+      MachineTargetFamily.X86_16 => new("x86-16", 16, 16),
       MachineTargetFamily.X86_64 => new("x86-64", 64, 64),
       MachineTargetFamily.X86_32 => new("x86-32", 32, 32),
-      _ => new("x86-16", 16, 16),
+      var unsupported => throw new ArgumentOutOfRangeException(
+        nameof(target), target, $"target family '{unsupported}' is not an x86 target"),
     };
+    this._targetFamily = target.TargetFamily;
     this._selector = new(target);
     this._allocator = new(target);
     this._scheduler = new(target);
@@ -75,11 +79,7 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       error = "selection: " + (declineReason ?? "unknown machine construct");
       return false;
     }
-    machine.TargetFamily = this.Target.Name switch {
-      "x86-64" => MachineTargetFamily.X86_64,
-      "x86-32" => MachineTargetFamily.X86_32,
-      _ => MachineTargetFamily.X86_16,
-    };
+    machine.TargetFamily = this._targetFamily;
     selected = machine;
     error = null;
     return true;

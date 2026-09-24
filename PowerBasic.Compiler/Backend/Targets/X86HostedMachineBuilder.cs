@@ -17,10 +17,10 @@ public static class X86HostedMachineBuilder {
       "x86-64" => X86Mode.Bit64,
       "x86-32" => X86Mode.Bit32,
       "x86-16" => X86Mode.Bit16,
-      _ => (X86Mode?)null,
+      var unsupported => throw new ArgumentOutOfRangeException(
+        nameof(machine), machine.Target, $"target '{unsupported}' is not an x86 hosted target"),
     };
-    if (mode is not { } selectedMode)
-      return true;
+    var selectedMode = mode;
 
     var registers = new X86TargetRegisterFile(selectedMode);
     var abi = X86Abi.For(machine.Source.Convention, selectedMode);
