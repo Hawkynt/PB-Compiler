@@ -80,11 +80,12 @@ to the frame, so it has no eight-value ceiling.
 Extends the OMF reader/linker + calling-convention work already landed.
 
 ### Must
-- **Routed near ABIs. Done for common-word callers.** `IrCall` preserves the declared BASIC, PASCAL,
+- **Routed near ABIs. Done for common-word callers and WATCALL LONGs.** `IrCall` preserves the declared BASIC, PASCAL,
   CDECL, STDCALL, FASTCALL or WATCALL identity. The x86-16 descriptor maps order, cleanup, distance and
   register slots; routed CDECL/STDCALL callers use right-to-left argument groups and CDECL caller
-  cleanup. Routed FASTCALL/WATCALL callers stage their leading 8/16-bit or near-pointer values in
-  AX/DX/BX(/CX), push overflow in the declared direction and leave cleanup to the callee. Source
+  cleanup. Routed FASTCALL callers stage leading 8/16-bit or near-pointer values in AX/DX/BX.
+  WATCALL also assigns LONGs to DX:AX or CX:BX, stops register allocation when no legal pair remains,
+  pushes overflow right-to-left and removes it in the caller. Source
   procedure DEFINITIONS route under all six conventions as well, the register ones through a prologue
   that spills those same registers into their frame cells. Wider register value classes remain below,
   as does a GENERATED definition under a register convention: its layout comes from the IR signature
@@ -113,8 +114,8 @@ Extends the OMF reader/linker + calling-convention work already landed.
   `LinkedImage`.
 
 ### Should
-- **Full register arg-size rules** for `WATCALL`/`FASTCALL`: LONG/float/far-pointer
-  arguments in register *pairs* (deferred from the common-word-case scope).
+- **Remaining register arg-size rules**: WATCALL LONG pairs are done. Float/far-pointer
+  WATCALL classes and vendor-specific FASTCALL LONG/float/pointer allocation remain.
   *Touch points:* `InstructionSelector.cs`, `CodeGenerator.Procs.cs`
   (`ConventionRegisters`, `EmitCall`, `LayoutFrame`, `BeginFrame`).
 - **C-runtime linking (M3).** *No-crt0 subset done.* Beyond leaf `strlen`, a genuine
@@ -290,8 +291,8 @@ the body — before the selector is asked, so a procedure it skips lands in neit
 and 263/263 means "of the functions we attempted, how many succeeded". The routed rows come from the
 production code generator's own record of its own decision (`CodeGenerator.BackendDeclines`). The
 optimized corpus gap is now empty: `LINKDEMO` routes when the census supplies the `MATHUNIT.PBU` named
-by its `$LINK`; near CDECL/STDCALL declarations route too, as do the implemented one-word
-FASTCALL/WATCALL call shapes. Wider register values still decline individually. With optimization
+by its `$LINK`; near CDECL/STDCALL declarations route too, as do word FASTCALL and word/LONG
+WATCALL call shapes. Other wider register values still decline individually. With optimization
 off, four selector gaps remain: two phi edge-copy cycles, one `FPToSI f80 -> i64`, and one `f32`
 `select`. Near BYREF
 INTEGER/WORD/LONG/DWORD/SINGLE/DOUBLE

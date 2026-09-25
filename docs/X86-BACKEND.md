@@ -417,16 +417,16 @@ FASTCALL or WATCALL identity through cloning and optimization. `X86CallAbi` maps
 or far return-address width, stack order, cleanup ownership and argument registers. `SelectCall`
 consumes all six near descriptors. CDECL and STDCALL reverse argument **groups** while preserving each
 multiword value's high-to-low word order, and CDECL emits `ADD SP,n` immediately after the call.
-FASTCALL stages up to three leading words in AX/DX/BX and pushes overflow left to right; WATCALL stages
-up to four in AX/DX/BX/CX and pushes overflow right to left. Both leave overflow cleanup to the callee.
+FASTCALL stages up to three leading words in AX/DX/BX, pushes overflow left to right and leaves cleanup
+to the callee. WATCALL allocates words from AX/DX/BX/CX and LONGs to DX:AX or CX:BX; failure to find a
+legal pair ends register allocation, overflow is pushed right to left, and the caller restores SP.
 The call names the physical inputs in machine IR, and each staging move reserves the prefix it has
 filled, so scheduling, spilling and allocation cannot silently overwrite an earlier argument.
 
-`HasUnsupportedRegisterParam` rejects a register-convention parameter that is not a single word (for
-example, a `LONG`, float or multiword aggregate; the per-compiler pair/size rules are not implemented).
-Definitions reach that check through `LayoutFrame`; external declarations have no frame, so `EmitCall`
-applies the same diagnostic before either caller path can bypass it. Near pointer values and BYVAL
-8/16-bit integers are the implemented register-value classes.
+`HasUnsupportedRegisterParam` accepts Watcom's one-word values and BYVAL LONG pairs. It still rejects
+an unmodelled value that would reach a register, and FASTCALL stays word-only until Microsoft and
+Borland have distinct identities. Definitions reach that check through `LayoutFrame`; external
+declarations have no frame, so `EmitCall` applies the same rule before either caller path can bypass it.
 
 ### The routed frame (`BackendFrameTests`)
 
@@ -1924,8 +1924,8 @@ results at their ownership boundaries. The final optimized gap closed when a lin
 external declaration stopped disqualifying its caller wholesale: the census builds the PBU named by
 `$LINK`, and `LINKDEMO` routes through numeric, BYREF, nested and dynamic-string unit calls in both
 optimizer modes. Near CDECL/STDCALL external calls route with their declared order and cleanup. Near
-FASTCALL/WATCALL external calls now route their leading one-word values in registers and preserve the
-declared overflow order; unsupported wider register values still decline per callee. The four
+FASTCALL external calls route leading words; WATCALL calls also route LONGs through DX:AX/CX:BX and
+restore right-to-left overflow in the caller. Other register-width classes still decline per callee. The four
 unoptimized gaps that remained - two phi edge-copy cycles, one `FPToSI f80 -> i64`, one `f32` `select` -
 have since closed, and closing them made the two figures the same one: all four were selection arms,
 so what the optimizer had been supplying was the accident of folding those shapes away rather than any

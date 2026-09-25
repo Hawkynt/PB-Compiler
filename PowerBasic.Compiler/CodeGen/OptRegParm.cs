@@ -7,7 +7,8 @@ namespace PowerBasic.Compiler.CodeGen;
 /// pb36 $OPTIMIZE SPEED - private calling-convention specialization for procedures whose complete
 /// direct-call surface is owned by this compilation. The BASIC stack convention is replaced by the
 /// Watcom register convention when doing so can remove call traffic without changing a source-visible
-/// ABI: leading one-word arguments travel in AX,DX,BX,CX and overflow remains on the stack.
+/// ABI: leading words travel in AX,DX,BX,CX, LONG values use Watcom's legal register pairs, and
+/// the caller removes any right-to-left stack overflow.
 ///
 /// <para>
 /// O0021 introduced the original word-sized BYVAL case. O0282 supplies the policy around it: the
@@ -22,7 +23,7 @@ namespace PowerBasic.Compiler.CodeGen;
 /// records their signatures but not a complete target set, so proving that a candidate cannot be
 /// reached indirectly would be speculation. Separately compiled/linkable programs are fenced by the
 /// caller of <see cref="Apply"/> for the same reason: outside code may still call the public BASIC ABI.
-/// Wider register pairs, floating arguments and routed x86 definitions remain O0282 follow-up work.
+/// Floating arguments and a costed choice among candidate private ABIs remain O0282 follow-up work.
 /// </para>
 /// </summary>
 public static class OptRegParm {
@@ -90,15 +91,15 @@ public static class OptRegParm {
     && proc.CallConv == CallConvention.Basic     // never override an explicitly declared convention
     && proc.Captures.Count == 0                  // a capturing closure receives its env pointer in BX:CX
     && proc.Parameters.Count > 0                 // nothing to lift into registers otherwise
-    && proc.Parameters.All(IsWordArgument);
+    && proc.Parameters.All(IsWatcallArgument);
 
   /// <summary>
   /// Shapes already modelled exactly by the direct WATCALL path. A small BYVAL scalar is the O0021
   /// case; every ordinary BYREF is itself a one-word near pointer, irrespective of the pointee size.
   /// SEG-qualified references are excluded because they need a far-pointer pair rather than one slot.
   /// </summary>
-  private static bool IsWordArgument(VariableSymbol parameter)
+  private static bool IsWatcallArgument(VariableSymbol parameter)
     => parameter.ByVal
-      ? parameter.Type is ScalarType { IsFloat: false, ByteSize: <= 2 }
+      ? parameter.Type is ScalarType { IsFloat: false, ByteSize: <= 4 }
       : !parameter.Seg;
 }

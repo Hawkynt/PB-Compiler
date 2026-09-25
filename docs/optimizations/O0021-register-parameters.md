@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (leading word-sized `BYVAL` scalars, AX/DX/BX/CX) |
+| **Status** | ✅ Implemented (word values plus Watcom LONG pairs in AX/DX/BX/CX) |
 | **Stage** | Whole-program analysis + emitter (both sides of the call) |
 | **Source** | `CodeGen/OptRegParm.cs`, `CodeGen/CodeGenerator.Procs.cs` (`ConventionRegisters`) |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED`, `pb36` only |
@@ -12,15 +12,16 @@
 
 When the compiler owns **every** call site of a procedure — it is defined in a
 self-contained module and its address is never taken via `CODEPTR`/`CALL DWORD`
-— its leading word-sized `BYVAL` scalar parameters travel in registers
-(AX, DX, BX, CX) instead of on the stack, reusing the existing `WATCALL`
-lowering. Caller and callee flip together, so the behavior is identical and the
-per-call push/pop traffic disappears along with the frame slots.
+— its word-sized `BYVAL` scalar parameters travel in AX, DX, BX and CX instead
+of on the stack. A LONG uses Watcom's DX:AX or CX:BX pair when one remains;
+failure to find a legal pair sends that argument and every later one to the
+stack. Caller and callee flip together, so behavior is unchanged while avoidable
+call traffic disappears.
 
-O0282 now owns the per-procedure policy around this mechanism: an address escape
+O0282 owns the per-procedure policy around this mechanism: an address escape
 fences the escaped target instead of disabling unrelated procedures, and one-word
-BYREF near pointers can use the same register slots. O0021 remains the original
-word-sized `BYVAL` lowering.
+BYREF near pointers can use the same register slots. O0021 remains the underlying
+argument placement mechanism.
 
 ## Sample
 
@@ -87,8 +88,8 @@ The `pb36` spelling of the same thing by hand would be a `WATCALL` declaration.
 
 ## Limits
 
-LONG, float and pointer arguments in register *pairs* are the remaining piece
-(see [O0282](O0282-internal-calling-convention.md)); the general internal calling
+Float and far-pointer arguments in register pairs remain (see
+[O0282](O0282-internal-calling-convention.md)); the general internal calling
 convention also composes with BYREF collapse and dead-parameter elimination
 ([O0069](O0069-dead-parameter-elimination.md)) and segment-register allocation
 ([O0071](O0071-segment-register-allocation.md)).

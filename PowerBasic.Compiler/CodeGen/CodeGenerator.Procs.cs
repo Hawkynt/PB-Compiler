@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Asm;
+using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
@@ -11,9 +12,9 @@ public sealed partial class CodeGenerator {
   private static int ParamSlotSize(VariableSymbol p) => p.ByVal ? Math.Max(2, (p.Type.Size + 1) & ~1) : 2;
 
   /// <summary>
-  /// Registers that carry the leading word-sized arguments, in parameter order, for the
-  /// register conventions (empirically matched to the genuine compilers): Watcom's WATCALL
-  /// uses AX,DX,BX,CX; Microsoft/Borland FASTCALL use AX,DX,BX. Empty for stack conventions.
+  /// Registers that carry word-sized arguments in the implemented convention surfaces. Watcom's
+  /// WATCALL uses AX,DX,BX,CX; the shared word-only FASTCALL subset uses AX,DX,BX. Empty for stack
+  /// conventions. Wider FASTCALL types wait for distinct Microsoft and Borland identities.
   /// </summary>
   private static Reg[] ConventionRegisters(CallConvention c) => c switch {
     CallConvention.Watcall => [Reg.AX, Reg.DX, Reg.BX, Reg.CX],
@@ -24,28 +25,56 @@ public sealed partial class CodeGenerator {
   /// <summary>True when the convention passes the leading arguments in registers (WATCALL/FASTCALL).</summary>
   private static bool IsRegisterConvention(ProcedureSymbol proc) => ConventionRegisters(proc.CallConv).Length > 0;
 
-  /// <summary>How many of <paramref name="proc"/>'s parameters arrive in registers (the rest spill to the stack).</summary>
-  private static int RegisterParamCount(ProcedureSymbol proc)
-    => Math.Min(ConventionRegisters(proc.CallConv).Length, proc.Parameters.Count);
+  /// <summary>The exact register prefix of a FASTCALL/WATCALL procedure.</summary>
+  private static X86RegisterArgumentLayout RegisterArgumentLayout(ProcedureSymbol proc) {
+    var registers = ConventionRegisters(proc.CallConv);
+    if (proc.CallConv == CallConvention.Watcall)
+      return X86CallAbi.PlanWatcallArguments(proc.Parameters.Select(WatcallArgumentWords).ToArray());
+
+    var count = Math.Min(registers.Length, proc.Parameters.Count);
+    var placements = Enumerable.Range(0, count)
+      .Select(i => new X86RegisterArgumentPlacement(i, new[] { registers[i] }))
+      .ToArray();
+    return new(placements, count);
+  }
+
+  /// <summary>One for the established word ABI, two for a Watcom LONG, or null when unmodelled.</summary>
+  private static int? WatcallArgumentWords(VariableSymbol parameter) {
+    if (ParamSlotSize(parameter) == 2)
+      return 1;
+    return parameter is { ByVal: true, Type: ScalarType { IsFloat: false, ByteSize: 4 } } ? 2 : null;
+  }
+
+  /// <summary>Registers pushed by the prologue, in memory-layout order for each parameter.</summary>
+  private static Reg[] RegisterSpillOrder(ProcedureSymbol proc)
+    => RegisterArgumentLayout(proc).RegisterArguments
+      .SelectMany(argument => argument.WordRegisters.Reverse())
+      .ToArray();
 
   /// <summary>
-  /// True when a register convention is used but a parameter does not fit the common-case
-  /// model (every parameter must be a single word - a BYVAL scalar &lt;= 2 bytes or a BYREF
-  /// near pointer). Multiword BYVAL values in a register convention need the full
-  /// per-compiler size rules, which we deliberately do not implement; reject them.
+  /// True when a register convention would put an unmodelled value in a register. WATCALL knows
+  /// one-word values and Watcom's two legal LONG pairs; FASTCALL stays word-only because its current
+  /// source identity still combines incompatible Microsoft and Borland allocation rules.
   /// </summary>
   private static bool HasUnsupportedRegisterParam(ProcedureSymbol proc)
-    => IsRegisterConvention(proc) && proc.Parameters.Any(p => ParamSlotSize(p) != 2);
+    => proc.CallConv switch {
+      CallConvention.Fastcall => proc.Parameters.Any(p => ParamSlotSize(p) != 2),
+      CallConvention.Watcall => RegisterArgumentLayout(proc).UnsupportedRegisterArgumentIndex is not null,
+      _ => false,
+    };
 
   private static string UnsupportedRegisterParamMessage(ProcedureSymbol proc)
-    => $"{proc.CallConv} {proc.Name}: a register-convention parameter must be word-sized "
-      + "(BYVAL <= 2 bytes or BYREF); multiword values need the full per-compiler ABI rules";
+    => proc.CallConv == CallConvention.Watcall
+      ? $"{proc.CallConv} {proc.Name}: a register argument must be word-sized or a BYVAL LONG"
+      : $"{proc.CallConv} {proc.Name}: a register-convention parameter must be word-sized "
+        + "(BYVAL <= 2 bytes or BYREF); multiword values need a vendor-specific FASTCALL identity";
 
   /// <summary>True when the convention pushes (stack) arguments right to left: CDECL, STDCALL and WATCALL's overflow; BASIC/PASCAL/FASTCALL push left to right.</summary>
   private static bool PushesRightToLeft(ProcedureSymbol proc) => proc.CallConv is CallConvention.Cdecl or CallConvention.Stdcall or CallConvention.Watcall;
 
-  /// <summary>True when the caller cleans the stack after the call (CDECL only); BASIC/STDCALL/PASCAL/FASTCALL/WATCALL clean any stack args in the callee via RET n.</summary>
-  private static bool CallerCleansStack(ProcedureSymbol proc) => proc.CallConv == CallConvention.Cdecl;
+  /// <summary>CDECL and Watcom's register convention restore stack arguments in the caller.</summary>
+  private static bool CallerCleansStack(ProcedureSymbol proc)
+    => proc.CallConv is CallConvention.Cdecl or CallConvention.Watcall;
 
   /// <summary>
   /// True when <paramref name="proc"/>'s convention is the ONE the x86-16 back end's
@@ -83,12 +112,13 @@ public sealed partial class CodeGenerator {
     if (HasUnsupportedRegisterParam(proc))
       this.Errors.Add(new(proc.Position, UnsupportedRegisterParamMessage(proc)));
 
-    // register-convention (WATCALL/FASTCALL) parameters arrive in registers; give them
-    // negative slots at the top of the frame ([BP-2], [BP-4], ...) that the prologue fills
-    // by spilling AX,DX,BX(,CX). Stack conventions take no register params (regCount = 0).
-    var regCount = RegisterParamCount(proc);
+    // Register-convention parameters arrive in registers; give them negative slots at the top of
+    // the frame. A LONG owns four contiguous bytes, and the prologue's high-to-low push order puts
+    // its low register at the parameter offset. Stack conventions take no register parameters.
+    var registerLayout = RegisterArgumentLayout(proc);
+    var regCount = registerLayout.FirstStackArgument;
     for (var i = 0; i < regCount; ++i) {
-      this._frameLocalBytes += 2;
+      this._frameLocalBytes += ParamSlotSize(proc.Parameters[i]);
       proc.Parameters[i].Offset = -this._frameLocalBytes;
     }
 
@@ -291,7 +321,7 @@ public sealed partial class CodeGenerator {
     this.PrepareDivMod(proc.Body!);
     this.PrepareArrayFill(proc.Body!);
     // register-convention entry: spill AX,DX,BX(,CX) into the parameters' negative slots
-    var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
+    var spillRegs = RegisterSpillOrder(proc);
     this.BeginFrame(elideZeroing, this._tailEntry, spillRegs);
     if (elideZeroing)
       foreach (var local in stackLocals)
@@ -396,7 +426,7 @@ public sealed partial class CodeGenerator {
 
     asm.Mov(Reg.SP, Reg.BP);
     asm.Pop(Reg.BP);
-    if (paramBytes > 0 && !CallerCleansStack(proc))   // CDECL: the caller cleans up; BASIC/STDCALL/PASCAL clean here
+    if (paramBytes > 0 && !CallerCleansStack(proc))   // CDECL/WATCALL clean in the caller
       asm.Ret((ushort)paramBytes);
     else
       asm.Ret();
@@ -933,17 +963,18 @@ public sealed partial class CodeGenerator {
     if (IsRegisterConvention(proc)) {
       // WATCALL/FASTCALL: stack overflow first (this convention's stack order), then the
       // leading args pushed and popped into AX,DX,BX(,CX) so they survive arg evaluation.
-      var regs = ConventionRegisters(proc.CallConv);
-      var regCount = RegisterParamCount(proc);
+      var registerLayout = RegisterArgumentLayout(proc);
+      var regCount = registerLayout.FirstStackArgument;
       var overflow = Enumerable.Range(regCount, args.Count - regCount).ToList();
       foreach (var i in PushesRightToLeft(proc) ? Enumerable.Reverse(overflow) : overflow) {
-        pushedBytes += ParamSlotSize(proc.Parameters[i]);   // callee (RET n) cleans these
+        pushedBytes += ParamSlotSize(proc.Parameters[i]);
         this.EmitArgumentPush(proc, args, i, ref tempBytesUsed, stringTemps);
       }
       for (var i = 0; i < regCount; ++i)
         this.EmitArgumentPush(proc, args, i, ref tempBytesUsed, stringTemps);
-      for (var i = regCount - 1; i >= 0; --i)
-        asm.Pop(regs[i]);
+      foreach (var argument in registerLayout.RegisterArguments.Reverse())
+        foreach (var register in argument.WordRegisters)
+          asm.Pop(register);
     } else {
       // CDECL/STDCALL push right to left; BASIC/PASCAL push left to right
       foreach (var i in PushesRightToLeft(proc) ? Enumerable.Range(0, args.Count).Reverse() : Enumerable.Range(0, args.Count)) {
@@ -953,7 +984,7 @@ public sealed partial class CodeGenerator {
     }
 
     asm.Call(this.ProcLabelOf(proc));
-    if (CallerCleansStack(proc) && pushedBytes > 0)   // CDECL only; others' callee RET n cleans
+    if (CallerCleansStack(proc) && pushedBytes > 0)
       asm.Add(Reg.SP, pushedBytes);
 
     var resultKind = proc is { IsFunction: true, ReturnType: { } rt } ? KindOf(rt) : (ValueKind?)null;

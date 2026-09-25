@@ -82,4 +82,26 @@ public sealed class InternalCallingConventionSpecializationTests {
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     Assert.That(Exec.Cpu8086.Run(image).Output.Trim(), Is.EqualTo("42"));
   }
+
+  [Test]
+  public void Execute_GivenOwnedLongParameter_ThenPrivateRegisterAbiUsesWatcomPair() {
+    var model = Bind("""
+      DECLARE FUNCTION bump(BYVAL value AS LONG) AS LONG
+      PRINT bump(70000)
+      FUNCTION bump(BYVAL value AS LONG) AS LONG
+        DIM result AS LONG
+        result = value + 123456
+        bump = result
+      END FUNCTION
+      """);
+
+    OptRegParm.Apply(model);
+    Assert.That(model.Procedures["bump"].CallConv, Is.EqualTo(CallConvention.Watcall),
+      "a private LONG argument should use Watcom's DX:AX pair");
+
+    var generator = new CodeGenerator(model);
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    Assert.That(Exec.Cpu8086.Run(image).Output.Trim(), Is.EqualTo("193456"));
+  }
 }

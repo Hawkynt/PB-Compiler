@@ -229,10 +229,10 @@ public sealed class OmfLinkTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Emit_GivenExternalRegisterConventionWithWideArgument_ThenRejectsUnsupportedAbi(bool routed) {
+  public void Emit_GivenExternalWatcallWithLongArgument_ThenUsesRegisterPair(bool routed) {
     const string source = """
       DECLARE FUNCTION wide WATCALL ALIAS "wide_" (BYVAL value AS LONG) AS LONG
-      PRINT wide(1)
+      PRINT wide(70000)
       END
       """;
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
@@ -240,9 +240,10 @@ public sealed class OmfLinkTests {
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model) { UseExperimentalBackend = routed };
 
-    generator.EmitExecutable([ObjectUnit("WIDE", "wide_", [0xC3])], []);
+    var image = generator.EmitExecutable([ObjectUnit("WIDE", "wide_", [0xC3])], []);
 
-    Assert.That(generator.Errors.Select(error => error.Message), Has.Some.Contains("word-sized"),
-      "a linked external declaration must not bypass the common register-ABI size guard");
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    Assert.That(Exec.Cpu8086.Run(image).Output.Trim(), Is.EqualTo("70000"),
+      "the RET-only foreign leaf returns the incoming DX:AX pair unchanged");
   }
 }

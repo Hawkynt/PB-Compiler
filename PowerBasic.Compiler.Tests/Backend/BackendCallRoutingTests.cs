@@ -228,8 +228,9 @@ public sealed class BackendCallRoutingTests {
       Assert.That(callInstruction.Effect.ReadRegs, Has.Count.EqualTo(expectedStages.Length),
         "the call must keep every staged physical register in flight until it consumes it");
       Assert.That(selected.AllInstructions.Any(i => i.Opcode == MOpcode.Add
-        && i.Operands[0] is MOperand.Register { Reg.IsVirtual: false, Reg.Physical: Reg.SP }), Is.False,
-        "both register conventions leave overflow cleanup to the callee");
+        && i.Operands[0] is MOperand.Register { Reg.IsVirtual: false, Reg.Physical: Reg.SP }),
+        Is.EqualTo(convention == IrCallConvention.Watcall),
+        "Watcom's caller removes WATCALL overflow; the current FASTCALL surface is callee-clean");
     });
   }
 
@@ -254,20 +255,57 @@ public sealed class BackendCallRoutingTests {
       $"allocation declined: {allocationReason}");
   }
 
-  [TestCase(IrCallConvention.Fastcall)]
-  [TestCase(IrCallConvention.Watcall)]
-  public void Select_GivenRegisterConventionWithWideArgument_ThenDeclinesExplicitly(
-      IrCallConvention convention) {
+  [Test]
+  public void Select_GivenFastcallWithWideArgument_ThenDeclinesExplicitly() {
     var module = new IrModule("t");
     var callee = module.AddFunction(new IrFunction("foreign", IrType.Void,
       [new IrArgument(IrType.I32, 0)]));
     var fn = module.AddFunction(new IrFunction("main", IrType.Void));
     var entry = fn.AddBlock(new IrBasicBlock("entry"));
-    entry.Append(new IrCall(IrType.Void, callee, [new IrConstantInt(IrType.I32, 1)], convention));
+    entry.Append(new IrCall(IrType.Void, callee, [new IrConstantInt(IrType.I32, 1)],
+      IrCallConvention.Fastcall));
     entry.Append(new IrRet());
 
     Assert.That(InstructionSelector.TrySelect(fn, out var reason), Is.Null);
     Assert.That(reason, Does.Contain("word arguments"));
+  }
+
+  [Test]
+  public void Select_GivenWatcallLongPairAndOverflow_ThenUsesDocumentedPairsAndStopsAtStack() {
+    var module = new IrModule("t");
+    var parameterTypes = new[] { IrType.I16, IrType.I32, IrType.I16, IrType.I32, IrType.I16 };
+    var callee = module.AddFunction(new IrFunction("foreign", IrType.Void,
+      parameterTypes.Select((type, i) => new IrArgument(type, i)).ToList()));
+    var fn = module.AddFunction(new IrFunction("main", IrType.Void));
+    var entry = fn.AddBlock(new IrBasicBlock("entry"));
+    IrValue[] arguments = [
+      new IrConstantInt(IrType.I16, 3),
+      new IrConstantInt(IrType.I32, 0x11112222),
+      new IrConstantInt(IrType.I16, 5),
+      new IrConstantInt(IrType.I32, 0x33334444),
+      new IrConstantInt(IrType.I16, 7),
+    ];
+    entry.Append(new IrCall(IrType.Void, callee, arguments, IrCallConvention.Watcall));
+    entry.Append(new IrRet());
+
+    var selected = InstructionSelector.TrySelect(fn, out var reason);
+
+    Assert.That(selected, Is.Not.Null, $"declined: {reason}");
+    var beforeCall = selected!.AllInstructions.TakeWhile(i => i.Opcode != MOpcode.Call).ToList();
+    var stages = beforeCall.Where(i => i.Opcode == MOpcode.Mov).Select(i => (
+      Register: ((MOperand.Register)i.Operands[0]).Reg.Physical,
+      Value: ((MOperand.Immediate)i.Operands[1]).Value)).ToList();
+    var pushes = beforeCall.Where(i => i.Opcode == MOpcode.Push)
+      .Select(i => ((MOperand.Immediate)i.Operands[0]).Value).ToList();
+    Assert.Multiple(() => {
+      Assert.That(stages, Is.EqualTo(new[] {
+        (Reg.AX, 3L), (Reg.BX, 0x2222L), (Reg.CX, 0x1111L), (Reg.DX, 5L),
+      }));
+      Assert.That(pushes, Is.EqualTo(new long[] { 7, 0x3333, 0x4444 }),
+        "the first unallocatable LONG and every later argument must use Watcom's right-to-left stack");
+      Assert.That(selected.AllInstructions.Single(i => i.Opcode == MOpcode.Call).Effect.ReadRegs,
+        Has.Count.EqualTo(4));
+    });
   }
 
   [Test]
