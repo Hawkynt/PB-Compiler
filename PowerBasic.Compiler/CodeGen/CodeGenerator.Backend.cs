@@ -559,8 +559,12 @@ public sealed partial class CodeGenerator {
     // The module body's own filter, recorded for the same reason a procedure's is: 161/161 owned
     // bodies is a claim about the bodies the routing ATTEMPTED, and a main that calls an unrouted
     // procedure inherits every blind spot the procedure filter has.
+    // A $COMPILE UNIT has no module body, so there is nothing here to route and nothing declined.
+    // This used to record ("main", "filter: ...") anyway - a decline for a body that does not exist,
+    // in the list the rest of the compiler reads as "what the back end refused" - and two fixtures
+    // were filtering "main" back out of it to see the real ones.
     if (this._isUnit)
-      return this.DeclineMain("filter: a $COMPILE UNIT has no module body to own");
+      return null;
     if (this._backendModule is null)
       // Say WHY. This read "the module did not lower to IR" for as long as it existed, and the
       // reason was sitting in a local one call away: TryLowerModule records the construct it refused
