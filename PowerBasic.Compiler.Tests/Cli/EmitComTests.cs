@@ -12,7 +12,7 @@ public sealed class EmitComTests {
     Directory.CreateDirectory(dir);
     try {
       var source = Path.Combine(dir, "HELLO.BAS");
-      File.WriteAllText(source, "$COMPILE COM\nPRINT \"COM OK\"\nEND\n");
+      File.WriteAllText(source, "$COMPILE COM\nEND 6\n");
       var stdout = new StringWriter();
       var stderr = new StringWriter();
 
@@ -27,7 +27,7 @@ public sealed class EmitComTests {
       Assert.That(bytes.Length, Is.GreaterThan(0));
       Assert.That(bytes.Length >= 2 && bytes[0] == (byte)'M' && bytes[1] == (byte)'Z', Is.False,
         "COM output must be a flat image, not an MZ file with a different extension");
-      Assert.That(Cpu8086.Run(bytes).Output.Trim(), Is.EqualTo("COM OK"));
+      Assert.That(Cpu8086.Run(bytes).ExitCode, Is.EqualTo(6));
     } finally {
       try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
     }

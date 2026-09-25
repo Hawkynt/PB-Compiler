@@ -262,22 +262,10 @@ public sealed partial class CodeGenerator {
       recoverIntegerArithmetic: true,
       targetCost: this.Cost);
 
-    // Once production emission is IR-only, whole-program dead function/global elimination belongs
-    // here instead of in CodeGenerator's bound-AST reachability pass. It is legal only for a
-    // self-contained executable: UNIT exports and linked foreign objects may name source procedures
-    // that have no visible IR caller.
-    var sourceDefinitionsBeforeGlobalDce = model.ProcedureList
-      .Where(p => !p.IsExternal && p.Body is not null)
-      .Select(Ir.IrLowering.IrNameOf)
-      .Where(name => module.FindFunction(name) is { IsDeclaration: false })
-      .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    // Artifact routing deliberately retains every source definition. Whole-program GlobalDCE belongs
+    // inside IrMiddleEndPipeline once export/linkage preservation is modeled there; the code generator
+    // must not own optimization choreography.
     var eliminatedByGlobalDce = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    if (this.Optimize && !this._isUnit && !this._allowExternalCalls) {
-      GlobalDce.Run(module);
-      foreach (var name in sourceDefinitionsBeforeGlobalDce)
-        if (module.FindFunction(name) is null)
-          eliminatedByGlobalDce.Add(name);
-    }
 
     // O0284 on native x86 uses ABI-preserving entry thunks. The source-visible procedures keep their
     // original signatures while private helpers carry the one varying context parameter.
@@ -319,6 +307,8 @@ public sealed partial class CodeGenerator {
       // Every one of these rejections is RECORDED rather than merely skipped. A skipped procedure
       // falls back to the direct emitter today and will be a compile failure once CodeGen/ is gone,
       // so it belongs in the same census as a selection decline - see BackendFilterReason.
+      if (proc.IsExternal || proc.Body is null)
+        continue;
       if (BackendFilterReason(proc) is { } filtered) {
         this._backendDeclines.Add((proc.Name, filtered));
         continue;

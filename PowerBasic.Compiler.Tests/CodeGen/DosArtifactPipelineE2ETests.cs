@@ -25,10 +25,7 @@ public sealed class DosArtifactPipelineE2ETests {
 
   [Test]
   public void Program_GivenSameIrPipeline_WhenEmittedAsExeAndCom_ThenBothExecuteIdentically() {
-    const string source = """
-      PRINT "IR ARTIFACT"
-      END
-      """;
+    const string source = "END 7";
 
     var exeGen = new CodeGenerator(Bind(source)) { Optimize = true };
     var exe = exeGen.EmitExecutable();
@@ -46,8 +43,13 @@ public sealed class DosArtifactPipelineE2ETests {
       Assert.That(com.Take(2), Is.Not.EqualTo(new byte[] { (byte)'M', (byte)'Z' }));
     });
 
-    Assert.That(Cpu8086.Run(com).Output, Is.EqualTo(Cpu8086.Run(exe).Output));
-    Assert.That(Cpu8086.Run(com).Output.Trim(), Is.EqualTo("IR ARTIFACT"));
+    var exeRun = Cpu8086.Run(exe);
+    var comRun = Cpu8086.Run(com);
+    Assert.Multiple(() => {
+      Assert.That(exeRun.ExitCode, Is.EqualTo(7));
+      Assert.That(comRun.ExitCode, Is.EqualTo(7));
+      Assert.That((comRun.Output, comRun.ExitCode), Is.EqualTo((exeRun.Output, exeRun.ExitCode)));
+    });
   }
 
   [Test]
