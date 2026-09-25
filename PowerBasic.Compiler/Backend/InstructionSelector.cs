@@ -3654,6 +3654,15 @@ public sealed partial class InstructionSelector {
             condition: null, clobbers: stagedRegisters[i]));
           break;
         }
+        case RuntimeAbi.ArgKind.NearPointer: {
+          if (arg.Type.IsFarPointer || PointerSegmentOf(arg) is not (Reg.DS or Reg.SS)
+              || !this.TryRuntimePointer(arg, callee.Name, out var nearSource, out _))
+            return this.Decline($"call: {callee.Name} wants a near address, got {arg.GetType().Name}");
+          var nearDest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [nearDest, nearSource], MovEffect(nearDest, nearSource),
+            condition: null, clobbers: stagedRegisters[i]));
+          break;
+        }
         case RuntimeAbi.ArgKind.Pointer: {
           if (!this.TryRuntimePointer(arg, callee.Name, out var source, out var segmentSource))
             return false;

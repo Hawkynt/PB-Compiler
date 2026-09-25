@@ -260,7 +260,8 @@ public sealed partial class CodeGenerator {
       arithmeticCostModel: this.SelectionCost,
       minimumIntegerStorageBits: narrowestStorageBits,
       recoverIntegerArithmetic: true,
-      targetCost: this.Cost);
+      targetCost: this.Cost,
+      packedVectorBytes: this._rt.Target.PackedIntegerWidthBytes);
 
     // Artifact routing deliberately retains every source definition. Whole-program GlobalDCE belongs
     // inside IrMiddleEndPipeline once export/linkage preservation is modeled there; the code generator

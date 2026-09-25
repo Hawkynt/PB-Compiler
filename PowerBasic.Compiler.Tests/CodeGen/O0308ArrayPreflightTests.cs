@@ -17,7 +17,7 @@ public sealed class O0308ArrayPreflightTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return exe;
@@ -38,21 +38,12 @@ public sealed class O0308ArrayPreflightTests {
     return count;
   }
 
-  private static string Loop(string feature, int elements, string operation, params string[] extraDirectives) {
-    string[] lines = [
-      $"$CPU 80586 {feature}",
-      "$OPTIMIZE SPEED",
-      "$ERROR OVERFLOW ON",
-      .. extraDirectives,
-      $"DIM a%(1 TO {elements}), b%(1 TO {elements}), c%(1 TO {elements})",
-      "DIM i%",
-      $"FOR i% = 1 TO {elements}",
-      $" c%(i%) = a%(i%) {operation} b%(i%)",
-      "NEXT",
-      "",
-    ];
-    return string.Join('\n', lines);
-  }
+  // The observable loop AutoVectorizeTests uses, under $ERROR OVERFLOW: filled through Opaque%, read
+  // back by a checksum. An unread result is a loop the optimizer deletes, which is not a claim about
+  // the preflight at all.
+  private static string Loop(string feature, int elements, string operation, params string[] extraDirectives)
+    => AutoVectorizeTests.Loop(string.Join('\n', [$"$CPU 80586 {feature}", "$OPTIMIZE SPEED", "$ERROR OVERFLOW ON", .. extraDirectives]),
+      operation, elements);
 
   [Test]
   public void Compile_GivenCheckedAddAndMmx_ThenPreflightUnlocksPaddw() {
@@ -93,16 +84,8 @@ public sealed class O0308ArrayPreflightTests {
 
   [Test]
   public void Compile_GivenCounterWouldWrapAfterShortMax_ThenKeepsOriginalLoopSemantics() {
-    var image = Compile("""
-      $CPU 80586 MMX
-      $OPTIMIZE SPEED
-      $ERROR OVERFLOW ON
-      DIM a%(32700 TO 32767), b%(32700 TO 32767), c%(32700 TO 32767)
-      DIM i%
-      FOR i% = 32700 TO 32767
-        c%(i%) = a%(i%) + b%(i%)
-      NEXT
-      """);
+    var image = Compile(AutoVectorizeTests.Loop("$CPU 80586 MMX\n$OPTIMIZE SPEED\n$ERROR OVERFLOW ON", "+", 100)
+      .Replace("FOR i% = 1 TO 100\n  c%(i%) = a%(i%) + b%(i%)", "FOR i% = 32700 TO 32767\n  c%(i% - 32600) = a%(i% - 32600) + b%(i% - 32600)"));
 
     Assert.That(Count(image, 0x0F, 0xFD), Is.EqualTo(0),
       "without $ERROR NUMERIC the final INTEGER increment wraps to -32768 and the FOR continues");
@@ -119,19 +102,58 @@ public sealed class O0308ArrayPreflightTests {
     });
   }
 
+  /// <summary>No element overflows: the preflight passes and the packed result is the loop's.</summary>
   [Test]
-  public void Compile_GivenNumericChecking_ThenKeepsCheckedScalarLoop() {
-    var image = Compile(Loop("MMX", 100, "+", "$ERROR NUMERIC ON"));
-
-    Assert.That(Count(image, 0x0F, 0xFD), Is.EqualTo(0),
-      "counter-wrap checking remains outside the array preflight proof");
+  public void Execute_GivenACheckedLoopThatFits_ThenThePackedResultIsTheLoops() {
+    var packed = Compile(Loop("MMX", 100, "+"));
+    var scalar = Compile(Loop("MMX", 100, "+").Replace("$OPTIMIZE SPEED", "$OPTIMIZE OFF"));
+    Assert.That(Count(packed, 0x0F, 0xFD), Is.GreaterThan(0), "the checked kernel must be in the optimized build");
+    Assert.That(DosBoxRunner.Normalize(DosBoxRunner.Run(packed)), Is.EqualTo(DosBoxRunner.Normalize(DosBoxRunner.Run(scalar))));
   }
 
+  /// <summary>An element overflows: nothing is computed packed, and the checked loop raises Error 6 as before.</summary>
   [Test]
-  public void Compile_GivenBoundsChecking_ThenKeepsCheckedScalarLoop() {
-    var image = Compile(Loop("MMX", 100, "+", "$ERROR BOUNDS ON"));
+  public void Execute_GivenACheckedLoopThatOverflows_ThenErrorSixIsRaisedAsBefore() {
+    string Overflowing(string optimize) => Loop("MMX", 100, "*").Replace("$OPTIMIZE SPEED", optimize)
+      .Replace("c%(i%) = a%(i%) * b%(i%)", "c%(i%) = a%(i%) + b%(i%) + 0")
+      .Replace("b%(i%) = Opaque%(i% * 101 + 7)", "b%(i%) = Opaque%(i% * 300)");
+    var packed = Compile(Overflowing("$OPTIMIZE SPEED"));
+    var scalar = Compile(Overflowing("$OPTIMIZE OFF"));
+    var packedRun = DosBoxRunner.Normalize(DosBoxRunner.Run(packed));
+    var scalarRun = DosBoxRunner.Normalize(DosBoxRunner.Run(scalar));
+    Assert.Multiple(() => {
+      Assert.That(Count(packed, 0x0F, 0xFD), Is.GreaterThan(0), "the loop must actually be behind the checked kernel");
+      Assert.That(packedRun, Is.EqualTo(scalarRun));
+      Assert.That(packedRun, Does.Contain("RUNTIME ERROR"), "the overflow still stops the program");
+    });
+  }
 
-    Assert.That(Count(image, 0x0F, 0xFD), Is.EqualTo(0),
-      "the preflight does not subsume per-element bounds checks");
+  /// <summary>
+  /// A counter running 1 TO 100 cannot wrap, so $ERROR NUMERIC's check on it is proven away and the
+  /// loop is the same loop as without the directive. The counter that CAN wrap is the short-max case
+  /// above, which stays scalar.
+  /// </summary>
+  [Test]
+  public void Compile_GivenNumericChecking_WhenTheCounterCannotWrap_ThenTheLoopStillVectorizes() {
+    var image = Compile(Loop("MMX", 100, "+", "$ERROR NUMERIC ON"));
+
+    Assert.That(Count(image, 0x0F, 0xFD), Is.GreaterThan(0), "a check proven never to fire does not keep the loop scalar");
+  }
+
+  /// <summary>
+  /// Subscripts proven in range lose their bounds checks and vectorize; one the analysis cannot prove
+  /// keeps its per-element check, which no packed kernel performs, so that loop stays scalar.
+  /// </summary>
+  [Test]
+  public void Compile_GivenBoundsChecking_ThenOnlyUnprovenSubscriptsKeepTheScalarLoop() {
+    var proven = Compile(Loop("MMX", 100, "+", "$ERROR BOUNDS ON"));
+    var unproven = Compile(Loop("MMX", 100, "+", "$ERROR BOUNDS ON")
+      .Replace("c%(i%) = a%(i%) + b%(i%)", "c%(i% + k%) = a%(i% + k%) + b%(i% + k%)")
+      .Replace("DIM i%, s%", "DIM i%, s%, k%\nk% = Opaque%(0)"));
+
+    Assert.Multiple(() => {
+      Assert.That(Count(proven, 0x0F, 0xFD), Is.GreaterThan(0), "in-range subscripts need no check");
+      Assert.That(Count(unproven, 0x0F, 0xFD), Is.EqualTo(0), "the preflight does not subsume per-element bounds checks");
+    });
   }
 }

@@ -52,6 +52,13 @@ internal static class RuntimeAbi {
     Offset,
 
     /// <summary>
+    /// A NEAR address in <see cref="RuntimeArg.Register"/>: an alloca or a global, or a pointer derived
+    /// from one. PB's near model puts the globals and the stack in one segment, so the offset alone
+    /// names the bytes; anything far declines.
+    /// </summary>
+    NearPointer,
+
+    /// <summary>
     /// A near offset in <see cref="RuntimeArg.Register"/> and its segment value in
     /// <see cref="RuntimeArg.High"/>. The selector derives DS for globals and SS for frame objects.
     ///
@@ -189,6 +196,11 @@ internal static class RuntimeAbi {
   // miscompiles a value that is never recomputed. A narrower set is used only where tests and runtime
   // inspection establish balanced saves for the excluded registers.
   private static readonly Reg[] _callerSaved = [Reg.AX, Reg.BX, Reg.CX, Reg.DX, Reg.SI, Reg.DI];
+
+  private static Routine PackedKernel(string label) => new(label,
+    [new(ArgKind.NearPointer, Reg.DI), new(ArgKind.NearPointer, Reg.BX),
+     new(ArgKind.NearPointer, Reg.SI), new(ArgKind.Word, Reg.CX)],
+    _callerSaved);
 
   // These three numeric-print entries have balanced SI/DI saves in their runtime bodies. Keeping the
   // arithmetic registers conservative while exposing that verified index-register preservation is
@@ -437,6 +449,18 @@ internal static class RuntimeAbi {
       [new(ArgKind.Pointer, Reg.SI, Reg.DX), new(ArgKind.Pointer, Reg.DI, Reg.BX),
        new(ArgKind.Word, Reg.CX)],
       _callerSaved, Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    // R4 packed kernels (PackedLoopVectorization): DI=c, BX=a, SI=b, CX=element count, all near.
+    // c(i) = a(i) OP b(i) with the target's widest SIMD, then a scalar tail; the vector registers
+    // they use hold nothing of the caller's.
+    ["rt_packed16_add"] = PackedKernel("rt_packed16_add"),
+    ["rt_packed16_sub"] = PackedKernel("rt_packed16_sub"),
+    ["rt_packed16_and"] = PackedKernel("rt_packed16_and"),
+    ["rt_packed16_or"] = PackedKernel("rt_packed16_or"),
+    ["rt_packed16_xor"] = PackedKernel("rt_packed16_xor"),
+    ["rt_packed16_mul"] = PackedKernel("rt_packed16_mul"),
+    // O0308: the same, after a read-only overflow scan -> AX = 0 done packed, 1 = run the checked loop
+    ["rt_packed16_add_checked"] = PackedKernel("rt_packed16_add_checked") with { Result = Reg.AX },
+    ["rt_packed16_sub_checked"] = PackedKernel("rt_packed16_sub_checked") with { Result = Reg.AX },
     ["llvm.memcpy.p0.p0.i32"] = new("rt_memcpy",
       [new(ArgKind.Pointer, Reg.DI, Reg.BX), new(ArgKind.Pointer, Reg.SI, Reg.DX),
        new(ArgKind.Word, Reg.CX), new(ArgKind.VolatileFlag, default)],

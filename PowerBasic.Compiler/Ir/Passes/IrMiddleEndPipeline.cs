@@ -156,7 +156,8 @@ public static class IrMiddleEndPipeline {
       int minimumIntegerStorageBits = 16,
       bool recoverIntegerArithmetic = false,
       TargetCost? targetCost = null,
-      IIrCallCostModel? callCostModel = null) {
+      IIrCallCostModel? callCostModel = null,
+      int packedVectorBytes = 0) {
     ArgumentNullException.ThrowIfNull(module);
 
     Func<IrPassManager> pipeline = optimize
@@ -180,6 +181,13 @@ public static class IrMiddleEndPipeline {
       // what makes rendering a constant at compile time exact on THIS target; it is not a claim about
       // any other runtime, so it runs here and not in Standard.
       ConstantNumericPrint.Run(module);
+      // R4: the packed kernels are the DOS runtime's, sized to the target's SIMD, and a SPEED trade
+      if (optimizeForSpeed && packedVectorBytes > 0)
+        foreach (var function in module.Functions.ToList())   // a kernel declaration joins the list
+          if (!function.IsDeclaration && PackedLoopVectorization.Run(function, packedVectorBytes) > 0) {
+            SimplifyCfg.Run(function);
+            Dce.Run(function);
+          }
       StringStackPromotion.Run(module);
       foreach (var function in module.Functions)
         if (!function.IsDeclaration)
