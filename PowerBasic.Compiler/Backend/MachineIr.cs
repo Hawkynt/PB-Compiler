@@ -418,6 +418,13 @@ public sealed class X86MachineFunction(string name) {
   public (int Offset, int Segment)? ClosureEnvSlots { get; set; }
 
   /// <summary>
+  /// The slots whose zero start the program can observe (see <see cref="Ir.Analysis.IrSlotInitialization"/>),
+  /// or null to zero the whole frame. Null is the unoptimized answer and the safe one; a set - possibly
+  /// empty - is what optimized selection proved, and spill and scratch slots never appear in it.
+  /// </summary>
+  public HashSet<int>? ZeroStartSlots { get; set; }
+
+  /// <summary>
   /// How the prologue loads the incoming arguments: which virtual register takes which word of which
   /// argument. A 16-bit argument contributes one entry, a 32-bit one contributes two (its low word at
   /// the parameter's own offset and its high word at +2) - which is why this is a table rather than
@@ -465,6 +472,7 @@ public sealed class X86MachineFunction(string name) {
       VirtualRegisterCount = this.VirtualRegisterCount,
       HasArgumentPlan = this.HasArgumentPlan,
       TargetFamily = this.TargetFamily,
+      ZeroStartSlots = this.ZeroStartSlots is null ? null : [.. this.ZeroStartSlots],
     };
     copy.StackSlots.AddRange(this.StackSlots);
     copy.ArgumentLoads.AddRange(this.ArgumentLoads);
@@ -486,6 +494,7 @@ public sealed class X86MachineFunction(string name) {
     this.VirtualRegisterCount = other.VirtualRegisterCount;
     this.HasArgumentPlan = other.HasArgumentPlan;
     this.TargetFamily = other.TargetFamily;
+    this.ZeroStartSlots = other.ZeroStartSlots is null ? null : [.. other.ZeroStartSlots];
     this.StackSlots.Clear();
     this.StackSlots.AddRange(other.StackSlots);
     this.ArgumentLoads.Clear();

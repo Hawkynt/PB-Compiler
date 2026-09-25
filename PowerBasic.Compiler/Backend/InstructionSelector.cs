@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 
 namespace PowerBasic.Compiler.Backend;
 
@@ -32,6 +33,9 @@ public sealed partial class InstructionSelector {
   /// </summary>
   private readonly HashSet<IrPhi> _nativeDwordPhis = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrAlloca, int> _slots = new(ReferenceEqualityComparer.Instance);
+
+  // the allocas whose zero start is observable, under the optimizer; null means every slot keeps one
+  private IReadOnlySet<IrAlloca>? _needingZeroStart;
 
   /// <summary>
   /// Where each floating-point SSA value lives: a frame cell, not a register. x87 computes on a stack
@@ -158,8 +162,12 @@ public sealed partial class InstructionSelector {
   }
 
   private X86MachineFunction? Run(IrFunction fn) {
-    this._function = new X86MachineFunction(fn.Name) { HasArgumentPlan = true };
+    this._function = new X86MachineFunction(fn.Name) {
+      HasArgumentPlan = true,
+      ZeroStartSlots = this._target.Optimize ? [] : null,
+    };
     this._returnsClosure = fn.ReturnsClosure;
+    this._needingZeroStart = this._target.Optimize ? IrSlotInitialization.NeedingZeroStart(fn) : null;
 
     if (this.UsesNativeDwordRegisters && IrDominators.Build(fn) is { } dominators)
       this._nativeDwordPhis.UnionWith(NativeDwordPhis(fn, dominators));
@@ -1817,6 +1825,9 @@ public sealed partial class InstructionSelector {
     for (var i = 0; i < count; ++i)
       this._function.StackSlots.Add(byteSize);
     this._slots[alloca] = slot;
+    if (this._needingZeroStart?.Contains(alloca) == true)
+      for (var i = 0; i < count; ++i)
+        this._function.ZeroStartSlots!.Add(slot + i);
     // A closure environment half is written by the PROLOGUE out of BX or CX, not by anything in the
     // body, so the emitter has to be told which slot it became - see IrAlloca.EnvRole.
     if (alloca.EnvRole != Ir.ClosureEnvRole.None) {

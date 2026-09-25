@@ -50,6 +50,23 @@ public sealed class MachineEmitter {
       this._labels[block.Label] = asm.DefineLabel(block.Label);
   }
 
+  /// <summary>
+  /// The BP-relative start and word count of the frame region the prologue must zero, or null when
+  /// nothing needs it. With no proof (<see cref="X86MachineFunction.ZeroStartSlots"/> null) that is the
+  /// whole frame; otherwise the smallest contiguous run covering every slot that can show its zero.
+  /// </summary>
+  private static (int Low, int Words)? ZeroStartRange(X86MachineFunction function, int[] slotDisp, int frame) {
+    if (function.ZeroStartSlots is not { } slots) {
+      var lowest = slotDisp.Length == 0 ? 0 : slotDisp.Min();
+      return frame == 0 ? null : (lowest, frame / 2);
+    }
+    if (slots.Count == 0)
+      return null;
+    var low = slots.Min(slot => slotDisp[slot]);
+    var high = slots.Max(slot => slotDisp[slot] + ((function.StackSlots[slot] + 1) & ~1));
+    return (low, (high - low) / 2);
+  }
+
   /// <summary>Emits the body of <paramref name="function"/> into <paramref name="asm"/> using the given register allocation.</summary>
   public static void Emit(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     var emitter = new MachineEmitter(asm, function, allocation);
@@ -137,22 +154,30 @@ public sealed class MachineEmitter {
         frame += (size + 1) & ~1;                      // word-aligned space for allocas / spills
       if (frame > 0) {
         asm.Sub(Asm.Reg.SP, (Imm)frame);
-        // PB gives every local a zero start, and the frame is where the locals live - the direct path
-        // spells this REP STOSW over the whole frame and so does this one. Skipping it is not a size
-        // optimization here, it is a miscompile: a SUB with DIM a%(0 TO 49) that writes one element and
-        // sums all fifty read forty-nine words of whatever the last call left on the stack. That is
-        // exactly how it was found, and it read as plausible numbers rather than as a crash.
+        // PB gives every local a zero start, and the frame is where the locals live. Skipping it where
+        // a local CAN be read first is not a size optimization, it is a miscompile: a SUB with
+        // DIM a%(0 TO 49) that writes one element and sums all fifty read forty-nine words of whatever
+        // the last call left on the stack. That is exactly how it was found, and it read as plausible
+        // numbers rather than as a crash.
+        //
+        // Unoptimized, the whole frame is filled. Optimized selection proves which slots can show their
+        // zero (ZeroStartSlots) and only those are filled - usually none, since spill and scratch slots
+        // are always written first and most locals are assigned before they are read.
         //
         // It has to happen before the arguments are loaded, because it clobbers AX, CX, DI and ES - at
-        // this point no allocated register holds anything yet. Spill slots get zeroed along with the
-        // allocas; they are written before they are read, so it costs only the instruction.
-        asm.Push(Asm.Reg.DS);
-        asm.Pop(Asm.Reg.ES);
-        asm.Mov(Asm.Reg.DI, Asm.Reg.SP);
-        asm.Mov(Asm.Reg.CX, (Imm)(frame / 2));
-        asm.Xor(Asm.Reg.AX, Asm.Reg.AX);
-        asm.Rep();
-        asm.Stosw();
+        // this point no allocated register holds anything yet.
+        if (ZeroStartRange(function, emitter._slotDisp, frame) is var (low, words)) {
+          asm.Push(Asm.Reg.DS);
+          asm.Pop(Asm.Reg.ES);
+          if (low == -(frame + spills.Count * 2))
+            asm.Mov(Asm.Reg.DI, Asm.Reg.SP);
+          else
+            asm.Lea(Asm.Reg.DI, Asm.Mem.Word(Asm.Reg.BP, low));
+          asm.Mov(Asm.Reg.CX, (Imm)words);
+          asm.Xor(Asm.Reg.AX, Asm.Reg.AX);
+          asm.Rep();
+          asm.Stosw();
+        }
       }
     }
 
