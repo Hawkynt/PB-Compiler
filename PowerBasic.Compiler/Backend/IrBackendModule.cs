@@ -1,0 +1,74 @@
+using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Passes;
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Backend.Targets;
+
+namespace PowerBasic.Compiler.Backend;
+
+/// <summary>The single shared compilation product consumed by all target emitters.</summary>
+public sealed class IrBackendModule {
+  private IrBackendModule(IrModule module, IrBackendOptions options) {
+    this.Module = module;
+    this.Options = options;
+  }
+
+  public IrModule Module { get; }
+  public IrBackendOptions Options { get; }
+  public IrMachineModule? Machine { get; private set; }
+
+  /// <summary>Completes the explicit Low IR → Machine SSA → Machine IR boundary.</summary>
+  public bool TryLowerMachine(out IReadOnlyList<string> errors) {
+    var target = IrBackendTargetContract.SelectionTarget(Options);
+    if (Options.Target != IrBackendTarget.X86_16) {
+      errors = [$"target '{Options.Target}' is not lowered through x86 machine IR"];
+      return false;
+    }
+    if (!IrMachinePipeline.TryLower(this.Module, target, out var machine, out errors))
+      return false;
+    this.Machine = machine;
+    return true;
+  }
+
+  public static IrBackendModule? TryCompile(
+      SemanticModel model,
+      IrBackendOptions? options,
+      out string? declinedBecause) {
+    ArgumentNullException.ThrowIfNull(model);
+    options ??= new();
+    var module = IrLowering.TryLowerModule(model, out declinedBecause);
+    if (module is null)
+      return null;
+
+    module.AsciiOnly = model.AsciiOnly;
+    if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35)
+      IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
+        options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops);
+    else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.Mos6502)
+      IrMiddleEndPipeline.RunNativeModule(module, options.Optimize, options.OptimizeForSpeed,
+        options.OptimizeForSize, minimumIntegerStorageBits: 16,
+        recoverIntegerArithmetic: options.RecoverIntegerArithmetic);
+    else {
+      declinedBecause = $"target '{options.Target}' has no emitter yet";
+      return null;
+    }
+
+    var errors = IrVerifier.Verify(module);
+    if (errors.Count != 0) {
+      declinedBecause = "optimized IR failed verification: " + string.Join("; ", errors);
+      return null;
+    }
+
+    if (!module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out var stageError)) {
+      declinedBecause = stageError;
+      return null;
+    }
+    if (!IrLowIrLegalization.TryLegalize(module, out var legalizationErrors)) {
+      declinedBecause = "optimized IR failed Low IR legalization: " + string.Join("; ", legalizationErrors);
+      return null;
+    }
+    if (module.RepresentationStage < IrBackendTargetContract.RequiredInputStage(options.Target))
+      throw new InvalidOperationException($"target '{options.Target}' requires {IrBackendTargetContract.RequiredInputStage(options.Target)}");
+
+    return new(module, options);
+  }
+}

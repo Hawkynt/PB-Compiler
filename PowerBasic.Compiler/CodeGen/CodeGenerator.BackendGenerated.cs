@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.Backend.Targets;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -16,8 +17,7 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private sealed record BackendGeneratedFunction(
     IrFunction Ir,
-    MFunction Machine,
-    IReadOnlyDictionary<int, Reg> Allocation,
+    IrMachineFunction MachineProduct,
     bool ElideFrame,
     X86DefinitionStackLayout StackLayout);
 
@@ -125,23 +125,20 @@ public sealed partial class CodeGenerator {
       decline = this.UnaddressableGlobal(unaddressable);
       return false;
     }
-    if (InstructionSelector.TrySelect(function, out var declineReason, this.SelectionTarget) is not { } machine) {
-      decline = "selection: " + (declineReason ?? "unknown");
+    if (!IrMachinePipeline.TryLowerFunction(function, this.SelectionTarget,
+        out var machineProduct, out var declineReason)) {
+      decline = declineReason ?? "unknown machine lowering failure";
       return false;
     }
+    var machine = machineProduct!.Function;
     if (UndefinedRuntimeCallee(machine) is { } undefined) {
       decline = $"routing: calls '{undefined}', which the DOS runtime does not define";
       return false;
     }
 
-    MachineScheduler.Schedule(machine);
-    if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } allocation) {
-      decline = "allocation: " + (noRegisters ?? "unknown");
-      return false;
-    }
-
     this._backendGenerated![function.Name] = new BackendGeneratedFunction(
-      function, machine, allocation, this.Optimize && FrameElision.IsCandidate(function), layout);
+      function, machineProduct,
+      this.Optimize && FrameElision.IsCandidate(function), layout);
     decline = string.Empty;
     return true;
   }
@@ -226,10 +223,10 @@ public sealed partial class CodeGenerator {
       this._asm.MarkLabel(this.GeneratedCalleeLabel(generated.Ir.Name)!);
       var abi = X86CallAbi.For(generated.Ir.Convention);
       var cleanupBytes = abi.StackCleanup == X86StackCleanup.Caller ? 0 : generated.StackLayout.ParameterBytes;
-      MachineEmitter.EmitFunction(this._asm, generated.Machine, generated.Allocation,
+      X86ProductionEmitter.EmitFunction(this._asm, generated.MachineProduct,
         generated.StackLayout.ParameterOffsets, cleanupBytes, this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: generated.ElideFrame,
-        emitInlineAsm: this.EmitRoutedInlineAsm);
+        registerSpills: [.. generated.StackLayout.Spills], emitInlineAsm: this.EmitRoutedInlineAsm);
     }
   }
 

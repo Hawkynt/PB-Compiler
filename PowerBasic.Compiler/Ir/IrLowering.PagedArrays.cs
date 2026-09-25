@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Hir;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
@@ -215,19 +216,24 @@ public sealed partial class IrLowering {
   /// bit 17 (paged), which is the wrap the machine has and no allocation can reach anyway.
   /// </para>
   /// </summary>
-  private (IrValue Address, PbType Element) PagedElementAddress(
-      CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
+  private (IrValue Address, PbType Element) PagedElementAddress(HirArrayElementAccess access) {
+    var symbol = access.Target;
+    var arr = access.Type;
     this.RequirePagedArrayShape(symbol, arr);
-    if (expr.Arguments.Count != 1)
-      throw new IrLoweringException($"{symbol.ArrayClass} array rank mismatch");
-    // the descriptor is this function's own storage, so an access the declaration has not reached -
-    // a use before the DIM, or an array declared in another function - has no segment to name
+    if (access.BoundsSource != HirArrayBoundsSource.Descriptor || access.Subscripts.Count != 1)
+      throw new IrLoweringException($"{symbol.ArrayClass} array HIR rank mismatch");
+    if (access.CheckBounds)
+      throw new IrLoweringException($"{symbol.ArrayClass} array HIR unexpectedly requests a bounds check");
+
+    // The descriptor is this function's own storage, so an access the declaration has not reached -
+    // a use before the DIM, or an array declared in another function - has no segment to name.
     if (!this._pagedArrays.ContainsKey(symbol))
       throw new IrLoweringException($"element of {symbol.Name} before its DIM was lowered");
 
     var descriptor = this.PagedDescriptor(symbol);
     var bounds = this.DynDescriptor(symbol, 1);
-    var index = this.Coerce(this.LowerExpr(expr.Arguments[0]), this._model.TypeOf(expr.Arguments[0]), PbType.Long);
+    var subscript = access.Subscripts[0];
+    var index = this.Coerce(this.LowerExpr(subscript), this._model.TypeOf(subscript), PbType.Long);
     var byteOffset = this._b.Mul(this._b.Sub(index, this._b.Load(IrType.I32, bounds.Lo[0])),
       new IrConstantInt(IrType.I32, System.Math.Max(arr.Element.Size, 1)));
     var low = this._b.Trunc(byteOffset, IrType.I16);

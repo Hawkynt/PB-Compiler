@@ -33,7 +33,7 @@ public sealed class IrBasicWriterTests {
   private static IrModule Optimized(string source) {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     return module!;
   }
 

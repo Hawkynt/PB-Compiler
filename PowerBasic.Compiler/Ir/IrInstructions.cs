@@ -349,8 +349,11 @@ public sealed class IrCall : IrInstruction {
       this.AddOperand(a);
   }
 
-  public IrCallConvention Convention { get; }
+  public IrCallConvention Convention { get; private set; }
   public IrValue Callee => this.GetOperand(0);
+
+  /// <summary>The call-site half of <see cref="IrFunction.SpecializeConvention"/>.</summary>
+  internal void SpecializeConvention(IrCallConvention convention) => this.Convention = convention;
   public IEnumerable<IrValue> Args => this.Operands.Skip(1);
   public int ArgCount => this.Operands.Count - 1;
 }

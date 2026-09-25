@@ -28,63 +28,73 @@ public sealed class FloatResultForwardingTests {
   private static byte[] Compile(string source, bool optimize = true) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model) { Optimize = optimize };
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return image;
   }
 
-  /// <summary>
-  /// The epilogue's reload, anchored to the teardown that always follows it: FLD [BP+disp8] - D9 /0
-  /// for a SINGLE, DD /0 for a DOUBLE - immediately before MOV SP,BP (89 EC). The anchor is what
-  /// makes this a real detector rather than a search for a common byte pair, and each test below
-  /// checks it BOTH ways on programs that differ only in whether forwarding applies, so a marker
-  /// that matched everywhere or nowhere would fail rather than pass quietly.
-  /// </summary>
-  private static bool HasFloatResultReload(byte[] image, byte opcode) {
-    for (var i = 0; i + 4 < image.Length; ++i)
-      if (image[i] == opcode && image[i + 1] == 0x46 && image[i + 3] == 0x89 && image[i + 4] == 0xEC)
-        return true;
-    return false;
-  }
+  private const string SinglePrologue = "$OPTIMIZE SPEED\nDECLARE FUNCTION f!(x!)\nPRINT f!(2.5); f!(INP(&H60))\nEND\n";
+  private const string DoublePrologue = "$OPTIMIZE SPEED\nDECLARE FUNCTION g#(x#)\nPRINT g#(2.5); g#(INP(&H60))\nEND\n";
 
-  private const string SinglePrologue = "$OPTIMIZE SPEED\nDECLARE FUNCTION f!(x!)\nPRINT f!(2.5)\nEND\n";
-  private const string DoublePrologue = "$OPTIMIZE SPEED\nDECLARE FUNCTION g#(x#)\nPRINT g#(2.5)\nEND\n";
-
-  private const string SingleForwarded = SinglePrologue + "FUNCTION f!(x!)\n f! = x! + 1.5\nEND FUNCTION";
+  private const string SingleForwarded = SinglePrologue + "FUNCTION f!(x!) NOINLINE\n f! = x! + 1.5\nEND FUNCTION";
   private const string SingleMultiExit = SinglePrologue
-    + "FUNCTION f!(x!)\n IF x! > 99.0 THEN f! = 0.0 : EXIT FUNCTION\n f! = x! + 1.5\nEND FUNCTION";
-  private const string DoubleForwarded = DoublePrologue + "FUNCTION g#(x#)\n g# = x# + 1.5\nEND FUNCTION";
+    + "FUNCTION f!(x!) NOINLINE\n IF x! > 99.0 THEN f! = 0.0 : EXIT FUNCTION\n f! = x! + 1.5\nEND FUNCTION";
+  private const string DoubleForwarded = DoublePrologue + "FUNCTION g#(x#) NOINLINE\n g# = x# + 1.5\nEND FUNCTION";
   private const string DoubleMultiExit = DoublePrologue
-    + "FUNCTION g#(x#)\n IF x# > 99.0 THEN g# = 0.0 : EXIT FUNCTION\n g# = x# + 1.5\nEND FUNCTION";
+    + "FUNCTION g#(x#) NOINLINE\n IF x# > 99.0 THEN g# = 0.0 : EXIT FUNCTION\n g# = x# + 1.5\nEND FUNCTION";
 
-  [Test]
-  public void Emit_GivenSingleExitSingleFunction_ThenTheEpilogueFldIsElided() {
-    Assert.Multiple(() => {
-      Assert.That(HasFloatResultReload(Compile(SingleForwarded), 0xD9), Is.False,
-        "a single-exit SINGLE function leaves its result in ST(0)");
-      Assert.That(HasFloatResultReload(Compile(SingleMultiExit), 0xD9), Is.True,
-        "a multi-exit function can reach the epilogue with nothing on the stack, so it must reload");
-    });
+  /// <summary>
+  /// The result travels at its own width. A SINGLE or DOUBLE result lives in a cell of that width,
+  /// so the function body moves no ten-byte value at all: the one <c>FSTP m32</c> that rounds it (the
+  /// rounding genuine PB 3.5 performs on the way out - FLTRET.BAS in the differential battery pins
+  /// it) and the <c>FLD m32</c> that hands it back in <c>ST(0)</c>.
+  ///
+  /// <para>
+  /// This used to demand that the epilogue's reload disappear, which is what the direct emitter's
+  /// O0102 did: it left the unrounded eighty-bit sum in <c>ST(0)</c>, and <c>d# = f!(1)</c> with
+  /// <c>f! = x! / 3</c> answered .333333333333333 where genuine PB answers .333333343267441. The
+  /// reload IS the rounding; what can go is every wider copy around it.
+  /// </para>
+  /// </summary>
+  [TestCase(SingleForwarded, "f")]
+  [TestCase(SingleMultiExit, "f")]
+  [TestCase(DoubleForwarded, "g")]
+  [TestCase(DoubleMultiExit, "g")]
+  public void Emit_GivenAFloatFunction_ThenItsResultNeverTravelsAsTenBytes(string source, string function) {
+    var code = FunctionCode(source, function);
+    var tbyte = 0;
+    for (var i = 0; i + 1 < code.Length; ++i)
+      if (code[i] == 0xDB && (code[i + 1] & 0xC0) != 0xC0 && ((code[i + 1] >> 3) & 7) is 5 or 7)
+        ++tbyte;                                    // FLD m80 / FSTP m80
+    Assert.That(tbyte, Is.Zero, "no FLD/FSTP TBYTE: the result and its operands live at their own width");
   }
 
-  [Test]
-  public void Emit_GivenSingleExitDoubleFunction_ThenTheEpilogueFldIsElided() {
-    Assert.Multiple(() => {
-      Assert.That(HasFloatResultReload(Compile(DoubleForwarded), 0xDD), Is.False,
-        "a single-exit DOUBLE function leaves its result in ST(0)");
-      Assert.That(HasFloatResultReload(Compile(DoubleMultiExit), 0xDD), Is.True,
-        "a multi-exit function must reload");
-    });
+  /// <summary>The named procedure's bytes, from the image listing.</summary>
+  private static byte[] FunctionCode(string source, string name) {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    var generator = new CodeGenerator(model);
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    var listing = generator.DescribeImage();
+    var code = DosImageCode.ByListingOffset(image);
+    var target = listing.Procedures.First(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    var end = listing.Procedures.Where(p => p.CodeOffset > target.CodeOffset).Select(p => p.CodeOffset)
+      .Concat(listing.RuntimeLabels.Where(l => !l.IsConstant && l.Offset > target.CodeOffset).Select(l => l.Offset))
+      .Append(Math.Min(listing.CodeLength, code.Length)).Min();
+    return code.AsSpan(target.CodeOffset, end - target.CodeOffset).ToArray();
   }
 
-  /// <summary>Forwarding must not change the answer, and 2.5 + 1.5 is exact in both widths.</summary>
+  /// <summary>
+  /// Forwarding must not change the answer, and 2.5 + 1.5 is exact in both widths. The interpreter's
+  /// ports read 0, so the second, opaque call answers 1.5.
+  /// </summary>
   [TestCase(SingleForwarded)]
   [TestCase(SingleMultiExit)]
   [TestCase(DoubleForwarded)]
   [TestCase(DoubleMultiExit)]
   public void Run_GivenAForwardedFloatResult_ThenTheValueIsRight(string source) =>
-    Assert.That(Cpu8086.Run(Compile(source)).Output.Trim(), Is.EqualTo("4"));
+    Assert.That(Cpu8086.Run(Compile(source)).Output.Trim(), Is.EqualTo("4  1.5"));
 
   /// <summary>
   /// And the optimizer changes nothing observable - the assertion the whole battery rests on, made

@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Expressions.cs` (int16 binary path) |
+| **Stage** | x86 back end (instruction selection) |
+| **Source** | `Backend/InstructionSelector.cs` — `SelectBinary`, `TryOperand`, `EmitCompareForFlags`; `Ir/Passes/InstCombine.cs` — `SimplifyCmp` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF43.BAS` (add/sub), `DIFF44.BAS` (bitwise/compare), `DIFF45.BAS` (checked add/sub) |
 | **Split from** | [O0008](O0008-peephole-zero-idiom.md) (which is now the zero idiom only) |
@@ -16,8 +16,9 @@ materialized in a register: `ADD/SUB/AND/OR/XOR AX,imm` and `CMP AX,imm`. That
 drops the constant load *and* the `PUSH`/`POP` pair that staged the second
 operand.
 
-The constant may sit on either side for a commutative operator; an ordering
-comparison with the constant on the left mirrors the operator instead.
+The selector maps an IR integer constant straight to an immediate operand. A
+comparison with the constant on the left is swapped by `InstCombine` (predicate
+mirrored), and the selector mirrors any that still reach it the same way.
 
 ## Sample
 
@@ -45,5 +46,5 @@ IF v% = 7 THEN PRINT "seven"
 
 The immediate is taken modulo 2¹⁶ — the same low word the register path would
 have coerced into BX — so the result is bit-identical. Under `$ERROR OVERFLOW`
-the `JNO` guard is emitted exactly as before, because `ADD r,imm` sets OF
-identically to `ADD r,r`.
+the trap is an explicit sign test the IR lowering adds around the operation, so
+it does not depend on the form of the `ADD`.

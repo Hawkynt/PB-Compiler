@@ -11,13 +11,13 @@ public static class SuperoptimizedPeepholes {
   private static readonly IReadOnlyDictionary<SourcePattern, Candidate> _catalog = DiscoverCatalog();
 
   /// <summary>Applies exhaustively verified replacements whose flag differences are unobservable.</summary>
-  public static int Run(MFunction function) {
+  public static int Run(X86MachineFunction function) {
     ArgumentNullException.ThrowIfNull(function);
     var changed = 0;
     foreach (var block in function.Blocks)
       for (var i = 0; i < block.Instructions.Count; ++i) {
         var instruction = block.Instructions[i];
-        if (!FlagsDeadAfter(block, i) || instruction.Condition is not null || instruction.Clobbers.Count != 0)
+        if (!MachineFlags.DeadAfter(function, block, i) || instruction.Condition is not null || instruction.Clobbers.Count != 0)
           continue;
         if (Match(instruction) is not { } pattern || !_catalog.TryGetValue(pattern, out var candidate))
           continue;
@@ -34,6 +34,8 @@ public static class SuperoptimizedPeepholes {
       return instruction.Opcode switch {
         MOpcode.Add when unchecked((ushort)immediate.Value) == 1 => SourcePattern.AddOne,
         MOpcode.Sub when unchecked((ushort)immediate.Value) == 1 => SourcePattern.SubOne,
+        MOpcode.Add when unchecked((ushort)immediate.Value) == ushort.MaxValue => SourcePattern.AddMinusOne,
+        MOpcode.Sub when unchecked((ushort)immediate.Value) == ushort.MaxValue => SourcePattern.SubMinusOne,
         MOpcode.Xor when unchecked((ushort)immediate.Value) == ushort.MaxValue => SourcePattern.XorAllOnes,
         MOpcode.And when unchecked((ushort)immediate.Value) == 0 => SourcePattern.AndZero,
         _ => null,
@@ -63,29 +65,6 @@ public static class SuperoptimizedPeepholes {
     => new(opcode, [new MOperand.Register(register)],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: writesFlags,
         ReadsMemory: false, WritesMemory: false));
-
-  private static bool FlagsDeadAfter(MBlock block, int index) {
-    for (var i = index + 1; i < block.Instructions.Count; ++i) {
-      var instruction = block.Instructions[i];
-      if (instruction.Effect.ReadsFlags)
-        return false;
-      if (FullyDefinesArithmeticFlags(instruction))
-        return true;
-    }
-    return false;                                  // a successor may consume the flags
-  }
-
-  /// <summary>
-  /// Whether an instruction replaces all condition-code flags a later machine operation can observe,
-  /// without consulting the incoming flags. This deliberately mirrors the conservative definition
-  /// used by O0092 after emission instead of treating every <see cref="MInstrEffect.WritesFlags"/> as
-  /// a kill: INC/DEC preserve CF, while ADC/SBB consume it.
-  /// </summary>
-  private static bool FullyDefinesArithmeticFlags(MInstr instruction)
-    => instruction.Effect.WritesFlags
-       && !instruction.Effect.ReadsFlags
-       && instruction.Opcode is MOpcode.Add or MOpcode.Sub or MOpcode.And or MOpcode.Or or MOpcode.Xor
-         or MOpcode.Cmp or MOpcode.Test or MOpcode.Neg;
 
   private static IReadOnlyDictionary<SourcePattern, Candidate> DiscoverCatalog() {
     var result = new Dictionary<SourcePattern, Candidate>();
@@ -118,6 +97,8 @@ public static class SuperoptimizedPeepholes {
   private static ushort Evaluate(SourcePattern pattern, ushort value) => pattern switch {
     SourcePattern.AddOne => unchecked((ushort)(value + 1)),
     SourcePattern.SubOne => unchecked((ushort)(value - 1)),
+    SourcePattern.AddMinusOne => unchecked((ushort)(value + ushort.MaxValue)),
+    SourcePattern.SubMinusOne => unchecked((ushort)(value - ushort.MaxValue)),
     SourcePattern.XorAllOnes => (ushort)(value ^ ushort.MaxValue),
     SourcePattern.AddSelf => unchecked((ushort)(value + value)),
     SourcePattern.AndZero => 0,
@@ -136,7 +117,8 @@ public static class SuperoptimizedPeepholes {
   // Exact register-encoding sizes for the supported 8086 word forms. The assembler uses 83 /op ib
   // for these small signed immediates and the legacy 40+rw / 48+rw one-byte INC/DEC forms.
   private static int SourceCost(SourcePattern pattern) => pattern switch {
-    SourcePattern.AddOne or SourcePattern.SubOne or SourcePattern.XorAllOnes or SourcePattern.AndZero => 3,
+    SourcePattern.AddOne or SourcePattern.SubOne or SourcePattern.AddMinusOne or SourcePattern.SubMinusOne
+      or SourcePattern.XorAllOnes or SourcePattern.AndZero => 3,
     SourcePattern.AddSelf => 2,
     _ => int.MaxValue,
   };
@@ -147,6 +129,6 @@ public static class SuperoptimizedPeepholes {
     _ => int.MaxValue,
   };
 
-  private enum SourcePattern { AddOne, SubOne, XorAllOnes, AddSelf, AndZero }
+  private enum SourcePattern { AddOne, SubOne, AddMinusOne, SubMinusOne, XorAllOnes, AddSelf, AndZero }
   private enum Candidate { Inc, Dec, Not, ShlOne, XorSelf }
 }

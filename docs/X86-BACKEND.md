@@ -250,18 +250,19 @@ rather than leaving implicit in each stage.
 
 A construct the back end cannot compile must **decline**: `InstructionSelector.Decline`, a null from
 `LinearScanAllocator.Allocate`, an `IrLoweringException` caught by `IrLowering.TryLowerModule`. A
-decline is safe and it is *measured* - the direct emitter takes the function, and the refusal lands in
-`BackendCoverageTests`' histogram with a reason attached, where it can be ranked and closed.
+decline is safe and it is *named* - routing is mandatory, so `CodeGenerator` reports it as a compile
+error ("routing is mandatory and 'X' was not taken by the x86-16 back end: <reason>"), and
+`BackendCoverageTests`' histogram records the reason, where it can be ranked and closed.
 
 A **throw** is none of those things. It ends the compilation with a stack trace, emits no executable,
 produces no diagnostic, and is invisible to every census here, because the function neither routed nor
-declined. An empty decline histogram says nothing about it. And after `CodeGen/` is retired each one
-stops being a survivable fallback and becomes an unconditional compiler crash.
+declined. An empty decline histogram says nothing about it. With no second code generator to fall
+back on, a decline is a diagnostic the user can act on, and a throw is only a crash.
 
 Three consequences follow, and each is enforced rather than hoped for:
 
 * **The check belongs where declining is still possible.** By `MachineEmitter` the routing decision is
-  made and there is no fallback left - which is why the inline-asm parse moved into
+  made and there is no clean way left to refuse - which is why the inline-asm parse moved into
   `InstructionSelector.SelectInlineAsm` and why `CodeGenerator.DataGlobalsResolve` asks the resolver
   about every global a function names before that function may route, rather than discovering at
   emission that one has no cell.
@@ -283,15 +284,14 @@ Three consequences follow, and each is enforced rather than hoped for:
 
 ## Gating + verification
 
-The backend is an **optimiser** feature, so it is gated on the optimiser flags, not the
-dialect (the optimiser is dialect-agnostic — docs/PB36.md): an optimised standalone
-program under `$OPTIMIZE SPEED` whose body fully lowers to IR is compiled through the
-backend; everything else (units, error handling, unsupported constructs) falls back to
-the direct codegen. Each stage is verified by the **differential oracle** — output
-equivalence to the genuine compilers across all batteries, the same basis the scheduler
-uses (the backend changes the emitted bytes, so it is verified by *output*, not
-byte-identity). The backend stays behind an explicit opt-in until it reaches output
-parity on the full battery, then becomes the default for the programs it can handle.
+The backend was first gated as an **optimiser** feature, behind an explicit opt-in, with
+everything it could not take falling back to the direct codegen. That gating is gone: the
+backend compiles every procedure and module body of every program, optimized or not, in
+every dialect, units included; the optimiser flags only decide which passes run in front of
+it (unoptimized, the middle end runs only `IrMiddleEndPipeline.Legalize`). It is verified by
+the **differential oracle** — output equivalence to the genuine compilers across all
+batteries (`scripts/run-diff-tests.sh`, last measured 592 / 0 / 0 on dosbox-staging); the
+backend changes the emitted bytes, so it is verified by *output*, not byte-identity.
 
 ## Status
 
@@ -311,11 +311,13 @@ LinearScanAllocator → MachineEmitter → Assembler → machine code`):
 - **Stage 6 — machine scheduling** (`Backend/MachineScheduler.cs`), pre-allocation interleaving with
   physical-clobber barriers. ✅
 
-The backend is wired into production codegen behind the experimental backend switch. It can own
-individual procedures and the module body when every participating function lowers, selects,
-schedules and allocates. Unsupported constructs still decline to the direct emitter; removing that
-fallback is a goal, not the current state. The sections below retain the implementation findings in
-the order they were discovered.
+The backend is the only production code generator: it owns every procedure and the module body,
+and a function that does not lower, select, schedule and allocate is a compile error. The direct
+emitter it replaced, and the switch that chose between them, are gone
+([DIRECT-EMITTER-RETIREMENT.md](DIRECT-EMITTER-RETIREMENT.md)). The sections below retain the
+implementation findings in the order they were discovered; they were written while the direct
+emitter still existed, so its comparisons, its fallback and the `UseExperimentalBackend` /
+`PBC_X_BACKEND` switch they mention describe that period.
 
 ### Activation finding (empirical — a routing was prototyped, harness-tested, and reverted)
 

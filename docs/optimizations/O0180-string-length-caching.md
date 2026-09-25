@@ -3,7 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Done |
-| **Stage** | Emitter |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/StringConstantFold.cs` — `FoldLength` (`rt_str_len_borrow`); `Ir/Passes/Gvn.cs` — `IsDeterministicRead`; `Ir/Passes/Licm.cs` — `IsHoistableRead`; `Ir/Analysis/IrEffects.cs` |
 | **Related** | [O0003](O0003-common-subexpression-elimination.md), [O0028](O0028-loop-invariant-code-motion.md), [O0181](O0181-empty-string-comparison.md), [R0003](R0003-string-engine.md) |
 
 ## The idea
@@ -29,57 +30,39 @@ IF LEN(s$) > 0 AND LEN(s$) < 100 THEN PRINT "ok"    ' twice
 
 ## Now
 
-The first `LEN(s$)` defines a CSE slot; every later read of the *same,
-unmodified* string reloads it. `LEN(s) + LEN(s) + LEN(s)` calls `rt_len` **once**
-instead of three times.
+The lowering reads `LEN(s$)` of a variable as `rt_str_len` over a copy made by
+`rt_str_dup`. `StringConstantFold.FoldLength` rewrites that pair into one
+non-consuming `rt_str_len_borrow` of the variable's handle (and a `LEN` of a
+literal into its byte count). `IrEffects` classifies `rt_str_len_borrow` as a
+deterministic read: no writes, no trap.
 
-`CacheableLenSymbol` (in `OptCommonSubexpr`) classifies `LEN(bareStringVar)` over
-a plain, non-static dynamic string as a cacheable integer leaf — keyed by the
-string symbol, exactly the treatment the array-element read gets
-(`CacheableArrayReadSymbol`). `LEN` is also made **barrier-free** so a condition
-or statement holding it is scanned. The `LEN` result is a `LONG`, so it reuses
-the existing wide (4-byte) CSE slot machinery — no emitter change was needed.
+`Gvn` numbers such a call like a load, keyed by callee, operands and the MemorySSA
+version of memory it reads (`IsDeterministicRead`). Two `LEN(s$)` with no
+intervening memory definition get the same number and the second is replaced by
+the first, so `LEN(s) + LEN(s) + LEN(s)` makes **one** descriptor read.
 
 ### Loop-condition hoisting (LICM)
 
-The block-local CSE above collapses `LEN(s$)` repeats *within one straight-line
-run*, but a `DO`/`WHILE` **condition** is re-evaluated every iteration and lives
-outside the body block — so `WHILE i% <= LEN(s$)` recomputed the length on each
-pass. The LICM preheader ([O0028](O0028-loop-invariant-code-motion.md),
-`AnalyzeLicm`) now also scans the loop's pre/post condition: a `LEN` of a string
-the body never writes is hoisted into the preheader as a single descriptor read,
-and both the condition *and* any body use reload the one slot (keyed by the
-string symbol, so they share it). `IsLicmCacheable` accepts a `CacheableLenSymbol`
-node; `IsHoistableSafely` is trivially true for it (a `LEN` cannot trap).
-
-The invariance test is the body write-set: if the loop mutates the string
-(`s$ = s$ + …`) its length is *not* invariant, `s$` is in `written`, and the
-length stays a per-iteration read. Verified by a self-differential DOSBox run of
-`WHILE i% <= LEN(s$)` (optimized output identical to the golden-faithful
-build) plus two regression tests — the invariant form collapses the condition and
-body reads to **one** `rt_len` call, the string-mutating form keeps them separate.
+`Licm` hoists a deterministic read (`IsHoistableRead`) out of a loop whose body
+writes no memory, releases or allocates nothing and cannot throw. Reading it
+once in the preheader is harmless even for a zero-trip loop, because its operand
+is live there. `WHILE i% <= LEN(s$)` therefore reads the length once when the body
+leaves memory alone; a body with any store keeps the per-iteration read. See
+[O0028](O0028-loop-invariant-code-motion.md).
 
 ### Invalidation
 
-- A **write to the string** (`s$ = …`) drops the slot: `InvalidateAfterWrite`
-  and `CollectWrites` (for cross-block / loop retention) both recognize a
-  dynamic-string target now, so a length cached before a reassignment — or one
-  inherited into a loop body that reassigns the string — recomputes.
-- Any **barrier** (a call, `INPUT`/`LINE INPUT`, `MID$`/`LSET` statement, pointer
-  write) ends the straight-line run and clears the cache, so nothing that could
-  change a length survives unseen.
+- A **write to the string** (`s$ = …`) is a memory definition, so a later `LEN`
+  reads a different MemorySSA version and gets a new value number.
+- Any other memory definition between the two reads (a call that may write, a
+  store, an input statement) does the same; the rule is conservative rather than
+  string-specific.
 - **Heap compaction is not a hazard**: it moves a string's data but never its
   *length*, which is what makes the length safe to cache where the address would
   not be.
 
-Verified by a self-differential run (optimized == the golden-faithful
-unoptimized build) over the tricky cases — cache-then-reassign, a branch that
-rewrites the string past an `IF` merge, and a loop body that grows the string
-each pass — plus a regression test asserting the repeated-`LEN` image shrinks.
+`LEN` over a **fixed-length** string or a record is a compile-time constant, so it
+never reaches this path; an ASCIIZ buffer calls `rt_asciiz_len` instead.
 
-`LEN` over a **fixed-length or ASCIIZ** buffer is already a compile-time constant
-(`EmitIntrinsic` emits `mov ax, <size>`), so it never reaches this path.
-
-Native-only, in the `CodeGen` CSE. The IR back ends lower `LEN` to an `rt_len`
-call the host C compiler's own CSE/GVN collapses when the string is provably
-unchanged, so no dedicated IR pass is needed.
+Covered by `OptimizerTests.Emit_GivenRepeatedLenOfSameString_WhenPb36_ThenCachedSmallerImage`.
+The C and LLVM back ends receive the same folded IR.

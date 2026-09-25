@@ -77,7 +77,9 @@ public sealed class FastVideoTests {
       PRINT "SECOND"
       """;
     var plain = DosBoxRunner.RunWithScreenCapture(Compile("$OPTIMIZE OFF\n" + subject, Dialect.Pb36), _capture);
-    var optimized = DosBoxRunner.RunWithScreenCapture(Compile(subject, Dialect.Pb36), _capture);
+    // $COMPILE EXE keeps the two builds in one container: DOSBox's shell spaces its next prompt one
+    // line differently after a COM than after an EXE, and the capture sees the prompt too
+    var optimized = DosBoxRunner.RunWithScreenCapture(Compile("$COMPILE EXE\n" + subject, Dialect.Pb36), _capture);
     Assert.Multiple(() => {
       Assert.That(optimized, Does.Contain("PLACED").And.Contain("SECOND"));
       Assert.That(optimized, Is.EqualTo(plain), "folding shadowed console setters must not move a single glyph");

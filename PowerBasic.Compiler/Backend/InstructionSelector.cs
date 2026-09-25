@@ -1,11 +1,12 @@
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 
 namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
 /// Stage 2 of the x86-16 back end (docs/X86-BACKEND.md): selects the typed-SSA IR into the
-/// <see cref="MFunction"/> machine IR over virtual registers. Each SSA value becomes a virtual
+/// <see cref="X86MachineFunction"/> machine IR over virtual registers. Each SSA value becomes a virtual
 /// register (or an immediate for an <see cref="IrConstantInt"/>); each instruction lowers to one or
 /// more <see cref="MInstr"/> in two-address x86 form. Anything it cannot model makes
 /// <see cref="TrySelect"/> return null, so the coverage census can name the unsupported construct and
@@ -33,13 +34,16 @@ public sealed partial class InstructionSelector {
   private readonly HashSet<IrPhi> _nativeDwordPhis = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrAlloca, int> _slots = new(ReferenceEqualityComparer.Instance);
 
+  // the allocas whose zero start is observable, under the optimizer; null means every slot keeps one
+  private IReadOnlySet<IrAlloca>? _needingZeroStart;
+
   /// <summary>
   /// Where each floating-point SSA value lives: a frame cell, not a register. x87 computes on a stack
   /// the linear-scan allocator does not model, so selection brackets every float operation with
   /// FLD/FSTP - the stack is empty again at each instruction boundary, and the value in between is
   /// simply its cell. That is also what the direct emitter does with ST0.
   /// </summary>
-  private readonly Dictionary<IrValue, int> _fslots = new(ReferenceEqualityComparer.Instance);
+  private readonly Dictionary<IrValue, (int Slot, MRegSize Size)> _fslots = new(ReferenceEqualityComparer.Instance);
 
   /// <summary>
   /// IEEE float parameters already live in caller-owned stack cells at their declared widths. x87 can
@@ -61,7 +65,7 @@ public sealed partial class InstructionSelector {
   /// had put there.
   /// </summary>
   private readonly Dictionary<IrValue, int> _qslots = new(ReferenceEqualityComparer.Instance);
-  private MFunction _function = null!;
+  private X86MachineFunction _function = null!;
 
   /// <summary>Whether this function's result is a pb36 closure - see <see cref="IrFunction.ReturnsClosure"/>.</summary>
   private bool _returnsClosure;
@@ -101,22 +105,22 @@ public sealed partial class InstructionSelector {
   private InstructionSelector(SelectionTarget target) => this._target = target;
 
   /// <summary>Selects a function into machine IR, or null if it contains a construct this stage cannot model.</summary>
-  public static MFunction? TrySelect(IrFunction fn)
+  public static X86MachineFunction? TrySelect(IrFunction fn)
     => TrySelect(fn, out _, SelectionTarget.Baseline);
 
   /// <summary>Selects a function into machine IR for a given target and objective, or null when it declines.</summary>
-  public static MFunction? TrySelect(IrFunction fn, SelectionTarget target) => TrySelect(fn, out _, target);
+  public static X86MachineFunction? TrySelect(IrFunction fn, SelectionTarget target) => TrySelect(fn, out _, target);
 
   /// <summary>
   /// Selects a function into machine IR, reporting <paramref name="declineReason"/> - the construct that
   /// stopped it - when the result is null. The reason is what the coverage census reads to rank which
   /// widening buys the most eligible functions, so it names the IR construct, not the failing routine.
   /// </summary>
-  public static MFunction? TrySelect(IrFunction fn, out string? declineReason)
+  public static X86MachineFunction? TrySelect(IrFunction fn, out string? declineReason)
     => TrySelect(fn, out declineReason, SelectionTarget.Baseline);
 
   /// <summary>The same, for a given target and objective.</summary>
-  public static MFunction? TrySelect(IrFunction fn, out string? declineReason, SelectionTarget target) {
+  public static X86MachineFunction? TrySelect(IrFunction fn, out string? declineReason, SelectionTarget target) {
     declineReason = null;
     if (fn.IsDeclaration || fn.Entry is null) {
       declineReason = "declaration";
@@ -135,15 +139,35 @@ public sealed partial class InstructionSelector {
     return false;
   }
 
-  /// <summary>As <see cref="Decline"/>, for the paths that return a null <see cref="MFunction"/>.</summary>
-  private MFunction? DeclineNull(string reason) {
+  /// <summary>Moves a scalar memory/immediate value into a virtual register for consumers that
+  /// require a register (switch dispatch, selects, and computed predicates).  Keeping this at the
+  /// selector boundary means those IR constructs do not depend on mem2reg having happened to leave
+  /// the value in a register, while still rejecting wide values that need a pair-specific lowering.</summary>
+  private bool TryMaterializeScalar(MOperand operand, IrType type, out MOperand.Register result) {
+    result = null!;
+    if (type.IsFloat || IsWide(type) || IsQuad(type))
+      return false;
+    if (operand is not (MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell or MOperand.Immediate))
+      return false;
+    var vreg = this.FreshVreg(type);
+    result = new MOperand.Register(vreg);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [result, operand], MovEffect(result, operand)));
+    return true;
+  }
+
+  /// <summary>As <see cref="Decline"/>, for the paths that return a null <see cref="X86MachineFunction"/>.</summary>
+  private X86MachineFunction? DeclineNull(string reason) {
     this._decline ??= reason;
     return null;
   }
 
-  private MFunction? Run(IrFunction fn) {
-    this._function = new MFunction(fn.Name) { HasArgumentPlan = true };
+  private X86MachineFunction? Run(IrFunction fn) {
+    this._function = new X86MachineFunction(fn.Name) {
+      HasArgumentPlan = true,
+      ZeroStartSlots = this._target.Optimize ? [] : null,
+    };
     this._returnsClosure = fn.ReturnsClosure;
+    this._needingZeroStart = this._target.Optimize ? IrSlotInitialization.NeedingZeroStart(fn) : null;
 
     if (this.UsesNativeDwordRegisters && IrDominators.Build(fn) is { } dominators)
       this._nativeDwordPhis.UnionWith(NativeDwordPhis(fn, dominators));
@@ -209,24 +233,30 @@ public sealed partial class InstructionSelector {
         if (instr is IrPhi)
           continue;                 // phis emit no instruction - their edge copies are inserted below
         if (ReferenceEquals(instr, block.Terminator)) {
-          if (!this.SelectTerminator(block.Terminator, folded, mblock))
+          if (!this.SelectTerminator(block.Terminator, folded, mblock)) {
+            this._decline ??= $"terminator: {block.Terminator!.GetType().Name} in block '{block.Label}' could not be lowered";
             return null;
+          }
           break;
         }
         if (ReferenceEquals(instr, folded))
           continue;                 // the compare is folded into the conditional branch below
         if (this._consumed.Contains(instr))
           continue;                 // absorbed by a multi-instruction pattern that emits it later
-        if (!this.SelectInstruction(instr, mblock))
+        if (!this.SelectInstruction(instr, mblock)) {
+          this._decline ??= $"instruction: {instr.GetType().Name} in block '{block.Label}' could not be lowered";
           return null;
+        }
       }
       // a split leaves the cursor on a later block; the phi copies for this predecessor must be
       // inserted there, since that is the block control actually leaves from
       mblocks[block.Label] = this._current;
     }
 
-    if (!this.InsertPhiCopies(fn, mblocks))
+    if (!this.InsertPhiCopies(fn, mblocks)) {
+      this._decline ??= "phi lowering: incoming values could not be materialized";
       return null;
+    }
 
     this._function.VirtualRegisterCount = this._nextVreg;
     if (this._target is { Optimize: true, OptimizeSpeed: true })
@@ -397,7 +427,7 @@ public sealed partial class InstructionSelector {
   /// to be undone in the allocator's terms rather than the selector's, and a value spilled to the frame
   /// has no exchange instruction at all. The register is minted at selection, so it is an ordinary
   /// value the allocator sees from the start - not a spiller-minted one, and so not a member of
-  /// <see cref="MFunction.MovedValues"/>, whose whole meaning is "already moved once during spilling".
+  /// <see cref="X86MachineFunction.MovedValues"/>, whose whole meaning is "already moved once during spilling".
   /// </para>
   ///
   /// <para>
@@ -473,10 +503,43 @@ public sealed partial class InstructionSelector {
     // and then not consumed by the terminator has no register at all - which is what the branch's
     // value path then reported as "IrCmp has no register".
     => block.Terminator is IrCondBr { Condition: IrCmp { Users.Count: 1 } cmp }
-       && MapPredicate(cmp.Pred) is not null
-       && !IsWide(cmp.Lhs.Type)
-       && !cmp.Lhs.Type.IsFloat
+       && (cmp.Lhs.Type.IsFloat
+         ? cmp.Lhs.Type.IsIeeeFloat && MapFloatPredicate(cmp.Pred) is not null
+         : MapPredicate(cmp.Pred) is not null && !IsWide(cmp.Lhs.Type))
       ? cmp : null;
+
+  /// <summary>
+  /// A 16-bit compare as a CMP whose flags answer <paramref name="predicate"/> - for a consumer that
+  /// branches on them rather than on a materialized truth value. Returns the condition code to jump
+  /// on, which follows the operands if they had to swap, or null when an operand is unavailable.
+  /// </summary>
+  private Condition? EmitCompareForFlags(IrCmp cmp, IrCmpPred predicate) {
+    if (MapPredicate(predicate) is not { } cc
+        || !this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
+      return null;
+    if (lhs is not MOperand.Register) {
+      // CMP wants a register on the left, and a constant there is not a dead end: comparing the
+      // other way round asks the same question with the predicate mirrored - `5 > x` is `x < 5` -
+      // so the operands swap and the condition follows them. Equality mirrors to itself.
+      if (rhs is MOperand.Register) {
+        (lhs, rhs) = (rhs, lhs);
+        cc = MapPredicate(Mirrored(predicate))!.Value;
+      } else {
+        // Neither side is in a register - two memory cells, or a constant against one. Mirroring
+        // cannot help when there is nothing to mirror ONTO, so the left operand is moved into a
+        // register and the comparison proceeds unmirrored. One MOV, and only on the shape that
+        // used to decline outright.
+        var held = this.FreshVreg(cmp.Lhs.Type);
+        var into = new MOperand.Register(held);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [into, lhs], MovEffect(into, lhs)));
+        lhs = into;
+      }
+    }
+    this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
+    return cc;
+  }
 
   private bool SelectTerminator(IrInstruction? terminator, IrCmp? folded, MBlock block) {
     switch (terminator) {
@@ -486,30 +549,11 @@ public sealed partial class InstructionSelector {
         this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(br.Target.Label)], MInstrEffect.None));
         this._current.Successors.Add(br.Target.Label);
         return true;
-      case IrCondBr cond when folded is { } cmp && MapPredicate(cmp.Pred) is { } cc:
-        if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
+      case IrCondBr cond when folded is { } cmp:
+        // a float compare branches on the x87 status it moved into the flags, exactly as an integer
+        // one branches on its CMP - PB's -1/0 truth value is never built for an IF
+        if ((cmp.Lhs.Type.IsFloat ? this.EmitFloatCompareFlags(cmp) : this.EmitCompareForFlags(cmp, cmp.Pred)) is not { } cc)
           return false;
-        if (lhs is not MOperand.Register) {
-          // CMP wants a register on the left, and a constant there is not a dead end: comparing the
-          // other way round asks the same question with the predicate mirrored - `5 > x` is `x < 5` -
-          // so the operands swap and the condition follows them. Equality mirrors to itself.
-          if (rhs is MOperand.Register) {
-            (lhs, rhs) = (rhs, lhs);
-            cc = MapPredicate(Mirrored(cmp.Pred))!.Value;
-          } else {
-            // Neither side is in a register - two memory cells, or a constant against one. Mirroring
-            // cannot help when there is nothing to mirror ONTO, so the left operand is moved into a
-            // register and the comparison proceeds unmirrored. One MOV, and only on the shape that
-            // used to decline outright.
-            var held = this.FreshVreg(cmp.Lhs.Type);
-            var into = new MOperand.Register(held);
-            this._current.Instructions.Add(new MInstr(MOpcode.Mov, [into, lhs], MovEffect(into, lhs)));
-            lhs = into;
-          }
-        }
-        this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
-          new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
-            ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
         this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(cond.IfTrue.Label)],
           new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), cc));
         this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(cond.IfFalse.Label)], MInstrEffect.None));
@@ -536,8 +580,14 @@ public sealed partial class InstructionSelector {
       case IrCondBr valued: {
         if (!this.TryOperand(valued.Condition, out var condition))
           return false;
-        if (condition is not MOperand.Register)
-          return this.Decline("terminator: IrCondBr on a non-register condition");
+        if (condition is not MOperand.Register) {
+          if (condition is not (MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell
+              or MOperand.Immediate))
+            return this.Decline("terminator: IrCondBr on a non-materializable condition");
+          var held = new MOperand.Register(this.FreshVreg(valued.Condition.Type));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [held, condition], MovEffect(held, condition)));
+          condition = held;
+        }
         this.EmitCompare(condition, new MOperand.Immediate(0));
         this.EmitBranch(Condition.NotEqual, valued.IfTrue.Label);
         this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(valued.IfFalse.Label)], MInstrEffect.None));
@@ -554,8 +604,13 @@ public sealed partial class InstructionSelector {
       case IrIndirectBr indirect: {
         if (!this.TryOperand(indirect.Address, out var address))
           return false;
-        if (address is not MOperand.Register)
-          return this.Decline("terminator: IrIndirectBr on an address that is not in a register");
+        if (address is not MOperand.Register) {
+          if (address is not (MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell))
+            return this.Decline("terminator: IrIndirectBr on an address that is not materializable");
+          var target = new MOperand.Register(this.FreshVreg(IrType.Ptr));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [target, address], MovEffect(target, address)));
+          address = target;
+        }
         this._current.Instructions.Add(new MInstr(MOpcode.JmpIndirect, [address],
           new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: false,
             ReadsMemory: false, WritesMemory: false)));
@@ -599,8 +654,12 @@ public sealed partial class InstructionSelector {
   }
 
   private bool SelectNarrowSwitch(IrSwitch sw) {
-    if (!this.TryOperand(sw.Condition, out var condition) || condition is not MOperand.Register conditionRegister)
-      return this.Decline("switch: condition is not in a register");
+    if (!this.TryOperand(sw.Condition, out var condition))
+      return false;
+    if (condition is not MOperand.Register conditionRegister) {
+      if (!this.TryMaterializeScalar(condition, sw.Condition.Type, out conditionRegister))
+        return this.Decline("switch: condition is not materializable");
+    }
 
     var dispatch = this._current;
     this.EmitEqualityChain(dispatch, conditionRegister,
@@ -949,6 +1008,13 @@ public sealed partial class InstructionSelector {
   }
 
   private bool SelectConstantShift(MOpcode opcode, MOperand.Register destination, int count, IrType type) {
+    // an arithmetic shift by all but the sign bit IS the sign smear - four bytes, no CL, any CPU -
+    // and it is exactly what division by a power of two computes first
+    if (this._target.Optimize && opcode == MOpcode.Sar && type.Bits == 16 && count == 15
+        && destination.Reg.Size == MRegSize.Word) {
+      this.EmitSignSmear(destination);
+      return true;
+    }
     if (count == 1 || this._target.Cpu186OrLater) {
       this.Add(opcode, destination, new MOperand.Immediate(count));
       return true;
@@ -1662,7 +1728,49 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>A 32-bit multiply through the runtime's <c>DX:AX, CX:BX -&gt; DX:AX</c> ABI.</summary>
-  private bool SelectWideMultiply(IrBinary bin) => this.SelectWideRuntimeBinary(bin, "rt_lmul");
+  private bool SelectWideMultiply(IrBinary bin)
+    => this._target.Optimize && WordProductOperands(bin) is var (left, right, signed)
+      ? this.SelectWordProduct(bin, left, right, signed)
+      : this.SelectWideRuntimeBinary(bin, "rt_lmul");
+
+  /// <summary>
+  /// The 16-bit operands of a 32-bit multiply whose factors are both words widened the same way - a
+  /// sign extension each, or a zero extension each, or a constant that is the same number either way.
+  /// Such a product is EXACT in one 16-bit IMUL or MUL, which leaves all 32 bits in DX:AX: the three
+  /// multiplies of rt_lmul compute nothing more.
+  /// </summary>
+  private static (IrValue Left, IrValue Right, bool Signed)? WordProductOperands(IrBinary bin) {
+    static (IrValue Word, bool? Signed)? Widened(IrValue value) => value switch {
+      IrCast { Op: IrCastOp.SExt, Value.Type: { IsInteger: true, Bits: 16 } } cast => (cast.Value, true),
+      IrCast { Op: IrCastOp.ZExt, Value.Type: { IsInteger: true, Bits: 16 } } cast => (cast.Value, false),
+      IrConstantInt { Value: >= 0 and <= short.MaxValue } constant => (new IrConstantInt(IrType.I16, constant.Value), null),
+      _ => null,
+    };
+    if (Widened(bin.Lhs) is not var (left, leftSigned) || Widened(bin.Rhs) is not var (right, rightSigned)
+        || (leftSigned is { } l && rightSigned is { } r && l != r) || (leftSigned is null && rightSigned is null))
+      return null;
+    return (left, right, leftSigned ?? rightSigned!.Value);
+  }
+
+  /// <summary>DX:AX = the exact product of two words, by the one-operand IMUL or MUL.</summary>
+  private bool SelectWordProduct(IrBinary bin, IrValue left, IrValue right, bool signed) {
+    if (!this.TryOperand(left, out var lhs) || !this.TryOperand(right, out var rhsSource))
+      return false;
+    var factor = new MOperand.Register(this.FreshVreg(IrType.I16));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [factor, rhsSource], MovEffect(factor, rhsSource)));
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lhs], MovEffect(ax, lhs),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+    this._current.Instructions.Add(new MInstr(signed ? MOpcode.Imul : MOpcode.Mul, [factor],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+    var (lo, hi) = this.FreshPair(bin);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, ax], MovEffect(lo, ax)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, dx], MovEffect(hi, dx)));
+    return true;
+  }
 
   /// <summary>A signed 32-bit divide/remainder through the same pair-register ABI as the direct emitter.</summary>
   private bool SelectWideDivide(IrBinary bin) => this.SelectWideRuntimeBinary(bin,
@@ -1780,6 +1888,9 @@ public sealed partial class InstructionSelector {
     for (var i = 0; i < count; ++i)
       this._function.StackSlots.Add(byteSize);
     this._slots[alloca] = slot;
+    if (this._needingZeroStart?.Contains(alloca) == true)
+      for (var i = 0; i < count; ++i)
+        this._function.ZeroStartSlots!.Add(slot + i);
     // A closure environment half is written by the PROLOGUE out of BX or CX, not by anything in the
     // body, so the emitter has to be told which slot it became - see IrAlloca.EnvRole.
     if (alloca.EnvRole != Ir.ClosureEnvRole.None) {
@@ -1864,7 +1975,7 @@ public sealed partial class InstructionSelector {
   /// instruction. <c>! LEA BX, GetStrLoc</c> parses as <c>LEA BX, [BP+0]</c> and does not parse at all
   /// as <c>LEA BX, &lt;label&gt;</c>; <c>INC</c>, <c>CMP</c> and <c>XCHG</c> against a documented string
   /// export are the same shape. Each of those ENDED the compilation out of
-  /// <c>MachineEmitter.EmitInlineAsm</c>, where the direct emitter reports a diagnostic and carries on.
+  /// the hosted target machine lowering, where unsupported text is routed to semantic emulation.
   /// The parse therefore runs once more here, through <see cref="AsmNameKinds"/> - which answers the
   /// same KINDS the emitter's own resolver will - and the failure becomes a decline, so the direct
   /// emitter takes the function and issues exactly the diagnostic it always did.
@@ -1874,17 +1985,32 @@ public sealed partial class InstructionSelector {
     if (!asm.Routable)
       return this.Decline("inline asm: a name in it is not a variable this pass could bind");
 
+    // No identity folding here. SPEED's erasure of architectural no-ops (MOV AX, AX; PMINUD XMM0,
+    // XMM0) belongs to the ISA policy at emission, which runs it only AFTER the target diagnostics
+    // and on PARSED operands - see CodeGenerator.TryEmitPolicyInlineAsm. A second copy here decided on
+    // the operand TEXT before any of that, so `$ISA SSE4.1 ERROR` on an 8086 lost its "forbids
+    // emulation" diagnostic, and `PBLENDW AX, AX, 0` - an XMM instruction given AX - was accepted
+    // because "AX" equals "AX". The instruction is selected like any other and emits nothing when the
+    // policy proves it a no-op.
+
     var kinds = new AsmNameKinds(asm);
     // The re-parse is here to catch the EMITTER's resolver disagreeing with the lowering's stand-in
     // symbols, and it can only do that for text the plain assembler emits. A line the ISA policy owns
     // never reaches that assembler - the policy encodes it natively or emulates it - so asking this
     // question of one answers "unknown mnemonic" about an instruction the compiler emits perfectly
     // well.
+    AsmRegisterEffect effect;
     if (!PolicyOwnedInlineAsm(asm.Text)
-        && !new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out var error))
-      return this.Decline($"inline asm: {error}");
-
-    var effect = TextAssembler.Analyze(asm.Text, kinds);
+        && !new TextAssembler(new Assembler()).TryParse(asm.Text, kinds, out _)) {
+      // The selected target may not implement this x86 mnemonic. Preserve the opaque barrier and
+      // let the target lower it to its semantic runtime emulation entry instead of declining into
+      // the historical direct emitter.
+      var allRegisters = Enum.GetValues<Reg>().ToHashSet();
+      effect = new AsmRegisterEffect(allRegisters, allRegisters, allRegisters,
+        ReadsFlags: true, WritesFlags: true, IsOpaque: true);
+    } else {
+      effect = TextAssembler.Analyze(asm.Text, kinds);
+    }
     // A RESTORE is not a write in the sense that matters. `! POP BP` puts back what a `! PUSH BP`
     // took, and nothing between them writes BP at all - so BP holds the frame at every instruction
     // boundary, which is the only thing this check protects. The direct emitter addresses its frame
@@ -2014,7 +2140,7 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
-  /// Answers the effect analysis' questions about identifiers the same way <c>MachineEmitter</c>'s own
+  /// Answers the effect analysis' questions about identifiers the same way the hosted target machine lowering's own
   /// resolver will answer the real assembly: a name the lowering paired with a block is a code label,
   /// any other bound name is storage, and an unbound one is a runtime export - code again.
   ///
@@ -2090,8 +2216,23 @@ public sealed partial class InstructionSelector {
       return this.SelectGlobalGep(global, offset, destOp);
     if (!this.TryOperand(gep.BasePtr, out var baseOp))
       return false;
-    if (baseOp is not MOperand.Register baseReg)
-      return this.Decline("gep: non-register base");
+    // Descriptor-based and by-reference arrays frequently carry their base pointer in a
+    // frame/data cell.  Treating that cell as an address operand used to decline the complete
+    // function even though the target can materialize the near pointer in one MOV and then apply
+    // the same offset arithmetic as for an SSA register base.
+    if (baseOp is not MOperand.Register baseReg) {
+      if (baseOp is not (MOperand.Memory or MOperand.StackSlot or MOperand.DataCell or MOperand.ParamCell))
+        return this.Decline("gep: non-register base");
+      this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, baseOp],
+        MovEffect(destOp, baseOp)));
+      if (offset is MOperand.Immediate displacement && displacement.Value == 0)
+        return true;
+      var source = offset;
+      this._current.Instructions.Add(new MInstr(MOpcode.Add, [destOp, source],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [0, 1] : [0],
+          ReadsFlags: false, WritesFlags: true, ReadsMemory: source.IsMemoryAccess(), WritesMemory: false)));
+      return true;
+    }
     // LEA dest, [base + offset]: a constant offset folds into the displacement, a register offset becomes the index
     var mem = offset switch {
       MOperand.Immediate disp => new MOperand.Memory(baseReg.Reg, null, 1, (int)disp.Value, MRegSize.Word),
@@ -2349,10 +2490,34 @@ public sealed partial class InstructionSelector {
       }
     }
 
+    if (this._target.Optimize && AsCarryQuestion(cc, rhs, cmp.Lhs.Type) is { } carry)
+      (rhs, cc) = carry;
     this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
       new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
         ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
     return this.MaterializeCondition(cmp, cc);
+  }
+
+  /// <summary>
+  /// The same comparison against an immediate, restated so that the CARRY answers it - the form
+  /// <see cref="MaterializeCondition"/> turns into <c>SBB r,r</c> without a branch. <c>x = 0</c> is
+  /// <c>x &lt; 1</c> unsigned; <c>x &gt; k</c> unsigned is <c>x &gt;= k+1</c>; and the complements follow.
+  /// Null when there is no such restatement: a non-immediate right side, a signed order (which the
+  /// carry does not describe), or <c>k+1</c> that no longer fits the operand.
+  /// </summary>
+  private static (MOperand Rhs, Condition Condition)? AsCarryQuestion(Condition condition, MOperand rhs, IrType type) {
+    if (rhs is not MOperand.Immediate { Value: var k })
+      return null;
+    var max = type.Bits switch { 8 => byte.MaxValue, 16 => ushort.MaxValue, _ => -1L };
+    var mask = max;
+    var unsignedK = k & mask;
+    return condition switch {
+      Condition.Equal when unsignedK == 0 => (new MOperand.Immediate(1), Condition.Below),
+      Condition.NotEqual when unsignedK == 0 => (new MOperand.Immediate(1), Condition.AboveOrEqual),
+      Condition.Above when max > 0 && unsignedK < max => (new MOperand.Immediate(unsignedK + 1), Condition.AboveOrEqual),
+      Condition.BelowOrEqual when max > 0 && unsignedK < max => (new MOperand.Immediate(unsignedK + 1), Condition.Below),
+      _ => null,
+    };
   }
 
   /// <summary>
@@ -2411,28 +2576,42 @@ public sealed partial class InstructionSelector {
     _ => null,
   };
 
-  private bool SelectFloatCmpValue(IrCmp cmp) {
-    if (MapFloatPredicate(cmp.Pred) is not { } cc)
-      return this.Decline($"compare as a value: float {cmp.Pred}");
-    if (this.TrySelectFloatMemoryCompare(cmp, cc))
-      return true;
+  private bool SelectFloatCmpValue(IrCmp cmp)
+    => this.EmitFloatCompareFlags(cmp) is { } cc && this.MaterializeCondition(cmp, cc);
+
+  /// <summary>
+  /// A float compare as the CPU flags a Jcc reads, and the condition to read them with - for a value
+  /// the caller materializes, or for a branch that consumes them directly. Null when it declines.
+  /// </summary>
+  private Condition? EmitFloatCompareFlags(IrCmp cmp) {
+    if (MapFloatPredicate(cmp.Pred) is not { } cc) {
+      this.Decline($"compare: float {cmp.Pred}");
+      return null;
+    }
+    if (this.TryEmitFloatMemoryCompare(cmp))
+      return cc;
     if (!this.TryFloatOperand(cmp.Lhs, out var lhs) || !this.TryFloatOperand(cmp.Rhs, out var rhs))
-      return false;
+      return null;
 
     // FLD left; FLD right leaves the right operand on top. FCOMPP compares ST(0) against ST(1), so
     // FXCH restores source order. FSTSW AX + SAHF maps x87 C0/C3 to the unsigned CF/ZF conditions.
-    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
     this.EmitX87(MOpcode.Fld, lhs, reads: true);
     this.EmitX87(MOpcode.Fld, rhs, reads: true);
     this._current.Instructions.Add(new MInstr(MOpcode.Fxch, [], MInstrEffect.None));
     this._current.Instructions.Add(new MInstr(MOpcode.Fcompp, [], MInstrEffect.None));
+    this.EmitStatusToFlags();
+    return cc;
+  }
+
+  /// <summary><c>FSTSW AX / SAHF</c>: the x87 condition codes C0/C3 into CF/ZF, where an unsigned Jcc reads them.</summary>
+  private void EmitStatusToFlags() {
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
     this._current.Instructions.Add(new MInstr(MOpcode.FstswAx, [ax],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
         ReadsMemory: false, WritesMemory: false), clobbers: [Reg.AX]));
     this._current.Instructions.Add(new MInstr(MOpcode.Sahf, [ax],
       new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: false, WritesMemory: false)));
-    return this.MaterializeCondition(cmp, cc);
   }
 
   private bool MaterializeCondition(IrCmp cmp, Condition cc) {
@@ -2441,6 +2620,20 @@ public sealed partial class InstructionSelector {
     var dest = MReg.Virtual(this._nextVreg++, MRegSize.Word);
     this._vregs[cmp] = dest;
     var destOp = new MOperand.Register(dest);
+
+    // A predicate the carry answers needs no branch: SBB r,r is -CF, the truth value itself, and NOT
+    // (which leaves the flags alone) turns it into the complement. Two or four bytes where the
+    // diamond below costs eight, and nothing for the prefetch queue to throw away.
+    if (this._target.Optimize && cc is Condition.Below or Condition.AboveOrEqual) {
+      this._current.Instructions.Add(new MInstr(MOpcode.Sbb, [destOp, destOp],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: true, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+      if (cc == Condition.AboveOrEqual)
+        this._current.Instructions.Add(new MInstr(MOpcode.Not, [destOp],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: false, WritesMemory: false)));
+      return true;
+    }
 
     var falseBlock = new MBlock($"{this._current.Label}.cmpfalse{this._splitCount}");
     var doneBlock = new MBlock($"{this._current.Label}.cmpdone{this._splitCount}");
@@ -2494,10 +2687,15 @@ public sealed partial class InstructionSelector {
     } else if (!this.TryOperand(whenTrue, out ifTrue) || !this.TryOperand(whenFalse, out ifFalse)) {
       return false;
     }
+    if (!wide && this._flagSelects.TryGetValue(sel, out var flagged))
+      return this.SelectFlagSelect(sel, flagged, ifTrue, ifFalse);
     if (!this.TryOperand(sel.Condition, out var cond))
       return false;
-    if (cond is not MOperand.Register)
-      return this.Decline("select: condition is not in a register");
+    if (cond is not MOperand.Register) {
+      if (!this.TryMaterializeScalar(cond, sel.Condition.Type, out var held))
+        return this.Decline("select: condition is not materializable");
+      cond = held;
+    }
 
     // A 32-bit result is a register PAIR, so each arm moves twice - the diamond is the same shape,
     // and both halves have to be written on both paths or the untouched one keeps whatever the
@@ -2543,6 +2741,36 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>
+  /// The word diamond on the compare's own flags (see <c>FlagSelectCompare</c>): CMP, the true arm's
+  /// MOV - which leaves the flags alone - and one Jcc over the false arm's.
+  /// </summary>
+  private bool SelectFlagSelect(IrSelect sel, IrCmp compare, MOperand ifTrue, MOperand ifFalse) {
+    if (this.EmitCompareForFlags(compare, this.PredicateOf(compare)) is not { } cc)
+      return false;
+    var dest = this.FreshVreg(sel.Type);
+    this._vregs[sel] = dest;
+    var destOp = new MOperand.Register(dest);
+
+    var falseBlock = new MBlock($"{this._current.Label}.selfalse{this._splitCount}");
+    var doneBlock = new MBlock($"{this._current.Label}.seldone{this._splitCount}");
+    ++this._splitCount;
+
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifTrue], MovEffect(destOp, ifTrue)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(doneBlock.Label)],
+      new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), cc));
+    this._current.Successors.Add(doneBlock.Label);
+    this._current.Successors.Add(falseBlock.Label);
+
+    falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifFalse], MovEffect(destOp, ifFalse)));
+    falseBlock.Successors.Add(doneBlock.Label);
+
+    this._function.Blocks.Add(falseBlock);
+    this._function.Blocks.Add(doneBlock);
+    this._current = doneBlock;
+    return true;
+  }
+
+  /// <summary>
   /// The same diamond for a float result, with the one difference that decides the whole shape: a
   /// float on this target never lives in a register, so each arm is a load-and-store through the x87
   /// into the select's own frame cell rather than a <c>MOV</c> into its virtual register.
@@ -2570,8 +2798,11 @@ public sealed partial class InstructionSelector {
       return false;
     if (!this.TryOperand(sel.Condition, out var cond))
       return false;
-    if (cond is not MOperand.Register)
-      return this.Decline("select: condition is not in a register");
+    if (cond is not MOperand.Register) {
+      if (!this.TryMaterializeScalar(cond, sel.Condition.Type, out var held))
+        return this.Decline("select: condition is not materializable");
+      cond = held;
+    }
 
     var destination = this.FloatCell(sel);
     var falseBlock = new MBlock($"{this._current.Label}.selfalse{this._splitCount}");
@@ -3532,6 +3763,15 @@ public sealed partial class InstructionSelector {
             condition: null, clobbers: stagedRegisters[i]));
           break;
         }
+        case RuntimeAbi.ArgKind.NearPointer: {
+          if (arg.Type.IsFarPointer || PointerSegmentOf(arg) is not (Reg.DS or Reg.SS)
+              || !this.TryRuntimePointer(arg, callee.Name, out var nearSource, out _))
+            return this.Decline($"call: {callee.Name} wants a near address, got {arg.GetType().Name}");
+          var nearDest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
+          this._current.Instructions.Add(new MInstr(MOpcode.Mov, [nearDest, nearSource], MovEffect(nearDest, nearSource),
+            condition: null, clobbers: stagedRegisters[i]));
+          break;
+        }
         case RuntimeAbi.ArgKind.Pointer: {
           if (!this.TryRuntimePointer(arg, callee.Name, out var source, out var segmentSource))
             return false;
@@ -3947,7 +4187,7 @@ public sealed partial class InstructionSelector {
     // the direct emitter writes right after the FYL2X. Keeping all eighty bits looks more accurate
     // and is less faithful: LOG(2.718281828459045#) is .9999999999999999 at eighty bits and 1 once
     // rounded to a double, and genuine QuickBASIC prints 1. Four battery programs turned on it.
-    this.PopRounded(call.Type, this.FloatCell(call));
+    this.PopRoundedInto(call);
     return true;
   }
 
@@ -4296,13 +4536,17 @@ public sealed partial class InstructionSelector {
   /// own cell at the variable's own width, so <c>D! = x</c> still rounds to SINGLE as it must - the
   /// rounding PB does keeps happening, and the rounding it does not do stops.
   /// </summary>
-  private MOperand FloatCell(IrValue value) {
-    if (!this._fslots.TryGetValue(value, out var slot)) {
-      slot = this._function.StackSlots.Count;
-      this._function.StackSlots.Add(_X87_CELL_BYTES);
-      this._fslots[value] = slot;
-    }
-    return new MOperand.StackSlot(slot, MRegSize.Tbyte);
+  private MOperand FloatCell(IrValue value)
+    => this._fslots.TryGetValue(value, out var cell)
+      ? new MOperand.StackSlot(cell.Slot, cell.Size)
+      : this.MintFloatCell(value, MRegSize.Tbyte);
+
+  /// <summary>A new frame cell of <paramref name="size"/> for <paramref name="value"/>.</summary>
+  private MOperand.StackSlot MintFloatCell(IrValue value, MRegSize size) {
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(size switch { MRegSize.Dword => 4, MRegSize.Qword => 8, _ => _X87_CELL_BYTES });
+    this._fslots[value] = (slot, size);
+    return new MOperand.StackSlot(slot, size);
   }
 
   /// <summary>The x87's own register width, which is what an intermediate float is stored and reloaded at.</summary>
@@ -4373,7 +4617,7 @@ public sealed partial class InstructionSelector {
     this._current.Instructions.Add(new MInstr(opcode, [], MInstrEffect.None));
     // ...and the result goes back at the width the IR gave it, which for PB's own expressions is the
     // x87's own and costs nothing. See PopRounded for why a NARROWER one is not an intermediate.
-    this.PopRounded(bin.Type, this.FloatCell(bin));
+    this.PopRoundedInto(bin);
     return true;
   }
 
@@ -4437,7 +4681,7 @@ public sealed partial class InstructionSelector {
     if (this.PointerMemory(load.Pointer, RegSize(load.Type)) is not { } source)
       return false;
     this.EmitX87(MOpcode.Fld, source, reads: true);
-    this.EmitX87(MOpcode.Fstp, this.FloatCell(load), reads: false);
+    this.PopRoundedInto(load);         // a load is exact at its own width, so its cell can be that wide
     return true;
   }
 
@@ -4597,7 +4841,7 @@ public sealed partial class InstructionSelector {
       if (!this.TryQwordSlot(cast.Value, out var qslot))
         return false;
       this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(qslot, MRegSize.Qword), reads: true);
-      this.PopRounded(cast.Type, this.FloatCell(cast));
+      this.PopRoundedInto(cast);
       return true;
     }
     // FILD has no byte source form: it reads signed m16/m32/m64 integers. A BYTE/SBYTE
@@ -4624,7 +4868,7 @@ public sealed partial class InstructionSelector {
       var byteCell = new MOperand.StackSlot(byteSlot, MRegSize.Word);
       this.StoreWord(byteCell, word);
       this.EmitX87(MOpcode.Fild, byteCell, reads: true);
-      this.PopRounded(cast.Type, this.FloatCell(cast));
+      this.PopRoundedInto(cast);
       return true;
     }
     if (!from.IsInteger || from.Bits is not (16 or 32))
@@ -4664,7 +4908,7 @@ public sealed partial class InstructionSelector {
     this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, read), reads: true);
     // A conversion INTO a narrow float rounds like any other narrow float result: a LONG above 2^24
     // has no exact SINGLE, and sitofp says which one it becomes (see PopRounded).
-    this.PopRounded(cast.Type, this.FloatCell(cast));
+    this.PopRoundedInto(cast);
     return true;
   }
 
@@ -4813,15 +5057,22 @@ public sealed partial class InstructionSelector {
   /// </para>
   /// </summary>
   private bool SelectFloatResize(IrCast cast) {
+    // A WIDENING of a value that already has a cell is that cell: FLD of a SINGLE or DOUBLE produces
+    // exactly the wider value, so copying it into a cell of its own would only move the same number.
+    // Sharing also keeps the value a legal memory operand (FADD m32) for the arithmetic it feeds.
+    if (cast.Op == IrCastOp.FPExt && this._target.Optimize && this._fslots.TryGetValue(cast.Value, out var narrow)) {
+      this._fslots[cast] = narrow;
+      return true;
+    }
     if (!this.TryFloatOperand(cast.Value, out var source))
       return false;
     this.EmitX87(MOpcode.Fld, source, reads: true);
-    this.PopRounded(cast.Type, this.FloatCell(cast));
+    this.PopRoundedInto(cast);
     return true;
   }
 
   /// <summary>
-  /// Pops the x87 top into <paramref name="destination"/> at the width <paramref name="type"/> names,
+  /// Pops the x87 top into <paramref name="value"/>'s cell at the width the value's type names,
   /// which for anything narrower than the register's own eighty bits means a round trip through a cell
   /// of that width first - the <c>FSTP m32 / FLD m32</c> pair the direct emitter writes when a value
   /// is stored into a SINGLE variable.
@@ -4844,15 +5095,27 @@ public sealed partial class InstructionSelector {
   /// four-byte cell away - and computing that at eighty bits accumulated a different sum, 4.5000000670
   /// against the 4.5000002607 genuine PBC 3.50 and the direct emitter both answer.
   /// </para>
+  /// <para>
+  /// A value first produced here is given a cell of its own width, so the one <c>FSTP m32</c> that
+  /// rounds it is also where it lives - the value in the cell is exactly the rounded one either way,
+  /// and a narrow cell is a legal operand of <c>FADD</c>/<c>FCOMP m32/m64</c> where a ten-byte one is
+  /// not. Only a value that already has a cell (a phi's, minted ahead of its edge copies) takes the
+  /// round trip into it.
+  /// </para>
   /// </summary>
-  private void PopRounded(IrType type, MOperand destination) {
-    if (RegSize(type) is var narrow and (MRegSize.Dword or MRegSize.Qword)) {
+  private void PopRoundedInto(IrValue value) {
+    var narrow = RegSize(value.Type);
+    if (narrow is MRegSize.Dword or MRegSize.Qword && !this._fslots.ContainsKey(value)) {
+      this.EmitX87(MOpcode.Fstp, this.MintFloatCell(value, narrow), reads: false);
+      return;
+    }
+    if (narrow is MRegSize.Dword or MRegSize.Qword) {
       var slot = this._function.StackSlots.Count;
       this._function.StackSlots.Add(narrow == MRegSize.Dword ? 4 : 8);
       this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(slot, narrow), reads: false);
       this.EmitX87(MOpcode.Fld, new MOperand.StackSlot(slot, narrow), reads: true);
     }
-    this.EmitX87(MOpcode.Fstp, destination, reads: false);
+    this.EmitX87(MOpcode.Fstp, this.FloatCell(value), reads: false);
   }
 
   private void StoreWord(MOperand cell, MOperand value)
@@ -5136,9 +5399,9 @@ public sealed partial class InstructionSelector {
   /// named data cell for a module-level variable - which the whole-program codegen resolves to the
   /// very <c>Mem</c> the direct emitter uses, so both paths address the same storage.
   ///
-  /// Reading that cell is sound because a global a procedure can see is <c>SHARED</c>, and
-  /// <c>SsaForm.IsTrackableShape</c> excludes SHARED variables from SSA tracking - so no store to it
-  /// is ever elided and no read is ever folded away. Register residency cannot strand a value there
+  /// Reading that cell is sound because a global a procedure can see is <c>SHARED</c>, and a global
+  /// is an <c>IrGlobalVariable</c>, which <c>Mem2Reg</c> never promotes - only allocas are - so no
+  /// store to it is ever elided and no read is ever folded away. Register residency cannot strand a value there
   /// either: it requires an SI/DI-clean region, and a call is not clean.
   /// </summary>
   private MOperand? PointerMemory(IrValue pointer, MRegSize size) {

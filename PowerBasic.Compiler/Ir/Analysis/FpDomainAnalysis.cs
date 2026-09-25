@@ -34,8 +34,16 @@ public sealed class FpDomainAnalysis {
 
   private FpDomainAnalysis(IrRangeAnalysis integers) => this._integers = integers;
 
-  public static FpDomainAnalysis? Build(IrFunction function)
-    => IrRangeAnalysis.Build(function) is { } integers ? new(integers) : null;
+  public static FpDomainAnalysis? Build(IrFunction function) {
+    ArgumentNullException.ThrowIfNull(function);
+    return Build(function, IrRangeAnalysis.Build(function));
+  }
+
+  /// <summary>Builds the FP domain adapter from an already computed integer range analysis.</summary>
+  internal static FpDomainAnalysis? Build(IrFunction function, IrRangeAnalysis? integers) {
+    ArgumentNullException.ThrowIfNull(function);
+    return integers is null ? null : new(integers);
+  }
 
   /// <summary>Returns the strongest interval this adapter can prove at a particular use block.</summary>
   public Domain DomainAt(IrValue value, IrBasicBlock block) {

@@ -3,21 +3,20 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Pre-emission analysis + emitter |
-| **Source** | `CodeGen/OptCommonSubexpr.cs` — `CacheableArrayReadSymbol` |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/Gvn.cs` (element address and load numbered by Memory SSA version, `Ir/Analysis/IrMemorySsa.cs`); `Ir/Passes/RedundantMemory.cs` for the block-local case |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF69.BAS` |
 | **Split from** | [O0003](O0003-common-subexpression-elimination.md) |
 
 ## What it is
 
-A repeated array-element read `a%(i%)` with no intervening write reloads the
-first read's stashed value instead of re-reading memory. The cache key is the
-array symbol plus its indices.
-
-Eligibility (`CacheableArrayReadSymbol`): a plain static array, not
-`HUGE`/`VIRTUAL`/`ABSOLUTE`, with a 2-byte non-float element and simple
-name/literal indices.
+A repeated array-element read `a%(i%)` with no intervening write reuses the
+first read's value instead of re-reading memory. In the IR an element read is an
+address computation (`gep`) followed by a load: `Gvn` numbers the two address
+computations as one value, and numbers the two loads as one when Memory SSA
+shows both see the same memory version. `RedundantMemory` does the same within
+a block, including forwarding a value just stored to the element.
 
 ## Sample
 
@@ -35,6 +34,8 @@ the max-scan idiom hand-quality.
 
 ## Why it is safe
 
-Any write to the array (to *any* element), to an index name, or a barrier
-invalidates the entry; a write to a **different** array keeps it live. Under
-`$ERROR BOUNDS` the check still runs where the first read ran.
+A store that may alias the element, or a call that may write memory, gives the
+second load a different memory version, so it stays. A write to an index
+variable changes the address operand, so the two addresses are no longer
+congruent. A store the alias analysis proves disjoint — a **different** array,
+for instance — does not interrupt the reuse.

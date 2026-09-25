@@ -3,30 +3,29 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (block-local, cross-branch, past merges, through loop preheaders, plus redundant array loads) |
-| **Stage** | Pre-emission analysis + emitter |
-| **IR** | ✅ `Ir/Passes/Gvn.cs` - and GLOBAL where the emitter's is block-local, so a subexpression shared across two blocks is still computed once; verified by `PortedMidEndOptimizationsTests` |
-| **Source** | `CodeGen/OptCommonSubexpr.cs`, `CodeGen/CodeGenerator.Expressions.cs` |
-| **Gate** | `--optimize`; modular-int16 caching disabled under `$ERROR NUMERIC/OVERFLOW/ALL` |
-| **Verified by** | `tests/diff/DIFF33.BAS`, `DIFF67.BAS` (past merge), `DIFF68.BAS` (`SELECT`), `DIFF69.BAS` (array loads) |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/Gvn.cs` — `Run`, `KeyOf`; loads numbered through `Ir/Analysis/IrMemorySsa.cs` |
+| **Gate** | `--optimize` |
+| **Verified by** | `PortedMidEndOptimizationsTests`, `tests/diff/DIFF33.BAS`, `DIFF67.BAS` (past merge), `DIFF68.BAS` (`SELECT`), `DIFF69.BAS` (array loads) |
 | **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0034](O0034-redundant-load-elimination.md), [O0046](O0046-ir-gvn.md) |
 | **Split into** | [O0184](O0184-cse-branch-inheritance.md), [O0185](O0185-cse-past-merge.md), [O0186](O0186-cse-loop-preheader.md), [O0187](O0187-redundant-array-load.md), [O0188](O0188-cse-if-condition.md) |
 
 ## What it is
 
-A pre-pass marks pure integer subexpression trees that recur in a straight-line
-run. The first occurrence computes into a reserved frame slot; every later
-occurrence reloads that slot instead of recomputing the tree.
+`Gvn` walks the dominator tree with a scoped hash table. Two binary
+operations, comparisons, casts or address computations with the same opcode and
+the same operands (commutative operands ordered, so `a+b` equals `b+a`) are the
+same value, and the one dominated by the other is replaced by it. A load is
+numbered together with the memory version Memory SSA says it reads, so two
+reads of an unchanged cell are one; a deterministic runtime call that only
+reads memory (`LEN` of a descriptor) is numbered the same way. The surviving
+value is an ordinary SSA value; the register allocator decides whether it stays
+in a register or is spilled to a frame slot.
 
-Two emission contexts are cached separately, because they are emitted by
-different paths: genuinely integer-typed trees (LONG/DWORD/comparison) through
-the normal emitter, and the SINGLE-promoted **modular int16** trees — the
-`y * 320 + x` graphics case computed on the 16-bit ALU — through
-`EmitModularInt16`.
-
-**This page covers the block-local case.** The cache's reach beyond one basic
-block is a set of separate entries (see *Split into* above): inheritance into
-branches, retention past a merge, reuse through loop preheaders, array-element
-load caching, and registering the `IF` condition itself.
+**This page covers the straight-line case.** The same dominator-scoped table
+also covers the cases listed separately under *Split into* above: inheritance
+into branches, retention past a merge, reuse through loop preheaders,
+array-element load reuse, and the `IF` condition itself.
 
 ## Sample
 
@@ -81,19 +80,17 @@ p% = t% + 1
 
 ## Why it is safe
 
-A reload only ever follows a define from **identical inputs** with no
-intervening write or barrier, so any `$ERROR` trap the define would raise fires
-exactly where the un-CSE'd first occurrence would have. Every call, branch,
-label, loop, `POKE` or inline-asm statement clears the cache; a scalar write
-invalidates the slots that read it; a write to any element of a cached array
-invalidates that array's entries (a write to a *different* array does not).
-
-A constant-foldable subtree is never a CSE candidate: the emitter folds the
-defining occurrence to a literal and emits nothing for it, which would leave the
-second occurrence reloading a slot nothing ever wrote.
+A value is only ever replaced by an identical computation that **dominates**
+it, so the leader has already run on every path that reaches the replaced one,
+and any trap it could raise fired there first. Stores, allocas, phis and calls
+with other effects are never numbered. A load is only reused when Memory SSA
+gives both reads the same clobbering memory version, so any intervening write
+that may alias the cell — including a call that may write memory — separates
+them.
 
 ## Limits
 
-Arbitrary CFG value numbering lives in the IR mid-end
-([O0046](O0046-ir-gvn.md)); hoisting *loads* out of loops needs memory SSA
-([O0060](O0060-memory-ssa.md)).
+Only fully redundant values are removed: a computation repeated on one path
+but not on another (partial redundancy) stays. Hoisting invariant work out of
+loops is `Licm` ([O0028](O0028-loop-invariant-code-motion.md)); the memory
+versions come from [O0060](O0060-memory-ssa.md).

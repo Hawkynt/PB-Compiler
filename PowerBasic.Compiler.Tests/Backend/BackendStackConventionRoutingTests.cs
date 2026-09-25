@@ -34,12 +34,12 @@ public sealed class BackendStackConventionRoutingTests {
   [TestCase("STDCALL", true)]
   public void Procedure_GivenStackConvention_ThenRoutedAndDirectExecutionAgree(string convention, bool optimize) {
     var source = Source(convention);
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("S"), $"{convention} procedure did not route");
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
 

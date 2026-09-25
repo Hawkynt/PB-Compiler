@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (16- and 32-bit paths) |
-| **Stage** | Emitter (immediate folding) + assembler (`RunPeephole`) |
-| **Source** | `CodeGen/CodeGenerator.Expressions.cs`, `Asm/Assembler.Peephole.cs` |
+| **Stage** | x86 back end (peephole over machine IR) + assembler (`RunPeephole`) |
+| **Source** | `Backend/Peephole.cs` — `Run`, `FoldZeroConstants`; `Backend/MachineFlags.cs` — `DeadAfter`; `Asm/Assembler.Peephole.cs` — `RunPeephole` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF43.BAS` (add/sub), `DIFF44.BAS` (bitwise/compare), `DIFF45.BAS` (checked add/sub), `DIFF46.BAS` (`INC`/`DEC`), `DIFF47.BAS` (32-bit) |
 | **Related** | [O0031](O0031-branch-fusion.md), [O0033](O0033-constant-store.md), [O0034](O0034-redundant-load-elimination.md), [O0035](O0035-jump-relaxation.md) |
@@ -12,9 +12,11 @@
 
 ## What it is
 
-**This page covers the zero idiom**: a constant zero at an expression position
-is materialized with `XOR r,r` — two bytes instead of three — which is safe
-there because the position is flag-dead by construction.
+**This page covers the zero idiom**: after instruction selection,
+`Peephole.FoldZeroConstants` rewrites `MOV r,0` as `XOR r,r` — a byte shorter on
+a word register, three on a dword one — wherever `MachineFlags.DeadAfter` proves
+the flags `XOR` writes are dead. Byte registers are left alone: both forms are
+two bytes there. The pass runs only for optimized selections.
 
 The other local rewrites each have their own entry (see *Split into* above):
 16- and 32-bit immediate folding, `INC`/`DEC`, the `OR reg,reg` zero test, and
@@ -86,11 +88,15 @@ The program is unchanged — these are encoding choices, not semantic rewrites.
   `JNO` guard is preserved; they leave CF alone, which none of these paths read.
 - `OR AX,AX` clears OF, which is harmless: with OF = 0 both the signed and the
   unsigned conditions reduce to SF/CF tests.
-- `XOR r,r` is only used at expression positions where the flags are dead.
+- `XOR r,r` is only used where the flags are proven dead after it. The
+  rewritten instruction declares no read of `r`, so the value's live range still
+  starts there.
 
 ## Limits
 
-The assembler-level peephole and the [instruction
-scheduler](O0038-instruction-scheduling.md) rewrite by recorded position and are
-therefore **mutually exclusive**: `pb36` + `$OPTIMIZE SPEED` gets the scheduler,
-every other optimized standalone build keeps the peephole.
+The machine-IR peephole runs for every optimized selection. The
+assembler-level `RunPeephole` works on the recorded byte stream and only for an
+optimized standalone program image; units and libraries keep the faithful
+stream. When the [instruction scheduler](O0038-instruction-scheduling.md) is
+enabled it implies the assembler peephole, which keeps the scheduler's records
+exact after each rewrite.

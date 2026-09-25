@@ -92,12 +92,16 @@ known mathematical interval may be negative.
 
 ### Pointer-alignment facts
 
-The target-neutral IR does not yet attach alignment metadata to loads/stores;
+The target-neutral IR does not attach target load/store alignment metadata here;
 the LLVM emitter intentionally emits `align 1` for every access. O0305 therefore
-does **not** claim a memory operation is aligned merely because one path checked
-it.
+does **not** claim a machine memory operation is aligned merely because one path
+checked it.
 
-It can, however, remove redundant alignment guards. The canonical low-bit form
+The low-bit reasoning itself is now shared infrastructure rather than O0305-private
+folklore. `IrAlignmentAnalysis` records dominating alignment guards and explicit
+round-up pointer arithmetic, and `IrValueFacts` exposes both current-point facts
+and a conservative "under this branch outcome" query used before BBV has
+materialized the specialized CFG. The canonical low-bit form
 
 ```text
 (ptrtoint p AND (2^k - 1)) == 0
@@ -218,9 +222,8 @@ local region and SSA rewrite.
   existing `IrDominators.FrontierOf` infrastructure.
 - Richer single-entry regions with internal branches/reconvergence instead of a
   forward chain only.
-- First-class IR alignment facts on memory operations, enabling downstream
-  vector/wide-access selection instead of merely deleting redundant alignment
-  tests.
+- Target-aware memory-operation alignment contracts, so downstream vector/wide-access
+  selection can distinguish an IR pointer low-bit fact from a machine access guarantee.
 - Non-null, alias/dependence and compound fact contexts where existing analyses
   can prove them.
 - Profitability tied to target costs, profile information, vectorization and

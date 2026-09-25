@@ -27,7 +27,7 @@ public sealed class ReciprocalCostPipelineTests {
   public void Standard_GivenTargetCostDecliningReciprocalReuse_ThenSpeedPipelineKeepsRepeatedDivisions() {
     var fn = DominatedDivisionPair();
 
-    IrPassManager.Standard(
+    IrMiddleEndPipeline.Standard(
       optimizeForSpeed: true,
       includeModulePasses: false,
       arithmeticCostModel: new NeverReuseCost()).RunToFixpoint(fn);
@@ -48,7 +48,7 @@ public sealed class ReciprocalCostPipelineTests {
   public void Standard_GivenNoCostModel_ThenTheSameDominatedPairSharesOneReciprocal() {
     var fn = DominatedDivisionPair();
 
-    IrPassManager.Standard(optimizeForSpeed: true, includeModulePasses: false).RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard(optimizeForSpeed: true, includeModulePasses: false).RunToFixpoint(fn);
 
     Assert.Multiple(() => {
       Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FDiv), Is.EqualTo(1));

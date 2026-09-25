@@ -45,8 +45,8 @@ public sealed class BackendArrayElementTests {
 
   /// <summary>Runs the program both ways, insisting the back end really took the code under test.</summary>
   private static (string Direct, string Routed) RunBothWays(string source, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
@@ -314,7 +314,7 @@ public sealed class BackendArrayElementTests {
   /// </summary>
   [Test]
   public void Allocate_GivenAPairReturnedThroughDxAx_ThenNeitherHalfLivesInTheOthersRegister() {
-    var m = new MFunction("F");
+    var m = new X86MachineFunction("F");
     var entry = new MBlock("entry");
     m.Blocks.Add(entry);
     var lo = new MOperand.Register(MReg.Virtual(0));

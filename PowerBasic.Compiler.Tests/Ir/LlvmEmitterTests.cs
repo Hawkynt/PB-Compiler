@@ -17,7 +17,7 @@ public sealed class LlvmEmitterTests {
   private static IrModule LowerOptimizeToModule(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
     var module = new IrModule("T");
     module.AddFunction(fn);
     return module;

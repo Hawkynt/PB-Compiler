@@ -32,6 +32,7 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class StringEmptinessTest {
 
   private const string _LEN = "rt_str_len";
+  private const string _LEN_BORROW = "rt_str_len_borrow";
   private const string _COMPARE = "rt_str_compare";
   private const string _COMPARE_EQ = "rt_str_compare_eq";
   private const string _CONST = "rt_str_const";
@@ -47,15 +48,18 @@ public static class StringEmptinessTest {
       foreach (var compare in function.AllInstructions.OfType<IrCmp>().ToList()) {
         if (compare.Parent is null || compare.Pred is not (IrCmpPred.Eq or IrCmpPred.Ne))
           continue;
-        if (AgainstZero(compare) is not IrCall answer)
+        if (AgainstZero(compare) is not { } zeroTested)
           continue;
-        if (EmptinessSubject(answer) is not { } subject)
+        var (value, widths) = ThroughWidthChanges(zeroTested);
+        if (value is not IrCall answer || EmptinessSubject(answer) is not { } subject)
           continue;
 
         var test = new IrCmp(compare.Pred, subject.Handle, new IrNullPtr());
         compare.Parent!.InsertBefore(test, compare);
         compare.ReplaceAllUsesWith(test);
         compare.EraseFromParent();
+        foreach (var width in widths)
+          width.EraseFromParent();                 // outermost first, each now unused
         answer.EraseFromParent();                  // its operands lose their user here...
         foreach (var consumed in subject.Consumed)
           consumed.EraseFromParent();              // ...which is what leaves these unused
@@ -73,6 +77,21 @@ public static class StringEmptinessTest {
   }
 
   /// <summary>
+  /// <paramref name="value"/> with single-use integer truncations and extensions peeled off, and the
+  /// peeled casts, outermost first. A length is at most 32767, so any width of it is zero exactly when
+  /// it is - and the 16-bit narrowing of a LONG compare leaves exactly such a cast between the two.
+  /// </summary>
+  private static (IrValue Value, List<IrCast> Widths) ThroughWidthChanges(IrValue value) {
+    var widths = new List<IrCast>();
+    while (value is IrCast { Op: IrCastOp.Trunc or IrCastOp.SExt or IrCastOp.ZExt, Type.IsInteger: true } cast
+           && cast.Users.Count == 1) {
+      widths.Add(cast);
+      value = cast.Value;
+    }
+    return (value, widths);
+  }
+
+  /// <summary>
   /// The borrowed handle whose emptiness <paramref name="answer"/> computes, plus the calls that go
   /// with it - or null when the call is not an emptiness question this pass may rewrite.
   /// </summary>
@@ -82,6 +101,8 @@ public static class StringEmptinessTest {
     switch (callee.Name) {
       case _LEN when answer.ArgCount == 1:
         return Borrowed(answer.GetOperand(1)) is { } length ? (length.Handle, [length.Borrow]) : null;
+      case _LEN_BORROW when answer.ArgCount == 1:
+        return (answer.GetOperand(1), []);   // already asks the handle itself, and consumes nothing
       case _COMPARE or _COMPARE_EQ when answer.ArgCount == 2: {
         // whichever side is the empty literal; the other is the string being asked about
         var literalIndex = IsEmptyLiteral(answer.GetOperand(2)) ? 2 : IsEmptyLiteral(answer.GetOperand(1)) ? 1 : 0;

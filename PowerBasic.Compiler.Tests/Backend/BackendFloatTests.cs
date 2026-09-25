@@ -29,14 +29,14 @@ public sealed class BackendFloatTests {
     return model;
   }
 
-  private static MFunction Select(string source, string function) {
+  private static X86MachineFunction Select(string source, string function) {
     var module = IrLowering.TryLowerModule(Bind(source));
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     var fn = module.Functions.First(f => f.Name.Equals(function, StringComparison.OrdinalIgnoreCase));
     var m = InstructionSelector.TrySelect(fn, out var reason);
     Assert.That(m, Is.Not.Null, $"{function} declined: {reason}");
@@ -101,7 +101,7 @@ public sealed class BackendFloatTests {
   [Test]
   public void Execute_GivenUnsuffixedSingleLiteralsInADoubleForLoop_ThenTheRoutedPathPreservesTheirBits() {
     const string source = """
-      FUNCTION Walk%
+      FUNCTION Walk% NOINLINE
         total# = 0
         FOR counter# = 0.1 TO 1 STEP 0.3
           total# = total# + counter#
@@ -112,8 +112,8 @@ public sealed class BackendFloatTests {
 
       PRINT Walk%
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -247,8 +247,8 @@ public sealed class BackendFloatTests {
         Echo! = value!
       END FUNCTION
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -286,7 +286,7 @@ public sealed class BackendFloatTests {
   [Test]
   public void Emit_GivenAFloatComputingFunction_ThenTheImageAssemblesAndTheBackEndTookIt() {
     const string source = """
-      FUNCTION Scaled%(BYVAL n%)
+      FUNCTION Scaled%(BYVAL n%) NOINLINE
         DIM s AS SINGLE
         s = n% * 1.5
         Scaled% = 0
@@ -295,7 +295,7 @@ public sealed class BackendFloatTests {
 
       PRINT Scaled%(4)
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var image = routed.EmitExecutable();
 
@@ -336,8 +336,8 @@ public sealed class BackendFloatTests {
     Assert.That(module!.Functions.SelectMany(f => f.AllInstructions).OfType<IrSelect>().Any(s => s.Type.IsFloat),
       "the program has to have produced a float select for this to be measuring one");
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 

@@ -251,7 +251,7 @@ public sealed class DataLayoutTransformsTests {
     var value = entry.Append(new IrLoad(IrType.I16, ptr));
     entry.Append(new IrRet(value));
 
-    var pipeline = IrPassManager.Standard(includeModulePasses: false,
+    var pipeline = IrMiddleEndPipeline.Standard(includeModulePasses: false,
       dataLayoutTarget: new(PointerBits: 16, CacheSizeBytes: 64, CacheLineBytes: 16, CacheAssociativity: 4));
     _ = pipeline.Run(fn);
 

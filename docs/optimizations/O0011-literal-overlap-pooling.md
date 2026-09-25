@@ -2,18 +2,24 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (exact dedup + containment + prefix/suffix overlap) |
-| **Stage** | Emitter, string-literal pool construction |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `#region O11` |
+| **Status** | 🟡 Partial — exact dedup and containment are implemented; prefix/suffix overlap is not implemented on the IR path |
+| **Stage** | String-literal pool layout (image data) |
+| **Source** | `CodeGen/CodeGenerator.cs` — `EmitStringLiterals` |
 | **Gate** | `--optimize` |
 | **Related** | [O0009](O0009-string-temp-economy.md), [P0006](P0006-header-squeeze.md) |
 
 ## What it is
 
 String literals are stored once in a pool and addressed by offset + length.
-Beyond exact deduplication, the packer places literals so that **contained** and
-**overlapping** ones share the same bytes: `"World!"` is a slice of
-`"Hello, World!"`, and so is `"lo, W"`.
+Beyond exact deduplication, `EmitStringLiterals` lays the pool out longest first
+and, when optimizing, gives a literal whose bytes occur inside an already placed
+one no bytes of its own: its label marks the place inside the longer literal.
+`"World!"` is a slice of `"Hello, World!"`, and so is `"lo, W"`. Unoptimized,
+each literal keeps its own bytes, as the vintage compilers lay them out.
+
+Literals that merely overlap — the suffix of one being the prefix of another —
+are not merged. Not implemented on the IR path; the syntax-level version was
+retired with the direct emitter.
 
 Because every use site supplies its own length, any slice of the pool is a valid
 literal address — no terminator is needed and no copy is made.
@@ -72,9 +78,7 @@ PRINT MID$(base$, 4, 5)
 
 ## Why it is safe
 
-Sound only while the pool stays provably **read-only**, which generated code
-guarantees: literals are read by `StrMem` copies and `PrintStr` and are never
-written. Escape analysis disables packing for a literal whose storage could
-leak — `VARPTR`/`STRPTR` over a literal-backed value, inline asm referencing a
-literal label, or a BYREF/external call that could write through the reference.
-An escaping literal falls back to a private copy.
+Sound only while the pool stays **read-only**. Every consumer of a literal
+copies its bytes by address and length and never writes the pool, so two
+labels into one run of bytes cannot be told apart from two separate runs. The
+layout reads nothing but the pool itself.

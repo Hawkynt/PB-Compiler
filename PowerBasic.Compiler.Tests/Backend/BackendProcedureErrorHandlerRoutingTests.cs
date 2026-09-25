@@ -112,7 +112,7 @@ public sealed class BackendProcedureErrorHandlerRoutingTests {
       Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
 
-    var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     var result = Cpu8086.Run(image);

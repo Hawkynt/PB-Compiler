@@ -176,12 +176,54 @@ public sealed class DeadStoreElimTests {
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
+
+  [Test]
+  public void PrivateFrameStore_ThroughPointerPreservingBitcast_WithNoReader_IsRemoved() {
+    var value = new IrArgument(IrType.I16, 0, "value");
+    var fn = new IrFunction("f", IrType.Void, [value]);
+    var entry = fn.CreateBlock("entry");
+    var b = new IrBuilder(entry);
+    var slot = b.Alloca(IrType.I16);
+    var cast = entry.Append(new IrCast(IrCastOp.BitCast, slot, IrType.Ptr));
+    b.Store(value, cast);
+    b.Ret();
+
+    var removed = DeadStoreElim.Run(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(removed, Is.EqualTo(1));
+      Assert.That(fn.AllInstructions.OfType<IrStore>(), Is.Empty);
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void PrivateFrameStore_WhenBitcastPointerEscapesToCall_IsKept() {
+    var value = new IrArgument(IrType.I16, 0, "value");
+    var pointer = new IrArgument(IrType.Ptr, 0, "pointer");
+    var callee = new IrFunction("sink", IrType.Void, [pointer]);
+    var fn = new IrFunction("f", IrType.Void, [value]);
+    var entry = fn.CreateBlock("entry");
+    var b = new IrBuilder(entry);
+    var slot = b.Alloca(IrType.I16);
+    var cast = entry.Append(new IrCast(IrCastOp.BitCast, slot, IrType.Ptr));
+    b.Store(value, cast);
+    b.Call(IrType.Void, callee, cast);
+    b.Ret();
+
+    Assert.Multiple(() => {
+      Assert.That(DeadStoreElim.Run(fn), Is.Zero);
+      Assert.That(fn.AllInstructions.OfType<IrStore>(), Has.One.Items);
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
   [Test]
   public void Pipeline_DoubleAssignedArrayElement_DropsTheDeadStore() {
     var unit = Parser.Parse(Lexer.Tokenize("DIM a%(0 TO 3)\na%(1) = 1\na%(1) = 2\nx% = a%(1)\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     Assert.That(fn.AllInstructions.OfType<IrStore>().Count(), Is.LessThanOrEqualTo(1));  // the a%(1)=1 store is dead

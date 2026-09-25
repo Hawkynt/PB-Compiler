@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -27,18 +29,45 @@ public static class Mem2Reg {
 
   /// <summary>Runs pre-promotion ownership rewrites, then promotes every promotable alloca.</summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
     _ = StringMove.Run(fn);
-    return Run(fn, preserveWriteOnlySourceVariables: false);
+    return Promote(fn, preserveWriteOnlySourceVariables: false, IrDominators.Build(fn));
   }
 
   /// <summary>Retains a BASIC variable that is written but never read, as faithful emission requires.</summary>
-  public static int RunForFaithfulSelection(IrFunction fn)
-    => Run(fn, preserveWriteOnlySourceVariables: true);
+  public static int RunForFaithfulSelection(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return Promote(fn, preserveWriteOnlySourceVariables: true, IrDominators.Build(fn));
+  }
 
-  private static int Run(IrFunction fn, bool preserveWriteOnlySourceVariables) {
-    if (fn.Entry is null)
+  /// <summary>
+  /// Analysis-aware optimizing entry. StringMove and promotion rewrite values/memory but never CFG
+  /// topology, so the shared dominator tree remains valid throughout and all CFG-only analyses survive.
+  /// </summary>
+  internal static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    var moved = StringMove.Run(fn);
+    var promoted = Promote(fn, preserveWriteOnlySourceVariables: false, analyses.Get(IrAnalyses.Dominators));
+    var changes = moved + promoted;
+    return changes == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(changes, IrAnalysisSets.Cfg);
+  }
+
+  /// <summary>Analysis-aware faithful-selection entry; deliberately omits StringMove.</summary>
+  internal static IrPassResult RunForFaithfulSelection(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    var promoted = Promote(fn, preserveWriteOnlySourceVariables: true, analyses.Get(IrAnalyses.Dominators));
+    return promoted == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(promoted, IrAnalysisSets.Cfg);
+  }
+
+  private static int Promote(IrFunction fn, bool preserveWriteOnlySourceVariables, IrDominators? dom) {
+    if (fn.Entry is null || dom is null)
       return 0;
-    var dom = IrDominators.Build(fn)!;
     var allocas = CollectPromotable(fn, preserveWriteOnlySourceVariables);
     if (allocas.Count == 0)
       return 0;
@@ -82,10 +111,8 @@ public static class Mem2Reg {
     // any particular use of it.
     if (a.Allocated.IsMbf)
       return false;
-    // A closure ENVIRONMENT half is written by the prologue, out of the BX:CX the closure carried,
-    // and never by anything in the IR. Every use of it is a load, so promotion sees a slot with no
-    // reaching store and folds it to nothing - which is right for any other load-only cell and wrong
-    // for this one, because the value does arrive. The captures then all read zero.
+    // A closure environment cell is initialized by the generated prologue rather than an IR store.
+    // Promoting it as an ordinary load-only alloca would replace the incoming environment with zero.
     if (a.EnvRole != ClosureEnvRole.None)
       return false;
     foreach (var user in a.Users)

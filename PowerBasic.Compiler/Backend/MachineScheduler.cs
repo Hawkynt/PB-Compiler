@@ -22,10 +22,10 @@ public static class MachineScheduler {
   private const int _registerFile = 6;
 
   /// <summary>Runs optimizer-gated combines for the conservative baseline target, then schedules.</summary>
-  public static void Schedule(MFunction function) => Schedule(function, SelectionTarget.Baseline);
+  public static void Schedule(X86MachineFunction function) => Schedule(function, SelectionTarget.Baseline);
 
   /// <summary>Runs optimizer-gated target combines, then reorders non-terminators by their dependencies.</summary>
-  public static void Schedule(MFunction function, SelectionTarget target) {
+  public static void Schedule(X86MachineFunction function, SelectionTarget target) {
     if (MachineOptimizationState.IsMarked(function)) {
       // O0348/O0349 live here rather than in selection: only after all IR instructions have become
       // one machine stream can a private TBYTE spill/reload pair be recognized. Run before any
@@ -49,9 +49,10 @@ public static class MachineScheduler {
     var keys = new (HashSet<int> Reads, HashSet<int> Writes)[n];
     for (var i = 0; i < n; ++i)
       keys[i] = RegisterKeys(instrs[i]);
+    var ordering = WithCopyPartners(instrs, keys, n);
 
     var order = InlineAsmScheduler.ScheduleByDependency(n,
-      (a, b) => Conflicts(instrs[a], keys[a], instrs[b], keys[b]),
+      (a, b) => Conflicts(instrs[a], ordering[a], instrs[b], ordering[b]),
       i => instrs[i].Effect.ReadsMemory || instrs[i].Effect.WritesMemory);
     if (order == null)
       return;
@@ -65,6 +66,38 @@ public static class MachineScheduler {
       scheduled.Add(instrs[i]);
     instrs.Clear();
     instrs.AddRange(scheduled);
+  }
+
+  /// <summary>
+  /// The keys the dependency test orders by: each instruction's own, plus - for one that defines the
+  /// source of a later <c>MOV d,s</c> between virtuals - a write of <c>d</c> as well. That copy is the
+  /// allocator's to delete by giving <c>d</c> and <c>s</c> one register, which it can only do while
+  /// <c>s</c> is born after <c>d</c>'s last read. A loop's stepped pointer is the case: hoisting
+  /// <c>LEA s,[d+2]</c> above the <c>ADD acc,[d]</c> that reads the element cost a register and a MOV
+  /// every iteration, and on this machine no reordering buys that back. The pressure estimate keeps
+  /// the plain keys: the extra one is an ordering, not a value.
+  /// </summary>
+  private static (HashSet<int> Reads, HashSet<int> Writes)[] WithCopyPartners(
+      List<MInstr> instrs, (HashSet<int> Reads, HashSet<int> Writes)[] keys, int n) {
+    var ordering = keys;
+    for (var copy = 0; copy < n; ++copy) {
+      if (instrs[copy] is not {
+            Opcode: MOpcode.Mov, Condition: null, Clobbers.Count: 0,
+            Operands: [MOperand.Register { Reg: { IsVirtual: true } destination },
+                       MOperand.Register { Reg: { IsVirtual: true } source }]
+          } || destination.Equals(source))
+        continue;
+      var sourceKey = Key(source);
+      for (var definition = copy - 1; definition >= 0; --definition) {
+        if (!keys[definition].Writes.Contains(sourceKey))
+          continue;
+        if (ReferenceEquals(ordering, keys))
+          ordering = [.. keys.Select(key => (new HashSet<int>(key.Reads), new HashSet<int>(key.Writes)))];
+        ordering[definition].Writes.Add(Key(destination));
+        break;
+      }
+    }
+    return ordering;
   }
 
   /// <summary>

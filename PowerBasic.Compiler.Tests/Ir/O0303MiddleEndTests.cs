@@ -95,7 +95,7 @@ public sealed class O0303MiddleEndTests {
       new IrConstantInt(IrType.I32, 7), new IrConstantInt(IrType.I32, 2 << 8));
     builder.Ret();
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.That(fn.AllInstructions.OfType<IrCall>()
       .Any(call => call.Callee is IrFunction { Name: "rt_using_field" }), Is.False);

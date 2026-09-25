@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -37,11 +39,20 @@ public static class ContextSensitiveCloning {
   /// </summary>
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
+    return Run(module, new IrModuleAnalysisManager(module)).Changes;
+  }
+
+  /// <summary>Analysis-aware entry using the shared direct-call graph for caller groups.</summary>
+  public static IrModulePassResult Run(IrModule module, IrModuleAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(module, analyses.Module))
+      throw new ArgumentException("Module analysis manager belongs to a different module.", nameof(analyses));
 
     var remainingInstructions = _MAX_CLONED_INSTRUCTIONS_PER_MODULE
       - module.Functions.Where(IsGeneratedClone).Sum(function => function.AllInstructions.Count());
     if (remainingInstructions <= 0)
-      return 0;
+      return IrModulePassResult.Unchanged;
 
     var cloned = 0;
     foreach (var source in module.Functions.Where(IsEligibleSource).ToList()) {
@@ -49,7 +60,8 @@ public static class ContextSensitiveCloning {
       if (bodySize == 0 || bodySize > remainingInstructions)
         continue;
 
-      var groups = FindCallerGroups(module, source);
+      var callGraph = analyses.Get(IrModuleAnalyses.CallGraph);
+      var groups = FindCallerGroups(module, source, callGraph);
       if (groups.Count < 2)
         continue;
 
@@ -76,6 +88,7 @@ public static class ContextSensitiveCloning {
       if (contextsToClone <= 0)
         continue;
 
+      var sourceChanged = false;
       foreach (var candidate in candidates.Take(contextsToClone)) {
         if (bodySize > remainingInstructions)
           break;
@@ -86,10 +99,20 @@ public static class ContextSensitiveCloning {
 
         remainingInstructions -= bodySize;
         ++cloned;
+        sourceChanged = true;
       }
+
+      if (sourceChanged)
+        // A generated clone can itself call a later source. Rebuild before that later source's caller
+        // groups are inspected rather than letting one source's rewrite leak through a stale graph.
+        analyses.Invalidate(IrModulePreservedAnalyses.None);
     }
 
-    return cloned;
+    if (cloned == 0)
+      return IrModulePassResult.Unchanged;
+
+    _ = analyses.Get(IrModuleAnalyses.CallGraph);
+    return IrModulePassResult.ChangedPreserving(cloned, IrModuleAnalyses.CallGraph);
   }
 
   private static bool IsEligibleSource(IrFunction function)
@@ -121,14 +144,18 @@ public static class ContextSensitiveCloning {
     return module.Functions.Count(function => function.Name.StartsWith(prefix, StringComparison.Ordinal));
   }
 
-  private static List<CallerGroup> FindCallerGroups(IrModule module, IrFunction callee) {
+  private static List<CallerGroup> FindCallerGroups(
+      IrModule module,
+      IrFunction callee,
+      IrCallGraph callGraph) {
+    var directCalls = callGraph.DirectCallsTo(callee);
     var result = new List<CallerGroup>();
     for (var order = 0; order < module.Functions.Count; ++order) {
       var caller = module.Functions[order];
       if (caller.IsDeclaration)
         continue;
-      var calls = caller.AllInstructions.OfType<IrCall>()
-        .Where(call => ReferenceEquals(call.Callee, callee))
+      var calls = directCalls
+        .Where(call => ReferenceEquals(call.Parent?.Parent, caller))
         .ToList();
       if (calls.Count > 0)
         result.Add(new CallerGroup(order, caller, calls));

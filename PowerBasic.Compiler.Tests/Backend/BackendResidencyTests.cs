@@ -38,7 +38,7 @@ public sealed class BackendResidencyTests {
   private static readonly SelectionTarget _speed386 = new(CpuLevel: 386, Optimize: true, OptimizeSpeed: true);
 
   /// <summary>The module body of <paramref name="source"/>, selected and scheduled but not yet allocated.</summary>
-  private static MFunction Select(string source, SelectionTarget target) {
+  private static X86MachineFunction Select(string source, SelectionTarget target) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var module = IrLowering.TryLowerModule(model, out var why);
@@ -50,11 +50,11 @@ public sealed class BackendResidencyTests {
     // 386 keeps a LONG in a dword register, so narrowing its storage to a word would cost the very
     // residency this fixture measures.
     var narrowestStorageBits = target.CpuLevel >= 386 ? 32 : 16;
-    IrPassManager.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
+    IrMiddleEndPipeline.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
     foreach (var f in module.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
+    IrMiddleEndPipeline.Standard(target.OptimizeSpeed, minimumIntegerStorageBits: narrowestStorageBits).RunOnModule(module);
     var main = module.FindFunction("main");
     Assert.That(main, Is.Not.Null);
     var machine = InstructionSelector.TrySelect(main!, out var reason, target);
@@ -147,7 +147,7 @@ public sealed class BackendResidencyTests {
       var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
         Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-      var generator = new CodeGenerator(model) { UseExperimentalBackend = routed };
+      var generator = new CodeGenerator(model);
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
       return (image, generator.BackendRoutedNames.ToList());
@@ -257,7 +257,7 @@ public sealed class BackendResidencyTests {
     var a = MReg.Virtual(0);
     var b = MReg.Virtual(1);
     var c = MReg.Virtual(2);
-    var function = new MFunction("F") { VirtualRegisterCount = 3 };
+    var function = new X86MachineFunction("F") { VirtualRegisterCount = 3 };
     function.StackSlots.Add(2);
     var block = new MBlock("entry");
     MInstr Move(MOperand destination, MOperand source)
@@ -311,11 +311,11 @@ public sealed class BackendResidencyTests {
         module = IrLowering.TryLowerModule(model);
         if (module is null)
           continue;
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
         foreach (var f in module.Functions)
           if (!f.IsDeclaration)
             IntegerRecovery.Run(f);
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
       } catch (Exception) {
         continue;                                  // the census owns the decline histogram; this owns allocation
       }

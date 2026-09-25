@@ -57,9 +57,9 @@ public sealed class O0273ProfileGuidedRegisterAllocationTests {
 
   private enum Profile { None, Partial, Complete }
 
-  private static MFunction PressureFunction(bool definitionsFromMemory, Profile profile) {
+  private static X86MachineFunction PressureFunction(bool definitionsFromMemory, Profile profile) {
     const int values = 7;
-    var function = new MFunction("profile_pressure") { VirtualRegisterCount = values };
+    var function = new X86MachineFunction("profile_pressure") { VirtualRegisterCount = values };
     if (definitionsFromMemory)
       function.StackSlots.AddRange(Enumerable.Repeat(2, values));
 
@@ -105,7 +105,7 @@ public sealed class O0273ProfileGuidedRegisterAllocationTests {
     new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
       ReadsMemory: false, WritesMemory: false));
 
-  private static bool Mentions(MFunction function, int value) => function.AllInstructions
+  private static bool Mentions(X86MachineFunction function, int value) => function.AllInstructions
     .Select(LivenessAnalysis.RegistersOf)
     .Any(registers => registers.Reads.Contains(value) || registers.Writes.Contains(value));
 }

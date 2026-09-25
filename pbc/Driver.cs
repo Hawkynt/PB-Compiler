@@ -1,5 +1,9 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.Backend.Mos6502;
 using PowerBasic.Compiler.Emit;
+using PowerBasic.Compiler.Emit.Commodore;
+using PowerBasic.Compiler.Emit.Hosted;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -32,9 +36,8 @@ public static class Driver {
     var checkStack = false;
     var optimizeSpeed = false;
     var parallelLoops = false;
-    bool? useExperimentalBackend = null;
-    var requireBackend = false;
     bool? optimize = null; // null = dialect default (on for pb36); --optimize/--no-optimize override
+    var platform = Platform.X86_16;
 
     for (var i = 0; i < args.Length; ++i)
       switch (args[i]) {
@@ -47,6 +50,14 @@ public static class Driver {
         case "-L" or "--linkdir" when i + 1 < args.Length:
           linkPaths.Add(args[++i]);
           break;
+        case "--platform" when i + 1 < args.Length: {
+          var name = args[++i];
+          if (!TryParsePlatform(name, out platform)) {
+            stderr.WriteLine($"pbc: unknown platform '{name}' (use x86-16|x86-32|x64|6502)");
+            return 1;
+          }
+          break;
+        }
         case "--dialect" when i + 1 < args.Length: {
           var name = args[++i];
           if (!DialectFacts.TryParse(name, out dialect)) {
@@ -81,17 +92,10 @@ public static class Driver {
         case "--parallel-loops":
           parallelLoops = true;
           break;
-        case "--x-backend":
-          useExperimentalBackend = true;
-          break;
-        case "--no-x-backend":
-          useExperimentalBackend = false;
-          break;
-        case "--x-backend-strict":
-          useExperimentalBackend = true;
-          requireBackend = true;
-          break;
-        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-c" or "--emit-obj" or "--emit-basic":
+        case "--x-backend" or "--x-backend-strict" or "--no-x-backend":
+          stderr.WriteLine($"pbc: {args[i]} was removed; the IR/native backend is mandatory");
+          return 1;
+        case "--dump-tokens" or "--dump-ast" or "--dump-bind" or "--emit-llvm" or "--emit-c" or "--emit-obj" or "--emit-com" or "--emit-lib" or "--emit-basic":
           dumpStage = args[i];
           break;
         case "--list":
@@ -166,7 +170,7 @@ public static class Driver {
         }
         var basic = Emit.PowerBasic35Emitter.Render(model, unit, folds);
         if (output != null) {
-          File.WriteAllText(output, basic);
+          File.WriteAllText(output, basic, System.Text.Encoding.Latin1);   // DOS text: one byte per character, as it was read
           stdout.WriteLine($"{Path.GetFileName(output)}: {basic.Length} bytes of PowerBASIC");
         } else {
           stdout.Write(basic);
@@ -175,95 +179,9 @@ public static class Driver {
       }
 
       if (dumpStage is "--emit-llvm" or "--emit-c") {
-        var module = IrLowering.TryLowerModule(model, out var declined);
-        if (module is null) {
-          stderr.WriteLine($"pbc: {dumpStage}: {declined ?? "unsupported construct"} - outside the IR lowering's subset (see docs/IR.md)");
-          return 1;
-        }
-        module.AsciiOnly = model.AsciiOnly;
-
-        // The hosted backends must make the same optimizer-objective decision as CodeGenerator. The
-        // CLI seeds the defaults, then the source's single $OPTIMIZE directive wins exactly as it does
-        // on the native path. SPEED is therefore a semantic policy shared by every dialect, not a
-        // separate hosted-only fast-math switch.
-        var optimizeMetas = model.MetaStatements
-          .Where(meta => meta.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase))
-          .ToList();
-        if (optimizeMetas.Count > 1) {
-          stderr.WriteLine($"error: {optimizeMetas[1].Position}: only one $OPTIMIZE per module");
-          return 1;
-        }
-        // Unlike --emit-basic, which reproduces the source at its dialect's faithfulness level, the
-        // hosted IR backends exist to show the optimized module. They therefore optimize for every
-        // dialect; only an explicit --no-optimize or $OPTIMIZE OFF turns that off.
-        var hostedOptimize = optimize ?? true;
-        var hostedSpeed = optimizeSpeed;
-        if (optimizeMetas.FirstOrDefault()?.Arguments is [{ } mode, ..]) {
-          if (mode.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase))
-            hostedOptimize = false;
-          hostedSpeed = mode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
-        }
-        if (parallelLoops && !hostedOptimize) {
-          stderr.WriteLine("pbc: --parallel-loops requires optimization; remove --no-optimize / $OPTIMIZE OFF");
-          return 1;
-        }
-
-        var pipeline = hostedOptimize
-          ? IrPassManager.Standard(optimizeForSpeed: hostedSpeed,
-              enableFpLookupTables: dumpStage == "--emit-llvm")
-          : IrPassManager.Legalize();
-
-        // O0311 needs the original counted-loop/memory graph, but its dependence proof wants SSA.
-        // Promote first, version while that shape is still intact, then let the ordinary pipeline
-        // optimize both the retained sequential loop and the outlined parallel iteration helper.
-        if (parallelLoops)
-          foreach (var f in module.Functions)
-            if (!f.IsDeclaration)
-              Mem2Reg.Run(f);
-        if (parallelLoops)
-          ParallelLoopVersioning.Run(module);
-        pipeline.RunOnModule(module);
-
-        if (hostedOptimize) {
-          // PB computes integral +/-/* in floating point (for PRINT precision); where the result is
-          // stored back to an integer the mod-2^N equivalence lets us recover the integer form, so
-          // the emitted C/LLVM squares an int as `x * x`, not `(int)((float)x * (float)x)`. Same
-          // sequence the x86-16 back end uses - recover, then re-run to clean up the dead float ops.
-          foreach (var f in module.Functions)
-            if (!f.IsDeclaration)
-              IntegerRecovery.Run(f);
-          pipeline.RunOnModule(module);
-          Inliner.Run(module);
-          pipeline.RunOnModule(module);              // re-optimize the inlined bodies
-          foreach (var f in module.Functions)
-            if (!f.IsDeclaration)
-              IntegerRecovery.Run(f);                // inlining can expose more float-form integer trees
-          pipeline.RunOnModule(module);
-          GlobalDce.Run(module);                     // drop functions/globals left unreferenced by inlining + DCE
-        }
-
-        var verifyErrors = IrVerifier.Verify(module);
-        if (verifyErrors.Count > 0) {
-          stderr.WriteLine($"pbc: {dumpStage}: internal error, optimized IR failed verification:");
-          foreach (var e in verifyErrors)
-            stderr.WriteLine("  " + e);
-          return 1;
-        }
-        // the same optimized IR, rendered for whichever back end was asked for: LLVM text for
-        // the native toolchain, or C99 for any C compiler (docs/BACKENDS.md)
-        //
-        // Neither has a fallback the way the x86-16 path has the direct emitter, so a construct the
-        // emitter cannot render is reported here, naming it - which is the entire value of declining
-        // rather than raising, and the same answer the lowering's own refusal gets six lines above.
         var emittedC = dumpStage == "--emit-c";
-        var text = emittedC
-          ? CEmitter.TryEmit(module, out var refused)
-          : LlvmEmitter.TryEmit(module, "x86_64-unknown-linux-gnu", out refused);
-        if (text is null) {
-          stderr.WriteLine($"pbc: {dumpStage}: {refused ?? "unsupported construct"} "
-            + "- outside what this back end renders (see docs/BACKENDS.md)");
+        if (!TryEmitHostedSource(model, emittedC, optimize, optimizeSpeed, parallelLoops, dumpStage, stderr, out var text))
           return 1;
-        }
         if (output != null) {
           File.WriteAllText(output, text);
           stdout.WriteLine($"{Path.GetFileName(output)}: {text.Length} bytes of {(emittedC ? "C" : "LLVM IR")}");
@@ -273,23 +191,48 @@ public static class Driver {
         return 0;
       }
 
+      switch (platform) {
+        case Platform.X86_32:
+          return BuildHosted(model, source, HostedPlatform.X86_32, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+        case Platform.X64:
+          return BuildHosted(model, source, HostedPlatform.X64, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+        case Platform.Mos6502:
+          return BuildC64(model, source, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+      }
+
+      if (dumpStage == "--emit-lib") {
+        stderr.WriteLine("pbc: --emit-lib builds a hosted archive; a DOS library is 'pbc lib build <out.PBL|out.LIB> <unit.PBU>...'");
+        return 1;
+      }
+
       var generator = new CodeGenerator(model) {
-        CheckBounds = checkBounds,    // -EB
-        CheckNumeric = checkNumeric,  // -EN
-        CheckOverflow = checkOverflow,// -EO
-        CheckStack = checkStack,      // -ES
-        OptimizeSpeed = optimizeSpeed,// -OZF
+        CheckBounds = checkBounds,
+        CheckNumeric = checkNumeric,
+        CheckOverflow = checkOverflow,
+        CheckStack = checkStack,
+        OptimizeSpeed = optimizeSpeed,
       };
-      if (optimize is { } opt)        // --optimize / --no-optimize override the dialect default
+      if (optimize is { } opt)
         generator.Optimize = opt;
-      if (useExperimentalBackend is { } useBackend)
-        generator.UseExperimentalBackend = useBackend;
-      if (requireBackend)
-        generator.RequireBackend = true;
+
+      if (dumpStage == "--emit-com") {
+        if (model.MetaStatements.Any(m => m.Command == "LINK")) {
+          stderr.WriteLine("error: COM output cannot use $LINK; DOS COM has no relocation table (use EXE)");
+          return 1;
+        }
+        var com = generator.EmitCom();
+        if (generator.Errors.Count > 0) {
+          foreach (var error in generator.Errors)
+            stderr.WriteLine($"error: {error}");
+          return 1;
+        }
+        output ??= Path.ChangeExtension(source, ".COM");
+        File.WriteAllBytes(output, com);
+        stdout.WriteLine($"{Path.GetFileName(output)}: {com.Length} bytes");
+        return 0;
+      }
 
       if (dumpStage == "--emit-obj") {
-        // emit the program's procedures as a linkable Intel OMF object, so C/asm/foreign
-        // linkers can consume PB output - regardless of $COMPILE UNIT (docs/LINKER.md)
         var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
         var compiledUnit = generator.EmitUnit(unitName);
         if (generator.Errors.Count > 0) {
@@ -305,18 +248,24 @@ public static class Driver {
       }
 
       if (listing) {
-        // compile the program (unit or EXE), then render a human-readable map of the
-        // emitted image - read-only reporting, no artifact is written (docs/PIPELINE.md)
         PbuFile? listedUnit = null;
         if (IsUnitCompile(model)) {
           var unitName = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
           listedUnit = generator.EmitUnit(unitName);
+        } else if (IsComCompile(model)) {
+          if (model.MetaStatements.Any(m => m.Command == "LINK")) {
+            stderr.WriteLine("error: COM output cannot use $LINK; DOS COM has no relocation table (use EXE)");
+            return 1;
+          }
+          var image = generator.EmitCom();
+          if (image.Length == 0 && generator.Errors.Count == 0)
+            return 1;
         } else {
           if (!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out var units, out var libraries))
             return 1;
           var image = generator.EmitExecutable(units, libraries);
           if (image.Length == 0 && generator.Errors.Count == 0)
-            return 1; // link errors already reported
+            return 1;
         }
         if (generator.Errors.Count > 0) {
           foreach (var error in generator.Errors)
@@ -338,14 +287,23 @@ public static class Driver {
         using var buffer = new MemoryStream();
         compiledUnit.Write(buffer);
         artifact = buffer.ToArray();
+      } else if (IsComCompile(model)) {
+        if (model.MetaStatements.Any(m => m.Command == "LINK")) {
+          stderr.WriteLine("error: COM output cannot use $LINK; DOS COM has no relocation table (use EXE)");
+          return 1;
+        }
+        artifact = generator.EmitCom();
+        output ??= Path.ChangeExtension(source, ".COM");
       } else {
         if (!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out var units, out var libraries))
           return 1;
         artifact = generator.EmitExecutable(units, libraries);
-        // $COMPILE CHAIN: same MZ image, .PBC extension (our own chain artifact)
         var isChain = model.MetaStatements.Any(m => m.Command == "COMPILE"
           && m.Arguments is [{ } chainTarget, ..] && chainTarget.Text.Equals("CHAIN", StringComparison.OrdinalIgnoreCase));
-        output ??= Path.ChangeExtension(source, isChain ? ".PBC" : ".EXE");
+        // an optimized self-contained program is written as a flat COM (CodeGenerator.Container), and
+        // the file is named for what it holds
+        var isCom = artifact is not [(byte)'M', (byte)'Z', ..] && artifact.Length > 0;
+        output ??= Path.ChangeExtension(source, isChain ? ".PBC" : isCom ? ".COM" : ".EXE");
       }
 
       if (generator.Errors.Count > 0) {
@@ -363,15 +321,167 @@ public static class Driver {
     }
   }
 
+  /// <summary>
+  /// The IR, through the hosted middle end, rendered as C99 or LLVM text - what <c>--emit-c</c> and
+  /// <c>--emit-llvm</c> print and what a hosted <c>--platform</c> build compiles. The source's own
+  /// <c>$OPTIMIZE</c> is honoured the way the DOS build honours it.
+  /// </summary>
+  private static bool TryEmitHostedSource(SemanticModel model, bool emitC, bool? optimize, bool optimizeSpeed,
+      bool parallelLoops, string label, TextWriter stderr, out string text) {
+    text = "";
+    var target = emitC ? IrBackendTarget.C : IrBackendTarget.Llvm;
+    var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+      Target = target,
+      Optimize = optimize ?? true,
+      OptimizeForSpeed = optimizeSpeed,
+      EnableFpLookupTables = !emitC,
+      RecoverIntegerArithmetic = optimize ?? true,
+      PrepareParallelLoops = parallelLoops,
+    }, out var declined);
+    if (compiled is null) {
+      stderr.WriteLine($"pbc: {label}: {declined ?? "unsupported construct"} - outside the IR lowering's subset (see docs/IR.md)");
+      return false;
+    }
+    var module = compiled.Module;
+    module.AsciiOnly = model.AsciiOnly;
 
-  /// <summary>$COMPILE UNIT selects unit emission; $COMPILE EXE (the default) is a no-op.</summary>
+    var optimizeMetas = model.MetaStatements
+      .Where(meta => meta.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase))
+      .ToList();
+    if (optimizeMetas.Count > 1) {
+      stderr.WriteLine($"error: {optimizeMetas[1].Position}: only one $OPTIMIZE per module");
+      return false;
+    }
+    var hostedOptimize = optimize ?? true;
+    var hostedSpeed = optimizeSpeed;
+    if (optimizeMetas.FirstOrDefault()?.Arguments is [{ } mode, ..]) {
+      if (mode.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase))
+        hostedOptimize = false;
+      hostedSpeed = mode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
+    }
+    if (parallelLoops && !hostedOptimize) {
+      stderr.WriteLine("pbc: --parallel-loops requires optimization; remove --no-optimize / $OPTIMIZE OFF");
+      return false;
+    }
+
+    if (hostedOptimize != (optimize ?? true) || hostedSpeed != optimizeSpeed) {
+      compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+        Target = target,
+        Optimize = hostedOptimize,
+        OptimizeForSpeed = hostedSpeed,
+        EnableFpLookupTables = !emitC,
+        RecoverIntegerArithmetic = hostedOptimize,
+        PrepareParallelLoops = parallelLoops,
+      }, out declined);
+      if (compiled is null) {
+        stderr.WriteLine($"pbc: {label}: {declined ?? "unsupported construct"}");
+        return false;
+      }
+      module = compiled.Module;
+    }
+
+    var verifyErrors = IrVerifier.Verify(module);
+    if (verifyErrors.Count > 0) {
+      stderr.WriteLine($"pbc: {label}: internal error, optimized IR failed verification:");
+      foreach (var e in verifyErrors)
+        stderr.WriteLine("  " + e);
+      return false;
+    }
+    var rendered = emitC
+      ? CEmitter.TryEmit(module, out var refused)
+      : LlvmEmitter.TryEmit(module, "x86_64-unknown-linux-gnu", out refused);
+    if (rendered is null) {
+      stderr.WriteLine($"pbc: {label}: {refused ?? "unsupported construct"} "
+        + "- outside what this back end renders (see docs/BACKENDS.md)");
+      return false;
+    }
+    text = rendered;
+    return true;
+  }
+
+  /// <summary>
+  /// A program for x86-32 or x64: the C back end's translation unit, built by the host toolchain
+  /// against the portable runtime. An executable by default, the program's object with
+  /// <c>--emit-obj</c>, or an archive of it and the runtime with <c>--emit-lib</c>. COM images and
+  /// PBU/PBL units are DOS containers and have no hosted form.
+  /// </summary>
+  private static int BuildHosted(SemanticModel model, string source, HostedPlatform platform, string dumpStage,
+      string? output, bool? optimize, bool optimizeSpeed, TextWriter stdout, TextWriter stderr) {
+    if (dumpStage == "--emit-com" || IsComCompile(model)) {
+      stderr.WriteLine("error: a COM image is a DOS container; build it with --platform x86-16");
+      return 1;
+    }
+    if (IsUnitCompile(model)) {
+      stderr.WriteLine("error: a PBU unit is a DOS container; for a hosted platform use --emit-obj or --emit-lib");
+      return 1;
+    }
+    var (artifact, extension) = dumpStage switch {
+      "--emit-obj" => (HostedArtifact.Object, ".o"),
+      "--emit-lib" => (HostedArtifact.Library, ".a"),
+      _ => (HostedArtifact.Executable, ""),
+    };
+    if (!TryEmitHostedSource(model, emitC: true, optimize, optimizeSpeed, parallelLoops: false, "--platform", stderr, out var text))
+      return 1;
+    output ??= Path.ChangeExtension(source, extension == "" ? null : extension);
+    if (!HostToolchain.TryBuild(text, platform, artifact, output, out var error)) {
+      stderr.WriteLine($"error: {error}");
+      return 1;
+    }
+    stdout.WriteLine($"{Path.GetFileName(output)}: {new FileInfo(output).Length} bytes ({HostToolchain.Describe(platform)})");
+    return 0;
+  }
+
+  /// <summary>The machines <c>--platform</c> selects.</summary>
+  private enum Platform { X86_16, X86_32, X64, Mos6502 }
+
+  private static bool TryParsePlatform(string name, out Platform platform) {
+    platform = name.ToLowerInvariant() switch {
+      "x86-16" or "x86_16" or "dos" => Platform.X86_16,
+      "x86-32" or "x86_32" or "i386" or "ia32" => Platform.X86_32,
+      "x64" or "x86-64" or "x86_64" or "amd64" => Platform.X64,
+      "6502" or "mos6502" or "c64" => Platform.Mos6502,
+      _ => (Platform)(-1),
+    };
+    return Enum.IsDefined(platform);
+  }
+
+  /// <summary>
+  /// A program for the 6502: the IR, through the native middle end, compiled by the 6502 back end
+  /// into a Commodore 64 <c>.PRG</c>. The C64 has one executable format, so the DOS containers and
+  /// the object formats are refused rather than approximated.
+  /// </summary>
+  private static int BuildC64(SemanticModel model, string source, string dumpStage, string? output, bool? optimize,
+      bool optimizeSpeed, TextWriter stdout, TextWriter stderr) {
+    if (dumpStage is "--emit-com" or "--emit-obj" or "--emit-lib" || IsComCompile(model) || IsUnitCompile(model)) {
+      stderr.WriteLine("error: the 6502 platform builds a C64 .PRG only; COM, units, objects and libraries are DOS or hosted formats");
+      return 1;
+    }
+    var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+      Target = IrBackendTarget.Mos6502,
+      Optimize = optimize ?? true,
+      OptimizeForSpeed = optimizeSpeed,
+      RecoverIntegerArithmetic = optimize ?? true,
+    }, out var declined);
+    var image = compiled is null ? null
+      : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, C64Prg.MemoryTop, out declined);
+    if (image is null) {
+      stderr.WriteLine($"error: 6502: {declined ?? "unsupported construct"}");
+      return 1;
+    }
+    output ??= Path.ChangeExtension(source, ".PRG");
+    var file = C64Prg.Write(image);
+    File.WriteAllBytes(output, file);
+    stdout.WriteLine($"{Path.GetFileName(output)}: {file.Length} bytes (6502, C64)");
+    return 0;
+  }
+
   private static bool IsUnitCompile(SemanticModel model)
     => model.MetaStatements.Any(m => m.Command == "COMPILE" && m.Arguments is [{ } target, ..] && target.Text.Equals("UNIT", StringComparison.OrdinalIgnoreCase));
 
-  /// <summary>
-  /// Loads every $LINK "X.PBU"/"Y.PBL" target, trying the -L link directories
-  /// first, then the source directory (so rebuilt units shadow foreign ones).
-  /// </summary>
+  /// <summary>$COMPILE COM selects a flat PSP:0100h DOS image.</summary>
+  private static bool IsComCompile(SemanticModel model)
+    => model.MetaStatements.Any(m => m.Command == "COMPILE" && m.Arguments is [{ } target, ..] && target.Text.Equals("COM", StringComparison.OrdinalIgnoreCase));
+
   private static bool TryLoadLinkTargets(SemanticModel model, IReadOnlyList<string> searchDirs, TextWriter stderr, out List<PbuFile> units, out List<PblFile> libraries) {
     units = [];
     libraries = [];
@@ -389,13 +499,10 @@ public static class Driver {
       }
       try {
         if (path.EndsWith(".OBJ", StringComparison.OrdinalIgnoreCase)) {
-          // external Intel OMF object: lower to a synthetic unit (docs/LINKER.md)
           units.Add(Emit.Omf.OmfToPbu.Convert(Emit.Omf.OmfReader.ReadObject(File.ReadAllBytes(path))));
           continue;
         }
         if (path.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase)) {
-          // external OMF library: each module becomes a unit in a library so the
-          // linker pulls only the ones that satisfy unresolved symbols
           var lib = new PblFile();
           foreach (var module in Emit.Omf.OmfReader.ReadLibrary(File.ReadAllBytes(path)))
             lib.Units.Add(Emit.Omf.OmfToPbu.Convert(module));
@@ -418,7 +525,6 @@ public static class Driver {
     return true;
   }
 
-  /// <summary>pblib-style library maintenance: build a .PBL from .PBUs, or list contents.</summary>
   private static int RunLib(string[] args, TextWriter stdout, TextWriter stderr) {
     switch (args) {
       case ["build", var output, .. var unitFiles] when unitFiles.Length > 0: {
@@ -431,7 +537,6 @@ public static class Driver {
           using var stream = File.OpenRead(file);
           units.Add(PbuFile.Read(stream));
         }
-        // a .LIB output is a foreign-consumable Intel OMF archive; anything else is our own .PBL
         if (output.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase)) {
           File.WriteAllBytes(output, Emit.Omf.OmfLibraryWriter.WriteLibrary(units));
         } else {
@@ -477,7 +582,8 @@ public static class Driver {
     w.WriteLine("       pbc lib build <out.PBL|out.LIB> <unit.PBU>...");
     w.WriteLine("       pbc lib list <file.PBL|file.PBU>");
     w.WriteLine();
-    w.WriteLine("A source with $COMPILE UNIT produces a .PBU unit instead of an EXE;");
+    w.WriteLine("A source with $COMPILE UNIT produces .PBU; $COMPILE COM produces flat .COM,");
+    w.WriteLine("as does any optimized program without $LINK ($COMPILE EXE keeps the .EXE);");
     w.WriteLine("$LINK \"X.PBU\" / $LINK \"Y.PBL\" directives (relative to the source");
     w.WriteLine("directory) are linked into the executable.");
     w.WriteLine();
@@ -494,12 +600,13 @@ public static class Driver {
     w.WriteLine("  --dump-ast     stop after parsing");
     w.WriteLine("  --dump-bind    stop after semantic analysis");
     w.WriteLine("  --emit-obj     compile to a linkable OMF .OBJ object instead of an EXE");
-    w.WriteLine("  --emit-basic   un-parse the bound (optimized) tree back to readable PowerBASIC");
+    w.WriteLine("  --emit-com     compile to a flat DOS .COM image (no $LINK/segment relocations)");
+    w.WriteLine("  --platform <p> x86-16 (DOS, default) | x86-32 | x64 | 6502: x86-32 and x64 build a native");
+    w.WriteLine("                 executable through the C back end and the host C compiler; 6502 a C64 .PRG");
+    w.WriteLine("  --emit-lib     with a hosted --platform: an archive of the program and its runtime");
+    w.WriteLine("  --emit-basic   render optimized IR back to readable PowerBASIC");
     w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");
     w.WriteLine("  --emit-c       optimize through the IR middle end and emit portable C99");
-    w.WriteLine("  --x-backend    compile through the IR and native x86-16 back end (the default)");
-    w.WriteLine("  --no-x-backend compile through the legacy direct emitter instead (PBC_X_BACKEND=0)");
-    w.WriteLine("  --x-backend-strict  route everything: a body the back end declines is an error, not a fallback");
     w.WriteLine("  --list         write a human-readable .LST map of the compiled image");
     w.WriteLine("  -h, --help     show this help");
   }

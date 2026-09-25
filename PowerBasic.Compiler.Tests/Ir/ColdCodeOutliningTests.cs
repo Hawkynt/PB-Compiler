@@ -259,7 +259,7 @@ public sealed class ColdCodeOutliningTests {
       Call(hot, sink, x);
     hot.Append(new IrRet());
 
-    IrPassManager.Standard(optimizeForSpeed: true).RunOnModule(module);
+    IrMiddleEndPipeline.Standard(optimizeForSpeed: true).RunOnModule(module);
 
     var helper = module.Functions.Single(f => f.Name.StartsWith("main__cold_", StringComparison.Ordinal));
     Assert.Multiple(() => {

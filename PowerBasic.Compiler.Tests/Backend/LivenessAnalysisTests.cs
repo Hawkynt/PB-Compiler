@@ -47,7 +47,7 @@ public sealed class LivenessAnalysisTests {
       new MInstrEffect([0], [1], false, false, false, false));
     MInstr Jmp(string label) => new(MOpcode.Jmp, [new MOperand.LabelRef(label)], MInstrEffect.None);
 
-    var fn = new MFunction("t");
+    var fn = new X86MachineFunction("t");
     var entry = new MBlock("entry");
     entry.Instructions.Add(MovImm(0, 5));   // idx 0: def v0
     entry.Instructions.Add(Jmp("loop"));    // idx 1

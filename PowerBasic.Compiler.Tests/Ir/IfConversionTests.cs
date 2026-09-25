@@ -99,7 +99,7 @@ public sealed class IfConversionTests {
     var unit = Parser.Parse(Lexer.Tokenize("c% = 1\nIF c% THEN\n  y% = 7\nELSE\n  y% = 9\nEND IF\nz% = y% + 1\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }

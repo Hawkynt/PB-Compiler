@@ -70,7 +70,7 @@ public sealed class CBackendTests {
     Assume.That(module, Is.Not.Null, $"{program}: outside the IR lowering's subset (docs/IR.md)");
 
     // the same pipeline the LLVM path runs - the back end sees optimized IR, not raw lowering
-    var pipeline = IrPassManager.Standard();
+    var pipeline = IrMiddleEndPipeline.Standard();
     pipeline.RunOnModule(module!);
     Inliner.Run(module!);
     pipeline.RunOnModule(module!);
@@ -142,7 +142,7 @@ public sealed class CBackendTests {
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var module = IrLowering.TryLowerModule(model);
     Assert.That(module, Is.Not.Null);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     var work = Path.Combine(Path.GetTempPath(), "pbc-c-alias-" + Guid.NewGuid().ToString("N")[..8]);
     Directory.CreateDirectory(work);

@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Hir;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
@@ -199,7 +200,7 @@ public sealed partial class IrLowering {
   /// </summary>
   private static IEnumerable<VariableSymbol> ArraysPassedToProcedures(SemanticModel model) {
     foreach (var body in AllProgramBodies(model))
-      foreach (var node in CodeGen.OptReachability.DescendantNodes(body)) {
+      foreach (var node in Syntax.Ast.AstWalker.DescendantNodes(body)) {
         var arguments = node switch {
           CallStmt call when model.CallBindings.ContainsKey(call) => call.Arguments,
           CallOrIndexExpr call when model.CallBindings.ContainsKey(call) => call.Arguments,
@@ -227,7 +228,7 @@ public sealed partial class IrLowering {
     foreach (var proc in model.Procedures.Values) {
       if (proc.Body is not { } body)
         continue;
-      foreach (var node in CodeGen.OptReachability.DescendantNodes(body)) {
+      foreach (var node in Syntax.Ast.AstWalker.DescendantNodes(body)) {
         if (node is Expression e && model.VariableBindings.TryGetValue(e, out var symbol)
             && symbol.Storage == VariableStorage.Global)
           used.Add(symbol);
@@ -276,7 +277,7 @@ public sealed partial class IrLowering {
   /// registration outlives the statement either way.
   /// </summary>
   private static IEnumerable<VariableSymbol> FieldTargets(SemanticModel model) {
-    foreach (var node in CodeGen.OptReachability.DescendantNodes(model.MainBody))
+    foreach (var node in Syntax.Ast.AstWalker.DescendantNodes(model.MainBody))
       if (node is FieldStmt field)
         foreach (var (_, target) in field.Fields)
           if (model.VariableBindings.TryGetValue(target, out var symbol))
@@ -986,45 +987,58 @@ public sealed partial class IrLowering {
 
   /// <summary>The address of one array element in PowerBASIC's first-subscript-fastest layout.</summary>
   private (IrValue Address, PbType Element) ElementAddress(CallOrIndexExpr expr, bool farAllowed = false) {
-    if (!this._model.VariableBindings.TryGetValue(expr, out var symbol) || symbol.Type is not ArrayType arr)
-      throw new IrLoweringException($"not an array element: {expr.Name}");
-    if (symbol.ArrayClass == ArrayClass.Absolute)
+    if (!HirArrayAccessBuilder.TryBuild(this._model, expr, this._checkBounds, out var access, out var error))
+      throw new IrLoweringException(error ?? $"unable to build array-element HIR for {expr.Name}");
+    return this.ElementAddress(access, farAllowed);
+  }
+
+  /// <summary>Lowers resolved array-access HIR into target-independent address arithmetic.</summary>
+  private (IrValue Address, PbType Element) ElementAddress(HirArrayElementAccess access, bool farAllowed = false) {
+    var symbol = access.Target;
+    var arr = access.Type;
+
+    if (access.ArrayClass == ArrayClass.Absolute)
       return farAllowed
-        ? this.AbsoluteElementAddress(expr, symbol, arr)
+        ? this.AbsoluteElementAddress(access)
         : throw new IrLoweringException(
             $"the address of an element of the ABSOLUTE array {symbol.Name} (only a direct read or write of one lowers)");
-    // the memory-model classes reach their elements through a segment they compute per access, which
-    // is the same far pointer for the same reason - and no more usable as a near one
-    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
+
+    // The memory-model classes reach their elements through a segment they compute per access. HIR
+    // carries that source-level class; the page/segment arithmetic remains a lower-level decision.
+    if (access.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
       return farAllowed
-        ? this.PagedElementAddress(expr, symbol, arr)
+        ? this.PagedElementAddress(access)
         : throw new IrLoweringException(
-            $"the address of an element of the {symbol.ArrayClass} array {symbol.Name} (only a direct read or write of one lowers)");
-    // An array PARAMETER has no bounds of its own whether or not the array behind it is dynamic: the
-    // callee knows only what the descriptor says, so it reaches every element the descriptor-driven
-    // way. Without this a static array's parameter fell through to the static path, which has no
-    // StaticBounds to use and said "rank mismatch".
-    if (arr.IsDynamic || symbol.Storage == VariableStorage.Parameter)
-      return this.DynamicElementAddress(expr, symbol, arr);
-    if (arr.StaticBounds is not { } bounds || bounds.Count != expr.Arguments.Count)
-      throw new IrLoweringException("rank mismatch");
+            $"the address of an element of the {access.ArrayClass} array {symbol.Name} (only a direct read or write of one lowers)");
+
+    if (access.BoundsSource == HirArrayBoundsSource.Descriptor)
+      return this.DynamicElementAddress(access);
+
+    if (access.StaticBounds.Count != arr.Rank || access.Subscripts.Count != arr.Rank)
+      throw new IrLoweringException($"static array HIR rank mismatch for {symbol.Name}");
     var basePtr = this.SlotFor(symbol);
 
     // Evaluate subscripts in source order, because a subscript expression may call a function or
     // otherwise have observable effects. Only after all relative indexes exist do we fold them from
     // the last dimension inward: rel0 + size0 * (rel1 + size1 * (...)). PowerBASIC stores the first
     // subscript contiguously, so dimension zero has element stride one.
-    var relative = new IrValue[bounds.Count];
-    for (var k = 0; k < bounds.Count; ++k) {
-      var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
-      if (this._checkBounds)
-        this.EmitBoundsCheck(idx, new IrConstantInt(IrType.I32, bounds[k].Lower), new IrConstantInt(IrType.I32, bounds[k].Upper));
-      relative[k] = this._b.Sub(idx, new IrConstantInt(IrType.I32, bounds[k].Lower));
+    var relative = new IrValue[arr.Rank];
+    for (var k = 0; k < arr.Rank; ++k) {
+      var subscript = access.Subscripts[k];
+      var bound = access.StaticBounds[k];
+      var idx = this.Coerce(this.LowerExpr(subscript), this._model.TypeOf(subscript), PbType.Long);
+      if (access.CheckBounds)
+        this.EmitBoundsCheck(
+          idx,
+          new IrConstantInt(IrType.I32, bound.Lower),
+          new IrConstantInt(IrType.I32, bound.Upper));
+      relative[k] = this._b.Sub(idx, new IrConstantInt(IrType.I32, bound.Lower));
     }
 
     IrValue flat = relative[^1];
-    for (var k = bounds.Count - 2; k >= 0; --k) {
-      var size = bounds[k].Upper - bounds[k].Lower + 1;
+    for (var k = arr.Rank - 2; k >= 0; --k) {
+      var bound = access.StaticBounds[k];
+      var size = bound.Upper - bound.Lower + 1;
       flat = this._b.Add(this._b.Mul(flat, new IrConstantInt(IrType.I32, size)), relative[k]);
     }
 
@@ -1266,9 +1280,12 @@ public sealed partial class IrLowering {
   }
 
   /// <summary>The address of one runtime-allocated element in PowerBASIC's first-subscript-fastest layout.</summary>
-  private (IrValue Address, PbType Element) DynamicElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
-    if (expr.Arguments.Count != arr.Rank)
-      throw new IrLoweringException("dynamic array rank mismatch");
+  private (IrValue Address, PbType Element) DynamicElementAddress(HirArrayElementAccess access) {
+    var symbol = access.Target;
+    var arr = access.Type;
+    if (access.BoundsSource != HirArrayBoundsSource.Descriptor || access.Subscripts.Count != arr.Rank)
+      throw new IrLoweringException($"descriptor array HIR rank mismatch for {symbol.Name}");
+
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
     // A parameter's block address is two separate words, so the far pointer is formed at the END from
     // the finished offset - the same shape AbsoluteElementAddress uses - rather than being loaded as a
@@ -1280,11 +1297,12 @@ public sealed partial class IrLowering {
     // nested inside a subscript expression.
     var relative = new IrValue[arr.Rank];
     for (var k = 0; k < arr.Rank; ++k) {
-      var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
+      var subscript = access.Subscripts[k];
+      var idx = this.Coerce(this.LowerExpr(subscript), this._model.TypeOf(subscript), PbType.Long);
       var lo = this._b.Load(IrType.I32, descriptor.Lo[k]);
-      // $ERROR BOUNDS ON over a dynamic array: the dimension is not a compile-time constant, so the
-      // upper bound is reconstructed from the descriptor the REDIM filled in - lo + size - 1
-      if (this._checkBounds) {
+      // $ERROR BOUNDS ON over a descriptor-backed array: reconstruct the upper bound from the
+      // descriptor the DIM/REDIM/caller filled in - lo + size - 1.
+      if (access.CheckBounds) {
         var size = this._b.Load(IrType.I32, descriptor.Size[k]);
         this.EmitBoundsCheck(idx, lo, this._b.Sub(this._b.Add(lo, size), new IrConstantInt(IrType.I32, 1)));
       }
@@ -1326,18 +1344,21 @@ public sealed partial class IrLowering {
   /// has a case for <see cref="IrFarPtr"/> outside the address former.
   /// </para>
   /// </summary>
-  private (IrValue Address, PbType Element) AbsoluteElementAddress(CallOrIndexExpr expr, VariableSymbol symbol, ArrayType arr) {
+  private (IrValue Address, PbType Element) AbsoluteElementAddress(HirArrayElementAccess access) {
+    var symbol = access.Target;
+    var arr = access.Type;
     if (!this._absoluteSegments.TryGetValue(symbol, out var segmentCell))
       throw new IrLoweringException($"element of {symbol.Name} before its DIM ... AT was lowered");
-    if (expr.Arguments.Count != arr.Rank)
-      throw new IrLoweringException("ABSOLUTE array rank mismatch");
+    if (access.BoundsSource != HirArrayBoundsSource.Descriptor || access.Subscripts.Count != arr.Rank)
+      throw new IrLoweringException("ABSOLUTE array HIR rank mismatch");
 
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
     var relative = new IrValue[arr.Rank];
     for (var k = 0; k < arr.Rank; ++k) {
-      var idx = this.Coerce(this.LowerExpr(expr.Arguments[k]), this._model.TypeOf(expr.Arguments[k]), PbType.Long);
+      var subscript = access.Subscripts[k];
+      var idx = this.Coerce(this.LowerExpr(subscript), this._model.TypeOf(subscript), PbType.Long);
       var lo = this._b.Load(IrType.I32, descriptor.Lo[k]);
-      if (this._checkBounds) {
+      if (access.CheckBounds) {
         var size = this._b.Load(IrType.I32, descriptor.Size[k]);
         this.EmitBoundsCheck(idx, lo, this._b.Sub(this._b.Add(lo, size), new IrConstantInt(IrType.I32, 1)));
       }
@@ -1419,8 +1440,18 @@ public sealed partial class IrLowering {
       case RequireStmt rq: this.LowerRequire(rq); break;
       case SelectStmt s: this.LowerSelect(s); break;
       case DimStmt d: this.LowerDim(d); break;
-      case RedimStmt rdm: this.LowerRedim(rdm); break;
-      case EraseStmt er: this.LowerErase(er); break;
+      case RedimStmt rdm:
+        if (!HirArrayLifetimeBuilder.TryBuild(this._model, rdm, out var resizeOperations, out var resizeError))
+          throw new IrLoweringException(resizeError ?? "unable to build REDIM HIR");
+        foreach (var operation in resizeOperations)
+          this.LowerRedim(operation);
+        break;
+      case EraseStmt er:
+        if (!HirArrayLifetimeBuilder.TryBuild(this._model, er, out var eraseOperations, out var eraseError))
+          throw new IrLoweringException(eraseError ?? "unable to build ERASE HIR");
+        foreach (var operation in eraseOperations)
+          this.LowerErase(operation);
+        break;
       case ArraySortStmt sort: this.LowerArraySort(sort); break;
       case ArrayScanStmt scan: this.LowerArrayScan(scan); break;
       case SwapStmt sw: this.LowerSwap(sw); break;
@@ -1747,7 +1778,7 @@ public sealed partial class IrLowering {
         break;
       case CommandStmt { Keyword: "SOUND", Arguments: [{ } frequency, { } duration] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_sound", IrType.Void, IrType.I16, IrType.I16),
-          this.WordArg(frequency), this.WordArg(duration));
+          this.IntegerValue(frequency), this.IntegerValue(duration));
         break;
       // DELAY takes its count as a DOUBLE, which is how the direct emitter coerces it too - a delay of
       // half a second is a delay the statement can express
@@ -1759,7 +1790,7 @@ public sealed partial class IrLowering {
       // POKE, and the same shape: an offset and a value, no answer
       case CommandStmt { Keyword: "POKE$", Arguments: [{ } pokeStrAddress, { } pokeStrValue] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_poke_str", IrType.Void, IrType.I16, IrType.Ptr),
-          this.WordArg(pokeStrAddress), this.LowerStringExpr(pokeStrValue));
+          this.IntegerValue(pokeStrAddress), this.LowerStringExpr(pokeStrValue));
         break;
       // TIMER/KEY/COM/PEN/STRIG ON|OFF|STOP and their ON <event> GOSUB handlers. This runtime has no
       // event dispatch at all, so the direct emitter reaches a bare `break` for both - and the BINDER
@@ -1870,6 +1901,9 @@ public sealed partial class IrLowering {
       // decline over. Reaching one that IS reachable still declines, below.
       case DeferredSourceStmt dead when this._unreachableDeferred?.Contains(dead) == true:
         break;
+      case DeferredSourceStmt deferred:
+        throw new IrLoweringException(
+          $"deferred {this._model.Dialect.DisplayName()} source whose path is not provably unreachable: {deferred.Text}");
 
       default: throw new IrLoweringException(statement is CommandStmt command
         ? $"unsupported statement: {command.Keyword}"
@@ -2675,7 +2709,7 @@ public sealed partial class IrLowering {
   private void UsingLiteral(IrValue? file, string text) {
     if (text.Length == 0)
       return;
-    var bytes = System.Text.Encoding.ASCII.GetBytes(text);
+    var bytes = System.Text.Encoding.Latin1.GetBytes(text);
     this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
       this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
   }
@@ -2743,7 +2777,7 @@ public sealed partial class IrLowering {
 
   /// <summary>One of WRITE's fixed characters - the separator or a quote - through the literal pool.</summary>
   private void WritePunctuation(IrValue? file, string text) {
-    var bytes = System.Text.Encoding.ASCII.GetBytes(text);
+    var bytes = System.Text.Encoding.Latin1.GetBytes(text);
     this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
       this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
   }
@@ -2803,9 +2837,9 @@ public sealed partial class IrLowering {
   /// </summary>
   private void LowerWait(Expression port, Expression mask, Expression? flip) {
     var byteMask = new IrConstantInt(IrType.I16, 0xFF);
-    var wanted = this._b.And(this.WordArg(mask), byteMask);
-    var inverted = this._b.And(flip is null ? new IrConstantInt(IrType.I16, 0) : this.WordArg(flip), byteMask);
-    var address = this.WordArg(port);
+    var wanted = this._b.And(this.IntegerValue(mask), byteMask);
+    var inverted = this._b.And(flip is null ? new IrConstantInt(IrType.I16, 0) : this.IntegerValue(flip), byteMask);
+    var address = this.IntegerValue(port);
 
     var poll = this.NewBlock("wait.poll");
     var done = this.NewBlock("wait.done");
@@ -2861,7 +2895,7 @@ public sealed partial class IrLowering {
       return;
     }
     if (expr is StringLiteralExpr lit) {
-      var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
+      var bytes = System.Text.Encoding.Latin1.GetBytes(lit.Value);
       var global = this._module!.AddStringConstant(bytes);
       this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
       return;
@@ -2904,7 +2938,7 @@ public sealed partial class IrLowering {
       var suffix = (input.Prompt is null && !input.IsLineInput) || input.PromptSemicolon ? "? " : "";
       var prompt = (input.Prompt ?? "") + suffix;
       if (prompt.Length > 0) {
-        var bytes = System.Text.Encoding.ASCII.GetBytes(prompt);
+        var bytes = System.Text.Encoding.Latin1.GetBytes(prompt);
         var global = this._module.AddStringConstant(bytes);
         this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
       }
@@ -3064,13 +3098,12 @@ public sealed partial class IrLowering {
     // A bind-time rewrite is lowered through its DESUGARED form, which is where the meaning is. An
     // interpolated string is the shape that needs it: $"a{n}b" is bound as the concatenation of the
     // pieces, with a numeric hole already wrapped in STR$ and a formatted one in USING$, so there is
-    // nothing left here to interpret. The direct emitter's expression entry does the same first
-    // thing, and OptReachability walks it too.
+    // nothing left here to interpret.
     if (this._model.Desugared.TryGetValue(expr, out var rewritten))
       return this.LowerStringExpr(rewritten);
     switch (expr) {
       case StringLiteralExpr lit: {
-        var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
+        var bytes = System.Text.Encoding.Latin1.GetBytes(lit.Value);
         var global = this._module!.AddStringConstant(bytes);
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_const", IrType.Ptr, IrType.Ptr, IrType.I32), global, new IrConstantInt(IrType.I32, bytes.Length));
       }
@@ -3103,15 +3136,19 @@ public sealed partial class IrLowering {
           aa.Address, new IrConstantInt(IrType.I32, afz.Length));
       case CallOrIndexExpr ci when this._model.IntrinsicBindings.TryGetValue(ci, out var info):
         return this.LowerStringIntrinsic(ci, info.Name);
-      // a user FUNCTION whose result is a string - its IR result already IS the handle
-      case CallOrIndexExpr uc when this._model.CallBindings.TryGetValue(uc, out var proc) && proc.IsFunction:
-        return this._procMap is not null && this._procMap.TryGetValue(proc, out var callee)
-          ? this.EmitCall(callee, proc, this.PositionalArguments(uc, uc.Arguments))
-          : throw new IrLoweringException($"call to {proc.Name} outside the modelled subset");
-      case NameExpr bare when this._model.CallBindings.TryGetValue(bare, out var bareProc) && bareProc.IsFunction:
-        return this._procMap is not null && this._procMap.TryGetValue(bareProc, out var bareCallee)
-          ? this.EmitCall(bareCallee, bareProc, [])
-          : throw new IrLoweringException($"call to {bareProc.Name} outside the modelled subset");
+      // a user FUNCTION whose result is a string - its HIR result already identifies the bound call
+      case CallOrIndexExpr uc
+        when HirDirectCallBuilder.TryBuild(this._model, uc, uc.Arguments, out var stringCall, out _)
+             && stringCall is { IsFunction: true, ReturnType: StringType }:
+        return this._procMap is not null && this._procMap.TryGetValue(stringCall.Target, out var callee)
+          ? this.EmitCall(callee, stringCall)
+          : throw new IrLoweringException($"call to {stringCall.Target.Name} outside the modelled subset");
+      case NameExpr bare
+        when HirDirectCallBuilder.TryBuild(this._model, bare, [], out var bareStringCall, out _)
+             && bareStringCall is { IsFunction: true, ReturnType: StringType }:
+        return this._procMap is not null && this._procMap.TryGetValue(bareStringCall.Target, out var bareCallee)
+          ? this.EmitCall(bareCallee, bareStringCall)
+          : throw new IrLoweringException($"call to {bareStringCall.Target.Name} outside the modelled subset");
       // The same branching ternary the numeric side lowers, over a string HANDLE. It has to be here
       // as well as there because a string is not a value this lowering loads with LowerExpr - the arms
       // are string EXPRESSIONS, and only LowerStringExpr knows how to produce one.
@@ -3276,10 +3313,19 @@ public sealed partial class IrLowering {
     this._b.Store(this._b.Load(IrType.I16, onerrSp), savedSp);
 
     var dispatch = this.NewBlock("try.dispatch");
+    var body = this.NewBlock("try.body");
     var cleanup = this.NewBlock("try.cleanup");
     var end = this.NewBlock("try.end");
     this._b.Call(IrType.Void, this.RuntimeFn("rt_onerr_arm", IrType.Void, IrType.Ptr),
       new IrBlockAddress(dispatch));
+
+    // rt_raise can enter 'dispatch' by restoring BP/SP and jumping through the armed block address.
+    // That edge is real program control flow but cannot be represented by an ordinary branch at run
+    // time. Keep an explicit never-taken CFG edge so verifier/dominator analyses see the handler as
+    // dominated by the arming/saved-frame state. HasErrorHandler functions are deliberately excluded
+    // from CFG simplification, so this structural edge survives until instruction selection.
+    this._b.CondBr(new IrConstantInt(IrType.I1, 0), dispatch, body);
+    this._b.Position(body);
 
     this.LowerStatements(stmt.Body);
     if (!this.Terminated) {
@@ -3556,7 +3602,7 @@ public sealed partial class IrLowering {
         labels[label] = blob.Count;                    // RESTORE <label> rewinds to the first DATA item at/after the label
         continue;
       }
-      var bytes = System.Text.Encoding.ASCII.GetBytes(item!);
+      var bytes = System.Text.Encoding.Latin1.GetBytes(item!);
       if (bytes.Length > 0xFFFF)
         throw new IrLoweringException("DATA item exceeds 64KB");
       blob.Add((byte)(bytes.Length & 0xFF));
@@ -3701,28 +3747,29 @@ public sealed partial class IrLowering {
   private IrValue ArrayBytes(IrValue count, ArrayType arr)
     => this._b.Mul(count, new IrConstantInt(IrType.I32, Math.Max(arr.Element.Size, 1)));
 
-  private void LowerRedim(RedimStmt r) {
-    foreach (var v in r.Variables) {
-      if (!this._model.RedimBindings.TryGetValue(v, out var symbol) || symbol.Type is not ArrayType { IsDynamic: true } arr)
-        throw new IrLoweringException($"REDIM of non-dynamic array {v.Name}");
-      // an ABSOLUTE array is a view of memory the program does not own; re-DIMing one would allocate
-      // a heap block and quietly stop it being that view
-      if (symbol.ArrayClass == ArrayClass.Absolute)
-        throw new IrLoweringException($"REDIM of the ABSOLUTE array {v.Name}");
-      if (v.ArrayBounds is not { } dims || dims.Count != arr.Rank)
-        throw new IrLoweringException("REDIM rank mismatch");
-      // a memory-model array re-DIMs through its own allocator, not the far array heap. PRESERVE has
-      // no meaning there - the direct emitter refuses it too, and for the same reason: the copy would
-      // have to walk two segment-stepped or page-mapped blocks at once.
-      if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
-        if (r.Preserve)
-          throw new IrLoweringException($"REDIM PRESERVE on the {symbol.ArrayClass} array {v.Name}");
-        this.LowerPagedAllocation(symbol, arr, this._model.ArrayBoundsOf(v));
-        continue;
-      }
+  private void LowerRedim(HirArrayResize operation) {
+    var symbol = operation.Target;
+    var arr = operation.Type;
+    var dims = operation.Bounds
+      .Select(bound => (bound.Lower, bound.Upper))
+      .ToArray();
 
-      this.AllocateDynamicArray(symbol, arr, this._model.ArrayBoundsOf(v), r.Preserve);
+    // an ABSOLUTE array is a view of memory the program does not own; re-DIMing one would allocate
+    // a heap block and quietly stop it being that view
+    if (operation.ArrayClass == ArrayClass.Absolute)
+      throw new IrLoweringException($"REDIM of the ABSOLUTE array {symbol.Name}");
+
+    // a memory-model array re-DIMs through its own allocator, not the far array heap. PRESERVE has
+    // no meaning there - the direct emitter refuses it too, and for the same reason: the copy would
+    // have to walk two segment-stepped or page-mapped blocks at once.
+    if (operation.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+      if (operation.Preserve)
+        throw new IrLoweringException($"REDIM PRESERVE on the {operation.ArrayClass} array {symbol.Name}");
+      this.LowerPagedAllocation(symbol, arr, dims);
+      return;
     }
+
+    this.AllocateDynamicArray(symbol, arr, dims, operation.Preserve);
   }
 
   /// <summary>
@@ -3831,49 +3878,49 @@ public sealed partial class IrLowering {
     }
   }
 
-  private void LowerErase(EraseStmt e) {
-    foreach (var name in e.Arrays) {
-      if (!this._model.VariableBindings.TryGetValue(name, out var symbol) || symbol.Type is not ArrayType arr)
-        throw new IrLoweringException("ERASE of a non-array");
-      // ERASE on an ABSOLUTE array UNMAPS it: the memory is not the program's to free or to zero, so
-      // the only thing to undo is the view itself. Clearing the segment cell is what the direct
-      // emitter does (MOV WORD PTR [slot],0), and a later access then names segment 0 exactly as it
-      // did there. Genuine PBC 3.50 terminates the program on such an access instead, which neither
-      // emitter reproduces - tests/diff/DIFF125.BAS records the oracle and stops short of it.
-      if (symbol.ArrayClass == ArrayClass.Absolute) {
-        if (!this._absoluteSegments.TryGetValue(symbol, out var segmentCell))
-          throw new IrLoweringException($"ERASE of {symbol.Name} before its DIM ... AT was lowered");
-        this._b.Store(new IrConstantInt(IrType.I16, 0), segmentCell);
-        continue;
-      }
-      if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
-        this.LowerPagedErase(symbol, arr);
-        continue;
-      }
-      if (!arr.IsDynamic) {
-        // A static array is not freed - PB zeroes it where it stands, and the storage stays. The
-        // direct emitter writes a REP STOSW over the word-rounded size; the portable spelling of
-        // that is a memset, which the C back end renders as one and an LLVM target lowers itself.
-        this._b.Call(IrType.Void,
-          this.RuntimeFn("llvm.memset.p0.i32", IrType.Void, IrType.Ptr, IrType.I8, IrType.I32, IrType.I1),
-          this.SlotFor(symbol), new IrConstantInt(IrType.I8, 0),
-          new IrConstantInt(IrType.I32, arr.Size), new IrConstantInt(IrType.I1, 0));
-        continue;
-      }
-      // The byte count travels with the pointer: the DOS heap is a bump allocator that can only give
-      // a block back when it is the topmost one, and "is this block on top" is `offset + bytes ==
-      // top`. A malloc/free runtime ignores the second argument, but the IR cannot know which kind of
-      // runtime it is talking to and the size is free to compute here.
-      var descriptor = this.MutableDynDescriptor(symbol, arr.Rank, "ERASE");
-      var count = this.DynElementCount(descriptor, arr.Rank);
-      var block = this._b.Load(IrType.FarPtr, descriptor.Data);
-      if (arr.Element is StringType)
-        this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free_ptr", IrType.Void, IrType.FarPtr, IrType.I32), block, count);
-      else
-        this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.FarPtr, IrType.I32),
-          block, this.ArrayBytes(count, arr));
-      this._b.Store(new IrNullPtr(IrType.FarPtr), descriptor.Data);
+  private void LowerErase(HirArrayErase operation) {
+    var symbol = operation.Target;
+    var arr = operation.Type;
+
+    // ERASE on an ABSOLUTE array UNMAPS it: the memory is not the program's to free or to zero, so
+    // the only thing to undo is the view itself. Clearing the segment cell is what the direct
+    // emitter does (MOV WORD PTR [slot],0), and a later access then names segment 0 exactly as it
+    // did there. Genuine PBC 3.50 terminates the program on such an access instead, which neither
+    // emitter reproduces - tests/diff/DIFF125.BAS records the oracle and stops short of it.
+    if (operation.ArrayClass == ArrayClass.Absolute) {
+      if (!this._absoluteSegments.TryGetValue(symbol, out var segmentCell))
+        throw new IrLoweringException($"ERASE of {symbol.Name} before its DIM ... AT was lowered");
+      this._b.Store(new IrConstantInt(IrType.I16, 0), segmentCell);
+      return;
     }
+
+    if (operation.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+      this.LowerPagedErase(symbol, arr);
+      return;
+    }
+
+    if (!arr.IsDynamic) {
+      // A static array is not freed - PB zeroes it where it stands, and the storage stays. The
+      // direct emitter writes a REP STOSW over the word-rounded size; the portable spelling of
+      // that is a memset, which the C back end renders as one and an LLVM target lowers itself.
+      this._b.Call(IrType.Void,
+        this.RuntimeFn("llvm.memset.p0.i32", IrType.Void, IrType.Ptr, IrType.I8, IrType.I32, IrType.I1),
+        this.SlotFor(symbol), new IrConstantInt(IrType.I8, 0),
+        new IrConstantInt(IrType.I32, arr.Size), new IrConstantInt(IrType.I1, 0));
+      return;
+    }
+
+    // The byte count travels with the pointer: the DOS heap is a bump allocator that can only give
+    // a block back when it is the topmost one, and "is this block on top" is `offset + bytes == top`.
+    var descriptor = this.MutableDynDescriptor(symbol, arr.Rank, "ERASE");
+    var count = this.DynElementCount(descriptor, arr.Rank);
+    var block = this._b.Load(IrType.FarPtr, descriptor.Data);
+    if (arr.Element is StringType)
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free_ptr", IrType.Void, IrType.FarPtr, IrType.I32), block, count);
+    else
+      this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.FarPtr, IrType.I32),
+        block, this.ArrayBytes(count, arr));
+    this._b.Store(new IrNullPtr(IrType.FarPtr), descriptor.Data);
   }
 
   // ---- ARRAY SORT / ARRAY SCAN ---------------------------------------------
@@ -4381,17 +4428,27 @@ public sealed partial class IrLowering {
     return null;
   }
 
+  /// <summary>
+  /// <c>INCR v[, n]</c> / <c>DECR v[, n]</c>: a read-modify-write of any numeric lvalue - a variable,
+  /// an array element, a record field, a pointer target. It used to accept only a plain variable, so
+  /// <c>INCR z%(1), 5</c> was a compile failure once the back end stopped having a fallback.
+  /// </summary>
   private void LowerIncrDecr(IncrDecrStmt id) {
-    var symbol = this.SymbolOf(id.Target);
-    var slot = this.SlotFor(symbol);
-    var ty = MapType(symbol.Type);
-    if (ty.IsFloat)
-      throw new IrLoweringException("INCR/DECR on float");
+    var (slot, type) = this.LValue(id.Target, "INCR/DECR");
+    if (type is not ScalarType scalar)
+      throw new IrLoweringException($"INCR/DECR of a {type.GetType().Name}");
+    var ty = MapType(scalar);
     var current = this._b.Load(ty, slot);
-    var amount = id.Amount is null
-      ? new IrConstantInt(ty, 1)
-      : this.Coerce(this.LowerExpr(id.Amount), this._model.TypeOf(id.Amount), symbol.Type);
-    this._b.Store(this._b.Binary(id.Increment ? IrBinaryOp.Add : IrBinaryOp.Sub, current, amount), slot);
+    IrValue amount = id.Amount is not null
+      ? this.Coerce(this.LowerExpr(id.Amount), this._model.TypeOf(id.Amount), scalar)
+      : scalar.IsFloat ? IrBuilder.ConstFloat(ty, 1) : new IrConstantInt(ty, 1);
+    var op = (id.Increment, scalar.IsFloat) switch {
+      (true, false) => IrBinaryOp.Add,
+      (false, false) => IrBinaryOp.Sub,
+      (true, true) => IrBinaryOp.FAdd,
+      (false, true) => IrBinaryOp.FSub,
+    };
+    this._b.Store(this._b.Binary(op, current, amount), slot);
   }
 
   /// <summary>
@@ -4752,7 +4809,7 @@ public sealed partial class IrLowering {
 
     this._b.Position(violated);
     if (rq.Message is { Length: > 0 } message) {
-      var bytes = System.Text.Encoding.ASCII.GetBytes(message);
+      var bytes = System.Text.Encoding.Latin1.GetBytes(message);
       this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
         this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
       this.EmitIo(null, "print", "nl", IrType.Void, []);
@@ -4784,10 +4841,12 @@ public sealed partial class IrLowering {
         this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), invoked);
       return;
     }
-    if (this._procMap is null || !this._model.CallBindings.TryGetValue(c, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
-      throw new IrLoweringException($"call to unsupported procedure {c.Name}");
-    var result = this.EmitCall(callee, proc, this.PositionalArguments(c, c.Arguments));
-    if (proc is { IsFunction: true, ReturnType: StringType })
+    if (!HirDirectCallBuilder.TryBuild(this._model, c, c.Arguments, out var directCall, out var directError))
+      throw new IrLoweringException(directError ?? $"call to unsupported procedure {c.Name}");
+    if (this._procMap is null || !this._procMap.TryGetValue(directCall.Target, out var callee))
+      throw new IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset");
+    var result = this.EmitCall(callee, directCall);
+    if (directCall is { IsFunction: true, ReturnType: StringType })
       this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), result);
   }
 
@@ -5040,12 +5099,12 @@ public sealed partial class IrLowering {
 
   private IrValue LowerNameRead(NameExpr name) {
     // a parameterless FUNCTION is called by naming it - "PRINT Counter%" is a call, not a read
-    if (this._model.CallBindings.TryGetValue(name, out var proc)) {
-      if (this._procMap is null || !this._procMap.TryGetValue(proc, out var callee))
-        throw new IrLoweringException($"call to {proc.Name} outside the modelled subset");
-      if (!proc.IsFunction)
+    if (HirDirectCallBuilder.TryBuild(this._model, name, [], out var directCall, out _)) {
+      if (this._procMap is null || !this._procMap.TryGetValue(directCall.Target, out var callee))
+        throw new IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset");
+      if (!directCall.IsFunction)
         throw new IrLoweringException("SUB used in expression position");
-      return this.EmitCall(callee, proc, []);
+      return this.EmitCall(callee, directCall);
     }
     if (!this._model.VariableBindings.TryGetValue(name, out var symbol))
       return this.LowerErrorPseudoVariable(name.Name)
@@ -5759,6 +5818,20 @@ public sealed partial class IrLowering {
   /// <c>HEX$(&amp;HFFFF63C0)</c>.
   /// </para>
   /// </summary>
+  /// <summary>
+  /// <paramref name="e"/> as a PowerBASIC INTEGER - a signed 16-bit value, typed <c>i16</c> in the IR.
+  ///
+  /// <para>
+  /// This is what a runtime routine declaring an <c>i16</c> parameter must be given. <see cref="WordArg"/>
+  /// is NOT that, despite the name: it sign-extends to <c>i32</c>. Passing its result to an <c>i16</c>
+  /// parameter was a type lie the verifier does not check on calls and the selector quietly repaired by
+  /// taking the low word - and ANDing it with an <c>i16</c> mask was a binary whose operands disagreed,
+  /// which the verifier does check, and which is how the lie was found.
+  /// </para>
+  /// </summary>
+  private IrValue IntegerValue(Expression e)
+    => this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer);
+
   private IrValue WordArg(Expression e) =>
     this._b.SExt(this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer), IrType.I32);
 
@@ -6206,39 +6279,13 @@ public sealed partial class IrLowering {
   private IrValue LowerCallExpr(CallOrIndexExpr call) {
     if (this._model.ProcPtrCalls.TryGetValue(call, out var signature))
       return this.LowerClosureCall(call, signature);   // f(args) through a delegate
-    if (this._procMap is null || !this._model.CallBindings.TryGetValue(call, out var proc) || !this._procMap.TryGetValue(proc, out var callee))
-      throw new IrLoweringException($"unsupported call/index {call.Name}");   // array index / intrinsic
-    if (!proc.IsFunction)
+    if (!HirDirectCallBuilder.TryBuild(this._model, call, call.Arguments, out var directCall, out var directError))
+      throw new IrLoweringException(directError ?? $"unsupported call/index {call.Name}");   // array index / intrinsic
+    if (this._procMap is null || !this._procMap.TryGetValue(directCall.Target, out var callee))
+      throw new IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset");
+    if (!directCall.IsFunction)
       throw new IrLoweringException("SUB used in expression position");
-    return this.EmitCall(callee, proc, this.PositionalArguments(call, call.Arguments));
-  }
-
-  /// <summary>
-  /// The arguments of a call in PARAMETER order, with every default filled in.
-  ///
-  /// <para>
-  /// pb36 named arguments and default values are resolved by the binder, not by either back end: it
-  /// records the complete positional list against the call node, and every consumer - the direct
-  /// emitter, the inliner, the constant propagator, the decompiler - reads it from there. This path
-  /// did not, so a call that named its arguments passed them in the order they were WRITTEN, and one
-  /// that omitted a defaulted argument passed one fewer than the callee takes. The second failed
-  /// loudly ("argument count mismatch"); the first would not have.
-  /// </para>
-  /// </summary>
-  private IReadOnlyList<Expression> PositionalArguments(object callSite, IReadOnlyList<Expression> written) {
-    if (this._model.ReorderedArguments.GetValueOrDefault(callSite) is { } reordered)
-      return reordered;
-    // A call that named no argument gets no entry, so a trailing DEFAULT is still missing here. The
-    // binder leaves that fill to the call site - the default is an expression evaluated there, not a
-    // value baked into the callee - and the direct emitter does it in EmitCall for the same reason.
-    if (!this._model.CallBindings.TryGetValue(callSite, out var proc)
-        || written.Count >= proc.Parameters.Count || proc.IsCdecl
-        || proc.Parameters[written.Count].DefaultValue is null)
-      return written;
-    var filled = new List<Expression>(written);
-    for (var i = written.Count; i < proc.Parameters.Count && proc.Parameters[i].DefaultValue is { } value; ++i)
-      filled.Add(value);
-    return filled;
+    return this.EmitCall(callee, directCall);
   }
 
   /// <summary>
@@ -6273,29 +6320,28 @@ public sealed partial class IrLowering {
     return temp;
   }
 
-  private IrValue EmitCall(IrFunction callee, ProcedureSymbol proc, IReadOnlyList<Expression> arguments) {
-    if (arguments.Count != proc.Parameters.Count)
-      throw new IrLoweringException("argument count mismatch (optional/CDECL not modelled)");
-    var args = new List<IrValue>(arguments.Count);
+  private IrValue EmitCall(IrFunction callee, HirDirectCall directCall) {
+    var args = new List<IrValue>(directCall.Arguments.Count);
     var stringTemporaries = new List<IrValue>();
     var arrayArguments = new List<(IrValue Block, VariableSymbol Symbol, ArrayType Array)>();
-    for (var i = 0; i < arguments.Count; ++i) {
-      var p = proc.Parameters[i];
-      if (p.Type is ProcPtrType) {
-        this.AddClosureArgument(arguments[i], args);   // a delegate crosses as its four words
+    foreach (var argument in directCall.Arguments) {
+      var value = argument.Value;
+      var parameterType = argument.ParameterType;
+      if (parameterType is ProcPtrType) {
+        this.AddClosureArgument(value, args);   // a delegate crosses as its four words
         continue;
       }
-      args.Add(p.Type is UdtType
-        ? this.UdtAddress(arguments[i])                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
-        : p.Type is ArrayType
-          ? this.ArrayDescriptorArgument(arguments[i], arrayArguments)  // an array argument passes a descriptor, never element storage
-        : p.Type is StringType
-          ? this.StringArgument(arguments[i], p.ByVal, stringTemporaries)
-        : p.ByVal
-          ? this.Coerce(this.LowerExpr(arguments[i]), this._model.TypeOf(arguments[i]), p.Type)
-          : this.AddressOfArgument(arguments[i], p.Type));
+      args.Add(parameterType is UdtType
+        ? this.UdtAddress(value)                 // a record argument passes its address (BYVAL callee copies, BYREF uses it)
+        : parameterType is ArrayType
+          ? this.ArrayDescriptorArgument(value, arrayArguments)  // an array argument passes a descriptor, never element storage
+        : parameterType is StringType
+          ? this.StringArgument(value, argument.ByValue, stringTemporaries)
+        : argument.ByValue
+          ? this.Coerce(this.LowerExpr(value), this._model.TypeOf(value), parameterType)
+          : this.AddressOfArgument(value, parameterType));
     }
-    var call = this._b.Call(callee.ReturnType, callee, IrConventionOf(proc.CallConv), args);
+    var call = this._b.Call(callee.ReturnType, callee, IrConventionOf(directCall.CallConvention), args);
     // The descriptor handed over is a block built for this call, so a REDIM or ERASE inside the
     // callee changed THAT and not the caller's own cells. Reading it back is what makes the caller
     // see the new bounds - which is what genuine PBC 3.50 does, and what tests/diff/DIFF124.BAS pins.
@@ -6306,7 +6352,7 @@ public sealed partial class IrLowering {
     // not a round trip introduced here: the direct emitter does the identical pair - rt_fixdn in the
     // callee's epilogue, rt_fixup where the caller stores the result - and pbvFixDigits is a runtime
     // cell, so neither half may be folded away.
-    var result = proc.ReturnType is BcdType { IsFixedPoint: true } fix
+    var result = directCall.ReturnType is BcdType { IsFixedPoint: true } fix
       ? this.Coerce(call, PbType.Ext, fix)
       : call;
     foreach (var temporary in stringTemporaries)

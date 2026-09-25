@@ -27,8 +27,8 @@ END IF
 
 ## IR implementation
 
-`PointerCheckElim` walks the dominator tree and records only explicit `ptr == null` / `ptr != null`
-branch facts. A later comparison of the same SSA value is folded when the corresponding true or false
+`PointerCheckElim` consumes the shared `IrValueFacts` program-point facade. Its nullness domain records only explicit `ptr == null` / `ptr != null`
+dominating branch facts. A later comparison of the same SSA value is folded when the corresponding true or false
 edge dominates it. Facts are tied to the SSA value rather than to a storage location, so reloading a
 pointer or string-handle cell after a call or store produces a new value and cannot accidentally reuse
 stale knowledge.

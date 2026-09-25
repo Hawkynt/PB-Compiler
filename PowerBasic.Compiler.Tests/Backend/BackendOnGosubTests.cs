@@ -33,8 +33,8 @@ public sealed class BackendOnGosubTests {
 
   private static (Cpu8086 Direct, Cpu8086 Routed, IReadOnlyList<string> RoutedNames) Execute(
       string source, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
     Assert.Multiple(() => {
@@ -98,7 +98,7 @@ public sealed class BackendOnGosubTests {
 
   /// <summary>Inside a procedure, where the labels and the return stack are the procedure's own.</summary>
   private const string _dispatchesInsideAProcedure = """
-    SUB Pick(BYVAL n AS INTEGER)
+    SUB Pick(BYVAL n AS INTEGER) NOINLINE
       DIM hit AS INTEGER
       hit = 0
       ON n GOSUB one, two
@@ -177,7 +177,7 @@ public sealed class BackendOnGosubTests {
   /// </para>
   /// </summary>
   private static string DispatchesThenGosubsInsideAnInlinedProcedure(int selector) => $"""
-    SUB Pick(BYVAL n AS INTEGER)
+    SUB Pick(BYVAL n AS INTEGER) NOINLINE
       DIM hit AS INTEGER
       hit = 0
       ON n GOSUB one, two
@@ -230,7 +230,7 @@ public sealed class BackendOnGosubTests {
   public void Emit_GivenTheInlinedDispatchAndGosub_WhenRendered_ThenBothEmittersProduceIt() {
     var model = Bind(DispatchesThenGosubsInsideAnInlinedProcedure(1));
     var module = IrLowering.TryLowerModule(model)!;
-    var pipeline = IrPassManager.Standard();
+    var pipeline = IrMiddleEndPipeline.Standard();
     pipeline.RunOnModule(module);
     Inliner.Run(module);
     pipeline.RunOnModule(module);

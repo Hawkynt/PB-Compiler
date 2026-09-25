@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.Backend.Targets;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -10,8 +11,7 @@ public sealed partial class CodeGenerator {
 
   private sealed record BackendSemanticMerge(
     IrFunction Function,
-    MFunction Machine,
-    IReadOnlyDictionary<int, Reg> Allocation,
+    IrMachineFunction MachineProduct,
     int[] ParameterOffsets,
     int ParameterBytes,
     bool ElideFrame);
@@ -28,7 +28,7 @@ public sealed partial class CodeGenerator {
   private void PrepareBackendSemanticMerges(IrModule module) {
     this._backendSemanticMerges = new(StringComparer.OrdinalIgnoreCase);
     this._backendSemanticMergesEmitted = false;
-    if (!this.UseExperimentalBackend || !this.Optimize || !this.OptimizeSize)
+    if (!this.Optimize || !this.OptimizeSize)
       return;
 
     var sourceFunctions = new Dictionary<string, ProcedureSymbol>(StringComparer.OrdinalIgnoreCase);
@@ -57,16 +57,13 @@ public sealed partial class CodeGenerator {
         continue;
       if (this.ExternalCalleeDecline(helper) is not null || !this.DataGlobalsResolve(helper, out _))
         continue;
-      if (InstructionSelector.TrySelect(helper, out _, this.SelectionTarget) is not { } machine
-          || UndefinedRuntimeCallee(machine) is not null)
-        continue;
-
-      MachineScheduler.Schedule(machine);
-      if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out _) is not { } allocation)
+      if (!IrMachinePipeline.TryLowerFunction(helper, this.SelectionTarget,
+          out var machineProduct, out _)
+          || UndefinedRuntimeCallee(machineProduct!.Function) is not null)
         continue;
 
       this._backendSemanticMerges[helper.Name] = new BackendSemanticMerge(
-        helper, machine, allocation, parameterOffsets, parameterBytes,
+        helper, machineProduct, parameterOffsets, parameterBytes,
         this.Optimize && FrameElision.IsCandidate(helper));
     }
   }
@@ -130,8 +127,8 @@ public sealed partial class CodeGenerator {
       if (this.Optimize && this.Cpu486)
         this._asm.AlignCode(16);
       this._asm.MarkLabel(this._asm.Lbl(helper.Function.Name));
-      MachineEmitter.EmitFunction(
-        this._asm, helper.Machine, helper.Allocation, helper.ParameterOffsets, helper.ParameterBytes,
+      X86ProductionEmitter.EmitFunction(
+        this._asm, helper.MachineProduct, helper.ParameterOffsets, helper.ParameterBytes,
         this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops,
         allowFrameElision: helper.ElideFrame,

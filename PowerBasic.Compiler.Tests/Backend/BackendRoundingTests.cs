@@ -63,8 +63,8 @@ public sealed class BackendRoundingTests {
   public void Execute_GivenARoundingOfARuntimeArgument_ThenTheRoutedPathAnswersWhatTheDirectOneDoes(
       string body, string suffix, string expected) {
     var source = Program(body, suffix);
-    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -88,8 +88,8 @@ public sealed class BackendRoundingTests {
   public void Execute_GivenARoundingUnderOptimization_ThenTheRoutedPathStillAnswersWhatTheDirectOneDoes(
       string body, string suffix, string expected) {
     var source = Program(body, suffix);
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());

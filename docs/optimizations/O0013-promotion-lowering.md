@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (16-bit and 32-bit forms) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Expressions.cs` — `EmitModularInt16`, the 32-bit promotion path, `StoreFoldedPromoted` |
-| **Gate** | `--optimize` |
+| **Stage** | IR (native x86 back end's legalizing and optimizing pipelines) |
+| **Source** | `Ir/Passes/IntegerRecovery.cs` — `Run`, `TryRecover`; requested by `CodeGen/CodeGenerator.Backend.cs` (`recoverIntegerArithmetic: true`) and scheduled in `IrMiddleEndPipeline.Legalize()` and `Standard()` |
+| **Gate** | native x86 back end; runs with and without `--optimize` |
 | **Verified by** | `tests/diff/DIFF113.BAS`, scenario `LongArithmeticStaysOffTheFpu` |
 | **Related** | [O0012](O0012-float-demotion.md), [O0016](O0016-value-fact-analysis.md), [O0055](O0055-ir-integer-recovery.md) |
 | **Split into** | [O0212](O0212-promotion-lowering-32.md) |
@@ -14,13 +14,18 @@
 
 PowerBASIC 2.0+ computes integral `+`, `-` and `*` **in floating point** — that
 is why `PRINT A% * B%` can show `9E+8` instead of a wrapped 16-bit product. The
-faithful lowering therefore drives integer arithmetic through the x87: `FILD`
-each operand, the FPU op, `FISTP` into a staging cell, then load the result.
+IR lowering therefore emits such a tree as float arithmetic over `sitofp`
+leaves, closed by a conversion back to the integer target. `IntegerRecovery`
+finds each `fptosi` into an integer type whose operand is a tree of
+`fadd`/`fsub`/`fmul` over `sitofp` leaves and integer-valued float constants,
+and rewrites it as the integer `add`/`sub`/`mul` tree over the same values.
 
 **This page covers the 16-bit form**, which is unconditionally legal: a 1- or
 2-byte store **wraps**, and the low bits of the exact x87 result *are* the
-modular result at every depth of the tree. So `+ - *`/negate trees over 16-bit
-integral leaves assigned into 16-bit integral targets run on the plain ALU.
+modular result at every depth of the tree. So `+ - *` trees over 16-bit integral leaves assigned into 16-bit integral
+targets run on the plain ALU. A leaf narrower than the target is sign- or
+zero-extended first; a wider leaf is accepted only where the range analysis
+proves it fits the target (`n% + LEN(s$)`).
 
 The 32-bit form is conditional — a 4-byte store does not wrap — and is the
 separate entry [O0212](O0212-promotion-lowering-32.md).
@@ -92,12 +97,9 @@ total& = total& + delta&  ' computed on the 32-bit ALU, sentinel on overflow
 - **16-bit**: modular arithmetic commutes with intermediate wrapping —
   `(a*2 + b*3) mod 2¹⁶ = ((a*2 mod 2¹⁶) + (b*3 mod 2¹⁶)) mod 2¹⁶` — so the tree
   may be evaluated integrally at every depth.
-- The tree walk explicitly checks the x87's 64-bit **mantissa budget**, which
-  closed a latent hole where a deep enough product could exceed it.
-- **32-bit**: the pass only fires when the value provably fits, or when the
-  guard reproduces the exact sentinel the float store would have left.
-- Checked arithmetic stays integral in the binder and never reaches this
-  lowering.
-- Constant folding had to learn the same store semantics: `StoreFoldedPromoted`
-  reproduces the sentinel rather than wrapping, because an optimizer that
-  changes a program's output is not an optimization.
+- Any other node in the tree — a division, a call, a non-integral constant, a
+  leaf of another width the ranges cannot bound — declines, and the float form
+  is kept.
+- Widening a narrower leaf into the target is exact: `L& = A2% * B2%` multiplies
+  in 32 bits, where an f32 product would lose the low bit of `32767 * 32767`.
+- A function with an armed error handler is never rewritten.

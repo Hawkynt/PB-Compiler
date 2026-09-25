@@ -562,7 +562,7 @@ public sealed partial class Parser {
     var name = command.Text.ToUpperInvariant();
     switch (name) {
       case "COMPILE":
-        RequireOneOf(command, arguments, "EXE", "UNIT", "CHAIN");
+        RequireOneOf(command, arguments, "EXE", "COM", "UNIT", "CHAIN");
         return;
       case "CPU":
         this.ValidateCpuMeta(command, arguments);

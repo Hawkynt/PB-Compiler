@@ -204,7 +204,7 @@ public sealed class IrDialectCarryTests {
   [Test]
   public void Select_GivenMbfStorage_ThenTheBackEndUsesTheConversionRoutines() {
     var module = Lower(_gwSingle, Dialect.Gw);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var machine = PowerBasic.Compiler.Backend.InstructionSelector.TrySelect(module.FindFunction("main")!, out var why);
     Assert.That(machine, Is.Not.Null, why);

@@ -32,7 +32,7 @@ public sealed class ArrayParameterRedimTests {
   private static string Run(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35), Dialect.Pb35);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var codegen = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false };
+    var codegen = new CodeGenerator(model) { Optimize = false};
     var image = codegen.EmitExecutable();
     Assert.That(codegen.Errors, Is.Empty, string.Join("; ", codegen.Errors));
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");

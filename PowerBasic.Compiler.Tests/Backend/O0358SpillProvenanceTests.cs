@@ -8,7 +8,7 @@ public sealed class O0358SpillProvenanceTests {
 
   [Test]
   public void LateLoadStore_GivenSelectorSlotAndLaterSpillSlot_ThenOnlyAllocatorOwnedSlotIsForwarded() {
-    var function = new MFunction("f") { VirtualRegisterCount = 4 };
+    var function = new X86MachineFunction("f") { VirtualRegisterCount = 4 };
     function.StackSlots.Add(2);                    // selected/source-owned slot 0
     var block = new MBlock("entry");
     function.Blocks.Add(block);

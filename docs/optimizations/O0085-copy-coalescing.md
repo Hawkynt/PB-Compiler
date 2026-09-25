@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial (a peephole coalesces the ABI-staging copy when the intermediate register dies immediately, including under `$OPTIMIZE SPEED`; allocator-driven coalescing over interference info is not wired) |
+| **Status** | ✅ Done — `CopyCoalescer` merges register-to-register copies before linear-scan allocation under any optimizing objective; the assembler peephole still coalesces a local staging copy. No cost model yet weighs coalescing out of AX |
 | **Stage** | Register allocation / assembler peephole |
+| **Source** | `Backend/CopyCoalescer.cs`; `Backend/LinearScanAllocator.cs` — `Allocate`, `TryCoalesced`; `Asm/Assembler.Peephole.cs` — `RunPeephole` |
 | **Related** | [O0027](O0027-copy-propagation.md), [O0038](O0038-instruction-scheduling.md), [O0058](O0058-386-register-allocation.md), [O0072](O0072-register-reassignment.md) |
 
 ## The idea
@@ -68,24 +69,24 @@ consumer would be hoisted before a coalesced producer if the write set remained
 stale, plus a length regression proving scheduling still sees an adjacent window
 after `CMP r,0` shrinks.
 
-This achieves the doc's observable *effect* for the local case without an
-allocator.
+This achieves the doc's observable *effect* for the local case on the final
+instruction stream.
 
-## Still planned
+## Allocator coalescing
 
-The doc's actual *mechanism* — the consumer allocated `AX` (or its target) directly
-by an allocator coalescing over live-range interference — is not wired. The
-graph-colouring allocator (`CodeGen/Ssa/RegisterAllocation.cs`) and `ScalarLiveness`
-interference exist and are unit-tested, but `RegisterAllocation.Compute` is
-analysis-only and not consumed by the emitter, so coalescing beyond the peephole's
-straight-line window (across branches, or a value produced far from its consumer)
-does not happen yet.
+Under `--optimize`, `LinearScanAllocator.Allocate` first tries `TryCoalesced`: it
+runs `CopyCoalescer` on a copy of the machine function and keeps the result only
+if that copy allocates. `CopyCoalescer` merges the two virtual registers of a
+plain register-to-register `MOV` when, for every instruction that defines one,
+the other is dead immediately after it (copies between them are exempt), using
+`LivenessAnalysis`; it repeats until no copy merges. This removes the back-edge
+and two-address copies out-of-SSA creates (`MOV t,i / ADD t,1 / MOV i,t` becomes
+`ADD i,1`) across branches as well as within a block. Values loaded by the
+prologue from argument cells, copies with clobbers and byte/word mismatches are
+not merged.
 
-## What it needs
+## Remaining
 
-- A real allocator with **interference information** — coalescing is meaningless
-  without live ranges, so this is a sub-item of
-  [O0058](O0058-386-register-allocation.md).
 - The x86-16 wrinkle from [O0072](O0072-register-reassignment.md): the
   accumulator forms are shorter encodings, so coalescing a value *out of* AX can
   grow the code even as it removes an instruction. The cost model

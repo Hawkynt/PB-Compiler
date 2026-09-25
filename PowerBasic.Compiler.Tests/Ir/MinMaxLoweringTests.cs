@@ -27,7 +27,7 @@ public sealed class MinMaxLoweringTests {
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
     if (optimize)
-      IrPassManager.Standard().RunOnModule(module!);
+      IrMiddleEndPipeline.Standard().RunOnModule(module!);
     return module!;
   }
 

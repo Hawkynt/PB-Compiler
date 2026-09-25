@@ -37,7 +37,7 @@ public sealed class BackendCpuTargetTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     if (routed) {
@@ -177,18 +177,18 @@ public sealed class BackendCpuTargetTests {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "S.BAS", Dialect.Pb36), "S.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
 
-    var generator = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+    var generator = new CodeGenerator(model) { Optimize = true};
     generator.EmitExecutable();
     // the program has to route, or this asserts about instructions nobody selected
     Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the module body did not route");
 
     var module = IrLowering.TryLowerModule(model);
     Assert.That(module, Is.Not.Null);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var fn in module!.Functions)
       if (!fn.IsDeclaration)
         IntegerRecovery.Run(fn);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var offenders = new List<string>();
     var shifts = 0;

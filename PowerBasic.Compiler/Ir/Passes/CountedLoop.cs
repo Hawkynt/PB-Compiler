@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -49,10 +51,80 @@ internal sealed record CountedLoop(
   }
 
   /// <summary>
+  /// Recognizes the same historical counted-loop contract while sourcing recurrence and trip-count facts from
+  /// shared loop/scalar-evolution analyses. This overload deliberately does not broaden the accepted shape.
+  /// </summary>
+  public static CountedLoop? Match(
+      IrFunction fn, IrBasicBlock header, IrLoopAnalysis loops, IrScalarEvolution scalarEvolution) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(header);
+    ArgumentNullException.ThrowIfNull(loops);
+    ArgumentNullException.ThrowIfNull(scalarEvolution);
+
+    if (header.Terminator is not IrCondBr { Condition: IrCmp test } branch
+        || !SupportsCountedPredicate(test.Pred))
+      return null;
+
+    var predecessors = fn.Blocks.Where(b => b.Terminator is { } t && t.Successors.Contains(header)).ToList();
+    if (predecessors.Count != 2)
+      return null;
+
+    var exit = branch.IfFalse;
+    var region = CollectRegion(header, branch.IfTrue, exit, out var latch);
+    if (region is null || latch is null)
+      return null;
+    var preheader = predecessors.SingleOrDefault(b => !ReferenceEquals(b, latch));
+    if (preheader is null)
+      return null;
+
+    var naturalLoop = loops.Loops.FirstOrDefault(loop => ReferenceEquals(loop.Header, header));
+    if (naturalLoop is null
+        || naturalLoop.Latches.Count != 1
+        || !ReferenceEquals(naturalLoop.Latches[0], latch)
+        || !ReferenceEquals(naturalLoop.UniqueEnteringBlock, preheader)
+        || test.Lhs is not IrPhi counter
+        || !ReferenceEquals(counter.Parent, header)
+        || test.Rhs is not IrConstantInt
+        || counter.IncomingFrom(preheader) is not IrConstantInt
+        || scalarEvolution.RecurrenceFor(counter) is not { } recurrence
+        || !ReferenceEquals(recurrence.Loop, naturalLoop)
+        || !ReferenceEquals(recurrence.Update.Lhs, counter)
+        || recurrence.Update.Rhs is not IrConstantInt step
+        || step.Value == 0
+        || scalarEvolution.ExactTripCount(naturalLoop) is not { } trips
+        || trips == 0)
+      return null;
+
+    return new(header, preheader, latch, exit, region, test, counter, trips);
+  }
+
+  /// <summary>
   /// The blocks the loop body occupies, or null when the shape is not one this can reason about.
   /// Collected by traversal, so both arms of an inner branch are inside rather than only the one a
   /// single walk would follow.
   /// </summary>
+  /// <summary>
+  /// The counter's first value and its step when both are constants of the counter's type and the
+  /// latch advances it by an add - the arithmetic progression the induction-variable passes rewrite.
+  /// </summary>
+  public bool TryConstantProgression(out IrConstantInt start, out IrConstantInt step) {
+    start = null!;
+    step = null!;
+    if (!this.Counter.Type.IsInteger
+        || this.Counter.IncomingFrom(this.Preheader) is not IrConstantInt initial
+        || this.Counter.IncomingFrom(this.Latch) is not IrBinary { Op: IrBinaryOp.Add } next
+        || !ReferenceEquals(next.Lhs, this.Counter)
+        || next.Rhs is not IrConstantInt increment
+        || !Equals(initial.Type, this.Counter.Type)
+        || !Equals(increment.Type, this.Counter.Type)
+        || increment.IsZero)
+      return false;
+
+    start = initial;
+    step = increment;
+    return true;
+  }
+
   private static HashSet<IrBasicBlock>? CollectRegion(IrBasicBlock header, IrBasicBlock entry, IrBasicBlock exit, out IrBasicBlock? latch) {
     latch = null;
     var region = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance) { header };
@@ -104,6 +176,9 @@ internal sealed record CountedLoop(
     }
     return null;
   }
+
+  private static bool SupportsCountedPredicate(IrCmpPred predicate)
+    => predicate is IrCmpPred.Slt or IrCmpPred.Sle or IrCmpPred.Sgt or IrCmpPred.Sge or IrCmpPred.Eq or IrCmpPred.Ne;
 
   private static bool Holds(IrCmpPred pred, long l, long r) => pred switch {
     IrCmpPred.Slt => l < r,

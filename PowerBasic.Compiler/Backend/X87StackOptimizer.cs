@@ -54,7 +54,7 @@ public static class X87StackOptimizer {
   private readonly record struct Subtree(int Start, int End, int Peak);
 
   /// <summary>Stackifies eligible x87 temporaries; returns the number of spill/reload groups removed.</summary>
-  public static int Run(MFunction function) {
+  public static int Run(X86MachineFunction function) {
     ArgumentNullException.ThrowIfNull(function);
 
     var total = RetainMultiUseValues(function, out var residentBlocks);
@@ -74,7 +74,7 @@ public static class X87StackOptimizer {
     return total;
   }
 
-  private static int RetainMultiUseValues(MFunction function, out HashSet<MBlock> residentBlocks) {
+  private static int RetainMultiUseValues(X86MachineFunction function, out HashSet<MBlock> residentBlocks) {
     residentBlocks = [];
     if (function.Blocks.Count == 0)
       return 0;
@@ -92,7 +92,7 @@ public static class X87StackOptimizer {
     return made;
   }
 
-  private static List<Candidate> MultiUseCandidates(MFunction function) {
+  private static List<Candidate> MultiUseCandidates(X86MachineFunction function) {
     var refs = new Dictionary<int, List<(MBlock Block, MInstr Instruction, MOperand.StackSlot Slot)>>();
     foreach (var block in function.Blocks)
       foreach (var instruction in block.Instructions)
@@ -263,7 +263,7 @@ public static class X87StackOptimizer {
 
   private static MInstr Op(MOpcode opcode) => new(opcode, [], MInstrEffect.None);
 
-  private static Dictionary<int, int> SlotUses(MFunction function) {
+  private static Dictionary<int, int> SlotUses(X86MachineFunction function) {
     var uses = new Dictionary<int, int>();
     foreach (var instruction in function.AllInstructions)
       foreach (var operand in instruction.Operands)
@@ -501,7 +501,7 @@ public static class X87StackOptimizer {
       this._dominators = dominators;
     }
 
-    public static FlowGraph Build(MFunction function) {
+    public static FlowGraph Build(X86MachineFunction function) {
       var byLabel = function.Blocks.ToDictionary(block => block.Label, StringComparer.Ordinal);
       var successors = function.Blocks.ToDictionary(block => block, _ => new List<MBlock>());
       var predecessors = function.Blocks.ToDictionary(block => block, _ => new List<MBlock>());

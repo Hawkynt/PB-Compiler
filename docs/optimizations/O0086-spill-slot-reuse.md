@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — direct-emitter CSE temporaries reuse physical 4-byte frame slots across proven-dead top-level runs; within-run coloring, argument staging and backend spill slots remain planned |
+| **Status** | ⬜ Not implemented on the IR path |
 | **Stage** | Frame layout |
+| **Source** | None. `Backend/Spiller.cs` gives every spilled value its own new stack slot; `Backend/MachineEmitter.cs` only drops slots nothing references any more when it lays out the frame |
 | **Related** | [O0003](O0003-common-subexpression-elimination.md), [O0019](O0019-zero-elision.md), [O0065](O0065-dead-frame-store-elimination.md) |
 
 ## The idea
@@ -14,9 +15,14 @@ not overlap can share one slot, shrinking the frame, shortening the prologue's
 zero fill ([O0019](O0019-zero-elision.md)) and keeping more accesses inside the
 short `[BP-disp8]` addressing form.
 
-## Implemented slice
+## Retired slice
 
-The direct emitter's CSE analysis already has an exact conservative lifetime
+Not implemented on the IR path; the syntax-level version was retired with the
+direct emitter. On the IR path CSE values live in SSA registers and the back end
+spills them like any other value, into slots that are never shared. What
+follows describes the retired slice.
+
+The direct emitter's CSE analysis had an exact conservative lifetime
 boundary: a hard barrier clears the whole live-expression cache. At a top-level
 barrier no CSE value from the preceding run can be reloaded afterwards, so the
 next independent run may restart physical slot numbering at zero.
@@ -49,6 +55,7 @@ whole procedure. After it they reserve one.
 
 ## Still planned
 
+- sharing backend spill slots whose live intervals do not overlap;
 - true define-to-last-use intervals for safe coloring **within** one straight-line
   run;
 - sharing argument-staging cells and backend allocator spill locations;
@@ -57,5 +64,5 @@ whole procedure. After it they reserve one.
 - measuring the secondary [O0019](O0019-zero-elision.md) win from the smaller
   frame and its shorter initialization.
 
-The implemented rule intentionally uses the CSE analysis's existing lifetime
-proof instead of inventing a parallel alias/control-flow model.
+The retired rule used the CSE analysis's lifetime proof instead of a parallel
+alias/control-flow model.

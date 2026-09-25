@@ -41,7 +41,7 @@ public sealed class IrBasicWriterCensusTests {
         module = IrLowering.TryLowerModule(model, out _);
         if (module is null)
           continue;
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
       } catch (Exception) {
         continue;
       }
@@ -110,7 +110,7 @@ public sealed class IrBasicWriterCensusTests {
           skipped.Add($"{dialect.CanonicalName()}/{name}: not lowered - {why}");
           continue;
         }
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
         rendered = IrBasicWriter.Write(module);
       } catch (Exception e) {
         // a module the writer declines is measured above, but WHICH module stopped counting is not,
@@ -190,6 +190,7 @@ public sealed class IrBasicWriterCensusTests {
     "pb36/DIFF109.BAS",
     "pb36/DIFF110.BAS",
     "pb36/DIFF112.BAS",
+    "pb36/DIFF113.BAS",
     "pb36/DIFF115.BAS",
     "pb36/DIFF116.BAS",
     "pb36/DIFF15.BAS",
@@ -252,6 +253,9 @@ public sealed class IrBasicWriterCensusTests {
     "pb36/DIFF97.BAS",
     "pb36/DIFF99.BAS",
     "pb36/HELLO.BAS",
+    "pb36/INCRLV.BAS",
+    "pb36/INSTRC.BAS",
+    "pb36/NARROW.BAS",
     "pb36/PRTUSING.BAS", // O0303 removes the otherwise unsupported constant rt_using_field call
     "pb36/RANGES.BAS",
     "pb36/SHAREDG.BAS",

@@ -4,7 +4,7 @@ namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
 /// Stage 5 of the x86-16 back end (docs/X86-BACKEND.md): emission. Given a selected
-/// <see cref="MFunction"/> and the linear-scan allocation (stage 4), it rewrites every virtual
+/// <see cref="X86MachineFunction"/> and the linear-scan allocation (stage 4), it rewrites every virtual
 /// register operand to its physical register, resolves each stack slot to a <c>[BP+disp]</c> frame
 /// cell, and emits the instruction through the existing <see cref="Assembler"/> - so encoding, length
 /// and fixups are handled there (no byte patching, the reason the asm-IL layer avoids the byte-level
@@ -21,7 +21,10 @@ public sealed class MachineEmitter {
   private readonly Func<string, Mem?>? _resolveData;
   private readonly int[] _paramOffsets;
 
-  private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
+  /// <summary>The bytes of stack slots the function still references - the frame the prologue allocates.</summary>
+  private readonly int _frameBytes;
+
+  private MachineEmitter(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation,
       Func<string, Label?>? resolveCallee = null, Func<string, Mem?>? resolveData = null,
       int[]? paramOffsets = null, int registerSpillBytes = 0) {
     PostRegisterAllocationPeepholes.Run(function, allocation);
@@ -39,19 +42,67 @@ public sealed class MachineEmitter {
     // them by pushing. Starting the slots BELOW that reservation is the whole of what keeps an alloca
     // from being handed the same address as parameter 0 - the two layouts are computed independently,
     // so overlapping them silently returns an argument where a local was stored.
+    //
+    // Trailing slots nothing references take no space. Spilling mints slots while the allocator
+    // searches, and the forwarding just above can remove a slot's last access; leaving the bytes in
+    // would keep a frame - and its PUSH BP / SUB SP - alive for nothing, and stop O0070 eliding it.
+    var kept = KeptSlotCount(function);
     this._slotDisp = new int[function.StackSlots.Count];
     var running = registerSpillBytes;
     for (var k = 0; k < function.StackSlots.Count; ++k) {
-      running += (function.StackSlots[k] + 1) & ~1;   // round each slot up to an even size
+      if (k < kept)
+        running += (function.StackSlots[k] + 1) & ~1;   // round each slot up to an even size
       this._slotDisp[k] = -running;
     }
+    this._frameBytes = running - registerSpillBytes;
     // one assembler label per block, so branches can target them
     foreach (var block in function.Blocks)
       this._labels[block.Label] = asm.DefineLabel(block.Label);
   }
 
+  /// <summary>
+  /// How many leading slots the frame keeps: up to and including the highest one something still
+  /// names - an operand, the zero-start set, the closure environment - or all of them when inline
+  /// assembly makes that unknowable. Only the TAIL can go. A value wider than a slot is laid out over
+  /// several consecutive ones and addressed from the lowest, which is the one with the highest index
+  /// (slots grow downward from BP), so a slot in the middle may be reached through its neighbour's
+  /// operands even though no operand names it.
+  /// </summary>
+  private static int KeptSlotCount(X86MachineFunction function) {
+    var highest = -1;
+    foreach (var instruction in function.AllInstructions) {
+      if (instruction.Opcode == MOpcode.InlineAsm)
+        return function.StackSlots.Count;
+      foreach (var operand in instruction.Operands)
+        if (operand is MOperand.StackSlot slot)
+          highest = Math.Max(highest, slot.Index);
+    }
+    if (function.ZeroStartSlots is { Count: > 0 } zero)
+      highest = Math.Max(highest, zero.Max());
+    if (function.ClosureEnvSlots is { } environment)
+      highest = Math.Max(highest, Math.Max(environment.Offset, environment.Segment));
+    return highest + 1;
+  }
+
+  /// <summary>
+  /// The BP-relative start and word count of the frame region the prologue must zero, or null when
+  /// nothing needs it. With no proof (<see cref="X86MachineFunction.ZeroStartSlots"/> null) that is the
+  /// whole frame; otherwise the smallest contiguous run covering every slot that can show its zero.
+  /// </summary>
+  private static (int Low, int Words)? ZeroStartRange(X86MachineFunction function, int[] slotDisp, int frame) {
+    if (function.ZeroStartSlots is not { } slots) {
+      var lowest = slotDisp.Length == 0 ? 0 : slotDisp.Min();
+      return frame == 0 ? null : (lowest, frame / 2);
+    }
+    if (slots.Count == 0)
+      return null;
+    var low = slots.Min(slot => slotDisp[slot]);
+    var high = slots.Max(slot => slotDisp[slot] + ((function.StackSlots[slot] + 1) & ~1));
+    return (low, (high - low) / 2);
+  }
+
   /// <summary>Emits the body of <paramref name="function"/> into <paramref name="asm"/> using the given register allocation.</summary>
-  public static void Emit(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
+  public static void Emit(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     var emitter = new MachineEmitter(asm, function, allocation);
     foreach (var block in function.Blocks) {
       asm.MarkLabel(emitter._labels[block.Label]);
@@ -98,18 +149,24 @@ public sealed class MachineEmitter {
   /// The optimized IR proved that the function owns no fixed local stack storage. The emitter still
   /// re-checks the final machine function and target ABI before acting on that proof.
   /// </param>
-  public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
+  public static void EmitFunction(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation,
       int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
       Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null, bool alignLoops = false,
       bool allowFrameElision = false, IReadOnlyList<Asm.Reg>? registerSpills = null,
       Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null) {
-    var spills = registerSpills ?? [];
+    var registerArguments = registerSpills ?? [];
+    // Register arguments are moved straight into their allocated registers when nothing needs them in
+    // the frame; only otherwise are they spilled below BP and read back like stack parameters.
+    var direct = registerArguments.Count > 0 && ArgumentsStayInRegisters(function, registerArguments.Count);
+    var spills = direct ? [] : registerArguments;
     var emitter = new MachineEmitter(asm, function, allocation, resolveCallee, resolveData, paramOffsets,
       registerSpillBytes: spills.Count * 2) { _emitInlineAsm = emitInlineAsm };
     var loopHeaders = alignLoops ? FindLoopHeaders(function) : null;
-    var elideFrame = CanElideFrame(function, allowFrameElision && spills.Count == 0);
+    var elideFrame = CanElideFrame(function, emitter._frameBytes, allowFrameElision && spills.Count == 0);
+    bool FromStack((int VirtualId, int ArgumentIndex, int ByteDelta) load)
+      => !direct || load.ArgumentIndex >= registerArguments.Count;
     var loadArgumentsThroughFrame = elideFrame && (function.HasArgumentPlan
-      ? function.ArgumentLoads.Any(load => allocation.ContainsKey(load.VirtualId))
+      ? function.ArgumentLoads.Any(load => FromStack(load) && allocation.ContainsKey(load.VirtualId))
       : paramOffsets.Length != 0);
 
     // A pb36 capturing lambda receives its ENVIRONMENT in BX:CX - carried by the closure rather than
@@ -132,27 +189,33 @@ public sealed class MachineEmitter {
       asm.Push(spill);
 
     if (!elideFrame) {
-      var frame = 0;
-      foreach (var size in function.StackSlots)
-        frame += (size + 1) & ~1;                      // word-aligned space for allocas / spills
+      var frame = emitter._frameBytes;                 // word-aligned space for allocas / spills
       if (frame > 0) {
         asm.Sub(Asm.Reg.SP, (Imm)frame);
-        // PB gives every local a zero start, and the frame is where the locals live - the direct path
-        // spells this REP STOSW over the whole frame and so does this one. Skipping it is not a size
-        // optimization here, it is a miscompile: a SUB with DIM a%(0 TO 49) that writes one element and
-        // sums all fifty read forty-nine words of whatever the last call left on the stack. That is
-        // exactly how it was found, and it read as plausible numbers rather than as a crash.
+        // PB gives every local a zero start, and the frame is where the locals live. Skipping it where
+        // a local CAN be read first is not a size optimization, it is a miscompile: a SUB with
+        // DIM a%(0 TO 49) that writes one element and sums all fifty read forty-nine words of whatever
+        // the last call left on the stack. That is exactly how it was found, and it read as plausible
+        // numbers rather than as a crash.
+        //
+        // Unoptimized, the whole frame is filled. Optimized selection proves which slots can show their
+        // zero (ZeroStartSlots) and only those are filled - usually none, since spill and scratch slots
+        // are always written first and most locals are assigned before they are read.
         //
         // It has to happen before the arguments are loaded, because it clobbers AX, CX, DI and ES - at
-        // this point no allocated register holds anything yet. Spill slots get zeroed along with the
-        // allocas; they are written before they are read, so it costs only the instruction.
-        asm.Push(Asm.Reg.DS);
-        asm.Pop(Asm.Reg.ES);
-        asm.Mov(Asm.Reg.DI, Asm.Reg.SP);
-        asm.Mov(Asm.Reg.CX, (Imm)(frame / 2));
-        asm.Xor(Asm.Reg.AX, Asm.Reg.AX);
-        asm.Rep();
-        asm.Stosw();
+        // this point no allocated register holds anything yet.
+        if (ZeroStartRange(function, emitter._slotDisp, frame) is var (low, words)) {
+          asm.Push(Asm.Reg.DS);
+          asm.Pop(Asm.Reg.ES);
+          if (low == -(frame + spills.Count * 2))
+            asm.Mov(Asm.Reg.DI, Asm.Reg.SP);
+          else
+            asm.Lea(Asm.Reg.DI, Asm.Mem.Word(Asm.Reg.BP, low));
+          asm.Mov(Asm.Reg.CX, (Imm)words);
+          asm.Xor(Asm.Reg.AX, Asm.Reg.AX);
+          asm.Rep();
+          asm.Stosw();
+        }
       }
     }
 
@@ -169,8 +232,16 @@ public sealed class MachineEmitter {
     // instead carry one dword entry, in which case the prologue performs one operand-size-prefixed load.
     // A function selected before the explicit table existed (or built by hand in a test) keeps the
     // positional one-word-per-argument form.
+    // Register arguments first, while every argument register still holds its argument.
+    if (direct)
+      EmitParallelMoves(asm, [.. function.ArgumentLoads
+        .Where(load => !FromStack(load) && allocation.ContainsKey(load.VirtualId))
+        .Select(load => (allocation[load.VirtualId], registerArguments[load.ArgumentIndex]))]);
+
     if (function.HasArgumentPlan)
       foreach (var (virtualId, argumentIndex, byteDelta) in function.ArgumentLoads) {
+        if (!FromStack((virtualId, argumentIndex, byteDelta)))
+          continue;
         if (allocation.TryGetValue(virtualId, out var reg)) {
           var offset = paramOffsets[argumentIndex] + byteDelta;
           asm.Mov(reg, reg.IsDword()
@@ -203,14 +274,62 @@ public sealed class MachineEmitter {
   }
 
   /// <summary>
+  /// Whether a register convention's arguments can go straight from their argument registers to the
+  /// ones the allocator chose. Not when an instruction reads one as its frame cell, not when the frame
+  /// gets a zero fill (it runs first and clobbers AX and CX), and not with inline assembly or without
+  /// an explicit argument plan, which both address parameters through the frame.
+  /// </summary>
+  private static bool ArgumentsStayInRegisters(X86MachineFunction function, int registerArguments)
+    => function.HasArgumentPlan
+       && (function.StackSlots.Count == 0 || function.ZeroStartSlots is { Count: 0 })
+       && !function.AllInstructions.Any(instruction => instruction.Opcode == MOpcode.InlineAsm
+            || instruction.Operands.Any(operand => operand is MOperand.ParamCell { ArgumentIndex: var index }
+                 && index < registerArguments));
+
+  /// <summary>Emits the register moves <see cref="SequenceParallelMoves"/> orders.</summary>
+  private static void EmitParallelMoves(Assembler asm, List<(Asm.Reg Destination, Asm.Reg Source)> moves) {
+    foreach (var (exchange, destination, source) in SequenceParallelMoves(moves))
+      if (exchange)
+        asm.Xchg(destination, source);
+      else
+        asm.Mov(destination, source);
+  }
+
+  /// <summary>
+  /// Orders register moves that must all read their sources before any writes one - a destination may
+  /// be another move's source, and two may swap. A move whose destination no pending move still reads
+  /// goes first; what remains is a cycle, broken by an exchange.
+  /// </summary>
+  internal static List<(bool Exchange, Asm.Reg Destination, Asm.Reg Source)> SequenceParallelMoves(
+      IEnumerable<(Asm.Reg Destination, Asm.Reg Source)> moves) {
+    var steps = new List<(bool Exchange, Asm.Reg Destination, Asm.Reg Source)>();
+    var pending = moves.Where(move => move.Destination != move.Source).ToList();
+    while (pending.Count > 0) {
+      var ready = pending.FindIndex(move => !pending.Any(other => other.Source == move.Destination));
+      if (ready >= 0) {
+        steps.Add((false, pending[ready].Destination, pending[ready].Source));
+        pending.RemoveAt(ready);
+        continue;
+      }
+      var (destination, source) = pending[0];
+      steps.Add((true, destination, source));
+      pending.RemoveAt(0);
+      // the value that sat in the destination now sits in the source
+      pending = [.. pending.Select(move => move.Source == destination ? (Destination: move.Destination, Source: source) : move)
+        .Where(move => move.Destination != move.Source)];
+    }
+    return steps;
+  }
+
+  /// <summary>
   /// Whether the machine function still satisfies the middle-end frame-free proof after instruction
   /// selection and register allocation. Incoming stack parameters are not persistent frame state:
   /// register-resident values can be copied through BP at entry and BP restored before the body starts.
   /// A parameter that remains a <see cref="MOperand.ParamCell"/> in the body still needs BP throughout,
   /// as does any alloca/spill slot or inline assembly.
   /// </summary>
-  private static bool CanElideFrame(MFunction function, bool requested) {
-    if (!requested || function.StackSlots.Count != 0)
+  private static bool CanElideFrame(X86MachineFunction function, int frameBytes, bool requested) {
+    if (!requested || frameBytes != 0)
       return false;
     foreach (var instruction in function.AllInstructions) {
       if (instruction.Opcode == MOpcode.InlineAsm)
@@ -225,7 +344,7 @@ public sealed class MachineEmitter {
   /// Finds loop headers from machine layout: a successor at or before its predecessor is a backward
   /// edge, and its target is the block a repeated iteration re-enters.
   /// </summary>
-  private static HashSet<string> FindLoopHeaders(MFunction function) {
+  private static HashSet<string> FindLoopHeaders(X86MachineFunction function) {
     var positions = function.Blocks
       .Select((block, index) => (block.Label, Index: index))
       .ToDictionary(item => item.Label, item => item.Index, StringComparer.Ordinal);
@@ -317,6 +436,13 @@ public sealed class MachineEmitter {
           asm.Imul(factor);
         else
           asm.Imul(this.Reg(ops[0]));
+        break;
+      // the unsigned twin: DX:AX = AX * r/m16
+      case MOpcode.Mul when ops.Count == 1:
+        if (this.ToSource(ops[0]) is Mem multiplier)
+          asm.Mul(multiplier);
+        else
+          asm.Mul(this.Reg(ops[0]));
         break;
       // TEST is CMP's bitwise twin - it sets the flags from an AND and keeps neither result, which is
       // how a membership mask's bit 0 is asked about without destroying the mask

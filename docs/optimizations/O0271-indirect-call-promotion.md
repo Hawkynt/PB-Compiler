@@ -25,14 +25,20 @@ The direct arm is now visible to the existing inliner and subsequent SSA passes.
 original `IrCall`, with the same callee value, arguments and calling convention, so correctness does not
 depend on the profile being right.
 
+Before profile profitability is consulted, O0271 queries the shared cached
+`IrFunctionTargetAnalysis`. If the complete target set is already one non-null function, O0271 leaves
+the site untouched: O0279 can replace it directly without paying for a guard and indirect fallback.
+Profile promotion is therefore reserved for genuinely incomplete target sets.
+
 For non-void calls the two results meet in a continuation phi. Splitting the block also repairs phi
 predecessor labels on the old successors, exactly as the ordinary inliner does when it moves a
 terminator into a continuation block.
 
 ## Profitability and safety
 
-The first-target threshold follows LLVM's default indirect-call-promotion profitability rule: the
-candidate must account for at least 30% of executions at the site. O0271 deliberately emits only one
+The default targetless profitability policy retains LLVM's documented 30% first-target threshold, but
+the threshold is owned by `IIrCallCostModel` rather than by O0271 itself. The candidate must therefore
+be admitted by the active target/objective cost model. O0271 deliberately emits only one
 guard, so it additionally requires that the hottest count is unique instead of using profile-list order
 to break a tie.
 

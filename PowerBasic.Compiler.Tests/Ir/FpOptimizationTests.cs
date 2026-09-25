@@ -24,7 +24,7 @@ public sealed class FpOptimizationTests {
     var sum = block.Append(new IrBinary(IrBinaryOp.FAdd, product, c));
     block.Append(new IrRet(sum));
 
-    IrPassManager.Standard(includeModulePasses: false).RunToFixpoint(function);
+    IrMiddleEndPipeline.Standard(includeModulePasses: false).RunToFixpoint(function);
 
     Assert.Multiple(() => {
       Assert.That(product.FastMathFlags, Is.EqualTo(IrFastMathFlags.None));

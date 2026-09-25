@@ -33,7 +33,7 @@ public sealed class BackendByteParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Procedure_GivenUnsignedByteParameterAndResult_ThenRoutedExecutionMatchesDirect(bool optimize) {
-    var routed = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind()) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
     Assert.Multiple(() => {
@@ -42,7 +42,7 @@ public sealed class BackendByteParameterRoutingTests {
       Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the BYTE caller did not route");
     });
 
-    var direct = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = false };
+    var direct = new CodeGenerator(Bind()) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
     var expected = Cpu8086.Run(directImage);

@@ -3,20 +3,21 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Pre-emission analysis |
-| **Source** | `CodeGen/OptCommonSubexpr.cs` |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/Gvn.cs` — no pass of its own |
 | **Gate** | `--optimize` |
-| **IR** | ✅ Falls out of SSA + `Gvn` — the test dominates both arms, so a condition recomputed inside the arm it guards is numbered to the test. Verified by `CseShapeTests` |
+| **Verified by** | `CseShapeTests` |
 | **Split from** | [O0003](O0003-common-subexpression-elimination.md) |
 
 ## What it is
 
-The condition of an `IF` is evaluated **unconditionally** and dominates every
-arm, so its subexpressions are cacheable like any others. Registering them is
-what lets an arm reuse a value the test just computed.
+The condition of an `IF` is evaluated **unconditionally** and its block
+dominates every arm, so `Gvn` numbers a subexpression recomputed inside an arm
+to the one the test just computed.
 
-Only the **first** condition qualifies: an `ELSEIF`'s condition runs only when
-the preceding ones were false, so it does not dominate the arms below it.
+An `ELSEIF`'s condition runs only when the preceding ones were false, so its
+block dominates only the arms after it; a value it computes is reused there and
+nowhere else.
 
 ## Sample
 
@@ -25,11 +26,11 @@ DIM a%(0 TO 99), i%, m%
 IF a%(i%) > m% THEN m% = a%(i%)
 ```
 
-The element read inside the condition defines the slot; the assignment in the
-arm reloads it ([O0187](O0187-redundant-array-load.md)).
+The element read inside the condition is the leader; the read in the arm is
+replaced by it ([O0187](O0187-redundant-array-load.md)).
 
 ## Why it is safe
 
 Dominance is the entire argument: a value computed in the condition has been
-computed on every path that reaches an arm. The `ELSEIF` restriction is exactly
-where that argument stops holding.
+computed on every path that reaches an arm. `Gvn`'s table is scoped to the
+dominator tree, so a value is never reused where it does not dominate.

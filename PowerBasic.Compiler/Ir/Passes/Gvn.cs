@@ -17,13 +17,26 @@ public static class Gvn {
 
   /// <summary>Eliminates redundant computations and unchanged loads; returns how many instructions were removed.</summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return IrFunctionPassPipeline.RunStandalone(fn, "gvn", Run);
+  }
+
+  /// <summary>Runs GVN using shared dominator and Memory SSA analyses.</summary>
+  public static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
     if (fn.Entry is null)
-      return 0;
-    var dom = IrDominators.Build(fn)!;
+      return IrPassResult.Unchanged;
+
+    var dom = analyses.Get(IrAnalyses.Dominators)!;
     var children = DomChildren(fn, dom);
-    var ctx = new Context(IrMemorySsa.Build(fn));
+    var ctx = new Context(analyses.Get(IrAnalyses.MemorySsa));
     ctx.Visit(fn.Entry, children);
-    return ctx.Removed;
+    return ctx.Removed == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(ctx.Removed, IrAnalysisSets.Cfg);
   }
 
   private static Dictionary<IrBasicBlock, List<IrBasicBlock>> DomChildren(IrFunction fn, IrDominators dom) {
@@ -76,12 +89,13 @@ public static class Gvn {
       IrCast x => $"x{x.Op}:{x.Type}({this.Operand(x.Value)})",
       IrGep g => $"g({this.Operand(g.BasePtr)},{this.Operand(g.ByteOffset)})",
       IrLoad load => $"l{load.Type}({this.Operand(load.Pointer)})@{this.MemoryVersion(load)}",
-      // A call is numbered only when the callee is on the checked purity list - an entry that answers
-      // the same for the same arguments and leaves nothing behind, so the second one is redundant.
-      // FunctionSummaries.IsPureExternal carries the argument for each row; everything else, including
-      // every string entry that consumes or allocates a handle, stays unnumbered.
-      IrCall { Callee: IrFunction callee } call when FunctionSummaries.IsPureExternal(callee.Name)
+      IrCall { Callee: IrFunction callee } call when IrEffects.ForInstruction(call).CanCse
         => $"r{callee.Name}({string.Join(',', call.Args.Select(this.Operand))})",
+      // a deterministic call that only READS - LEN of a string's descriptor - is numbered like a load:
+      // the same question over the same memory version is the same answer
+      IrCall { Callee: IrFunction callee } call when IsDeterministicRead(call)
+          && this._memorySsa.AccessFor(call) is IrMemoryUse use
+        => $"r{callee.Name}({string.Join(',', call.Args.Select(this.Operand))})@{this.VersionId(use.DefiningAccess)}",
       _ => null,                                       // stores/other calls/allocas/phis/terminators are not numbered
     };
 
@@ -89,8 +103,14 @@ public static class Gvn {
       var clobber = this._memorySsa.GetClobberingAccess(load);
       if (clobber is IrMemoryLiveOnEntry)
         return "entry";
-      if (!this._memoryIds.TryGetValue(clobber, out var id))
-        this._memoryIds[clobber] = id = this._nextMemoryId++;
+      return this.VersionId(clobber);
+    }
+
+    private string VersionId(IrMemoryAccess version) {
+      if (version is IrMemoryLiveOnEntry)
+        return "entry";
+      if (!this._memoryIds.TryGetValue(version, out var id))
+        this._memoryIds[version] = id = this._nextMemoryId++;
       return "m" + id.ToString(CultureInfo.InvariantCulture);
     }
 
@@ -114,6 +134,10 @@ public static class Gvn {
       return this._ids[v] = this._nextId++;
     }
   }
+
+  /// <summary>A call whose only effect is reading memory, and whose answer depends on nothing else.</summary>
+  internal static bool IsDeterministicRead(IrCall call)
+    => IrEffects.ForInstruction(call) is { Deterministic: true, Effects: IrEffectKind.ReadsMemory };
 
   private static bool IsCommutative(IrBinaryOp op) =>
     op is IrBinaryOp.Add or IrBinaryOp.Mul or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor

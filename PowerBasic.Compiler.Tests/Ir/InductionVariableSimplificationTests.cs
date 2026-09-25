@@ -146,7 +146,7 @@ public sealed class InductionVariableSimplificationTests {
     var store = new IrStore(derived, loop.Sink);
     loop.Body.InsertBefore(store, loop.Body.Terminator!);
 
-    var passes = IrPassManager.Standard(includeModulePasses: false);
+    var passes = IrMiddleEndPipeline.Standard(includeModulePasses: false);
     passes.VerifyEachPass = true;
     passes.RunToFixpoint(loop.Fn);
 

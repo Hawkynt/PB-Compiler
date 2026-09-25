@@ -3,20 +3,23 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Pre-emission analysis over tracked scalars |
-| **IR** | ✅ `Mem2Reg` + `Gvn` + `Dce` in `IrPassManager.Standard()` - a copy chain does not survive SSA construction at all; verified by `PortedMidEndOptimizationsTests` |
-| **Source** | `CodeGen/OptCopyProp.cs` |
+| **Stage** | IR middle end (SSA construction) |
+| **Source** | `Ir/Passes/Mem2Reg.cs`, `Ir/Passes/Gvn.cs`, `Ir/Passes/Dce.cs` (in `IrMiddleEndPipeline.Standard`) |
+| **Verified by** | `PortedMidEndOptimizationsTests` (`O0027_GivenAChainOfCopies_ThenTheyCollapseToTheSource`) |
 | **Gate** | `--optimize` |
 | **Related** | [O0002](O0002-dead-code-elimination.md), [O0017](O0017-sccp.md), [O0046](O0046-ir-gvn.md) |
 
 ## What it is
 
-A copy `y = x` — where the right-hand side is a bare read of another tracked
-scalar of the same type — makes `y` and `x` the same value. Every read of `y` is
-redirected to `x`'s cell and the copy statement disappears.
+A copy `y = x` — where the right-hand side is a bare read of another scalar of
+the same type — makes `y` and `x` the same value. There is no separate pass for
+it: when `Mem2Reg` promotes the variables to SSA (a module-level variable once
+`LocalizeGlobals`, [O0278](O0278-global-variable-localization.md), has made it
+a local), the load of `x` and the store to `y` disappear and every later read
+of `y` *is* the value `x` held, so the copy never exists as an instruction.
 
-Copy **chains** resolve to the root: in `b = a : c = b`, both `b` and `c` read
-`a`'s cell, and both copies drop.
+Copy **chains** resolve to the root the same way: in `b = a : c = b`, both `b`
+and `c` are `a`'s value, and both copies drop.
 
 ## Sample
 
@@ -65,9 +68,9 @@ PRINT a% + a%
 
 ## Why it is safe
 
-The source must be assigned **at most once**, so its cell is stable across the
-copy's live range; a chain resolves to the root whose cell is actually written,
-which guarantees a redirected read never lands on a cell nothing wrote. Escaping
-variables are not tracked. The pass composes with SSA dead-store elimination
-(which then removes the stores that fed only the dropped copies) and is
-byte-identical across the full differential harness.
+SSA gives every definition its own value, so a later write to `x` is a new
+value and cannot change what `y` already holds; phis merge the copies that
+reach a join. `Mem2Reg` promotes only stack slots whose every use is a direct
+load or store of the slot's own shape, so a variable whose address escapes stays
+in memory and is not propagated through. `Gvn` and `Dce` then remove the
+redundant and unused values that remain.

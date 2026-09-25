@@ -16,7 +16,7 @@ public sealed class BackendByRefRoutingTests {
 
   private static readonly TestCaseData[] _numericCases = [
     new TestCaseData("""
-      SUB Bump(n AS INTEGER)
+      SUB Bump(n AS INTEGER) NOINLINE
         n = n + 1
       END SUB
       DIM n AS INTEGER
@@ -25,7 +25,7 @@ public sealed class BackendByRefRoutingTests {
       PRINT n
       """).SetName("INTEGER storage"),
     new TestCaseData("""
-      SUB Bump(n AS WORD)
+      SUB Bump(n AS WORD) NOINLINE
         n = n + 1
       END SUB
       DIM n AS WORD
@@ -34,7 +34,7 @@ public sealed class BackendByRefRoutingTests {
       PRINT n
       """).SetName("WORD storage"),
     new TestCaseData("""
-      SUB Bump(n AS LONG)
+      SUB Bump(n AS LONG) NOINLINE
         n = n + 2
       END SUB
       DIM n AS LONG
@@ -43,7 +43,7 @@ public sealed class BackendByRefRoutingTests {
       PRINT n
       """).SetName("LONG storage"),
     new TestCaseData("""
-      SUB Bump(n AS DWORD)
+      SUB Bump(n AS DWORD) NOINLINE
         n = n + 1
       END SUB
       DIM n AS DWORD
@@ -52,7 +52,7 @@ public sealed class BackendByRefRoutingTests {
       PRINT n
       """).SetName("DWORD storage"),
     new TestCaseData("""
-      SUB Bump(n AS SINGLE)
+      SUB Bump(n AS SINGLE) NOINLINE
         n = n + .25
       END SUB
       DIM n AS SINGLE
@@ -61,7 +61,7 @@ public sealed class BackendByRefRoutingTests {
       PRINT n
       """).SetName("SINGLE storage"),
     new TestCaseData("""
-      SUB Bump(n AS DOUBLE)
+      SUB Bump(n AS DOUBLE) NOINLINE
         n = n + .125
       END SUB
       DIM n AS DOUBLE
@@ -83,12 +83,10 @@ public sealed class BackendByRefRoutingTests {
     var direct = new CodeGenerator(Bind(source)) {
       Optimize = optimize,
       OptimizeSpeed = optimizeSpeed,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(source)) {
       Optimize = optimize,
       OptimizeSpeed = optimizeSpeed,
-      UseExperimentalBackend = true,
     };
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -119,7 +117,7 @@ public sealed class BackendByRefRoutingTests {
   public void Execute_GivenTwoByRefParametersAliasingOneCell_WhenTheCalleeWritesBoth_ThenTheAliasSurvives(
       bool optimize) {
     const string source = """
-      SUB Mutate(a AS INTEGER, b AS INTEGER)
+      SUB Mutate(a AS INTEGER, b AS INTEGER) NOINLINE
         a = 10
         b = b + 1
       END SUB
@@ -141,7 +139,7 @@ public sealed class BackendByRefRoutingTests {
   [Test]
   public void Execute_GivenSpeedOptimization_WhenMainCallsAByRefProcedure_ThenBothSidesRouteWithTheStackAbi() {
     const string source = """
-      SUB Bump(value AS LONG)
+      SUB Bump(value AS LONG) NOINLINE
         value = value + 1
       END SUB
       DIM value AS LONG
@@ -166,7 +164,7 @@ public sealed class BackendByRefRoutingTests {
   public void Execute_GivenARecursiveByRefCall_WhenParametersAreForwarded_ThenTheOriginalCellsAreMutated(
       bool optimize) {
     const string source = """
-      SUB CountDown(n AS INTEGER, total AS LONG)
+      SUB CountDown(n AS INTEGER, total AS LONG) NOINLINE
         IF n <= 0 THEN EXIT SUB
         total = total + n
         n = n - 1

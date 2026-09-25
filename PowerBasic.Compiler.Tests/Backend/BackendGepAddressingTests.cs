@@ -24,12 +24,12 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendGepAddressingTests {
 
-  private static MFunction Select(string source, string procedure) {
+  private static X86MachineFunction Select(string source, string procedure) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     var fn = module!.Functions.First(f => f.Name.Equals(procedure, StringComparison.OrdinalIgnoreCase));
     var machine = InstructionSelector.TrySelect(fn, out var reason);
     Assert.That(machine, Is.Not.Null, $"{procedure} declined: {reason}");
@@ -37,7 +37,7 @@ public sealed class BackendGepAddressingTests {
   }
 
   /// <summary>The distinct registers used as a memory BASE - the ones the spiller cannot relocate.</summary>
-  private static int DistinctBases(MFunction fn) => fn.AllInstructions
+  private static int DistinctBases(X86MachineFunction fn) => fn.AllInstructions
     .SelectMany(instruction => instruction.Operands)
     .OfType<MOperand.Memory>()
     .Where(memory => memory.Base is not null)

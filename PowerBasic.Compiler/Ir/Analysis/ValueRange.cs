@@ -2,7 +2,7 @@ namespace PowerBasic.Compiler.Ir.Analysis;
 
 /// <summary>
 /// A closed integer interval <c>[Lo, Hi]</c> over the value a program computes - the range half of
-/// the direct emitter's O16 lattice (<c>CodeGen/IntervalRange.cs</c>), restated for the IR.
+/// the O16 interval lattice the retired direct emitter kept over syntax, restated for the IR.
 ///
 /// <para>
 /// Values are held in the <b>mathematical</b> space the type denotes, not as bit patterns: an

@@ -63,8 +63,8 @@ public sealed class O0358RegisterAliasTests {
       "AX overwrites the low half of EAX, so a dword spill fact backed by EAX is invalid");
   }
 
-  private static (MFunction Function, MBlock Block, MOperand.StackSlot Slot) SpillFunction(MRegSize size) {
-    var function = new MFunction("f") { VirtualRegisterCount = 4 };
+  private static (X86MachineFunction Function, MBlock Block, MOperand.StackSlot Slot) SpillFunction(MRegSize size) {
+    var function = new X86MachineFunction("f") { VirtualRegisterCount = 4 };
     var block = new MBlock("entry");
     function.Blocks.Add(block);
     Peephole.Run(function);                         // selected frame boundary: no source-owned slots

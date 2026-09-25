@@ -55,15 +55,15 @@ public sealed class O0355O0358MachineOptimizationTests {
       new MInstrEffect([], [], ReadsFlags: false, WritesFlags: true, ReadsMemory: true, WritesMemory: true),
       clobbers: [Reg.AX, Reg.CX, Reg.DX]);
 
-  private static MFunction OneBlock(params MInstr[] instructions) {
-    var function = new MFunction("f") { VirtualRegisterCount = 16 };
+  private static X86MachineFunction OneBlock(params MInstr[] instructions) {
+    var function = new X86MachineFunction("f") { VirtualRegisterCount = 16 };
     var block = new MBlock("entry");
     block.Instructions.AddRange(instructions);
     function.Blocks.Add(block);
     return function;
   }
 
-  private static void MarkOptimized(MFunction function) => Peephole.Run(function);
+  private static void MarkOptimized(X86MachineFunction function) => MachineOptimizationState.Mark(function);
 
   [Test]
   public void Superoptimizer_GivenAddOneAndLaterFlagOverwrite_WhenRun_ThenSearchDiscoveredIncIsUsed() {
@@ -143,7 +143,7 @@ public sealed class O0355O0358MachineOptimizationTests {
 
   [Test]
   public void MachineCombiner_GivenSuccessorObservingFlags_WhenRun_ThenCompareIsPreservedAcrossTheCfgEdge() {
-    var function = new MFunction("f") { VirtualRegisterCount = 16 };
+    var function = new X86MachineFunction("f") { VirtualRegisterCount = 16 };
     var entry = new MBlock("entry");
     entry.Instructions.Add(Compare(0, 0));
     entry.Successors.Add("next");

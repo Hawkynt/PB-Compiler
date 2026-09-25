@@ -77,11 +77,13 @@ public sealed class IrMemoryPhi : IrMemoryAccess {
 /// Function-local Memory SSA overlay.
 ///
 /// <para>
-/// Stores, calls and inline assembly are memory definitions; ordinary loads are memory uses. Memory
-/// phis are placed at the iterated dominance frontier of blocks containing definitions, then the
-/// graph is renamed down the dominator tree exactly like ordinary SSA. Calls and inline assembly are
-/// deliberately opaque barriers. PB-specific precision lives in <see cref="IrAliasAnalysis"/>, not in
-/// the graph construction.
+/// Memory uses and definitions are derived from shared <see cref="IrModRefAnalysis"/> rather than
+/// instruction-class folklore. Ordinary loads are uses; stores and opaque calls/assembly are definitions;
+/// module-owned pipelines can additionally prove internal calls read-only or memory-free from cached
+/// function summaries. Memory phis are placed at the iterated dominance frontier of
+/// blocks containing definitions, then the graph is renamed down the dominator tree exactly like
+/// ordinary SSA. PB-specific location precision lives in <see cref="IrAliasAnalysis"/> backed by the
+/// shared <see cref="IrPointerIdentityAnalysis"/>, not in the graph construction.
 /// </para>
 ///
 /// <para>
@@ -98,18 +100,28 @@ public sealed class IrMemorySsa {
     = new(ReferenceEqualityComparer.Instance);
   private readonly Dictionary<IrBasicBlock, IrMemoryPhi> _phis
     = new(ReferenceEqualityComparer.Instance);
+  private readonly IrModRefAnalysis _modRef;
+  private readonly IrPointerIdentityAnalysis _pointerIdentity;
 
   private readonly record struct MemoryLocation(IrValue Pointer, IrType Type);
 
-  private IrMemorySsa(IrFunction function) {
+  private IrMemorySsa(
+      IrFunction function,
+      IrDominators? dominators,
+      IrModRefAnalysis modRef,
+      IrPointerIdentityAnalysis pointerIdentity) {
+    ArgumentNullException.ThrowIfNull(modRef);
+    ArgumentNullException.ThrowIfNull(pointerIdentity);
+    this._modRef = modRef;
+    this._pointerIdentity = pointerIdentity;
     this.LiveOnEntry = new IrMemoryLiveOnEntry();
     if (function.Entry is null)
       return;
 
-    var dominators = IrDominators.Build(function)!;
+    ArgumentNullException.ThrowIfNull(dominators);
     var definitionBlocks = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance);
     foreach (var block in dominators.ReversePostorder)
-      if (block.Instructions.Any(IsMemoryDef))
+      if (block.Instructions.Any(IsMemoryDefinition))
         definitionBlocks.Add(block);
 
     this.PlacePhis(definitionBlocks, dominators);
@@ -126,7 +138,23 @@ public sealed class IrMemorySsa {
   /// <summary>Builds the Memory SSA overlay for <paramref name="function"/>.</summary>
   public static IrMemorySsa Build(IrFunction function) {
     ArgumentNullException.ThrowIfNull(function);
-    return new(function);
+    return new(
+      function,
+      IrDominators.Build(function),
+      new IrModRefAnalysis(functionSummaries: null),
+      new IrPointerIdentityAnalysis());
+  }
+
+  /// <summary>Builds the Memory SSA overlay while reusing shared dominator and mod/ref analyses.</summary>
+  internal static IrMemorySsa Build(
+      IrFunction function,
+      IrDominators? dominators,
+      IrModRefAnalysis modRef,
+      IrPointerIdentityAnalysis pointerIdentity) {
+    ArgumentNullException.ThrowIfNull(function);
+    ArgumentNullException.ThrowIfNull(modRef);
+    ArgumentNullException.ThrowIfNull(pointerIdentity);
+    return new(function, dominators, modRef, pointerIdentity);
   }
 
   /// <summary>The memory access attached to an instruction, or null for a non-memory/unreachable instruction.</summary>
@@ -177,7 +205,7 @@ public sealed class IrMemorySsa {
         return this.FindClobber(use.DefiningAccess, location, activePhis);
 
       case IrMemoryDef definition:
-        return DefinitionMayClobber(definition, location)
+        return this.DefinitionMayClobber(definition, location)
           ? definition
           : this.FindClobber(definition.DefiningAccess, location, activePhis);
 
@@ -205,9 +233,10 @@ public sealed class IrMemorySsa {
     }
   }
 
-  private static bool DefinitionMayClobber(IrMemoryDef definition, MemoryLocation location)
+  private bool DefinitionMayClobber(IrMemoryDef definition, MemoryLocation location)
     => definition.Instruction switch {
-      IrStore store => IrAliasAnalysis.MayAlias(store.Pointer, store.Value.Type, location.Pointer, location.Type),
+      IrStore store => IrAliasAnalysis.MayAlias(
+        store.Pointer, store.Value.Type, location.Pointer, location.Type, this._pointerIdentity),
       _ => true, // calls, inline asm and any future opaque memory definition
     };
 
@@ -231,16 +260,15 @@ public sealed class IrMemorySsa {
     IrMemoryAccess current = this._phis.TryGetValue(block, out var phi) ? phi : incoming;
 
     foreach (var instruction in block.Instructions) {
-      if (instruction is IrLoad) {
-        this._accesses.Add(instruction, new IrMemoryUse(instruction, current));
+      var effects = this._modRef.ForInstruction(instruction);
+      if (effects.WritesMemory) {
+        var definition = new IrMemoryDef(instruction, current);
+        this._accesses.Add(instruction, definition);
+        current = definition;
         continue;
       }
-      if (!IsMemoryDef(instruction))
-        continue;
-
-      var definition = new IrMemoryDef(instruction, current);
-      this._accesses.Add(instruction, definition);
-      current = definition;
+      if (effects.ReadsMemory)
+        this._accesses.Add(instruction, new IrMemoryUse(instruction, current));
     }
 
     foreach (var successor in block.Successors)
@@ -263,6 +291,6 @@ public sealed class IrMemorySsa {
     return children;
   }
 
-  private static bool IsMemoryDef(IrInstruction instruction)
-    => instruction is IrStore or IrCall or IrInlineAsm;
+  private bool IsMemoryDefinition(IrInstruction instruction)
+    => this._modRef.ForInstruction(instruction).WritesMemory;
 }

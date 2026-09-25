@@ -58,6 +58,16 @@ public sealed class IrFunction : IrGlobalValue {
     this._hasConvention = true;
   }
 
+  /// <summary>
+  /// Replaces the definition ABI of a procedure the module owns completely - every caller is a direct
+  /// call in this module, whose sites are respecified with it (see <see cref="IrCall.SpecializeConvention"/>).
+  /// Only a whole-program pass may do this, and only where no outside caller can hold the old ABI.
+  /// </summary>
+  internal void SpecializeConvention(IrCallConvention convention) {
+    this._convention = convention;
+    this._hasConvention = true;
+  }
+
   /// <summary>The formal parameters in signature order.</summary>
   public IReadOnlyList<IrArgument> Parameters => this._parameters;
 

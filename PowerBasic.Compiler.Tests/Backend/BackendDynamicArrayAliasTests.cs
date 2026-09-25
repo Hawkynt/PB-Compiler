@@ -67,8 +67,8 @@ public sealed class BackendDynamicArrayAliasTests {
 
   /// <summary>Runs the program both ways, insisting the back end really took the module body.</summary>
   private static (string Direct, string Routed) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
@@ -117,7 +117,7 @@ public sealed class BackendDynamicArrayAliasTests {
   /// </summary>
   [Test]
   public void Allocate_GivenAValueDefinedBetweenACallAndItsResultMove_ThenItAvoidsTheResultRegister() {
-    var m = new MFunction("F");
+    var m = new X86MachineFunction("F");
     var entry = new MBlock("entry");
     m.Blocks.Add(entry);
     var intruder = new MOperand.Register(MReg.Virtual(0));

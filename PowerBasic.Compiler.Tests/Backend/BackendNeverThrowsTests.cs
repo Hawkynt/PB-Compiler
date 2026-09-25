@@ -51,7 +51,7 @@ public sealed class BackendNeverThrowsTests {
       var bound = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
       if (bound.Errors.Count > 0)
         return null;
-      var routed = new CodeGenerator(bound) { Optimize = optimize, UseExperimentalBackend = true };
+      var routed = new CodeGenerator(bound) { Optimize = optimize};
       routed.EmitExecutable();
       _ = routed.BackendRoutedNames.ToList();
       return null;
@@ -225,7 +225,7 @@ public sealed class BackendNeverThrowsTests {
         rejected.Add($"{bodyName}: {bound.Errors[0].Message}");
         continue;
       }
-      var gen = new CodeGenerator(bound) { Optimize = true, UseExperimentalBackend = true };
+      var gen = new CodeGenerator(bound) { Optimize = true};
       gen.EmitExecutable();
       var names = gen.BackendRoutedNames.ToList();
       if (names.Count > 0)
@@ -259,7 +259,7 @@ public sealed class BackendNeverThrowsTests {
   /// </para>
   /// </summary>
   private static readonly (string Name, string Source)[] _formerlyRaised = [
-    // MachineEmitter.EmitInlineAsm. The lowering proved the text parses against its OWN stand-in
+    // the hosted target machine lowering. The lowering proved the text parses against its own stand-in
     // symbols, where a name that is neither a variable nor a label answers as memory; at emission the
     // same name is the runtime label it really is, and the two disagree about what is an instruction.
     // LEA/INC/CMP/XCHG against a documented string-manager export are the four shapes that differ.
@@ -303,13 +303,13 @@ public sealed class BackendNeverThrowsTests {
 
     SemanticModel Bind() => Binder.Bind(
       Parser.Parse(Lexer.Tokenize(source, "AMBIG.BAS", Dialect.Pb36), "AMBIG.BAS", Dialect.Pb36), Dialect.Pb36);
-    var routed = new CodeGenerator(Bind()) { Optimize = false, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind()) { Optimize = false};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the module body must route");
     Assert.That(routed.BackendRoutedNames, Does.Contain("Bump"), "and so must the SUB that shares them");
 
-    var direct = new CodeGenerator(Bind()) { Optimize = false, UseExperimentalBackend = false };
+    var direct = new CodeGenerator(Bind()) { Optimize = false};
     var directImage = direct.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
 
@@ -322,50 +322,31 @@ public sealed class BackendNeverThrowsTests {
   }
 
   [Test]
-  public void FormerlyRaisingShapes_WhenCompiledRouted_ThenTheyDeclineAndBehaveLikeTheUnroutedBuild() {
+  public void FormerlyRaisingShapes_WhenCompiledRouted_ThenDeclinesAreHardFailuresAndNeverThrow() {
     var failures = new List<string>();
     foreach (var (name, source) in _formerlyRaised)
       foreach (var optimize in new[] { true, false }) {
         var label = $"{name} ({(optimize ? "optimized" : "unoptimized")})";
-        if (RoutedCompileFailure(source, name + ".BAS", optimize) is { } e) {
+        try {
+          var bound = Binder.Bind(
+            Parser.Parse(Lexer.Tokenize(source, name + ".BAS", Dialect.Pb36), name + ".BAS", Dialect.Pb36),
+            Dialect.Pb36);
+          var routed = new CodeGenerator(bound) { Optimize = optimize};
+          var image = routed.EmitExecutable();
+
+          if (image.Length != 0)
+            failures.Add($"{label}: mandatory routing decline produced an image");
+          if (!routed.BackendDeclines.Any())
+            failures.Add($"{label}: expected a recorded backend decline");
+          if (!routed.Errors.Any(e => e.Message.StartsWith("routing is mandatory and", StringComparison.Ordinal)))
+            failures.Add($"{label}: expected the mandatory-routing diagnostic");
+        } catch (Exception e) {
           failures.Add($"{label}: {Head(e)}");
-          continue;
         }
-        // and the decline has to be a real fallback, not merely a non-crash: the direct emitter takes
-        // the function and the program is the one it always was, diagnostics included
-        SemanticModel Bind() => Binder.Bind(
-          Parser.Parse(Lexer.Tokenize(source, name + ".BAS", Dialect.Pb36), name + ".BAS", Dialect.Pb36), Dialect.Pb36);
-        var direct = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = false };
-        var routed = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = true };
-        var directImage = direct.EmitExecutable();
-        var routedImage = routed.EmitExecutable();
-        if (!directImage.SequenceEqual(routedImage))
-          failures.Add($"{label}: declined but produced a different image than the direct build");
-        if (ProgramDiagnostics(direct) != ProgramDiagnostics(routed))
-          failures.Add($"{label}: direct reported {ProgramDiagnostics(direct)} diagnostics, "
-            + $"routed {ProgramDiagnostics(routed)}");
       }
 
     Assert.That(failures, Is.Empty, "\n  " + string.Join("\n  ", failures));
   }
-
-  /// <summary>
-  /// What the PROGRAM had to say, which is what the comparison above is about - and never what the
-  /// harness had to say about routing.
-  ///
-  /// <para>
-  /// Under <c>PBC_X_BACKEND_STRICT</c> a decline becomes a diagnostic of its own, so the routed build
-  /// of a program that declines reports one more than the direct build of the same program and the two
-  /// stopped comparing equal. That is the flag doing its job, not a difference in the program. All four
-  /// rows here are inline asm the ASSEMBLER refuses - <c>pbc --no-x-backend</c> answers
-  /// <c>inline asm 'LEA BX, GetStrLoc': Register, memory operands expected</c> for every one of them -
-  /// so they are not routing gaps at all: they do not compile on either path, and what this fixture
-  /// asserts of them is that the routed build says the same thing rather than raising.
-  /// </para>
-  /// </summary>
-  private static int ProgramDiagnostics(CodeGenerator generator)
-    => generator.Errors.Count(e =>
-      !e.Message.StartsWith("routing is mandatory and", StringComparison.Ordinal));
 
   /// <summary>
   /// And the corpus half needs the same guarantee: at least one corpus program must really route,
@@ -389,7 +370,7 @@ public sealed class BackendNeverThrowsTests {
       }
       if (bound.Errors.Count > 0)
         continue;
-      var gen = new CodeGenerator(bound) { Optimize = true, UseExperimentalBackend = true };
+      var gen = new CodeGenerator(bound) { Optimize = true};
       try {
         gen.EmitExecutable();
         routed += gen.BackendRoutedNames.Any() ? 1 : 0;

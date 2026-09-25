@@ -96,6 +96,7 @@ BoundedMultiplyStaysOffTheFpu 9
 HotAccumulatorWinsTheRegister 7
 AndOrConditionShortCircuits 42
 ParityTestIsAMask -7
+ParityTestIsAMask 12
 END
 
 ' ---------------------------------------------------------------------------
@@ -419,13 +420,16 @@ END FUNCTION
 
 ' ---------------------------------------------------------------------------
 ' @scenario ZeroUsesXorIdiom
-' @what     assigning the constant zero
-' @expect   O8 emits XOR AX,AX rather than MOV AX,0
+' @what     a constant zero handed to the runtime in a register
+' @expect   O8 emits XOR AX,AX rather than MOV AX,0. The zero goes to OUT (port 80h, the POST
+'           diagnostic port, harmless) because PRINT alone no longer needs a register: the
+'           printed " 0 " is rendered at compile time.
 ' @assert   present xor-ax-ax
 ' @status   done
 ' ---------------------------------------------------------------------------
 SUB ZeroUsesXorIdiom() NOINLINE
   z% = 0
+  OUT &H80, z%
   PRINT "zero"; z%
 END SUB
 
@@ -612,7 +616,8 @@ END SUB
 ' @what     the commonest loop there is: accumulate over an array
 ' @expect   what a person writing this by hand would produce - the counter, the
 '           accumulator and the element pointer all live in registers, so the
-'           whole loop is CMP/JG, ADD DI,[BX], ADD BX,2, ADD SI,1, JMP. There is
+'           whole loop is ADD DI,[BX], ADD BX,2, INC AX, CMP/JLE (the pointer in
+'           BX or SI, whichever the allocator has free). There is
 '           no subscript arithmetic left at all: the address is not rebuilt from
 '           the counter (no MOV BX,AX), it is stepped, and the element is read
 '           straight into the ALU op rather than staged through a register with
@@ -620,8 +625,8 @@ END SUB
 ' @assert   absent imul-bx
 ' @assert   absent push-ax-pop-ax
 ' @assert   absent mov-bx-ax
-' @assert   present add-di-mem-bx
-' @assert   present add-bx-2
+' @assert   present add-di-mem-bx|add-di-mem-si
+' @assert   present add-bx-2|add-si-2
 ' @assert   smaller-than-unoptimized
 ' @status   done
 ' ---------------------------------------------------------------------------
@@ -692,9 +697,10 @@ END SUB
 ' @expect   the element is fetched once. Cross-block CSE keeps the value the
 '           condition loaded available to the arm the condition dominates, and
 '           redundant-load elimination then drops the reload of the slot as
-'           well, because the register still holds it: one MOV AX,[BX+disp]
-'           per iteration - the arm reuses the register, not the slot
-' @assert   count mov-ax-mem-bx 1
+'           well, because the register still holds it: one MOV r,[BX] per
+'           iteration (through a displacement, or a stepped pointer) - the arm
+'           reuses the register, not the slot
+' @assert   count mov-ax-mem-bx|mov-dx-mem-bx 1
 ' @assert   smaller-than-unoptimized
 ' @status   done
 ' ---------------------------------------------------------------------------
@@ -796,8 +802,13 @@ END SUB
 '           is zero, so it is dead here. The condition becomes AND ax,1 driving
 '           the branch on its own flags, not a full IDIV-style modulo followed by
 '           a compare
+' @note     TWO call sites with different arguments: from one, IPCP proves n and the SUB
+'           computes nothing - every absent-assertion here would hold for no reason. The
+'           byte bound is what separates the mask (63 bytes) from the sign-biased
+'           remainder it replaces (95), which uses neither CWD nor IDIV either.
 ' @assert   absent cwd
 ' @assert   absent idiv-bx
+' @assert   bytes<= 70
 ' @assert   smaller-than-unoptimized
 ' @status   done
 ' ---------------------------------------------------------------------------

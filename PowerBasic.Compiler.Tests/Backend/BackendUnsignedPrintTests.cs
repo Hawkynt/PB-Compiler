@@ -24,7 +24,7 @@ public sealed class BackendUnsignedPrintTests {
   }
 
   private static string Run(string source, bool routed) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
@@ -39,11 +39,11 @@ public sealed class BackendUnsignedPrintTests {
       PRINT d
       """), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var main = module.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     var m = InstructionSelector.TrySelect(main, out var reason);

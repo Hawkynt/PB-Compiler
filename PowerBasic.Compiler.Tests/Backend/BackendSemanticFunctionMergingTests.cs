@@ -24,10 +24,10 @@ public sealed class BackendSemanticFunctionMergingTests {
       DECLARE FUNCTION First%(BYVAL x%)
       DECLARE FUNCTION Second%(BYVAL x%)
 
-      PRINT First%(10)
-      PRINT Second%(10)
-      PRINT First%(-3)
-      PRINT Second%(-3)
+      PRINT First%(INP(&H60) + 10)
+      PRINT Second%(INP(&H60) + 10)
+      PRINT First%(INP(&H60) - 3)
+      PRINT Second%(INP(&H60) - 3)
       END
 
       FUNCTION First%(BYVAL x%)
@@ -59,7 +59,6 @@ public sealed class BackendSemanticFunctionMergingTests {
       var generator = new CodeGenerator(Bind(source)) {
         Optimize = true,
         OptimizeSize = true,
-        UseExperimentalBackend = routed,
       };
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
@@ -95,10 +94,10 @@ public sealed class BackendSemanticFunctionMergingTests {
       DECLARE FUNCTION First%(BYVAL x%)
       DECLARE FUNCTION Second%(BYVAL x%)
 
-      PRINT First%(10)
-      PRINT Second%(10)
-      PRINT First%(-3)
-      PRINT Second%(-3)
+      PRINT First%(INP(&H60) + 10)
+      PRINT Second%(INP(&H60) + 10)
+      PRINT First%(INP(&H60) - 3)
+      PRINT Second%(INP(&H60) - 3)
       END
 
       FUNCTION PlusOne%(BYVAL x%) NOINLINE
@@ -138,7 +137,6 @@ public sealed class BackendSemanticFunctionMergingTests {
       var generator = new CodeGenerator(Bind(source)) {
         Optimize = true,
         OptimizeSize = true,
-        UseExperimentalBackend = routed,
       };
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));

@@ -16,10 +16,10 @@ the equivalent BASIC the transformed program behaves like.
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 182 | 60 | 165 | 407 |
+| O — optimization passes | 178 | 77 | 152 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **196** | **60** | **165** | **421** |
+| **all** | **192** | **77** | **152** | **421** |
 
 **A 🟡 page's "Still planned" list can be behind the code, so check before building
 from it.** Of eight partial pages read closely on 2026-08-06, four named work that
@@ -38,14 +38,11 @@ implementing something and rediscovering it.
 O0286 carry their remaining work only in the status line, so skimming for the
 heading makes them look finished.
 
-*Three name the same blocker.* O0098 (balanced tree), O0099 (bit-test dispatch)
-and O0100 (perfect hash) each list "`LONG` subjects" as remaining, which reads as
-three items and is closer to one. `EmitSelect` already emits both
-`EmitSelectorInt16` and `EmitSelectorInt32`, and O0099's restriction is a single
-`kind == ValueKind.Int16` conjunct at the `TryEmitArmBitMask` call site — its mask
-machinery already works 32 bits wide under `$CPU 80386`. Widening the dispatch
-subject is one piece of work that moves three entries, which is worth knowing
-before picking any of them off individually.
+*Three named the same blocker.* O0098 (balanced tree), O0099 (bit-test dispatch)
+and O0100 (perfect hash) each listed "`LONG` subjects" as remaining, which read as
+three items and was one: widening the dispatch subject. That work has since
+landed, and all three now dispatch `LONG`/`DWORD` subjects; what each still lacks
+is listed in its own status line.
 
 **One entry, one optimization.** A page describes a single transformation.
 Where an ID once covered a family, the family is dissected: the original entry
@@ -81,19 +78,19 @@ Conventions used on every page:
 | ✅ | [O0008](O0008-peephole-zero-idiom.md) | Peephole / zero-idiom |
 | ✅ | [O0009](O0009-string-temp-economy.md) | String-temp economy |
 | ✅ | [O0010](O0010-redundant-statement-elimination.md) | Redundant-statement / `DEF SEG` coalescing |
-| ✅ | [O0011](O0011-literal-overlap-pooling.md) | Literal overlap pooling |
-| ✅ | [O0012](O0012-float-demotion.md) | Float demotion |
+| 🟡 | [O0011](O0011-literal-overlap-pooling.md) | Literal overlap pooling |
+| 🟡 | [O0012](O0012-float-demotion.md) | Float demotion |
 | ✅ | [O0013](O0013-promotion-lowering.md) | Promotion lowering |
-| ✅ | [O0014](O0014-tail-call-optimization.md) | Tail-call optimization |
-| ✅ | [O0015](O0015-udt-zero-cost.md) | UDT zero-cost copy/compare |
-| ✅ | [O0016](O0016-value-fact-analysis.md) | Value-fact analysis |
+| 🟡 | [O0014](O0014-tail-call-optimization.md) | Tail-call optimization |
+| 🟡 | [O0015](O0015-udt-zero-cost.md) | UDT zero-cost copy/compare |
+| 🟡 | [O0016](O0016-value-fact-analysis.md) | Value-fact analysis |
 | ✅ | [O0017](O0017-sccp.md) | SCCP / branch folding |
 | ✅ | [O0018](O0018-interprocedural-constant-propagation.md) | Interprocedural constant propagation |
 | ✅ | [O0019](O0019-zero-elision.md) | Definite-assignment zero elision |
-| ✅ | [O0020](O0020-idiom-replacement.md) | Algorithmic idiom replacement |
+| 🟡 | [O0020](O0020-idiom-replacement.md) | Algorithmic idiom replacement |
 | ✅ | [O0021](O0021-register-parameters.md) | Register parameters |
 | ✅ | [O0022](O0022-dead-procedure-elimination.md) | Dead procedure elimination |
-| ✅ | [O0023](O0023-dead-global-elimination.md) | Dead global / data tree-shaking |
+| 🟡 | [O0023](O0023-dead-global-elimination.md) | Dead global / data tree-shaking |
 | ✅ | [O0024](O0024-multi-concat.md) | Multi-concat single allocation |
 | ✅ | [O0025](O0025-pure-function-folding.md) | Pure-function compile-time evaluation |
 | ✅ | [O0026](O0026-auto-vectorization.md) | Auto-vectorization |
@@ -107,7 +104,7 @@ Conventions used on every page:
 | ✅ | [O0034](O0034-redundant-load-elimination.md) | Redundant-load elimination |
 | ✅ | [O0035](O0035-jump-relaxation.md) | Jump relaxation & threading |
 | ✅ | [O0036](O0036-constant-subscript-folding.md) | Constant subscript folding |
-| ✅ | [O0037](O0037-fixed-point-for-counters.md) | Fixed-point FOR counters |
+| ⬜ | [O0037](O0037-fixed-point-for-counters.md) | Fixed-point FOR counters |
 | ✅ | [O0038](O0038-instruction-scheduling.md) | Instruction scheduling |
 | ✅ | [O0039](O0039-inline-asm-scheduling.md) | Inline-asm scheduling |
 | ✅ | [O0040](O0040-identical-code-folding.md) | Identical-code folding |
@@ -147,7 +144,7 @@ Conventions used on every page:
 | ⬜ | [O0074](O0074-wider-vectorization.md) | Wider auto-vectorization |
 | ⬜ | [O0075](O0075-silent-fixed-point.md) | Silent fixed-point arithmetic |
 | ✅ | [O0076](O0076-algebraic-identities.md) | Algebraic identities & annihilators |
-| ✅ | [O0077](O0077-negation-idioms.md) | Negation idioms |
+| 🟡 | [O0077](O0077-negation-idioms.md) | Negation idioms |
 | 🟡 | [O0078](O0078-multiply-decomposition.md) | General multiply decomposition |
 | ✅ | [O0079](O0079-shared-divide.md) | Shared divide (quotient + remainder) |
 | ✅ | [O0080](O0080-division-special-cases.md) | Division special cases |
@@ -155,7 +152,7 @@ Conventions used on every page:
 | ✅ | [O0082](O0082-memory-operand-folding.md) | Memory operand folding |
 | ⬜ | [O0083](O0083-store-to-load-forwarding.md) | Store-to-load forwarding |
 | ⬜ | [O0084](O0084-cross-statement-register-caching.md) | Cross-statement register caching |
-| 🟡 | [O0085](O0085-copy-coalescing.md) | Register copy coalescing |
+| ✅ | [O0085](O0085-copy-coalescing.md) | Register copy coalescing |
 | ⬜ | [O0086](O0086-spill-slot-reuse.md) | Spill-slot reuse |
 | ⬜ | [O0087](O0087-rematerialization.md) | Rematerialization |
 | ✅ | [O0088](O0088-boolean-materialization-sbb.md) | Branchless truth values |
@@ -173,7 +170,7 @@ Conventions used on every page:
 | 🟡 | [O0100](O0100-perfect-hash-dispatch.md) | Perfect-hash dispatch |
 | 🟡 | [O0101](O0101-jump-table-compression.md) | Jump-table sharing & compression |
 | 🟡 | [O0102](O0102-return-value-forwarding.md) | Return-value forwarding |
-| 🟡 | [O0103](O0103-shared-epilogue.md) | Shared epilogue |
+| ⬜ | [O0103](O0103-shared-epilogue.md) | Shared epilogue |
 | ⬜ | [O0104](O0104-block-placement.md) | Block placement |
 | ⬜ | [O0105](O0105-hot-cold-splitting.md) | Hot/cold splitting |
 | ⬜ | [O0106](O0106-trace-formation.md) | Trace formation |
@@ -236,7 +233,7 @@ Conventions used on every page:
 | ⬜ | [O0163](O0163-dead-field-elimination.md) | Dead field elimination |
 | ⬜ | [O0164](O0164-partial-evaluation.md) | Partial evaluation |
 | ⬜ | [O0165](O0165-readonly-global-propagation.md) | Read-only global propagation |
-| ⬜ | [O0166](O0166-dead-call-result-elimination.md) | Dead call results |
+| ✅ | [O0166](O0166-dead-call-result-elimination.md) | Dead call results |
 | ⬜ | [O0167](O0167-tail-call-fact-propagation.md) | Tail-call fact propagation |
 | ⬜ | [O0168](O0168-recursive-argument-evolution.md) | Recursive argument evolution |
 | ⬜ | [O0169](O0169-returned-condition-propagation.md) | Returned conditions |
@@ -267,7 +264,7 @@ Conventions used on every page:
 | ✅ | [O0189](O0189-multiply-shift-add-shapes.md) | Multiply by `2^a ± 2^b` |
 | ✅ | [O0190](O0190-divide-power-of-two.md) | Integer divide by a power of two |
 | ✅ | [O0191](O0191-modulo-power-of-two.md) | Modulo by a power of two |
-| ✅ | [O0192](O0192-parity-mask.md) | Parity / zero-test modulo mask |
+| ⬜ | [O0192](O0192-parity-mask.md) | Parity / zero-test modulo mask |
 | ✅ | [O0193](O0193-subscript-shift-scaling.md) | Subscript scaling by shift |
 | ✅ | [O0194](O0194-accumulator-residency.md) | Hot accumulator in DI |
 | ✅ | [O0195](O0195-nested-counter-residency.md) | Nested FOR counter residency |
@@ -278,7 +275,7 @@ Conventions used on every page:
 | ✅ | [O0200](O0200-trivial-method-inlining.md) | Trivial TYPE method and property inlining |
 | ✅ | [O0201](O0201-inlined-procedure-purge.md) | Fully-inlined procedure purge |
 | ✅ | [O0202](O0202-int16-immediate-folding.md) | 16-bit immediate operand folding |
-| ✅ | [O0203](O0203-int32-immediate-folding.md) | 32-bit immediate operand folding |
+| 🟡 | [O0203](O0203-int32-immediate-folding.md) | 32-bit immediate operand folding |
 | ✅ | [O0204](O0204-inc-dec-idiom.md) | `INC`/`DEC` for ±1 |
 | ✅ | [O0205](O0205-or-self-zero-test.md) | Zero test as `OR reg,reg` |
 | ✅ | [O0206](O0206-memory-incr-in-place.md) | In-place memory `INCR`/`DECR` |
@@ -288,10 +285,10 @@ Conventions used on every page:
 | ✅ | [O0210](O0210-concat-chain-temp-reuse.md) | Concat-chain dead-temp reuse |
 | ✅ | [O0211](O0211-console-setter-elimination.md) | Redundant console-setter elimination |
 | ✅ | [O0212](O0212-promotion-lowering-32.md) | 32-bit promotion lowering |
-| ✅ | [O0213](O0213-cross-procedure-tail-call.md) | Cross-procedure tail call |
-| ✅ | [O0214](O0214-udt-compare-widening.md) | Whole-UDT compare widening |
-| ✅ | [O0215](O0215-udt-self-copy-elision.md) | UDT self-copy elision |
-| ✅ | [O0216](O0216-udt-self-compare-fold.md) | UDT self-compare folding |
+| 🟡 | [O0213](O0213-cross-procedure-tail-call.md) | Cross-procedure tail call |
+| ⬜ | [O0214](O0214-udt-compare-widening.md) | Whole-UDT compare widening |
+| ⬜ | [O0215](O0215-udt-self-copy-elision.md) | UDT self-copy elision |
+| ⬜ | [O0216](O0216-udt-self-compare-fold.md) | UDT self-compare folding |
 | ✅ | [O0217](O0217-bounds-check-elimination.md) | Bounds-check elimination by range |
 | ✅ | [O0218](O0218-range-comparison-folding.md) | Range-invariant comparison folding |
 | ✅ | [O0219](O0219-overflow-check-elimination.md) | Overflow-check elimination |
@@ -302,22 +299,22 @@ Conventions used on every page:
 | ✅ | [O0224](O0224-bounded-multiply-off-fpu.md) | Bounded multiply stays off the FPU |
 | ✅ | [O0225](O0225-ssa-construction.md) | SSA construction (CFG, dominators, phi placement) |
 | ✅ | [O0226](O0226-proven-constant-reads.md) | Cross-block proven-constant reads |
-| ✅ | [O0227](O0227-constant-fill-stosw.md) | Constant array fill → `REP STOSW` |
-| ✅ | [O0228](O0228-series-folding.md) | Arithmetic-series folding |
-| ✅ | [O0229](O0229-copy-loop-movsw.md) | Array copy loop → `REP MOVSW` |
+| ⬜ | [O0227](O0227-constant-fill-stosw.md) | Constant array fill → `REP STOSW` |
+| ⬜ | [O0228](O0228-series-folding.md) | Arithmetic-series folding |
+| ⬜ | [O0229](O0229-copy-loop-movsw.md) | Array copy loop → `REP MOVSW` |
 | ✅ | [O0230](O0230-jump-to-next-removal.md) | Jump-to-next removal |
 | ✅ | [O0231](O0231-loop-top-alignment.md) | Hot loop-top alignment |
 | ✅ | [O0232](O0232-procedure-entry-alignment.md) | Procedure entry alignment |
-| ✅ | [O0233](O0233-hardware-constant-divide.md) | Hardware divide for constant divisors |
+| 🟡 | [O0233](O0233-hardware-constant-divide.md) | Hardware divide for constant divisors |
 | ✅ | [O0234](O0234-quad-bitwise-inline.md) | Inline 64-bit bitwise operations |
 | ✅ | [O0235](O0235-shld-shrd-shifts.md) | `SHLD`/`SHRD` 64-bit shifts |
 | ✅ | [O0236](O0236-long-shift-rotate-collapse.md) | 32-bit shift/rotate collapse |
-| ✅ | [O0237](O0237-movzx-movsx-loads.md) | `MOVZX`/`MOVSX` byte loads |
-| ✅ | [O0238](O0238-setcc-relationals.md) | `SETcc` relational results |
-| ✅ | [O0239](O0239-stosd-array-zero.md) | `REP STOSD` array zero-fill |
-| ✅ | [O0240](O0240-stosd-loop-fill.md) | `REP STOSD` constant loop fill |
+| ⬜ | [O0237](O0237-movzx-movsx-loads.md) | `MOVZX`/`MOVSX` byte loads |
+| ⬜ | [O0238](O0238-setcc-relationals.md) | `SETcc` relational results |
+| 🟡 | [O0239](O0239-stosd-array-zero.md) | `REP STOSD` array zero-fill |
+| ⬜ | [O0240](O0240-stosd-loop-fill.md) | `REP STOSD` constant loop fill |
 | ✅ | [O0241](O0241-dword-string-copy.md) | DWORD-wide string copy |
-| ✅ | [O0242](O0242-movsd-block-copy.md) | DWORD block copy for TYPE and `LSET` |
+| 🟡 | [O0242](O0242-movsd-block-copy.md) | DWORD block copy for TYPE and `LSET` |
 
 ### O — planned sub-passes (dissected from the entries above)
 
@@ -580,23 +577,52 @@ Conventions used on every page:
 
 ## Where the passes run
 
-The principal entries, by stage (the dissected sub-passes run with their
-parents):
+The principal entries, by stage, in the order `Ir/Passes/IrMiddleEndPipeline.cs`
+runs them (the dissected sub-passes run with their parents; the per-function
+list is abridged):
 
 ```
-Binder → OptPruner (O0002, O0010) → OptIpcp (O0018) → OptPureFold (O0025)
-       → OptReachability / OptDeadGlobals (O0022, O0023)
-       → per body: SSA build → SCCP (O0017) → dead store (O0002)
-                   CSE / LICM (O0003, O0028) → copy prop (O0027)
-       → Emitter (O0001, O0004–O0008, O0011–O0016, O0019–O0021, O0024, O0026,
-                  O0029–O0033, O0036, O0037, O0041)
+Binder → IrLowering (bound model → typed SSA IR)
+       → RunNativeModule: Standard() twice
+           module:       array zero-fill (O0068)
+           per function: storage narrowing (O0057) → mem2reg (O0042)
+                         → data-layout transforms → loop-temporary reuse (O0290)
+                         → overflow versioning (O0308) → unroll (O0007)
+                         → instcombine (O0043) → SCCP (O0017, O0044)
+                         → correlated values (O0045) → pointer / range / conversion
+                           check elimination (O0351, O0352) → overflow coalescing (O0350)
+                         → scalar replacement (O0059, O0182) → mem2reg again
+                         → reassociation (O0061) → equality saturation (O0354)
+                         → float demotion (O0012) → IV simplification (O0111)
+                         → GVN (O0003, O0046) → redundant memory (O0047)
+                         → dead store (O0048) → interchange (O0122)
+                         → LICM (O0028, O0049) → unswitch / versioning (O0114, O0306)
+                         → DCE (O0050) → closed forms (O0134) → if-conversion (O0051)
+                         → simplify CFG (O0052) → tail recursion (O0014)
+                         → switch formation
+           module:       speed-only inlining and cloning → string passes
+                         → global localization → devirtualization
+                         → IPCP / dead parameters (O0018, O0069)
+                         → semantic merging (O0284, SIZE only)
+       → Inliner (O0006, O0053), then Standard() twice more if anything was inlined
+       → constant PRINT / INSTR specialization → address induction
+         → string stack promotion → memory-routine specialization (O0339)
+       → switch-formation sweep → GlobalDce (O0022, O0054)
+       → PrivateCallingConvention (O0021, O0282; SPEED only)
+       → Backend/ per function: InstructionSelector (loop rotation, Peephole)
+         → MachineScheduler (x87 stack O0348, MachineCombiner O0356,
+           SuperoptimizedPeepholes O0355) → LinearScanAllocator (CopyCoalescer O0085)
+         → post-RA peepholes (O0357) → late load/store (O0358) → MachineEmitter
        → Assembler (O0034, O0035, O0038–O0040, C0002, C0003)
        → RuntimeTrimmer (P0001, P0002) → MZ/COM writer (P0003–P0007)
 ```
 
-The `Ir/Passes/` pipeline (O0042–O0055) is the separate SSA IR mid-end that runs
-for `--emit-c` and `--emit-llvm`; see [../IR.md](../IR.md) and
-[../BACKENDS.md](../BACKENDS.md).
+Without the optimizer, `RunNativeModule` runs only the `Legalize()` subset
+(mem2reg, instcombine, DCE and CFG simplification in their faithful forms). The
+hosted targets (`--emit-c`, `--emit-llvm`) run the same `Standard()` pipeline
+through `RunHostedModule`; see [../IR.md](../IR.md) and
+[../BACKENDS.md](../BACKENDS.md). `OptPruner` (O0010) and `OptPureFold` (O0025)
+remain only for `--emit-basic`, where their effect is shown at the source level.
 
 ## Ideas that are already covered
 
@@ -610,7 +636,7 @@ entries, because an implemented pass already does them:
 | empty pure loop eliminated | [O0020](O0020-idiom-replacement.md) |
 | `MOD` by a power of two is a mask | [O0004](O0004-strength-reduction.md) |
 | constant condition eliminated, dead arm dropped | [O0017](O0017-sccp.md) |
-| sparse conditional constant propagation | [O0017](O0017-sccp.md) (AST), [O0044](O0044-ir-sccp.md) (IR) |
+| sparse conditional constant propagation | [O0017](O0017-sccp.md), [O0044](O0044-ir-sccp.md) |
 | known-bits and congruence propagation | [O0016](O0016-value-fact-analysis.md) |
 | bounds checks removed in a counted loop | [O0016](O0016-value-fact-analysis.md) |
 | memory SSA | [O0060](O0060-memory-ssa.md) |

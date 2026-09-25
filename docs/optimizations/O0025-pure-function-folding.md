@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (integer subset, v1) |
-| **Stage** | Whole-program analysis + emitter |
-| **Source** | `CodeGen/OptPureFold.cs` — `ClassifyPure`, `Evaluator` |
+| **Stage** | IR module pass (interprocedural phase of `IrMiddleEndPipeline.Standard`) |
+| **Source** | `Ir/Passes/PureCallEvaluation.cs` — `PureFunctions`, `Evaluate` |
 | **Gate** | `--optimize` |
 | **Sample** | [`docs/decompilation/optimizations/30-pure-function-folding.bas`](../decompilation/optimizations/30-pure-function-folding.bas) |
 | **Related** | [O0001](O0001-constant-folding.md), [O0018](O0018-interprocedural-constant-propagation.md), [O0022](O0022-dead-procedure-elimination.md) |
@@ -12,14 +12,16 @@
 ## What it is
 
 The compiler **infers** purity instead of requiring a `CONSTEXPR` keyword. A
-`FUNCTION` whose result depends only on its `BYVAL` arguments — no I/O, no
-global/`SHARED` reads, no `BYREF`, no side-effecting statements, and calling only
-other pure functions — is pure. Purity is a greatest fixed point over the call
-graph, so mutually-recursive pure helpers all qualify.
+`FUNCTION` whose IR does nothing but integer arithmetic, compares, casts, selects,
+phis and branches — no memory, no runtime call, no error handler, no inline
+assembly, no float — and calls only other pure functions is pure. Purity is a
+greatest fixed point over the call graph, so recursive and mutually-recursive
+pure helpers all qualify. Overflow checking needs no separate rule: where the
+dialect checks, the lowering spells the check as a call to the runtime's error
+raise, which disqualifies the function.
 
-When such a function is called with **all-constant arguments**, a small
-tree-walking interpreter executes its body and the call is replaced by the
-resulting literal. The frame, the `CALL`/`RET` and the whole computation vanish;
+When such a function is called with **all-constant arguments**, the pass
+interprets its SSA IR on the constants and the call is replaced by the result. The frame, the `CALL`/`RET` and the whole computation vanish;
 once no caller references it, [O0022](O0022-dead-procedure-elimination.md)
 purges the body.
 
@@ -55,9 +57,10 @@ Fact:
 ## With the optimizer
 
 ```asm
-    mov     ax, 9800h        ; 3628800 low word
-    mov     dx, 0037h        ; high word
-    call    rt_print_i32
+    mov     si, s_0          ; " 3628800 " - the number is printed as text too
+    mov     cx, 9
+    call    rt_print_str
+    call    rt_print_nl
 ```
 
 …and `Fact` is not emitted at all.
@@ -70,19 +73,19 @@ PRINT 3628800
 
 ## Why it is safe
 
-- The interpreter wraps every intermediate to its node's static type via
-  `WrapToType`, exactly as the runtime ALU would at each operation width, so the
-  folded value is **bit-identical** to the executed result — a 16-bit `INTEGER`
-  product silently wraps in the interpreter too.
-- Integer division or `MOD` by zero, an unmodelled operator, a non-constant
-  sub-expression, or exhausting the step (500 000) / recursion (64) budget
-  simply **abandons** the fold and emits the genuine call.
+- Every operation is evaluated by `IrConstFold`, the folder the rest of the
+  middle end uses, at the operation's own width — so the folded value is
+  **bit-identical** to what the compiled instruction computes; a 16-bit
+  `INTEGER` product wraps in the interpreter too.
+- Integer division or `MOD` by zero (which the folder refuses), an unmodelled
+  instruction, or exhausting the step (200 000) / recursion (256) budget simply
+  **abandons** the fold and keeps the genuine call.
 - Folding a call to its provably-equal value cannot alter observable behavior,
   which is why the whole `pb36` differential battery is unchanged by this pass.
 
 ## Limits (v1 subset)
 
-Integer-typed functions, parameters and locals only, with
-`IF`/`SELECT CASE`/`FOR`/`DO-LOOP`/`WHILE` and `EXIT FUNCTION`/`FOR`/`DO`.
-Floats, strings, arrays, pointers and intrinsics keep the real call — a roadmap
+Integer-typed functions, parameters and locals only; any control flow the IR
+expresses with branches and phis (`IF`, `SELECT CASE`, loops, `EXIT`). Floats,
+strings, arrays, pointers and runtime intrinsics keep the real call — a roadmap
 extension.

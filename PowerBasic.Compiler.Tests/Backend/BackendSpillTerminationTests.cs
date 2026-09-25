@@ -55,11 +55,11 @@ public sealed class BackendSpillTerminationTests {
   /// operand, and neither may carry two). Splitting through a spill cell is the only move it has.
   /// </para>
   /// </summary>
-  private static MFunction StoreOfAConstantThroughAFrameAddress() {
+  private static X86MachineFunction StoreOfAConstantThroughAFrameAddress() {
     var address = MReg.Virtual(0);
     var constant = MReg.Virtual(1);
     var carried = MReg.Virtual(2);
-    var function = new MFunction("F") { VirtualRegisterCount = 3 };
+    var function = new X86MachineFunction("F") { VirtualRegisterCount = 3 };
     function.StackSlots.AddRange([2, 2, 2]);
     var block = new MBlock("entry");
     block.Instructions.Add(new MInstr(MOpcode.Lea,
@@ -202,7 +202,7 @@ public sealed class BackendSpillTerminationTests {
   /// The back end's own routing pipeline, in both optimization modes - the same shape
   /// <c>CodeGenerator.BackendProcs</c> runs, so what the fixtures measure is what production does.
   /// </summary>
-  private static IEnumerable<(string Name, MFunction Machine)> Compile(string source, bool optimize,
+  private static IEnumerable<(string Name, X86MachineFunction Machine)> Compile(string source, bool optimize,
       string file = "T.BAS") {
     SemanticModel model;
     IrModule? module;
@@ -217,7 +217,9 @@ public sealed class BackendSpillTerminationTests {
     if (module is null)
       yield break;
 
-    var pipeline = optimize ? () => IrPassManager.Standard() : (Func<IrPassManager>)IrPassManager.Legalize;
+    Func<IrPassManager> pipeline = optimize
+      ? () => IrMiddleEndPipeline.Standard()
+      : () => IrMiddleEndPipeline.Legalize();
     foreach (var function in module.Functions)
       if (!function.IsDeclaration)
         IntegerRecovery.Run(function);

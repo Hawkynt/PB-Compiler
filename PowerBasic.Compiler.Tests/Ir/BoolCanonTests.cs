@@ -37,7 +37,7 @@ public sealed class BoolCanonTests {
     var unit = Parser.Parse(Lexer.Tokenize("i% = 0\nWHILE i% < 10\n  i% = i% + 1\nWEND\nEND", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     // the header should test the counter directly, not via a widen + compare-to-zero

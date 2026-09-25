@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Done |
-| **Stage** | Emitter + IR middle end |
-| **Source** | `CodeGen/CodeGenerator.cs` — `TryEmitIfChainJumpTable`; `Ir/Passes/SwitchFormation.cs` |
+| **Stage** | IR middle end + x86 back end (instruction selection) |
+| **Source** | `Ir/Passes/SwitchFormation.cs`; `Backend/InstructionSelector.Dispatch.cs` (switch lowering) |
 | **Gate** | optimizer enabled |
 | **Verified by** | `OptimizerTests`, `SwitchFormationTests` |
 | **Related** | [O0029](O0029-select-jump-table.md), [O0032](O0032-short-circuit-conditions.md) |
@@ -54,8 +54,8 @@ before the last arm runs:
 
 ## Optimized
 
-The direct emitter reuses the same jump-table machinery as
-[O0029](O0029-select-jump-table.md):
+The chain becomes the same switch as [O0029](O0029-select-jump-table.md), and
+a dense one selects to a jump table:
 
 ```asm
     mov     ax, [k]
@@ -67,19 +67,13 @@ The direct emitter reuses the same jump-table machinery as
     jmp     word ptr [Table+bx]
 ```
 
-`EmitIf` calls `TryEmitIfChainJumpTable`, which recognizes a chain whose every
-condition is `<same integer variable> = <foldable constant>` (either operand
-order), synthesizes the equivalent `SelectStmt` — **reusing the original subject
-and constant expression nodes**, so the model's type and constant-fold queries
-still resolve — and hands it to `TryEmitSelectJumpTable`. The two forms then
-share every rule and emit byte-for-byte identical code.
-
-The IR path performs the same recovery one level earlier. `SwitchFormation` is
-now part of `IrPassManager.Standard`, after the ordinary value/CFG transforms and
-tail-recursion lowering. It reads the surviving compare chain as a set of values
+The recovery happens in the IR. `SwitchFormation` is part of
+`IrMiddleEndPipeline.Standard`, after the ordinary value/CFG transforms and
+tail-recursion lowering, and runs once more as a final sweep in
+`IrMiddleEndPipeline.RunNativeModule`. It reads the surviving compare chain as a set of values
 and replaces it with one target-neutral `IrSwitch`. The pass manager then runs
 another fixpoint sweep, so DCE removes comparisons made dead by the new
-terminator. This applies to `--emit-c`, `--emit-llvm`, and the routed x86-16 path
+terminator. This applies to `--emit-c`, `--emit-llvm`, and the x86-16 path
 instead of depending on a downstream compiler to rediscover the source-level
 construct.
 
@@ -103,7 +97,7 @@ target-specific switch lowering.
 - **Conservative size bounds.** Fewer than three distinct values or more than
   256 enumerated values remain as compares; unsupported strings, floats,
   unsigned ordering predicates, and unsafe CFG shapes also remain untouched.
-- **Optimizer gate.** `IrPassManager.Legalize()` does not run switch formation,
+- **Optimizer gate.** `IrMiddleEndPipeline.Legalize()` does not run switch formation,
   so `--no-optimize` preserves the faithful compare-chain representation.
 
 ## Equivalent BASIC
@@ -120,7 +114,7 @@ END SELECT
 
 The focused middle-end regression compiles an actual `IF`/`ELSEIF` equality
 chain, including reversed operand order (`11 = k`), through
-`IrPassManager.Standard` and asserts that it contains one `IrSwitch` with the
+`IrMiddleEndPipeline.Standard` and asserts that it contains one `IrSwitch` with the
 four expected cases. Existing switch-formation tests cover duplicate values,
 ranges, exclusions, mixed variables, strings, enumeration limits, and cleanup of
 the original comparison chain.
