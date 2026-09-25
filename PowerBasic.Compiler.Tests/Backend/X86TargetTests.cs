@@ -144,9 +144,11 @@ public sealed class X86TargetTests {
 
     var code = target.HostedEmitter.Emit(function);
 
+    // An explicit Return restores the frame before it returns - a bare C3 would leave the caller's
+    // RBP on the stack as the return address. The trailing epilogue is the fall-off-the-end one.
     Assert.That(code.Bytes, Is.EqualTo(new byte[] {
       0x55, 0x48, 0x89, 0xE5, 0x48, 0xB8, 0x2A, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0xC3, 0x5D, 0xC3
+      0x00, 0x00, 0x00, 0x00, 0x5D, 0xC3, 0x5D, 0xC3
     }));
   }
 
@@ -475,14 +477,28 @@ public sealed class X86TargetTests {
     });
   }
 
+  /// <summary>
+  /// x86-16 homes a register argument: the incoming register is stored to a frame slot before any
+  /// instruction runs, and the parameter is addressed there - never an uninitialized home.
+  /// </summary>
   [Test]
-  public void X86HostedMachineBuilder_GivenRegisterArgumentConvention_ThenDeclinesWithoutProducingAnUninitializedHome() {
-    var source = new IrFunction("fastcall", IrType.Void, [new IrArgument(IrType.I16, 0)]) {
-      Convention = IrCallConvention.Fastcall,
-    };
-    var selected = new X86MachineFunction("fastcall");
-    var machine = new IrMachineFunction(source, selected, new Dictionary<int, Reg>(),
-      new MachineTargetDescription(MachineTargetFamily.X86_16));
+  public void X86HostedMachineBuilder_GivenRegisterArgumentConventionOnX86_16_ThenStoresTheRegisterToItsHomeFirst() {
+    var machine = FastcallMachine(MachineTargetFamily.X86_16);
+
+    Assert.That(X86HostedMachineBuilder.TryBuild(machine, out var hosted, out var error), Is.True, error);
+    var home = machine.Function.IncomingParameterOffsets[0];
+    Assert.Multiple(() => {
+      Assert.That(home, Is.Negative);
+      Assert.That(hosted!.Instructions[0].Opcode, Is.EqualTo(X86TargetOpcode.Mov));
+      Assert.That(hosted.Instructions[0].Address!.Value.Displacement, Is.EqualTo(home));
+    });
+  }
+
+  /// <summary>The 32- and 64-bit homes are not implemented, so those modes decline rather than guess.</summary>
+  [TestCase(MachineTargetFamily.X86_32)]
+  [TestCase(MachineTargetFamily.X86_64)]
+  public void X86HostedMachineBuilder_GivenRegisterArgumentConventionOnAHostedMode_ThenDeclines(MachineTargetFamily family) {
+    var machine = FastcallMachine(family);
 
     Assert.That(X86HostedMachineBuilder.TryBuild(machine, out var hosted, out var error), Is.False);
     Assert.Multiple(() => {
@@ -490,6 +506,14 @@ public sealed class X86TargetTests {
       Assert.That(error, Does.Contain("register-argument parameter homes are not implemented"));
       Assert.That(error, Does.Contain("fastcall"));
     });
+  }
+
+  private static IrMachineFunction FastcallMachine(MachineTargetFamily family) {
+    var source = new IrFunction("fastcall", IrType.Void, [new IrArgument(IrType.I16, 0)]) {
+      Convention = IrCallConvention.Fastcall,
+    };
+    return new IrMachineFunction(source, new X86MachineFunction("fastcall"), new Dictionary<int, Reg>(),
+      new MachineTargetDescription(family));
   }
 
   [Test]
