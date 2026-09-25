@@ -41,7 +41,7 @@ public static class Licm {
   }
 
   private static int Hoist(IReadOnlySet<IrBasicBlock> body, IrBasicBlock entering) {
-    var invariant = ComputeInvariant(body);
+    var invariant = ComputeInvariant(body, WritesNothing(body));
     var count = 0;
     bool progress;
     do {
@@ -60,7 +60,7 @@ public static class Licm {
     return count;
   }
 
-  private static List<IrInstruction> ComputeInvariant(IReadOnlySet<IrBasicBlock> body) {
+  private static List<IrInstruction> ComputeInvariant(IReadOnlySet<IrBasicBlock> body, bool readOnlyLoop) {
     var invariant = new HashSet<IrInstruction>(ReferenceEqualityComparer.Instance);
     var ordered = new List<IrInstruction>();
     bool changed;
@@ -68,7 +68,8 @@ public static class Licm {
       changed = false;
       foreach (var block in body)
         foreach (var inst in block.Instructions)
-          if (!invariant.Contains(inst) && IsSpeculatable(inst) && OperandsInvariant(inst, body, invariant)) {
+          if (!invariant.Contains(inst) && (IsSpeculatable(inst) || readOnlyLoop && IsHoistableRead(inst))
+              && OperandsInvariant(inst, body, invariant)) {
             invariant.Add(inst);
             ordered.Add(inst);
             changed = true;
@@ -91,6 +92,24 @@ public static class Licm {
         return false;
     return true;
   }
+
+  /// <summary>
+  /// Whether nothing in the loop writes memory, releases or allocates - so a deterministic read of an
+  /// invariant operand answers the same on every iteration. A call or instruction with any stronger
+  /// effect makes the loop a writer; loads and trap-only operations do not.
+  /// </summary>
+  private static bool WritesNothing(IReadOnlySet<IrBasicBlock> body)
+    => body.SelectMany(block => block.Instructions).All(instruction =>
+         (IrEffects.ForInstruction(instruction).Effects
+          & (IrEffectKind.WritesMemory | IrEffectKind.MayRelease | IrEffectKind.MayAllocate | IrEffectKind.MayThrow)) == 0);
+
+  /// <summary>
+  /// A deterministic, trap-free call that only reads - LEN of a string's descriptor. In a loop that
+  /// writes nothing it answers the same every iteration, and reading it once before the loop is
+  /// harmless even when the loop does not run: its operand is live there.
+  /// </summary>
+  private static bool IsHoistableRead(IrInstruction inst)
+    => inst is IrCall call && Gvn.IsDeterministicRead(call);
 
   /// <summary>Pure and trap-free: safe to execute unconditionally in the entering block.</summary>
   private static bool IsSpeculatable(IrInstruction inst) => inst switch {

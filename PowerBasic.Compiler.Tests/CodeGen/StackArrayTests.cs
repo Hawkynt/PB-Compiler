@@ -98,40 +98,41 @@ public sealed class StackArrayTests {
 
   [Test]
   public void Emit_GivenStackArrayFrame_WhenOptimized_ThenAllocationAndZeroFillAgree() {
-    // the frame size reaches the image as a "constant label" - a pseudo-label whose position IS
-    // the byte count. An image-shrinking pass (short-jump relaxation, the peephole) that slid it
-    // like a real offset would allocate fewer bytes than the REP STOSW then zeroes, and the SUB
-    // would run on a corrupted stack. The two counts must always agree: SUB SP,n / ... / REP
-    // STOSW of n/2 words.
+    // The frame size and the zero fill are two numbers in the prologue, and an image-shrinking pass
+    // that moved one without the other would zero bytes the frame never allocated - the SUB would run
+    // on a corrupted stack. SUB SP,alloc / PUSH DS / POP ES / LEA DI,[BP-d] (or MOV DI,SP: d = alloc)
+    // / MOV CX,words / XOR AX,AX / REP STOSW must keep the filled [BP-d, BP-d+2*words) inside
+    // [BP-alloc, BP). The SUB takes an opaque argument from two call sites, so its frame survives.
     const string source = """
-      SUB Grid
+      DECLARE SUB Grid(BYVAL k%)
+      Grid INP(&H60)
+      Grid 2
+      SUB Grid(BYVAL k%) NOINLINE
         DIM STACK g(1 TO 3, 1 TO 4) AS INTEGER
-        g(1, 1) = 5
-        PRINT g(1, 1)
+        g(1, k% AND 3) = 5
+        PRINT g(1, 1); g(2, k% AND 3)
       END SUB
-      Grid
       """;
     var unit = Parser.Parse(Lexer.Tokenize(source, "t.bas", Dialect.Pb36), "t.bas", Dialect.Pb36);
-    // The DIRECT emitter, deliberately: the byte sequence below IS its prologue, and the invariant is
-    // about that encoding surviving the image-shrinking passes. The routed path lays the same array
-    // out as an ordinary frame alloca and emits no such sequence, so scanning for one there would be
-    // asserting the absence of a shape rather than the presence of a behaviour. What the behaviour
-    // costs is covered beside this, by Execute_GivenAStackArrayReusingAFrame_ThenItStartsZeroed.
-    var image = new CodeGenerator(Binder.Bind(unit, Dialect.Pb36)) { UseExperimentalBackend = false }
-      .EmitExecutable();
+    var image = new CodeGenerator(Binder.Bind(unit, Dialect.Pb36)).EmitExecutable();
 
-    // MOV CX,bytes / SUB SP,CX / PUSH DS / POP ES / MOV DI,SP / MOV CX,words / XOR AX,AX / REP STOSW
     var frames = 0;
-    for (var i = 3; i + 12 < image.Length; ++i) {
-      if (image[i - 3] != 0xB9 || image[i] != 0x29 || image[i + 1] != 0xCC)
-        continue;
-      if (image[i + 2] != 0x1E || image[i + 3] != 0x07 || image[i + 4] != 0x89 || image[i + 5] != 0xE7
-          || image[i + 6] != 0xB9 || image[i + 9] != 0x31 || image[i + 10] != 0xC0
-          || image[i + 11] != 0xF3 || image[i + 12] != 0xAB)
-        continue;
-      var bytes = image[i - 2] | (image[i - 1] << 8);
-      var words = image[i + 7] | (image[i + 8] << 8);
-      Assert.That(bytes, Is.EqualTo(words * 2), $"frame at {i:X4}: allocates {bytes} bytes but zeroes {words} words");
+    for (var i = 0; i + 16 < image.Length; ++i) {
+      int alloc, at;
+      if (image[i] == 0x83 && image[i + 1] == 0xEC) { alloc = image[i + 2]; at = i + 3; }
+      else if (image[i] == 0x81 && image[i + 1] == 0xEC) { alloc = image[i + 2] | (image[i + 3] << 8); at = i + 4; }
+      else continue;                                   // SUB SP,imm8 / SUB SP,imm16
+      if (image[at] != 0x1E || image[at + 1] != 0x07)
+        continue;                                      // PUSH DS / POP ES
+      int depth;
+      if (image[at + 2] == 0x89 && image[at + 3] == 0xE7) { depth = alloc; at += 4; }                  // MOV DI,SP
+      else if (image[at + 2] == 0x8D && image[at + 3] == 0x7E) { depth = -(sbyte)image[at + 4]; at += 5; } // LEA DI,[BP+d8]
+      else continue;
+      if (image[at] != 0xB9 || image[at + 3] != 0x31 || image[at + 4] != 0xC0 || image[at + 5] != 0xF3 || image[at + 6] != 0xAB)
+        continue;                                      // MOV CX,words / XOR AX,AX / REP STOSW
+      var words = image[at + 1] | (image[at + 2] << 8);
+      Assert.That(depth, Is.LessThanOrEqualTo(alloc), $"frame at {i:X4}: the fill starts below the {alloc} allocated bytes");
+      Assert.That(words * 2, Is.LessThanOrEqualTo(depth), $"frame at {i:X4}: {words} words from BP-{depth} run past BP");
       ++frames;
     }
     Assert.That(frames, Is.GreaterThan(0), "the zero-filled frame prologue must be present to be checked");

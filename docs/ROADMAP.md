@@ -795,6 +795,46 @@ word pairs and runtime helpers, but unsigned divide/remainder and general 64-bit
 machine representation. Widening that integer tier and parameterizing the selector comes before
 vectors.
 
+### Facts about strings and arrays, not only numbers - not started
+
+`IrRangeAnalysis` tracks what a numeric value can be, constant or not, and passes already spend it:
+proven-word narrowing, range-check elimination, the loop counters' widening. Strings and arrays get
+nothing comparable. A string is only ever "a handle", so every `LEN`, `MID$`, `INSTR` and
+subscript on it re-asks the runtime what the program has often already settled.
+
+The lattice worth having per string value is its **length interval**, its **known bytes** (a known
+prefix and suffix, plus individual positions), and **emptiness** as a special case of the first. Per
+array, the same shape: **declared and REDIMmed bounds** as facts, **element facts** (a value range
+over every element, "all zero" straight after `DIM`/`ERASE`), and eventually order properties.
+
+Where the facts come from:
+
+- A literal, `SPACE$(n)`, `STRING$(n, c)` and `LEFT$`/`RIGHT$`/`MID$` of a known-length source have a
+  length interval, and literals have every byte. Concatenation adds lengths and joins the known
+  prefix of the left operand with the known suffix of the right.
+- A statement that completes proves its preconditions. After `MID$(a$, 1, 1) = "A"` the program
+  knows `LEN(a$) >= 1`, `ASC(a$) = 65`, `LEFT$(a$, 1) = "A"` and `MID$(a$, 1, 1) = "A"`. The MID$
+  statement never lengthens its target: on a string too short it raises an error instead of
+  writing. So the fact holds only on the path where the statement finished, which is every path
+  except under an `ON ERROR` handler that `RESUME NEXT`s past it. Branch conditions refine the same
+  way numeric ones do (`IF LEN(a$) > 3 THEN` holds inside the THEN arm).
+- An array subscript that passed its bounds check proves the index in range for every later access
+  the check dominates, as a condition does for a number.
+
+What they buy:
+
+- `LEN`, `ASC`, `LEFT$`/`RIGHT$` of a known prefix, `INSTR` of a needle known to sit at a known
+  position, and comparisons fold at compile time.
+- Bounds checks and the Error 5/9 paths are eliminated where the length or index is proven, and
+  with them the code paths only an error could reach.
+- The runtime's generic routines give way to fixed-length specialisations (compares and copies of a
+  known length, the O0302 INSTR search).
+- Emptiness tests disappear on a string proven non-empty.
+
+This is the string/array counterpart of the O0016 value facts. It belongs beside
+`IrRangeAnalysis` as its own analysis in `IrAnalyses`, so the passes that already consume ranges can
+ask one more question instead of each re-deriving it.
+
 ### Porting the optimization catalogue to the IR — the real denominator
 
 "Port the 421 optimizations to the IR" needs a denominator before it means anything, and 421 is the

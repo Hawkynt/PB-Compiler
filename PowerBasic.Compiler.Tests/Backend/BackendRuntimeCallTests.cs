@@ -425,7 +425,7 @@ public sealed class BackendRuntimeCallTests {
   /// </summary>
   private const string _lenProgram = """
     DIM s AS STRING
-    s = "abc"
+    s = SPACE$(INP(&H60))
     PRINT LEN(s)
     """;
 
@@ -437,7 +437,7 @@ public sealed class BackendRuntimeCallTests {
     var call = m.AllInstructions
       .Select((instruction, index) => (instruction, index))
       .First(p => p.instruction.Opcode == MOpcode.Call
-                  && p.instruction.Operands is [MOperand.LabelRef { Name: "rt_len" }]).index;
+                  && p.instruction.Operands is [MOperand.LabelRef { Name: "rt_len" or "rt_len_borrow" }]).index;
     Assert.That(opcodes.Skip(call).Take(2), Does.Contain(MOpcode.Cwd),
       "the CWD must follow the call immediately, before anything can disturb DX");
   }

@@ -40,11 +40,13 @@ public sealed class StringLoweringTests {
 
   [Test]
   public void StringLength_LowersToRuntimeLen() {
-    var module = LowerOptimized("a$ = \"apple\"\nn% = LEN(a$)\nPRINT n%\nEND");
+    // an opaque string: a literal's LEN is a compile-time constant and calls nothing. A variable's LEN
+    // reads its descriptor (rt_str_len_borrow) instead of measuring a copy (rt_str_len).
+    var module = LowerOptimized("a$ = SPACE$(INP(&H60))\nn% = LEN(a$)\nPRINT n%\nEND");
 
     Assert.That(module, Is.Not.Null);
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
-    Assert.That(LlvmEmitter.Emit(module!), Does.Contain("call i32 @rt_str_len(ptr"));
+    Assert.That(LlvmEmitter.Emit(module!), Does.Match(@"call i32 @rt_str_len(_borrow)?\(ptr"));
   }
 
   [Test]

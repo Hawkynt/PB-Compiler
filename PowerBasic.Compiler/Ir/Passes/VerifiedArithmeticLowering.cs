@@ -14,7 +14,8 @@ public static class VerifiedArithmeticLowering {
 
   /// <summary>
   /// Rewrites verified constant multiplies and signed divisions/remainders. Reciprocal-multiply
-  /// lowering is a SPEED trade (more IR/code for fewer divide cycles), so callers must opt into it.
+  /// lowering and two-term multiply chains are SPEED trades (more code for fewer cycles), so callers
+  /// must opt into them.
   /// </summary>
   public static int Run(IrFunction function, bool optimizeForSpeed = false) {
     ArgumentNullException.ThrowIfNull(function);
@@ -23,7 +24,7 @@ public static class VerifiedArithmeticLowering {
       if (binary.Parent is null || binary.Type.Bits != 16 || !binary.Type.IsInteger)
         continue;
       IrValue? replacement = binary.Op switch {
-        IrBinaryOp.Mul => LowerMultiply(binary),
+        IrBinaryOp.Mul => LowerMultiply(binary, optimizeForSpeed),
         IrBinaryOp.SDiv => LowerSignedDivision(binary, remainder: false, optimizeForSpeed),
         IrBinaryOp.SRem => LowerSignedDivision(binary, remainder: true, optimizeForSpeed),
         _ => null,
@@ -38,7 +39,14 @@ public static class VerifiedArithmeticLowering {
     return changed;
   }
 
-  private static IrValue? LowerMultiply(IrBinary binary) {
+  /// <summary>
+  /// A constant multiply as verified shifts and adds - bigger than the compact IMUL and faster only in
+  /// cycles, so like the selector's O0078 chains it is SPEED's. (A positive power of two, which is
+  /// smaller as a shift, is InstCombine's under every objective.)
+  /// </summary>
+  private static IrValue? LowerMultiply(IrBinary binary, bool optimizeForSpeed) {
+    if (!optimizeForSpeed)
+      return null;
     IrValue value;
     IrConstantInt constant;
     if (binary.Rhs is IrConstantInt right) { value = binary.Lhs; constant = right; }

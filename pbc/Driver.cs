@@ -158,7 +158,7 @@ public static class Driver {
         }
         var basic = Emit.PowerBasic35Emitter.Render(model, unit, folds);
         if (output != null) {
-          File.WriteAllText(output, basic);
+          File.WriteAllText(output, basic, System.Text.Encoding.Latin1);   // DOS text: one byte per character, as it was read
           stdout.WriteLine($"{Path.GetFileName(output)}: {basic.Length} bytes of PowerBASIC");
         } else {
           stdout.Write(basic);

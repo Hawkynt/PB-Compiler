@@ -596,15 +596,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Dq(value);
     }
 
-    // String literals are target data, not a syntax-emitter optimization. The IR backend resolves
-    // each interned .strN global through LiteralOf(), so every pooled label must be materialized in
-    // the DOS image even though the old direct-expression emitter has been deleted. Deliberately do
-    // no suffix/overlap packing here: that was legacy AST optimizer policy and must not re-enter the
-    // production pipeline behind IrMiddleEndPipeline.
-    foreach (var (text, label) in this._stringLiterals) {
-      asm.MarkLabel(label);
-      asm.Db(text);
-    }
+    // String literals are target data. The IR backend resolves each interned .strN global through
+    // LiteralOf(), so every pooled label is materialized here.
+    this.EmitStringLiterals(asm);
 
     this.EmitBackendDataPool(asm);
 
@@ -640,6 +634,41 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     asm.MarkLabel("rt_stackmin");
     asm.Dw(0);
     asm.MarkLabel("rt_memend");    // stack probe baseline ($ERROR STACK ON)
+  }
+
+  /// <summary>
+  /// The literal pool. Optimized, a literal whose bytes occur inside a longer one is not written
+  /// again: its label marks the place in the longer literal - <c>"World!"</c> inside
+  /// <c>"Hello, World!"</c> - which is data layout, the string-tail merging a linker does for
+  /// read-only strings, and reads nothing but the pool itself. A literal is only ever read (every
+  /// consumer copies its bytes by address and length), so two labels into one run of bytes cannot be
+  /// told apart from two runs. Unoptimized, each literal keeps its own bytes, as the vintage compilers
+  /// lay them out.
+  /// </summary>
+  private void EmitStringLiterals(Assembler asm) {
+    var hosts = new List<(string Text, Label Label, List<(int Offset, Label Label)> Contained)>();
+    var ordered = this.Optimize
+      ? this._stringLiterals.OrderByDescending(literal => literal.Key.Length).ToList()
+      : this._stringLiterals.ToList();
+    foreach (var (text, label) in ordered) {
+      var host = this.Optimize && text.Length > 0
+        ? hosts.FindIndex(candidate => candidate.Text.Contains(text, StringComparison.Ordinal))
+        : -1;
+      if (host >= 0)
+        hosts[host].Contained.Add((hosts[host].Text.IndexOf(text, StringComparison.Ordinal), label));
+      else
+        hosts.Add((text, label, []));
+    }
+    foreach (var (text, label, contained) in hosts) {
+      asm.MarkLabel(label);
+      var written = 0;
+      foreach (var (offset, inner) in contained.OrderBy(entry => entry.Offset)) {
+        asm.Db(text[written..offset]);
+        written = offset;
+        asm.MarkLabel(inner);
+      }
+      asm.Db(text[written..]);
+    }
   }
 
   private void Unsupported(Statement s) => this.Errors.Add(new(s.Position, $"not yet generated: {(s is CommandStmt c ? $"command {c.Keyword}" : s.GetType().Name)}"));

@@ -91,6 +91,11 @@ public static class Gvn {
       IrLoad load => $"l{load.Type}({this.Operand(load.Pointer)})@{this.MemoryVersion(load)}",
       IrCall { Callee: IrFunction callee } call when IrEffects.ForInstruction(call).CanCse
         => $"r{callee.Name}({string.Join(',', call.Args.Select(this.Operand))})",
+      // a deterministic call that only READS - LEN of a string's descriptor - is numbered like a load:
+      // the same question over the same memory version is the same answer
+      IrCall { Callee: IrFunction callee } call when IsDeterministicRead(call)
+          && this._memorySsa.AccessFor(call) is IrMemoryUse use
+        => $"r{callee.Name}({string.Join(',', call.Args.Select(this.Operand))})@{this.VersionId(use.DefiningAccess)}",
       _ => null,                                       // stores/other calls/allocas/phis/terminators are not numbered
     };
 
@@ -98,8 +103,14 @@ public static class Gvn {
       var clobber = this._memorySsa.GetClobberingAccess(load);
       if (clobber is IrMemoryLiveOnEntry)
         return "entry";
-      if (!this._memoryIds.TryGetValue(clobber, out var id))
-        this._memoryIds[clobber] = id = this._nextMemoryId++;
+      return this.VersionId(clobber);
+    }
+
+    private string VersionId(IrMemoryAccess version) {
+      if (version is IrMemoryLiveOnEntry)
+        return "entry";
+      if (!this._memoryIds.TryGetValue(version, out var id))
+        this._memoryIds[version] = id = this._nextMemoryId++;
       return "m" + id.ToString(CultureInfo.InvariantCulture);
     }
 
@@ -123,6 +134,10 @@ public static class Gvn {
       return this._ids[v] = this._nextId++;
     }
   }
+
+  /// <summary>A call whose only effect is reading memory, and whose answer depends on nothing else.</summary>
+  internal static bool IsDeterministicRead(IrCall call)
+    => IrEffects.ForInstruction(call) is { Deterministic: true, Effects: IrEffectKind.ReadsMemory };
 
   private static bool IsCommutative(IrBinaryOp op) =>
     op is IrBinaryOp.Add or IrBinaryOp.Mul or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor

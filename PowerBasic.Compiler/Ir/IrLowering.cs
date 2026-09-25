@@ -2709,7 +2709,7 @@ public sealed partial class IrLowering {
   private void UsingLiteral(IrValue? file, string text) {
     if (text.Length == 0)
       return;
-    var bytes = System.Text.Encoding.ASCII.GetBytes(text);
+    var bytes = System.Text.Encoding.Latin1.GetBytes(text);
     this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
       this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
   }
@@ -2777,7 +2777,7 @@ public sealed partial class IrLowering {
 
   /// <summary>One of WRITE's fixed characters - the separator or a quote - through the literal pool.</summary>
   private void WritePunctuation(IrValue? file, string text) {
-    var bytes = System.Text.Encoding.ASCII.GetBytes(text);
+    var bytes = System.Text.Encoding.Latin1.GetBytes(text);
     this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
       this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
   }
@@ -2895,7 +2895,7 @@ public sealed partial class IrLowering {
       return;
     }
     if (expr is StringLiteralExpr lit) {
-      var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
+      var bytes = System.Text.Encoding.Latin1.GetBytes(lit.Value);
       var global = this._module!.AddStringConstant(bytes);
       this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
       return;
@@ -2938,7 +2938,7 @@ public sealed partial class IrLowering {
       var suffix = (input.Prompt is null && !input.IsLineInput) || input.PromptSemicolon ? "? " : "";
       var prompt = (input.Prompt ?? "") + suffix;
       if (prompt.Length > 0) {
-        var bytes = System.Text.Encoding.ASCII.GetBytes(prompt);
+        var bytes = System.Text.Encoding.Latin1.GetBytes(prompt);
         var global = this._module.AddStringConstant(bytes);
         this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], global, new IrConstantInt(IrType.I32, bytes.Length));
       }
@@ -3104,7 +3104,7 @@ public sealed partial class IrLowering {
       return this.LowerStringExpr(rewritten);
     switch (expr) {
       case StringLiteralExpr lit: {
-        var bytes = System.Text.Encoding.ASCII.GetBytes(lit.Value);
+        var bytes = System.Text.Encoding.Latin1.GetBytes(lit.Value);
         var global = this._module!.AddStringConstant(bytes);
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_const", IrType.Ptr, IrType.Ptr, IrType.I32), global, new IrConstantInt(IrType.I32, bytes.Length));
       }
@@ -3603,7 +3603,7 @@ public sealed partial class IrLowering {
         labels[label] = blob.Count;                    // RESTORE <label> rewinds to the first DATA item at/after the label
         continue;
       }
-      var bytes = System.Text.Encoding.ASCII.GetBytes(item!);
+      var bytes = System.Text.Encoding.Latin1.GetBytes(item!);
       if (bytes.Length > 0xFFFF)
         throw new IrLoweringException("DATA item exceeds 64KB");
       blob.Add((byte)(bytes.Length & 0xFF));
@@ -4810,7 +4810,7 @@ public sealed partial class IrLowering {
 
     this._b.Position(violated);
     if (rq.Message is { Length: > 0 } message) {
-      var bytes = System.Text.Encoding.ASCII.GetBytes(message);
+      var bytes = System.Text.Encoding.Latin1.GetBytes(message);
       this.EmitIo(null, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32],
         this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
       this.EmitIo(null, "print", "nl", IrType.Void, []);

@@ -264,7 +264,7 @@ public sealed class IrRangeAnalysis {
   private static ValueRange? RuntimeResult(string name) => name switch {
     "rt_inp" or "rt_freefile" or "rt_csrlin" => new ValueRange(0, byte.MaxValue),
     "rt_str_asc" => new ValueRange(-1, byte.MaxValue),
-    "rt_str_len" => new ValueRange(0, short.MaxValue),
+    "rt_str_len" or "rt_str_len_borrow" => new ValueRange(0, short.MaxValue),
     "rt_eof" => new ValueRange(-1, 0),
     _ => null,
   };

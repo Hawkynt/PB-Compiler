@@ -1107,7 +1107,7 @@ public sealed partial class CodeGenerator {
     if (name.StartsWith(".str", System.StringComparison.Ordinal)
         && this._backendModule?.FindGlobal(name) is { Bytes: { } bytes })
       return materialize
-        ? Asm.Mem.Word(this.LiteralOf(System.Text.Encoding.ASCII.GetString(bytes)))
+        ? Asm.Mem.Word(this.LiteralOf(System.Text.Encoding.Latin1.GetString(bytes)))
         : _ProbeCell;
     // a float literal: the back end names it by its bits, and it resolves through this codegen's own
     // constant pool - which stores every float as a qword double, whatever its source precision

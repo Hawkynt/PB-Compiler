@@ -853,21 +853,24 @@ public sealed class OptimizerTests {
     Assert.That(Has(ne, 0x83, 0xE0, 0x04), Is.False, "<> 0: no and ax, 4");
   }
 
+  /// <summary>
+  /// O0081 with the mask asked twice. <c>IF x% AND 4</c> and <c>IF (x% AND 4) = 0</c> ask one question
+  /// both ways, so the shared <c>x AND 4</c> is only ever TESTED - one <c>TEST r,4</c> answers both
+  /// IFs, and the masked value is never materialized. (The direct emitter kept it for a CSE slot, and
+  /// this test used to require that <c>AND AX,4</c>.) Both answers still print as BASIC prints them.
+  /// </summary>
   [Test]
-  public void Emit_GivenBitTestValueAlsoUsed_WhenPb36_ThenMaskIsMaterialized() {
-    // O0081 backs off when the AND is CSE'd: a second use of the same `x AND mask` needs the value, so the
-    // masked result has to be materialized with `and ax, mask` rather than discarded by a bare `test`.
-    static bool Has(byte[] img, params byte[] seq) {
-      for (var i = 0; i <= img.Length - seq.Length; ++i) {
-        var ok = true;
-        for (var j = 0; j < seq.Length; ++j) if (img[i + j] != seq[j]) { ok = false; break; }
-        if (ok) return true;
-      }
-      return false;
-    }
-    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\nS 5\nS 6\nEND\nSUB S(BYVAL x%) NOINLINE\n";
-    var img = Compile(head + "IF x% AND 4 THEN PRINT \"y\"\nIF (x% AND 4) = 0 THEN PRINT \"n\"\nEND SUB", Dialect.Pb36);
-    Assert.That(Has(img, 0x83, 0xE0, 0x04), Is.True, "the shared `x AND 4` is materialized for its CSE slot");
+  public void Emit_GivenBitTestAskedTwice_WhenPb36_ThenTestedNotMaterialized() {
+    static bool Has(ReadOnlySpan<byte> code, params byte[] sequence) => code.IndexOf(sequence) >= 0;
+    const string source = "DECLARE SUB S(BYVAL x%)\nS 5\nS 3\nEND\nSUB S(BYVAL x%) NOINLINE\n"
+      + "IF x% AND 4 THEN PRINT \"y\"\nIF (x% AND 4) = 0 THEN PRINT \"n\"\nEND SUB";
+    var code = ProcedureBytes("$OPTIMIZE SPEED\n" + source, "S").ToArray();
+    Assert.Multiple(() => {
+      Assert.That(Has(code, 0xA9, 0x04, 0x00) || Has(code, 0xF6, 0xC0, 0x04), Is.True, "x% AND 4 is a TEST");
+      Assert.That(Has(code, 0x83, 0xE0, 0x04) || Has(code, 0x25, 0x04, 0x00), Is.False, "and never an AND");
+      Assert.That(Exec.Cpu8086.Run(Compile("$OPTIMIZE SPEED\n" + source, Dialect.Pb36)).Output,
+        Is.EqualTo(Exec.Cpu8086.Run(Compile("$OPTIMIZE OFF\n" + source, Dialect.Pb36)).Output));
+    });
   }
 
   [Test]
@@ -1673,23 +1676,6 @@ public sealed class OptimizerTests {
     return count;
   }
 
-  // rt_len entry: TEST AX,AX / JZ ret / PUSH BX / PUSH SI / MOV BX,AX = 85 C0 74 ?? 53 56 89 C3
-  // (the JZ rel8 at index 3 varies with the routine length). Count E8 near-CALL sites targeting it.
-  private static int CountCallsToLen(byte[] image) {
-    var head = -1;
-    for (var i = 0; i + 8 <= image.Length && head < 0; ++i)
-      if (image[i] == 0x85 && image[i + 1] == 0xC0 && image[i + 2] == 0x74
-          && image[i + 4] == 0x53 && image[i + 5] == 0x56 && image[i + 6] == 0x89 && image[i + 7] == 0xC3)
-        head = i;
-    if (head < 0)
-      return 0;
-    var count = 0;
-    for (var i = 0; i + 2 < image.Length; ++i)
-      if (image[i] == 0xE8 && i + 3 + (short)(image[i + 1] | (image[i + 2] << 8)) == head)
-        ++count;
-    return count;
-  }
-
   private static bool ContainsSeq(byte[] image, params byte[] seq) {
     for (var i = 0; i + seq.Length <= image.Length; ++i) {
       var match = true;
@@ -1840,25 +1826,47 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenConstantForLimit_WhenPb36_ThenComparedAgainstImmediate() {
-    // O0113: a constant FOR limit folds into the SI-resident compare as `cmp si, imm` (83 FE 64 for
-    // 100) - no temp cell, no per-iteration `cmp si, [bp+disp]` memory read. A variable limit keeps
-    // the cell and the memory compare. XOR accumulation reads the counter, so the countdown path
-    // declines and the rotation compare is reached (a plain sum would fold to its closed form).
-    var constLim = Compile("$OPTIMIZE SPEED\nDIM i%, s%\nFOR i% = 1 TO 100\ns% = s% XOR i%\nNEXT\nPRINT s%\nEND", Dialect.Pb36);
-    var varLim = Compile("$OPTIMIZE SPEED\nDIM i%, s%, n%\nn% = 100\nFOR i% = 1 TO n%\ns% = s% XOR i%\nNEXT\nPRINT s%\nEND", Dialect.Pb36);
-    Assert.That(ContainsSeq(constLim, 0x83, 0xFE, 0x64), Is.True, "a constant limit compares SI against the immediate 100");
-    Assert.That(ContainsSeq(constLim, 0x3B, 0xB6) || ContainsSeq(constLim, 0x3B, 0x76), Is.False, "no per-iteration memory limit read");
-    Assert.That(ContainsSeq(varLim, 0x3B, 0xB6) || ContainsSeq(varLim, 0x3B, 0x76), Is.True, "a variable limit still reads the limit cell each iteration");
+    // O0113: a constant FOR limit is compared as an immediate (CMP r,100) - no temp cell, no
+    // per-iteration memory read of the limit - while a parameter limit has no such compare. The loop
+    // sits in a SUB whose body reads an opaque parameter: a whole constant program is evaluated at
+    // compile time and prints a constant, with no loop left to compare.
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL k%, BYVAL n%)\nS INP(&H60), 100\nS 3, 50\nEND\n"
+      + "SUB S(BYVAL k%, BYVAL n%) NOINLINE\n  DIM i%, s%\n  FOR i% = 1 TO ";
+    const string tail = "\n    s% = s% XOR (i% + k%)\n  NEXT\n  PRINT s%\nEND SUB";
+    var constant = ProcedureBytes(head + "100" + tail, "S").ToArray();
+    var variable = ProcedureBytes(head + "n%" + tail, "S").ToArray();
+    Assert.Multiple(() => {
+      Assert.That(ComparesAgainstImmediate(constant, 100), Is.True, "a constant limit compares the counter against 100");
+      Assert.That(ComparesAgainstImmediate(variable, 100), Is.False, "a variable limit has no immediate to compare against");
+    });
+  }
+
+  /// <summary>Whether the code holds <c>CMP r16,imm</c> for <paramref name="value"/>, in any of its encodings.</summary>
+  private static bool ComparesAgainstImmediate(byte[] code, int value) {
+    for (var i = 0; i + 2 < code.Length; ++i) {
+      if (code[i] == 0x83 && code[i + 1] >= 0xF8 && value is >= -128 and <= 127 && code[i + 2] == (byte)value)
+        return true;
+      if (code[i] == 0x81 && code[i + 1] >= 0xF8 && i + 3 < code.Length
+          && code[i + 2] == (byte)value && code[i + 3] == (byte)(value >> 8))
+        return true;
+      if (code[i] == 0x3D && code[i + 1] == (byte)value && code[i + 2] == (byte)(value >> 8))
+        return true;                                // the accumulator's short form, CMP AX,imm16
+    }
+    return false;
   }
 
   [Test]
   public void Emit_GivenConstantForLimitOnNestedCounter_WhenPb36_ThenComparedAgainstImmediate() {
-    // O0113: the fold also fires on the nested DI-resident inner-loop path
-    // (TryEmitNestedForCounterInRegister) - the inner counter is compared `cmp di, 0Ah` (83 FF 0A).
-    // XOR keeps the inner loop off the arithmetic-series closed form; the outer keeps DI free for it.
-    var img = Compile("$OPTIMIZE SPEED\nDIM i%, j%, s%\ns% = 0\nFOR i% = 1 TO 20\nFOR j% = 1 TO 10\ns% = s% XOR j%\nNEXT\nNEXT\nPRINT s%\nEND", Dialect.Pb36);
-    Assert.That(ContainsSeq(img, 0x83, 0xFF, 0x0A), Is.True,
-      "a constant inner limit compares DI against the immediate 10");
+    // O0113 on a nested loop: the inner counter is compared against its constant limit too. The inner
+    // trip count is too large to unroll, so the compare exists, and the body reads an opaque parameter.
+    const string source = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL k%)\nS INP(&H60)\nS 3\nEND\n"
+      + "SUB S(BYVAL k%) NOINLINE\n  DIM i%, j%, s%\n  FOR i% = 1 TO 20\n    FOR j% = 1 TO 1000\n"
+      + "      s% = s% XOR (j% + k%)\n    NEXT\n  NEXT\n  PRINT s%\nEND SUB";
+    var code = ProcedureBytes(source, "S").ToArray();
+    Assert.Multiple(() => {
+      Assert.That(ComparesAgainstImmediate(code, 1000), Is.True, "the inner counter is compared against 1000");
+      Assert.That(ComparesAgainstImmediate(code, 20), Is.True, "and the outer against 20");
+    });
   }
 
   [Test]
@@ -1886,12 +1894,34 @@ public sealed class OptimizerTests {
   [Test]
   public void Emit_GivenLoopInvariantLen_WhenPb36_ThenHoistedToOneDescriptorRead() {
     // O0180/LICM: LEN(s$) in a WHILE condition (re-evaluated every iteration) and again in the body is
-    // loop-invariant when the body never writes s$ - it hoists into the preheader as a single descriptor
-    // read, both uses reloading one slot: exactly one rt_len call for the whole loop.
-    const string invariant = "$OPTIMIZE SPEED\nDIM s AS STRING, i%, n%\ns = \"hello world\"\ni% = 1\n"
+    // loop-invariant when the body never writes s$. It reads the descriptor (rt_len_borrow) rather than
+    // measuring a copy (rt_len), and the two reads become ONE call, made before the loop. s$ has an
+    // opaque length: a literal's LEN is a constant and would leave no call to count.
+    const string invariant = "$OPTIMIZE SPEED\nDIM s AS STRING, i%, n%\ns = SPACE$(INP(&H60) AND 15)\ni% = 1\n"
       + "WHILE i% <= LEN(s)\nn% = n% + LEN(s)\ni% = i% + 1\nWEND\nPRINT n%\nEND";
-    Assert.That(CountCallsToLen(Compile(invariant, Dialect.Pb36)), Is.EqualTo(1),
-      "a loop-invariant LEN(s$) used in the condition and body hoists to one rt_len call");
+    var calls = RuntimeCalls(invariant);
+    Assert.Multiple(() => {
+      Assert.That(calls.GetValueOrDefault("rt_len_borrow"), Is.EqualTo(1), "one descriptor read for the whole loop");
+      Assert.That(calls.GetValueOrDefault("rt_len"), Is.Zero, "and no copy made just to be measured");
+    });
+  }
+
+  /// <summary>How many near calls the image makes to each runtime label, by name.</summary>
+  private static Dictionary<string, int> RuntimeCalls(string source, Dialect dialect = Dialect.Pb36) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
+    var model = Binder.Bind(unit, dialect);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model);
+    var exe = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    var code = PowerBasic.Compiler.Tests.Exec.DosImageCode.ByListingOffset(exe);
+    var labels = generator.DescribeImage().RuntimeLabels.Where(l => !l.IsConstant)
+      .GroupBy(l => l.Offset).ToDictionary(g => g.Key, g => g.First().Name);
+    var calls = new Dictionary<string, int>();
+    for (var i = 0; i + 2 < code.Length; ++i)
+      if (code[i] == 0xE8 && labels.TryGetValue(i + 3 + (short)(code[i + 1] | (code[i + 2] << 8)), out var name))
+        calls[name] = calls.GetValueOrDefault(name) + 1;
+    return calls;
   }
 
   [Test]
@@ -1900,7 +1930,8 @@ public sealed class OptimizerTests {
     // and body's LEN(s$) must NOT merge into a preheader read - each stays a live call (two rt_len sites).
     const string variant = "$OPTIMIZE SPEED\nDIM s AS STRING, i%, n%\ns = \"hi\"\ni% = 1\n"
       + "WHILE i% <= LEN(s)\ns = s + \"x\"\nn% = n% + LEN(s)\ni% = i% + 1\nWEND\nPRINT n%\nEND";
-    Assert.That(CountCallsToLen(Compile(variant, Dialect.Pb36)), Is.GreaterThan(1),
+    var calls = RuntimeCalls(variant);
+    Assert.That(calls.GetValueOrDefault("rt_len") + calls.GetValueOrDefault("rt_len_borrow"), Is.GreaterThan(1),
       "LEN of a string mutated inside the loop is recomputed - the two reads do not collapse to one");
   }
 
@@ -2073,23 +2104,18 @@ public sealed class OptimizerTests {
   }
 
   [Test]
-  public void Emit_GivenDirectCellStore_WhenPb36_ThenNoValuePark() {
-    // a store to a direct-cell variable needs no address computation, so the value is no longer
-    // parked (push ax / pop ax) across EmitPlace. The same stores to a BYREF parameter DO need a
-    // pointer load, so the park stays - one extra push per store.
-    const string direct = "$OPTIMIZE SPEED\nDECLARE SUB s(x%)\ns 9\nEND\nSUB s(x%) NOINLINE\n  a% = x%\n  b% = x%\n  d% = x%\n  PRINT a%; b%; d%\nEND SUB";
-    const string byref = "$OPTIMIZE SPEED\nDECLARE SUB s(x%)\ns 9\nEND\nSUB s(x%) NOINLINE\n  x% = x% + 1\n  x% = x% + 1\n  x% = x% + 1\n  PRINT x%\nEND SUB";
-    Assert.That(CountPushAx(Compile(direct, Dialect.Pb36)), Is.LessThan(CountPushAx(Compile(byref, Dialect.Pb36))),
-      "direct-cell stores drop the value park; BYREF stores keep it (one push per store)");
-  }
-
-  // 0x50 = PUSH AX (the value park before an address computation)
-  private static int CountPushAx(byte[] image) {
-    var count = 0;
-    foreach (var b in image)
-      if (b == 0x50)
-        ++count;
-    return count;
+  public void Emit_GivenStoresOfOneByrefValue_WhenPb36_ThenItIsReadOnceAndNeverParked() {
+    // a% = x% : b% = x% : d% = x% with x% BYREF: the value is read through its pointer ONCE and kept in
+    // a register for all three - no reload per store and no PUSH/POP parking it across an address
+    // computation (the direct emitter's value park). Measured over the SUB: loads through [BX]/[SI]/[DI].
+    const string source = "$OPTIMIZE SPEED\nDECLARE SUB s(x%)\nDIM v%\nv% = INP(&H60)\ns v%\ns 9\nEND\n"
+      + "SUB s(x%) NOINLINE\n  a% = x%\n  b% = x%\n  d% = x%\n  PRINT a%; b%; d%\nEND SUB";
+    var code = ProcedureBytes(source, "s").ToArray();
+    var reads = 0;
+    for (var i = 0; i + 1 < code.Length; ++i)
+      if (code[i] == 0x8B && (code[i + 1] & 0xC7) is 0x04 or 0x05 or 0x07)
+        ++reads;                                    // MOV r16,[SI] / [DI] / [BX]
+    Assert.That(reads, Is.EqualTo(1), "x% is read through its pointer once");
   }
 
   [Test]
@@ -2306,11 +2332,20 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenModularMultiplyByThree_WhenPb36Default_ThenKeepsImul() {
-    // the shift chains are a SPEED trade (a few bytes for the cycles); SIZE/default
-    // keep the 2-byte IMUL
-    const string source = "x% = 11\nT x%\ny% = x% * 3\nT y%\nEND" + _TOUCH_END;
-    var pb36 = Compile(_TOUCH + source, Dialect.Pb36);
-    Assert.That(CountImulBx(pb36), Is.EqualTo(1), "without $OPTIMIZE SPEED the compact IMUL BX is kept");
+    // the shift chains are a SPEED trade (bytes for cycles); the default objective keeps the compact
+    // one-operand IMUL. x% is an opaque parameter, and the SUB is measured on its own.
+    const string source = "DECLARE SUB S(BYVAL x%)\nS INP(&H60)\nS 3\nEND\nSUB S(BYVAL x%) NOINLINE\n  y% = x% * 3\n  PRINT y%\nEND SUB";
+    var code = ProcedureBytes(source, "S").ToArray();
+    var imul = 0;
+    var shifts = 0;
+    for (var i = 0; i + 1 < code.Length; ++i) {
+      imul += code[i] == 0xF7 && code[i + 1] is >= 0xE8 and <= 0xEF ? 1 : 0;   // IMUL r16
+      shifts += code[i] == 0xD1 && code[i + 1] is >= 0xE0 and <= 0xE7 ? 1 : 0; // SHL r16,1
+    }
+    Assert.Multiple(() => {
+      Assert.That(imul, Is.EqualTo(1), "without $OPTIMIZE SPEED the compact IMUL is kept");
+      Assert.That(shifts, Is.Zero, "and no shift-add chain replaces it");
+    });
   }
 
   [Test]
@@ -2346,15 +2381,29 @@ public sealed class OptimizerTests {
   private const string _TOUCHL_END = "\nSUB TL(a&) NOINLINE\n  ! nop\nEND SUB";
 
   [Test]
-  public void Emit_GivenBitwiseMaskConstant_WhenPb36_ThenFoldsToImmediateNoRegisterLoad() {
-    // y% = x% AND 15 folds the mask into AND AX,imm; the variable form y% = x% AND w% reads w%
-    // straight as a memory operand (AND AX,[w%] = 23 06) - neither stages the operand through BX.
-    var constMask = Compile(_TOUCH + "x% = 100\nT x%\ny% = x% AND 15\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
-    var varMask = Compile(_TOUCH + "x% = 100\nw% = 15\nT x%\nT w%\ny% = x% AND w%\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
+  public void Emit_GivenBitwiseMasks_WhenPb36_ThenConstantIsImmediateAndVariableIsNotStaged() {
+    // y% = x% AND 15 folds the mask into AND r,imm - no register holds the 15. z% = x% AND w% reads
+    // w% (a parameter, [BP+4]) as the AND's memory operand, or loads it once; it is never staged into
+    // a register just to be ANDed. Two call sites, one opaque, keep both from folding.
+    const string source = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%, BYVAL w%)\n" + _TOUCH
+      + "S INP(&H60), INP(&H61)\nS 3, 9\nEND\n"
+      + "SUB S(BYVAL x%, BYVAL w%) NOINLINE\n  y% = x% AND 15\n  T y%\n  z% = x% AND w%\n  T z%\nEND SUB" + _TOUCH_END;
+    var code = ProcedureBytes(source, "S").ToArray();
+    bool andImmediate = false, stagedConstant = false;
+    int maskLoads = 0, maskOperands = 0;
+    for (var i = 0; i + 2 < code.Length; ++i) {
+      andImmediate |= code[i] == 0x83 && code[i + 1] is >= 0xE0 and <= 0xE7 && code[i + 2] == 0x0F;   // AND r16,15
+      stagedConstant |= code[i] is >= 0xB8 and <= 0xBF && code[i + 1] == 0x0F && code[i + 2] == 0x00; // MOV r16,15
+      if (code[i + 2] == 0x04 && (code[i + 1] & 0xC7) == 0x46) {                                        // [BP+4]
+        maskLoads += code[i] == 0x8B ? 1 : 0;
+        maskOperands += code[i] == 0x23 ? 1 : 0;
+      }
+    }
     Assert.Multiple(() => {
-      Assert.That(CountMovBxAx(constMask), Is.Zero, "x% AND 15 should fold to AND AX,imm with no MOV BX,AX");
-      Assert.That(CountMovBxAx(varMask), Is.Zero, "x% AND w% reads w% as a memory operand, not via MOV BX,AX");
-      Assert.That(CountAndAxMem(varMask), Is.GreaterThanOrEqualTo(1), "x% AND w% should use AND AX,[w%]");
+      Assert.That(andImmediate, Is.True, "x% AND 15 is AND r,15");
+      Assert.That(stagedConstant, Is.False, "the constant mask is never loaded into a register");
+      Assert.That(maskLoads == 1 || (maskLoads == 0 && maskOperands > 0), Is.True,
+        $"w% is an AND operand or loaded once ({maskLoads} loads, {maskOperands} AND operands)");
     });
   }
 
@@ -2368,32 +2417,24 @@ public sealed class OptimizerTests {
       "a direct-cell right operand is read as an ALU memory operand, not staged through BX");
   }
 
-  // 23 06 = AND AX, [disp16] - the memory-operand bitwise form
-  private static int CountAndAxMem(byte[] image) {
-    var count = 0;
-    for (var i = 0; i + 1 < image.Length; ++i)
-      if (image[i] == 0x23 && image[i + 1] == 0x06)
-        ++count;
-    return count;
-  }
-
   [Test]
-  public void Emit_GivenCompareWithMemoryRightOperand_WhenPb36_ThenCmpMemoryOperand() {
-    // i% > n% with n% a direct cell compares it as a memory operand (CMP AX,[n%]); an expression
-    // right operand (n% * i%) must be staged through BX first.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > n% THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > (n% * i%) THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
-    Assert.That(CountCmpMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountCmpMem(Compile(staged, Dialect.Pb36))),
-      "a direct-cell compare operand is read as a CMP memory operand (CMP AX,[n%]); a staged operand is CMP AX,BX");
-  }
-
-  // 3B /r with a memory mod field (mod != 11) = CMP r16, [mem] - the memory-operand compare form
-  private static int CountCmpMem(byte[] image) {
-    var count = 0;
-    for (var i = 0; i + 1 < image.Length; ++i)
-      if (image[i] == 0x3B && (image[i + 1] & 0xC0) != 0xC0)
-        ++count;
-    return count;
+  public void Emit_GivenCompareWithParameterRightOperand_WhenPb36_ThenItIsNotStagedPerIteration() {
+    // i% > n% with n% a parameter: n% is either read straight into the compare (CMP r,[BP+4]) or loaded
+    // once and kept in a register (CMP r,r) - never staged into a register again on every iteration,
+    // which is what an expression operand needs. Counted over the SUB, reads of the parameter cell.
+    const string source = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > n% THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
+    var code = ProcedureBytes(source, "s").ToArray();
+    int loads = 0, compares = 0;
+    for (var i = 0; i + 2 < code.Length; ++i) {
+      if (code[i + 2] != 0x04 || (code[i + 1] & 0xC7) != 0x46)
+        continue;                                   // not [BP+4], the parameter's cell
+      if (code[i] == 0x8B)
+        ++loads;                                    // MOV r16,[BP+4]
+      else if (code[i] == 0x3B)
+        ++compares;                                 // CMP r16,[BP+4]
+    }
+    Assert.That(loads == 1 || (loads == 0 && compares > 0), Is.True,
+      $"n% is kept in a register or read as a compare operand ({loads} loads, {compares} compares)");
   }
 
   [Test]
@@ -2539,14 +2580,19 @@ public sealed class OptimizerTests {
   }
 
   [Test]
-  public void Emit_GivenLongOpWithDirectCellOperand_WhenPb36_ThenLoadsRightWithoutStaging() {
-    // a LONG op (AND/OR/XOR) against a BYVAL direct-cell right operand loads it into BX:CX
-    // straight from memory, skipping the push/pop staging of the left (MOV BX,AX); a BYREF
-    // operand is not a direct cell and keeps staging. Two call sites defeat IPCP folding.
-    const string mem = "DECLARE SUB s(BYVAL a AS LONG, BYVAL b AS LONG)\ns 7, 3\ns 100, 200\nEND\nSUB s(BYVAL a AS LONG, BYVAL b AS LONG) NOINLINE\n  r& = a AND b\n  r& = r OR b\n  r& = r XOR b\n  PRINT r&\nEND SUB";
-    const string staged = "DECLARE SUB s(BYVAL a AS LONG, b AS LONG)\nDIM q AS LONG\nq = 3\ns 7, q\nq = 200\ns 100, q\nEND\nSUB s(BYVAL a AS LONG, b AS LONG) NOINLINE\n  r& = a AND b\n  r& = r OR b\n  r& = r XOR b\n  PRINT r&\nEND SUB";
-    Assert.That(CountMovBxAx(Compile(mem, Dialect.Pb36)), Is.LessThan(CountMovBxAx(Compile(staged, Dialect.Pb36))),
-      "a LONG direct-cell right operand loads into BX:CX from memory; a BYREF operand stages through MOV BX,AX");
+  public void Emit_GivenLongOpsWithParameterOperands_WhenPb36_ThenEachHalfIsReadOnce() {
+    // LONG AND/OR/XOR against BYVAL parameters read each parameter half from its cell at most once -
+    // a right operand is used where it lives, never re-staged per operation through another register.
+    // Two call sites, one opaque, defeat interprocedural folding.
+    const string source = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL a AS LONG, BYVAL b AS LONG)\ns INP(&H60) * 70000, 3\ns 100, 200\nEND\n"
+      + "SUB s(BYVAL a AS LONG, BYVAL b AS LONG) NOINLINE\n  r& = a AND b\n  PRINT r&\n  r& = (r& + a) OR b\n  PRINT r&\n  r& = (r& - a) XOR b\n  PRINT r&\nEND SUB";
+    var code = ProcedureBytes(source, "s").ToArray();
+    var reads = new Dictionary<int, int>();
+    for (var i = 0; i + 2 < code.Length; ++i)
+      if (code[i] == 0x8B && (code[i + 1] & 0xC7) == 0x46 && code[i + 2] is >= 4 and <= 10)
+        reads[code[i + 2]] = reads.GetValueOrDefault(code[i + 2]) + 1;    // MOV r16,[BP+4..10]
+    Assert.That(reads.Values.All(count => count == 1), Is.True,
+      "each parameter word is loaded once: " + string.Join(", ", reads.Select(r => $"[BP+{r.Key}] x{r.Value}")));
   }
 
   [Test]
@@ -2556,37 +2602,40 @@ public sealed class OptimizerTests {
     Assert.That(CountMovBxAx(pb36), Is.Zero, "comparison against a constant should fold to CMP AX,imm");
   }
 
-  // 8B /1 with a memory mod field = MOV CX, [mem] - the int32 path loading the right
-  // operand's high word straight from its cell (replaces the old MOV CX,DX staging)
-  private static int CountMovCxMem(byte[] image) {
-    var count = 0;
-    for (var i = 0; i + 1 < image.Length; ++i)
-      if (image[i] == 0x8B && (image[i + 1] & 0x38) == 0x08 && (image[i + 1] & 0xC0) != 0xC0)
-        ++count;
-    return count;
-  }
-
   [Test]
-  public void Emit_GivenLongBitwiseConstant_WhenPb36_ThenFoldsToImmediatePairNoRegisterLoad() {
-    // b& = a& AND 255 folds into AND AX,imm / AND DX,imm; the variable form must
-    // load the high word into CX
-    var constMask = Compile(_TOUCHL + "a& = &H1234\nTL a&\nb& = a& AND 255\nTL b&\nEND" + _TOUCHL_END, Dialect.Pb36);
-    var varMask = Compile(_TOUCHL + "a& = &H1234\nm& = 255\nTL a&\nTL m&\nb& = a& AND m&\nTL b&\nEND" + _TOUCHL_END, Dialect.Pb36);
+  public void Emit_GivenLongBitwiseConstant_WhenPb36_ThenFoldsToImmediateNoRegisterLoad() {
+    // b& = a& AND 255 is AND r,0FFh on the low word - the high word is simply zero - and no register
+    // is ever loaded with the mask. a& is an opaque parameter, so nothing folds.
+    const string source = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL a&)\ns INP(&H60) * 70000\ns 100\nEND\n"
+      + "SUB s(BYVAL a&) NOINLINE\n  b& = a& AND 255\n  PRINT b&\nEND SUB";
+    var code = ProcedureBytes(source, "s").ToArray();
+    var span = code.AsSpan();
+    var andImmediate = span.IndexOf(new byte[] { 0x25, 0xFF, 0x00 }) >= 0;                      // AND AX,0FFh
+    for (var r = 0xE0; r <= 0xE7 && !andImmediate; ++r)
+      andImmediate = span.IndexOf(new byte[] { 0x81, (byte)r, 0xFF, 0x00 }) >= 0;              // AND r16,0FFh
+    var loadsMask = false;
+    for (var r = 0xB8; r <= 0xBF; ++r)
+      loadsMask |= span.IndexOf(new byte[] { (byte)r, 0xFF, 0x00 }) >= 0;                      // MOV r16,0FFh
     Assert.Multiple(() => {
-      Assert.That(CountMovCxMem(constMask), Is.Zero, "a& AND 255 should fold to immediate pair ops, no high-word load into CX");
-      Assert.That(CountMovCxMem(varMask), Is.GreaterThanOrEqualTo(1), "a& AND m& loads the second operand's high word into CX straight from memory (MOV CX,[m&+2])");
+      Assert.That(andImmediate, Is.True, "a& AND 255 masks with an immediate");
+      Assert.That(loadsMask, Is.False, "the mask is never loaded into a register");
     });
   }
 
   [Test]
   public void Emit_GivenLongEqualsConstant_WhenPb36_ThenFoldsWithoutRegisterLoad() {
-    // y% = (p& = 123456) subtracts the constant halves in place; the variable
-    // form must load the comparand into CX
-    var constEq = Compile(_TOUCHL + _TOUCH + "p& = 7\nTL p&\ny% = (p& = 123456)\nT y%\nEND" + _TOUCHL_END + _TOUCH_END, Dialect.Pb36);
-    var varEq = Compile(_TOUCHL + _TOUCH + "p& = 7\nq& = 123456\nTL p&\nTL q&\ny% = (p& = q&)\nT y%\nEND" + _TOUCHL_END + _TOUCH_END, Dialect.Pb36);
+    // y% = (p& = 123456) compares each half against its immediate (1 and E240h) - the comparand is
+    // never loaded into a register. p& is an opaque parameter, so nothing folds.
+    const string source = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL p&)\ns INP(&H60) * 70000\ns 123456\nEND\n"
+      + "SUB s(BYVAL p&) NOINLINE\n  y% = (p& = 123456)\n  PRINT y%\nEND SUB";
+    var code = ProcedureBytes(source, "s").ToArray();
+    var loadsComparand = false;
+    for (var r = 0xB8; r <= 0xBF; ++r)
+      loadsComparand |= code.AsSpan().IndexOf(new byte[] { (byte)r, 0x40, 0xE2 }) >= 0;        // MOV r16,0E240h
     Assert.Multiple(() => {
-      Assert.That(CountMovCxMem(constEq), Is.Zero, "p& = const should fold the comparand, no high-word load");
-      Assert.That(CountMovCxMem(varEq), Is.GreaterThanOrEqualTo(1), "p& = q& loads the comparand's high word straight from memory (MOV CX,[q&+2])");
+      Assert.That(ComparesAgainstImmediate(code, 0xE240 - 0x10000), Is.True, "the low half is compared against E240h");
+      Assert.That(ComparesAgainstImmediate(code, 1), Is.True, "the high half against 1");
+      Assert.That(loadsComparand, Is.False, "the comparand is never loaded into a register");
     });
   }
 
@@ -2600,17 +2649,24 @@ public sealed class OptimizerTests {
   }
 
   [Test]
-  public void Emit_GivenCompareAgainstZero_WhenPb36_ThenUsesOrIdiomNotCmpImmediate() {
-    var pb36 = Compile(_TOUCH + "x% = 7\nT x%\ny% = (x% = 0)\nT y%\nEND" + _TOUCH_END, Dialect.Pb36);
-    var hasOrAxAx = false;
-    var hasCmpAxZero = false;
-    for (var i = 0; i + 2 < pb36.Length; ++i) {
-      hasOrAxAx |= pb36[i] == 0x09 && pb36[i + 1] == 0xC0;                       // OR AX,AX (r/m,reg form)
-      hasCmpAxZero |= pb36[i] == 0x3D && pb36[i + 1] == 0x00 && pb36[i + 2] == 0x00; // CMP AX,0
+  public void Emit_GivenCompareAgainstZero_WhenPb36_ThenUsesAZeroIdiomNotCmpImmediate() {
+    // x% = 0 never compares against an immediate zero: OR r,r / TEST r,r ask it with no immediate,
+    // and CMP x,1 / SBB r,r - carry set exactly when x is 0 - even builds PB's -1/0 without a jump.
+    // x% is a parameter with two call sites, one opaque: with a constant it folds and nothing is asked.
+    const string source = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL x%)\n" + _TOUCH + "S INP(&H60)\nS 3\nEND\n"
+      + "SUB S(BYVAL x%) NOINLINE\n  y% = (x% = 0)\n  T y%\nEND SUB" + _TOUCH_END;
+    var code = ProcedureBytes(source, "S").ToArray();
+    bool compareWithZero = false, zeroIdiom = false;
+    for (var i = 0; i + 2 < code.Length; ++i) {
+      compareWithZero |= code[i] == 0x3D && code[i + 1] == 0x00 && code[i + 2] == 0x00;             // CMP AX,0
+      compareWithZero |= code[i] == 0x83 && code[i + 1] >= 0xF8 && code[i + 2] == 0x00;             // CMP r16,0
+      compareWithZero |= i + 3 < code.Length && code[i] == 0x83 && code[i + 1] == 0x7E && code[i + 3] == 0x00; // CMP [BP+d],0
+      var sameRegister = code[i + 1] >= 0xC0 && ((code[i + 1] >> 3) & 7) == (code[i + 1] & 7);
+      zeroIdiom |= code[i] is 0x09 or 0x0B or 0x85 or 0x19 && sameRegister;                        // OR/TEST/SBB r,r
     }
     Assert.Multiple(() => {
-      Assert.That(hasOrAxAx, Is.True, "x% = 0 should test via OR AX,AX");
-      Assert.That(hasCmpAxZero, Is.False, "x% = 0 should not emit CMP AX,0");
+      Assert.That(compareWithZero, Is.False, "x% = 0 should not compare against an immediate 0");
+      Assert.That(zeroIdiom, Is.True, "it is asked with OR/TEST r,r or answered by SBB r,r");
     });
   }
 

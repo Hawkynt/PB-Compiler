@@ -32,6 +32,7 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class StringEmptinessTest {
 
   private const string _LEN = "rt_str_len";
+  private const string _LEN_BORROW = "rt_str_len_borrow";
   private const string _COMPARE = "rt_str_compare";
   private const string _COMPARE_EQ = "rt_str_compare_eq";
   private const string _CONST = "rt_str_const";
@@ -100,6 +101,8 @@ public static class StringEmptinessTest {
     switch (callee.Name) {
       case _LEN when answer.ArgCount == 1:
         return Borrowed(answer.GetOperand(1)) is { } length ? (length.Handle, [length.Borrow]) : null;
+      case _LEN_BORROW when answer.ArgCount == 1:
+        return (answer.GetOperand(1), []);   // already asks the handle itself, and consumes nothing
       case _COMPARE or _COMPARE_EQ when answer.ArgCount == 2: {
         // whichever side is the empty literal; the other is the string being asked about
         var literalIndex = IsEmptyLiteral(answer.GetOperand(2)) ? 2 : IsEmptyLiteral(answer.GetOperand(1)) ? 1 : 0;
