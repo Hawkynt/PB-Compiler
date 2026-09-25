@@ -322,7 +322,7 @@ public static class Driver {
   private static bool TryEmitHostedSource(SemanticModel model, bool emitC, bool? optimize, bool optimizeSpeed,
       bool parallelLoops, string label, TextWriter stderr, out string text) {
     text = "";
-    var target = emitC ? IrBackendTarget.C : IrBackendTarget.X86_64;
+    var target = emitC ? IrBackendTarget.C : IrBackendTarget.Llvm;
     var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
       Target = target,
       Optimize = optimize ?? true,

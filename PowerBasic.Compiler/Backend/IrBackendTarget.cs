@@ -7,9 +7,8 @@ namespace PowerBasic.Compiler.Backend;
 public enum IrBackendTarget {
   Mos6502,
   X86_16,
-  X86_32,
-  X86_64,
   C,
+  Llvm,
   PowerBasic35,
 }
 
@@ -17,22 +16,17 @@ public enum IrBackendTarget {
 public static class IrBackendTargetContract {
   public static SelectionTarget SelectionTarget(IrBackendOptions options) => options.Target switch {
     IrBackendTarget.X86_16 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 86, TargetFamily: MachineTargetFamily.X86_16),
-    IrBackendTarget.X86_32 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 386, TargetFamily: MachineTargetFamily.X86_32),
-    IrBackendTarget.X86_64 => new(options.Optimize, options.OptimizeForSpeed, options.OptimizeForSize, CpuLevel: 686, TargetFamily: MachineTargetFamily.X86_64),
     _ => global::PowerBasic.Compiler.Backend.SelectionTarget.Baseline,
   };
 
   public static IMachineTarget? CreateMachineTarget(IrBackendTarget target) => target switch {
     IrBackendTarget.Mos6502 => new Mos6502MachineTarget(),
-    IrBackendTarget.X86_16 => new X86MachineTarget(X86Mode.Bit16, X86Abi.I8086Cdecl),
-    IrBackendTarget.X86_32 => new X86MachineTarget(X86Mode.Bit32, X86Abi.I386Cdecl),
-    IrBackendTarget.X86_64 => new X86MachineTarget(X86Mode.Bit64, X86Abi.SysV64),
     _ => null,
   };
 
   public static IrRepresentationStage RequiredInputStage(IrBackendTarget target) => target switch {
-    IrBackendTarget.C or IrBackendTarget.PowerBasic35 or IrBackendTarget.X86_16
-      or IrBackendTarget.X86_32 or IrBackendTarget.X86_64 or IrBackendTarget.Mos6502
+    IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35 or IrBackendTarget.X86_16
+      or IrBackendTarget.Mos6502
       => IrRepresentationStage.LowIr,
     _ => throw new ArgumentOutOfRangeException(nameof(target), target, null),
   };

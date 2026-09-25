@@ -16,38 +16,6 @@ public sealed class IrBackendModule {
   public IrBackendOptions Options { get; }
   public IrMachineModule? Machine { get; private set; }
 
-  /// <summary>Emits the target-owned hosted x86 products produced by machine lowering.</summary>
-  public bool TryEmitHostedX86(
-      out IReadOnlyDictionary<string, MachineCode> emitted,
-      out IReadOnlyList<string> errors) {
-    emitted = new Dictionary<string, MachineCode>(StringComparer.Ordinal);
-    if (this.Machine is null) {
-      errors = ["hosted emission requires machine lowering"];
-      return false;
-    }
-    if (this.Options.Target is not (IrBackendTarget.X86_16 or IrBackendTarget.X86_32 or IrBackendTarget.X86_64)) {
-      errors = [$"target '{this.Options.Target}' is not an x86 hosted target"];
-      return false;
-    }
-
-    var target = IrBackendTargetContract.CreateMachineTarget(this.Options.Target);
-    if (target is not X86MachineTarget x86) {
-      errors = [$"target '{this.Options.Target}' has no x86 emitter contract"];
-      return false;
-    }
-    var results = new Dictionary<string, MachineCode>(StringComparer.Ordinal);
-    foreach (var function in this.Machine.Functions) {
-      if (function.HostedFunction is null) {
-        errors = [$"function '{function.Source.Name}' is not representable by the hosted x86 machine emitter"];
-        return false;
-      }
-      results.Add(function.Source.Name, x86.HostedEmitter.Emit(function.HostedFunction));
-    }
-    emitted = results;
-    errors = [];
-    return true;
-  }
-
   public bool TryEmitMos6502(out IReadOnlyDictionary<string, MachineCode> emitted,
       out IReadOnlyList<string> errors) {
     emitted = new Dictionary<string, MachineCode>(StringComparer.Ordinal);
@@ -83,19 +51,6 @@ public sealed class IrBackendModule {
       return true;
     }
 
-    if (Options.Target is IrBackendTarget.X86_16 or IrBackendTarget.X86_32 or IrBackendTarget.X86_64) {
-      var targetModel = IrBackendTargetContract.CreateMachineTarget(Options.Target);
-      if (targetModel is null) {
-        errors = [$"target '{Options.Target}' has no machine target contract"];
-        return false;
-      }
-      if (!IrMachinePipeline.TryLower(this.Module, targetModel.CreateLowerer(target), target,
-            out var targetMachine, out errors))
-        return false;
-      this.Machine = targetMachine;
-      return true;
-    }
-
     if (!IrMachinePipeline.TryLower(this.Module, target, out var machine, out errors))
       return false;
     this.Machine = machine;
@@ -113,12 +68,12 @@ public sealed class IrBackendModule {
       return null;
 
     module.AsciiOnly = model.AsciiOnly;
-    if (options.Target is IrBackendTarget.C or IrBackendTarget.PowerBasic35 or IrBackendTarget.X86_64)
+    if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
         options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops);
-    else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.X86_32 or IrBackendTarget.Mos6502)
+    else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.Mos6502)
       IrMiddleEndPipeline.RunNativeModule(module, options.Optimize, options.OptimizeForSpeed,
-        options.OptimizeForSize, minimumIntegerStorageBits: options.Target is IrBackendTarget.X86_16 or IrBackendTarget.Mos6502 ? 16 : 32,
+        options.OptimizeForSize, minimumIntegerStorageBits: 16,
         recoverIntegerArithmetic: options.RecoverIntegerArithmetic);
     else {
       declinedBecause = $"target '{options.Target}' has no emitter yet";

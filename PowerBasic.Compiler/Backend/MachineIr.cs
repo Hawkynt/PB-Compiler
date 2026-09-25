@@ -18,7 +18,7 @@ namespace PowerBasic.Compiler.Backend;
 public enum MRegSize { Byte, Word, Dword, Qword, Tbyte }
 
 /// <summary>The concrete machine family a selected function is allowed to use.</summary>
-public enum MachineTargetFamily { X86_16, X86_32, X86_64, Mos6502 }
+public enum MachineTargetFamily { X86_16, Mos6502 }
 
 /// <summary>A register operand: a virtual id until allocation binds it to a physical register.</summary>
 public readonly record struct MReg(int VirtualId, Reg Physical, MRegSize Size, bool IsVirtual) {

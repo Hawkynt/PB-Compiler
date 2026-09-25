@@ -435,8 +435,8 @@ public sealed partial class InstructionSelector {
   private void EmitIndexedJump(MOperand.BlockAddressTable table, string fallback, IReadOnlyList<Reg> clobbers) {
     // Dispatch arithmetic deliberately lives in AX, but an 8086 table jump is a MEMORY operand and
     // AX cannot address memory. Materialize the normalized index in BX at the representation boundary
-    // instead of relying on an assembler-side repair: the hosted x86 target consumes Machine IR
-    // literally and encodes this as JMP word [BX+table].
+    // instead of relying on an assembler-side repair, so the machine IR says what is encoded:
+    // JMP word [BX+table].
     var ax = Pinned(Reg.AX);
     var bx = Pinned(Reg.BX);
     this.EmitPinned(MOpcode.Mov, [bx, ax], MovEffect(bx, ax), clobbers);

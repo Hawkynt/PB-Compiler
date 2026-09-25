@@ -8,9 +8,7 @@ public sealed record IrMachineFunction(
     Ir.IrFunction Source,
     X86MachineFunction Function,
     IReadOnlyDictionary<int, Reg> Allocation,
-    MachineTargetDescription Target,
-    X86TargetMachineFunction? HostedFunction = null,
-    string? HostedLoweringError = null);
+    MachineTargetDescription Target);
 
 /// <summary>
 /// The machine-side compilation product. Selection produces virtual-register machine SSA;

@@ -44,7 +44,7 @@ public sealed class X86MachinePostAllocation
   }
 }
 
-/// <summary>Current x86 lowering implementation shared by the 16-, 32- and 64-bit x86 contracts.</summary>
+/// <summary>The x86-16 lowering: selection, scheduling, allocation and the post-allocation rewrites.</summary>
 public sealed class X86MachineLowering : IMachineFunctionLowerer {
   private readonly MachineTargetFamily _targetFamily;
   private readonly X86MachineSelector _selector;
@@ -53,7 +53,7 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
   private readonly X86MachinePostAllocation _postAllocation = new();
 
   public X86MachineLowering(SelectionTarget target) {
-    if (target.TargetFamily.X86Mode() is null)
+    if (target.TargetFamily != MachineTargetFamily.X86_16)
       throw new ArgumentOutOfRangeException(
         nameof(target), target, $"target family '{target.TargetFamily}' is not an x86 target");
     this.Target = new(target.TargetFamily);
@@ -106,8 +106,8 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
     ArgumentNullException.ThrowIfNull(source);
     ArgumentNullException.ThrowIfNull(selected);
     machine = null;
-    if (!X86MachineTargetValidation.TryValidate(selected, this.Target, out var targetError)) {
-      error = "target: " + targetError;
+    if (selected.TargetFamily != this.Target.Family) {
+      error = $"target: machine function is '{selected.TargetFamily.DisplayName()}', target requires '{this.Target.Name}'";
       return false;
     }
     IReadOnlyDictionary<int, Reg>? allocation;
@@ -153,56 +153,8 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       error = $"post-allocation: invalid operand: {exception.Message}";
       return false;
     }
-    var provisional = new IrMachineFunction(source, selected, allocation, this.Target);
-    var hostedFailure = TryBuildHosted(provisional, out var hosted);
-    // The hosted function is how x86-32 and x86-64 are EMITTED, so there it is the product and a
-    // failure to build or encode it is a failure to compile. x86-16 is not emitted from it:
-    // X86ProductionEmitter sends DOS through MachineEmitter on the allocated MFunction, which owns
-    // the stack ABI, far operands, verbatim inline assembly and 386 operand-size prefixes. Making the
-    // hosted build a GATE for x86-16 therefore refused programs the emitter that actually produces
-    // their bytes handles - every `! DEC` without a semantic model, every $CPU 80386 function using
-    // EAX in real mode - and what was lost was routing, not correctness. On x86-16 the hosted build
-    // is best-effort: its reason is kept for TryEmitHostedX86, which already reports a missing one.
-    if (hostedFailure is not null && this.Target.Family.EmitsFromHostedFunction()) {
-      error = hostedFailure;
-      return false;
-    }
-    machine = new IrMachineFunction(source, selected, allocation, this.Target,
-      hostedFailure is null ? hosted : null, hostedFailure);
+    machine = new IrMachineFunction(source, selected, allocation, this.Target);
     error = null;
     return true;
-  }
-
-  /// <summary>Builds and encode-checks the hosted function, answering why not, or null on success.</summary>
-  private static string? TryBuildHosted(IrMachineFunction provisional, out X86TargetMachineFunction? hosted) {
-    if (!X86HostedMachineBuilder.TryBuild(provisional, out hosted, out var hostedError))
-      return "hosted machine lowering: " + (hostedError ?? "unsupported target instruction");
-    if (hosted is null)
-      return "hosted machine lowering: succeeded without producing a target function";
-    if (!TryValidateEncoding(hosted, provisional.Target.Family, out var encodingError))
-      return "x86 encoding: " + encodingError;
-    return null;
-  }
-
-  private static bool TryValidateEncoding(X86TargetMachineFunction function, MachineTargetFamily family, out string? error) {
-    var mode = family.RequireX86Mode();
-    try {
-      _ = new X86TargetMachineEmitter(new X86InstructionEncoder(mode))
-        .Emit(function, preserveFramePointer: true, emitReturn: true);
-      error = null;
-      return true;
-    } catch (ArgumentException exception) {
-      error = exception.Message;
-      return false;
-    } catch (InvalidOperationException exception) {
-      error = exception.Message;
-      return false;
-    } catch (NotSupportedException exception) {
-      error = exception.Message;
-      return false;
-    } catch (OverflowException exception) {
-      error = exception.Message;
-      return false;
-    }
   }
 }
