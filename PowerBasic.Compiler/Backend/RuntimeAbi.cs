@@ -596,6 +596,17 @@ internal static class RuntimeAbi {
     ["rt_str_space"] = new("rt_strfill", [new(ArgKind.Word, Reg.CX)], _callerSaved,
       Result: Reg.AX, Constants: [(Reg.DX, ' ')]),
 
+    // O0302 (ConstantInstrSpecialization): INSTR of a compile-time needle of two bytes or more.
+    // AX=haystack (consumed), CX=start, BX=needle offset, DX=needle length [, SI=skip table] ->
+    // AX=position/0, widened like every word answer
+    ["rt_instr_short"] = new("rt_instr_short",
+      [new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.AX), new(ArgKind.Offset, Reg.BX), new(ArgKind.Word, Reg.DX)],
+      _callerSaved, Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    ["rt_instr_horspool"] = new("rt_instr_horspool",
+      [new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.AX), new(ArgKind.Offset, Reg.BX), new(ArgKind.Word, Reg.DX),
+       new(ArgKind.Offset, Reg.SI)],
+      _callerSaved, Result: Reg.AX, Answer: ResultKind.WidenedWord),
+
     // the three-argument INSTR names its start, so nothing is preset
     ["rt_str_instr_start"] = new("rt_instr",
       [new(ArgKind.Word, Reg.CX), new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)],

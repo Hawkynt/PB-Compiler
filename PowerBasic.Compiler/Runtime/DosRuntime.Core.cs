@@ -266,6 +266,7 @@ public sealed partial class DosRuntime {
     ("long_helpers", this.EmitLongHelpers),
     ("memory", this.EmitMemoryProcedures),
     ("packed16", this.EmitPacked16),
+    ("instr_const", this.EmitConstantInstr),
     ("strings", this.EmitStringProcedures),
     ("strviews", this.EmitStringViewProcedures),
     ("binary_strings", this.EmitBinaryStringProcedures),

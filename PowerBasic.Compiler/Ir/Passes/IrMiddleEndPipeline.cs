@@ -181,6 +181,7 @@ public static class IrMiddleEndPipeline {
       // what makes rendering a constant at compile time exact on THIS target; it is not a claim about
       // any other runtime, so it runs here and not in Standard.
       ConstantNumericPrint.Run(module);
+      ConstantInstrSpecialization.Run(module);
       // R4: the packed kernels are the DOS runtime's, sized to the target's SIMD, and a SPEED trade
       if (optimizeForSpeed && packedVectorBytes > 0)
         foreach (var function in module.Functions.ToList())   // a kernel declaration joins the list

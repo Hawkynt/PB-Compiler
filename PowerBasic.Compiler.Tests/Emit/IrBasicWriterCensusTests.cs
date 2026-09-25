@@ -254,6 +254,7 @@ public sealed class IrBasicWriterCensusTests {
     "pb36/DIFF99.BAS",
     "pb36/HELLO.BAS",
     "pb36/INCRLV.BAS",
+    "pb36/INSTRC.BAS",
     "pb36/PRTUSING.BAS", // O0303 removes the otherwise unsupported constant rt_using_field call
     "pb36/RANGES.BAS",
     "pb36/SHAREDG.BAS",
