@@ -554,6 +554,16 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Dq(value);
     }
 
+    // String literals are target data, not a syntax-emitter optimization. The IR backend resolves
+    // each interned .strN global through LiteralOf(), so every pooled label must be materialized in
+    // the DOS image even though the old direct-expression emitter has been deleted. Deliberately do
+    // no suffix/overlap packing here: that was legacy AST optimizer policy and must not re-enter the
+    // production pipeline behind IrMiddleEndPipeline.
+    foreach (var (text, label) in this._stringLiterals) {
+      asm.MarkLabel(label);
+      asm.Db(text);
+    }
+
     this.EmitBackendDataPool(asm);
 
     if (!this._isUnit) {
