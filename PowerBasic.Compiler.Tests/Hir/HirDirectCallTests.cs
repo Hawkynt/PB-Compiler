@@ -93,9 +93,18 @@ public sealed class HirDirectCallTests {
       .Single(candidate => ReferenceEquals(candidate.Callee, target));
 
     Assert.Multiple(() => {
-      Assert.That(call.Args.Cast<IrConstantInt>().Select(argument => argument.Value),
-        Is.EqualTo(new long[] { 2, 3, 5 }));
+      Assert.That(call.Args.Select(ConstantBehindWidening), Is.EqualTo(new long[] { 2, 3, 5 }));
       Assert.That(IrVerifier.Verify(module), Is.Empty);
     });
   }
+
+  /// <summary>
+  /// The literal an argument carries. INTEGER literals reach LONG parameters widened, and lowering
+  /// does not fold that sext - the order is what is under test, not the folding.
+  /// </summary>
+  private static long ConstantBehindWidening(IrValue argument) => argument switch {
+    IrConstantInt constant => constant.Value,
+    IrCast { Op: IrCastOp.SExt, Value: IrConstantInt constant } => constant.Value,
+    _ => throw new AssertionException($"argument {argument} is not a (widened) integer constant"),
+  };
 }
