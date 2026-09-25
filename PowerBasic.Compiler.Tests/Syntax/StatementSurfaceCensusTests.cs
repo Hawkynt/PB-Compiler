@@ -6,21 +6,17 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Tests.Syntax;
 
 /// <summary>
-/// The statement surface against both code generators, measured rather than assumed.
+/// The statement surface against the mandatory multi-stage compiler pipeline, measured rather than assumed.
 ///
-/// <see cref="StatementSurface"/> lists every spelling of every statement, including the combinations
-/// of its optional parameters. This fixture drives all of them through the whole front end and then
-/// through BOTH emitters - the direct x86-16 one and the IR path - and reports, per form, exactly how
-/// far it gets: parse, bind, direct codegen, routed codegen.
-///
-/// The report is the point. A statement that parses and binds but has no code generator behind it is
-/// not "supported", and the only way to find those is to compile every one of them and look. The
-/// pinned totals underneath turn that measurement into a ratchet.
+/// <see cref="StatementSurface"/> lists every spelling of every statement, including combinations of
+/// optional parameters. This fixture drives each one through parse, bind, HIR/IR lowering, the middle
+/// end, Machine IR and x86-16 DOS emission. A statement that parses and binds but cannot traverse that
+/// complete pipeline is not supported; the pinned gap set makes that boundary explicit.
 /// </summary>
 [TestFixture]
 public sealed class StatementSurfaceCensusTests {
 
-  private enum Stage { Parse, Bind, Direct, Routed, Done }
+  private enum Stage { Parse, Bind, Compile, Done }
 
   private sealed record Result(StatementSurface.Form Form, Dialect Dialect, Stage Reached, string? Why);
 
@@ -38,21 +34,12 @@ public sealed class StatementSurfaceCensusTests {
       return new(form, dialect, Stage.Bind, model.Errors[0].Message);
 
     try {
-      var direct = new CodeGenerator(Rebind(source, dialect)) { UseExperimentalBackend = false };
-      direct.EmitExecutable();
-      if (direct.Errors.Count > 0)
-        return new(form, dialect, Stage.Direct, direct.Errors[0].Message);
+      var compiler = new CodeGenerator(Rebind(source, dialect));
+      compiler.EmitExecutable();
+      if (compiler.Errors.Count > 0)
+        return new(form, dialect, Stage.Compile, compiler.Errors[0].Message);
     } catch (Exception e) {
-      return new(form, dialect, Stage.Direct, e.GetType().Name + ": " + e.Message);
-    }
-
-    try {
-      var routed = new CodeGenerator(Rebind(source, dialect)) { UseExperimentalBackend = true };
-      routed.EmitExecutable();
-      if (routed.Errors.Count > 0)
-        return new(form, dialect, Stage.Routed, routed.Errors[0].Message);
-    } catch (Exception e) {
-      return new(form, dialect, Stage.Routed, e.GetType().Name + ": " + e.Message);
+      return new(form, dialect, Stage.Compile, e.GetType().Name + ": " + e.Message);
     }
     return new(form, dialect, Stage.Done, null);
   }
@@ -79,7 +66,6 @@ public sealed class StatementSurfaceCensusTests {
     }
   }
 
-  // a CodeGenerator consumes its model, so each emitter gets its own
   private static SemanticModel Rebind(string source, Dialect dialect)
     => Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", dialect), "T.BAS", dialect), dialect);
 
@@ -107,13 +93,13 @@ public sealed class StatementSurfaceCensusTests {
     foreach (var (section, forms) in StatementSurface.Sections) {
       var ids = forms.Select(f => f.Id).ToHashSet(StringComparer.Ordinal);
       var mine = results.Where(r => ids.Contains(r.Form.Id)).ToList();
-      report.AppendLine($"{section,-12} {mine.Count(r => r.Reached == Stage.Done),3}/{mine.Count} compile both ways");
+      report.AppendLine($"{section,-12} {mine.Count(r => r.Reached == Stage.Done),3}/{mine.Count} compile through IR/x86-16");
       foreach (var r in mine.Where(r => r.Reached != Stage.Done))
         report.AppendLine($"    {r.Reached,-7} {r.Form.Id,-28} {Summarize(r.Why ?? "")}");
     }
 
     var done = results.Count(r => r.Reached == Stage.Done);
-    report.Insert(0, $"statement forms compiling through BOTH emitters under pb36: {done}/{results.Count}\n");
+    report.Insert(0, $"statement forms compiling through the mandatory IR/x86-16 pipeline under pb36: {done}/{results.Count}\n");
     TestContext.Out.Write(report.ToString());
 
     // The gaps are pinned by NAME, not by count. A count is a ratchet that only catches the total

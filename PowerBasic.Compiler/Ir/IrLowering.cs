@@ -3311,10 +3311,19 @@ public sealed partial class IrLowering {
     this._b.Store(this._b.Load(IrType.I16, onerrSp), savedSp);
 
     var dispatch = this.NewBlock("try.dispatch");
+    var body = this.NewBlock("try.body");
     var cleanup = this.NewBlock("try.cleanup");
     var end = this.NewBlock("try.end");
     this._b.Call(IrType.Void, this.RuntimeFn("rt_onerr_arm", IrType.Void, IrType.Ptr),
       new IrBlockAddress(dispatch));
+
+    // rt_raise can enter 'dispatch' by restoring BP/SP and jumping through the armed block address.
+    // That edge is real program control flow but cannot be represented by an ordinary branch at run
+    // time. Keep an explicit never-taken CFG edge so verifier/dominator analyses see the handler as
+    // dominated by the arming/saved-frame state. HasErrorHandler functions are deliberately excluded
+    // from CFG simplification, so this structural edge survives until instruction selection.
+    this._b.CondBr(new IrConstantInt(IrType.I1, 0), dispatch, body);
+    this._b.Position(body);
 
     this.LowerStatements(stmt.Body);
     if (!this.Terminated) {
