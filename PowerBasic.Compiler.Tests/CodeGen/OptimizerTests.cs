@@ -659,22 +659,21 @@ public sealed class OptimizerTests {
   }
 
   [Test]
-  public void Emit_GivenRegisterCounterFor_WhenPb36Speed_ThenRotatedTestedAtBothEnds() {
-    // O0062: a register-resident FOR counter (SI) is rotated - an entry guard plus a bottom test -
-    // so the counter is compared (cmp si, r/m: 3B with modrm reg field = 110b) at BOTH ends. A PRINT
-    // body keeps the loop (nothing to collapse) while still qualifying for the SI-counter path.
+  public void Emit_GivenRegisterCounterFor_WhenPb36Speed_ThenRotatedToABottomTest() {
+    // O0062: a register-resident FOR counter (SI) is rotated - an entry guard plus a bottom test. With
+    // a constant limit the guard (1 <= 1000) is settled at compile time and folds away, so the counter
+    // is compared exactly once, at the bottom (cmp si, r/m: 3B with modrm reg field = 110b, or cmp si,
+    // imm: 81/83 FE). A PRINT body keeps the loop (nothing to collapse).
     static int CmpSi(byte[] img) {
       var n = 0;
       for (var i = 0; i < img.Length - 1; ++i)
-        // cmp si, r/m16 (3B, modrm reg field = 110b) OR cmp si, imm (81/83 FE): O0113 folds a
-        // constant limit to the immediate form, so both count as "the SI counter is compared here"
         if ((img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6)
             || ((img[i] == 0x81 || img[i] == 0x83) && img[i + 1] == 0xFE))
           ++n;
       return n;
     }
     var img = Compile("$OPTIMIZE SPEED\nDIM i AS INTEGER\nFOR i = 1 TO 1000\nPRINT i\nNEXT i\nEND", Dialect.Pb36);
-    Assert.That(CmpSi(img), Is.EqualTo(2), "the rotated FOR tests its SI counter at the entry guard and at the bottom");
+    Assert.That(CmpSi(img), Is.EqualTo(1), "the rotated FOR tests its SI counter once, at the bottom - the constant entry guard folds away");
   }
 
   [Test]

@@ -40,6 +40,8 @@ public static class PostRegisterAllocationPeepholes {
         ++i;
       }
     }
+    // coalescing can leave a block that held only a phi copy holding only its JMP
+    changed += MachineBranchCleanup.Run(function);
     return changed;
   }
 

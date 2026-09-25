@@ -105,9 +105,10 @@ public static class Peephole {
     // Neither of these removes a VALUE, so neither can expose a pattern for the rewrites above and
     // neither belongs in their fixpoint. Straightening goes first because it deletes instructions the
     // zero idiom's flag question then does not have to look past.
-    total += StraightenBranches(function);
+    total += FoldConstantBranches(function);
+    total += MachineBranchCleanup.StraightenBranches(function);
     foreach (var block in function.Blocks)
-      total += FoldZeroConstants(block);
+      total += FoldZeroConstants(function, block);
     return total;
   }
 
@@ -516,50 +517,83 @@ public static class Peephole {
     return -1;
   }
 
-  /// <summary>The condition that is taken exactly where this one is not - the encoding's low bit.</summary>
-  private static Asm.Condition Inverted(Asm.Condition condition) => (Asm.Condition)((byte)condition ^ 1);
 
   /// <summary>
-  /// The two rewrites that follow from the block ORDER, which is the order
-  /// hosted target machine emission lays the blocks out in and therefore the order the labels land in:
-  /// a <c>JMP</c> to the block laid out next is the fallthrough and is deleted, and a
-  /// <c>Jcc next / JMP away</c> pair is <c>J!cc away</c>. Both leave the successor set alone - the
-  /// same two blocks are reachable on the same two conditions - and neither can be done during
-  /// selection, where a block's neighbour is not yet known.
+  /// <c>MOV v,a / ... / CMP v,b / Jcc L</c> with no other write to <c>v</c> in between: the branch is
+  /// decided before the program runs, so it becomes <c>JMP L</c> or disappears, and the compare goes
+  /// with it once nothing reads its flags.
   ///
   /// <para>
-  /// A pair whose two arms are the SAME block is left alone: it is degenerate and not this pass's to
-  /// reason about. An ABI-pinned branch is not - a jump writes no register, so its clobber list is a
-  /// barrier the pinned sequence's other members carry too; the inverted branch keeps it, and a
-  /// deleted one takes nothing with it that the instruction in front of it does not still say.
+  /// Loop rotation is what makes these. It copies a counted loop's header test into the block in front
+  /// of the loop, where the counter has just been given its first value - <c>FOR i% = 1 TO 10</c>
+  /// left <c>MOV AX,1 / CMP AX,10 / JLE body</c> at the top of every rotated loop, a test of two
+  /// constants. Only a write in the SAME block counts: a value arriving from a predecessor is not
+  /// known here, and nothing is guessed.
   /// </para>
   /// </summary>
-  private static int StraightenBranches(X86MachineFunction function) {
+  private static int FoldConstantBranches(X86MachineFunction function) {
     var made = 0;
-    for (var b = 0; b + 1 < function.Blocks.Count; ++b) {
-      var body = function.Blocks[b].Instructions;
-      var next = function.Blocks[b + 1].Label;
+    foreach (var block in function.Blocks)
+      for (var j = 1; j < block.Instructions.Count; ++j) {
+        if (block.Instructions[j] is not { Opcode: MOpcode.Jcc, Condition: { } condition } branch
+            || branch.Operands is not [MOperand.LabelRef target]
+            || block.Instructions[j - 1] is not { Opcode: MOpcode.Cmp, Condition: null } compare
+            || compare.Operands is not [MOperand.Register { Reg: { IsVirtual: true } subject }, MOperand.Immediate { Value: var right }]
+            || ConstantBefore(function, block, j - 1, subject) is not { } left
+            || MachineFlags.CompareHolds(condition, left, right, BitsOf(subject.Size)) is not { } taken)
+          continue;
 
-      if (body.Count >= 2
-          && body[^1] is { Opcode: MOpcode.Jmp, Condition: null } away
-          && away.Operands is [MOperand.LabelRef elsewhere]
-          && body[^2] is { Opcode: MOpcode.Jcc, Condition: { } taken } branch
-          && branch.Operands is [MOperand.LabelRef whenTaken]
-          && whenTaken.Name == next && elsewhere.Name != next) {
-        body[^2] = new MInstr(MOpcode.Jcc, [elsewhere], branch.Effect, Inverted(taken), branch.Clobbers);
-        body.RemoveAt(body.Count - 1);
+        if (taken) {
+          block.Instructions[j] = new MInstr(MOpcode.Jmp, [target], MInstrEffect.None, condition: null, branch.Clobbers);
+          block.Instructions.RemoveRange(j + 1, block.Instructions.Count - j - 1);
+          block.Successors.Clear();
+          block.Successors.Add(target.Name);
+        } else {
+          block.Instructions.RemoveAt(j);
+          if (!block.Instructions.Any(i => i.Operands is [MOperand.LabelRef { Name: var name }] && name == target.Name))
+            block.Successors.Remove(target.Name);
+        }
+        if (MachineFlags.DeadAfter(function, block, j - 1)) {
+          block.Instructions.RemoveAt(j - 1);
+          --j;
+        }
         ++made;
       }
-
-      if (body.Count >= 1
-          && body[^1] is { Opcode: MOpcode.Jmp, Condition: null } tail
-          && tail.Operands is [MOperand.LabelRef fallsInto] && fallsInto.Name == next) {
-        body.RemoveAt(body.Count - 1);
-        ++made;
-      }
-    }
     return made;
   }
+
+  /// <summary>
+  /// The immediate <paramref name="register"/> was last set to before <paramref name="index"/>, if that
+  /// is what it was. The search runs back through the block and then into its predecessor while there is
+  /// exactly ONE - a block with two ways in can receive two different values.
+  /// </summary>
+  private static long? ConstantBefore(X86MachineFunction function, MBlock block, int index, MReg register) {
+    var visited = new HashSet<string>(StringComparer.Ordinal);
+    for (var from = index; visited.Add(block.Label);) {
+      for (var k = from - 1; k >= 0; --k) {
+        var instr = block.Instructions[k];
+        if (!LivenessAnalysis.RegistersOf(instr).Writes.Contains(register.VirtualId))
+          continue;
+        return instr is { Opcode: MOpcode.Mov, Condition: null }
+            && instr.Operands is [MOperand.Register { Reg: var written }, MOperand.Immediate { Value: var value }]
+            && written.Equals(register)
+          ? value
+          : null;
+      }
+      var predecessors = function.Blocks.Where(candidate => candidate.Successors.Contains(block.Label)).ToList();
+      if (predecessors.Count != 1 || ReferenceEquals(block, function.Blocks[0]))
+        return null;
+      (block, from) = (predecessors[0], predecessors[0].Instructions.Count);
+    }
+    return null;
+  }
+
+  private static int BitsOf(MRegSize size) => size switch {
+    MRegSize.Byte => 8,
+    MRegSize.Dword => 32,
+    MRegSize.Qword => 64,
+    _ => 16,
+  };
 
   /// <summary>
   /// <c>MOV r,0</c> is <c>XOR r,r</c> - a byte shorter on a word register and three on a dword one,
@@ -575,14 +609,14 @@ public static class Peephole {
   /// memory-to-memory <c>XOR</c>, so a spilled one would have to become the <c>MOV</c> again.
   /// </para>
   /// </summary>
-  private static int FoldZeroConstants(MBlock block) {
+  private static int FoldZeroConstants(X86MachineFunction function, MBlock block) {
     var made = 0;
     for (var i = 0; i < block.Instructions.Count; ++i) {
       var instr = block.Instructions[i];
       if (instr.Opcode != MOpcode.Mov || instr.Condition is not null
           || instr.Operands is not [MOperand.Register zero, MOperand.Immediate { Value: 0 }]
           || zero.Reg.Size is not (MRegSize.Word or MRegSize.Dword)
-          || !MachineFlags.DeadAfter(block, i))
+          || !MachineFlags.DeadAfter(function, block, i))
         continue;
       block.Instructions[i] = new MInstr(MOpcode.Xor, [zero, zero],
         new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: true,

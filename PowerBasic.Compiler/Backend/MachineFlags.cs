@@ -18,15 +18,61 @@ public static class MachineFlags {
   /// them. The end of a block proves nothing - a successor may branch on the flags - unless the block
   /// ends by leaving the function, since flags are not part of any call or return contract.
   /// </summary>
-  public static bool DeadAfter(MBlock block, int index) {
-    for (var i = index + 1; i < block.Instructions.Count; ++i) {
-      var instruction = block.Instructions[i];
-      if (instruction.Effect.ReadsFlags)
+  public static bool DeadAfter(MBlock block, int index) => DeadAfter(null, block, index);
+
+  /// <summary>
+  /// The same, following an unconditional <c>JMP</c> at the end of the block into its target when the
+  /// function is given - the one place control goes, so the question continues there.
+  /// </summary>
+  public static bool DeadAfter(X86MachineFunction? function, MBlock block, int index) {
+    var visited = new HashSet<string>(StringComparer.Ordinal);
+    for (var from = index; visited.Add(block.Label);) {
+      for (var i = from + 1; i < block.Instructions.Count; ++i) {
+        var instruction = block.Instructions[i];
+        if (instruction.Effect.ReadsFlags)
+          return false;
+        if (Kills(instruction))
+          return true;
+      }
+      if (function is null || block.Instructions is not [.., { Opcode: MOpcode.Jmp, Condition: null } jump]
+          || jump.Operands is not [MOperand.LabelRef { Name: var target }]
+          || function.Blocks.Find(candidate => candidate.Label == target) is not { } next)
         return false;
-      if (Kills(instruction))
-        return true;
+      (block, from) = (next, -1);
     }
     return false;
+  }
+
+  /// <summary>
+  /// Whether <paramref name="condition"/> holds after <c>CMP left, right</c> at the given width, or null
+  /// for the one condition a compare's result does not settle here (parity). This is the constant
+  /// folding of a machine branch: every other flag a CMP sets is a function of the two operands.
+  /// </summary>
+  public static bool? CompareHolds(Asm.Condition condition, long left, long right, int bits) {
+    var mask = bits >= 64 ? -1L : (1L << bits) - 1;
+    var signBit = 1L << (bits - 1);
+    long Signed(long value) => (value & signBit) != 0 ? (value & mask) - (mask + 1) : value & mask;
+    ulong Unsigned(long value) => (ulong)(value & mask);
+    var (sl, sr, ul, ur) = (Signed(left), Signed(right), Unsigned(left), Unsigned(right));
+    var difference = (left - right) & mask;
+    var overflow = Signed(difference) != sl - sr;
+    return condition switch {
+      Asm.Condition.Overflow => overflow,
+      Asm.Condition.NotOverflow => !overflow,
+      Asm.Condition.Below => ul < ur,
+      Asm.Condition.AboveOrEqual => ul >= ur,
+      Asm.Condition.Equal => ul == ur,
+      Asm.Condition.NotEqual => ul != ur,
+      Asm.Condition.BelowOrEqual => ul <= ur,
+      Asm.Condition.Above => ul > ur,
+      Asm.Condition.Sign => (difference & signBit) != 0,
+      Asm.Condition.NotSign => (difference & signBit) == 0,
+      Asm.Condition.Less => sl < sr,
+      Asm.Condition.GreaterOrEqual => sl >= sr,
+      Asm.Condition.LessOrEqual => sl <= sr,
+      Asm.Condition.Greater => sl > sr,
+      _ => null,
+    };
   }
 
   /// <summary>
