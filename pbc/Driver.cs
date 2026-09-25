@@ -145,26 +145,18 @@ public static class Driver {
       }
 
       if (dumpStage == "--emit-basic") {
-        var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
-          Target = IrBackendTarget.PowerBasic35,
-          Optimize = optimize ?? true,
-          OptimizeForSpeed = optimizeSpeed,
-          RecoverIntegerArithmetic = optimize ?? true,
-        }, out var declined);
-        if (compiled is null) {
-          stderr.WriteLine($"pbc: --emit-basic: {declined ?? "unsupported construct"} - outside the IR lowering's subset (see docs/IR.md)");
-          return 1;
+        // back-emitter: turn the program back into PB 3.5-compatible PowerBASIC - declarations and
+        // signatures from the surface unit, executable bodies (with the binder's pb36->pb35 lowering)
+        // from the bound model. When the optimizer is in effect (its dialect default, unless
+        // --no-optimize), run the AST-level passes whose effect is visible at the source level: the
+        // statement pruner (dead-code / DEF SEG) mutates the tree, and pure-function folding produces
+        // a call->constant map the back-emitter substitutes, so the output shows what the optimizer yields.
+        Dictionary<Syntax.Ast.CallOrIndexExpr, Semantics.ConstantValue>? folds = null;
+        if (optimize ?? (dialect == Dialect.Pb36)) {
+          CodeGen.OptPruner.Prune(model);
+          folds = CodeGen.OptPureFold.Analyze(model);
         }
-
-        string basic;
-        try {
-          basic = IrBasicWriter.Write(compiled.Module, out var warnings);
-          foreach (var warning in warnings)
-            stderr.WriteLine($"pbc: --emit-basic: warning: {warning}");
-        } catch (IrBasicWriterException ex) {
-          stderr.WriteLine($"pbc: --emit-basic: {ex.What} - outside the PB3.5 IR writer's subset");
-          return 1;
-        }
+        var basic = Emit.PowerBasic35Emitter.Render(model, unit, folds);
         if (output != null) {
           File.WriteAllText(output, basic);
           stdout.WriteLine($"{Path.GetFileName(output)}: {basic.Length} bytes of PowerBASIC");
