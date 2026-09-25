@@ -1778,7 +1778,7 @@ public sealed partial class IrLowering {
         break;
       case CommandStmt { Keyword: "SOUND", Arguments: [{ } frequency, { } duration] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_sound", IrType.Void, IrType.I16, IrType.I16),
-          this.WordArg(frequency), this.WordArg(duration));
+          this.IntegerValue(frequency), this.IntegerValue(duration));
         break;
       // DELAY takes its count as a DOUBLE, which is how the direct emitter coerces it too - a delay of
       // half a second is a delay the statement can express
@@ -1790,7 +1790,7 @@ public sealed partial class IrLowering {
       // POKE, and the same shape: an offset and a value, no answer
       case CommandStmt { Keyword: "POKE$", Arguments: [{ } pokeStrAddress, { } pokeStrValue] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_poke_str", IrType.Void, IrType.I16, IrType.Ptr),
-          this.WordArg(pokeStrAddress), this.LowerStringExpr(pokeStrValue));
+          this.IntegerValue(pokeStrAddress), this.LowerStringExpr(pokeStrValue));
         break;
       // TIMER/KEY/COM/PEN/STRIG ON|OFF|STOP and their ON <event> GOSUB handlers. This runtime has no
       // event dispatch at all, so the direct emitter reaches a bare `break` for both - and the BINDER
@@ -2837,9 +2837,9 @@ public sealed partial class IrLowering {
   /// </summary>
   private void LowerWait(Expression port, Expression mask, Expression? flip) {
     var byteMask = new IrConstantInt(IrType.I16, 0xFF);
-    var wanted = this._b.And(this.WordArg(mask), byteMask);
-    var inverted = this._b.And(flip is null ? new IrConstantInt(IrType.I16, 0) : this.WordArg(flip), byteMask);
-    var address = this.WordArg(port);
+    var wanted = this._b.And(this.IntegerValue(mask), byteMask);
+    var inverted = this._b.And(flip is null ? new IrConstantInt(IrType.I16, 0) : this.IntegerValue(flip), byteMask);
+    var address = this.IntegerValue(port);
 
     var poll = this.NewBlock("wait.poll");
     var done = this.NewBlock("wait.done");
@@ -5809,6 +5809,20 @@ public sealed partial class IrLowering {
   /// <c>HEX$(&amp;HFFFF63C0)</c>.
   /// </para>
   /// </summary>
+  /// <summary>
+  /// <paramref name="e"/> as a PowerBASIC INTEGER - a signed 16-bit value, typed <c>i16</c> in the IR.
+  ///
+  /// <para>
+  /// This is what a runtime routine declaring an <c>i16</c> parameter must be given. <see cref="WordArg"/>
+  /// is NOT that, despite the name: it sign-extends to <c>i32</c>. Passing its result to an <c>i16</c>
+  /// parameter was a type lie the verifier does not check on calls and the selector quietly repaired by
+  /// taking the low word - and ANDing it with an <c>i16</c> mask was a binary whose operands disagreed,
+  /// which the verifier does check, and which is how the lie was found.
+  /// </para>
+  /// </summary>
+  private IrValue IntegerValue(Expression e)
+    => this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer);
+
   private IrValue WordArg(Expression e) =>
     this._b.SExt(this.Coerce(this.LowerExpr(e), this._model.TypeOf(e), PbType.Integer), IrType.I32);
 
