@@ -35,7 +35,7 @@ public sealed partial class Assembler {
       var position = start + relocation.Offset;
       switch (relocation.Kind) {
         case MachineRelocationKind.Relative16:
-          this._fixups.Add(new(position, FixupKind.Rel16, label, relocation.Addend));
+          this._fixups.Add(new(position, FixupKind.Rel16, label, ToFixupAddend(relocation, Rel16FieldBytes)));
           break;
         case MachineRelocationKind.Relative32:
           throw new NotSupportedException("32-bit relocations cannot be appended to a DOS image");
@@ -47,4 +47,22 @@ public sealed partial class Assembler {
       }
     }
   }
+
+  private const int Rel16FieldBytes = 2;
+
+  /// <summary>
+  /// A relative <see cref="MachineRelocation"/>'s addend in the assembler's own fixup convention.
+  ///
+  /// <para>
+  /// The two disagree about who accounts for the end of the displacement field. A MachineRelocation
+  /// uses the ELF form - the stored value is <c>S + A - P</c>, with the field's width already folded
+  /// into <c>A</c>, so a JMP rel16 carries <c>A = -2</c>. The assembler's Rel16 fixup subtracts
+  /// <c>P + 2</c> itself. Handing the addend over unchanged applied the width twice and every
+  /// displacement came out two short: the jump to the very next instruction encoded as FFFE, not 0.
+  /// </para>
+  /// <para>
+  /// The conversion lives here, once, because this is the one place both conventions meet.
+  /// </para>
+  /// </summary>
+  private static int ToFixupAddend(MachineRelocation relocation, int fieldBytes) => relocation.Addend + fieldBytes;
 }
