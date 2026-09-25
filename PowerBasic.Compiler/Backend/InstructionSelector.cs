@@ -508,6 +508,39 @@ public sealed partial class InstructionSelector {
        && !cmp.Lhs.Type.IsFloat
       ? cmp : null;
 
+  /// <summary>
+  /// A 16-bit compare as a CMP whose flags answer <paramref name="predicate"/> - for a consumer that
+  /// branches on them rather than on a materialized truth value. Returns the condition code to jump
+  /// on, which follows the operands if they had to swap, or null when an operand is unavailable.
+  /// </summary>
+  private Condition? EmitCompareForFlags(IrCmp cmp, IrCmpPred predicate) {
+    if (MapPredicate(predicate) is not { } cc
+        || !this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
+      return null;
+    if (lhs is not MOperand.Register) {
+      // CMP wants a register on the left, and a constant there is not a dead end: comparing the
+      // other way round asks the same question with the predicate mirrored - `5 > x` is `x < 5` -
+      // so the operands swap and the condition follows them. Equality mirrors to itself.
+      if (rhs is MOperand.Register) {
+        (lhs, rhs) = (rhs, lhs);
+        cc = MapPredicate(Mirrored(predicate))!.Value;
+      } else {
+        // Neither side is in a register - two memory cells, or a constant against one. Mirroring
+        // cannot help when there is nothing to mirror ONTO, so the left operand is moved into a
+        // register and the comparison proceeds unmirrored. One MOV, and only on the shape that
+        // used to decline outright.
+        var held = this.FreshVreg(cmp.Lhs.Type);
+        var into = new MOperand.Register(held);
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [into, lhs], MovEffect(into, lhs)));
+        lhs = into;
+      }
+    }
+    this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
+    return cc;
+  }
+
   private bool SelectTerminator(IrInstruction? terminator, IrCmp? folded, MBlock block) {
     switch (terminator) {
       case IrRet ret:
@@ -516,30 +549,9 @@ public sealed partial class InstructionSelector {
         this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(br.Target.Label)], MInstrEffect.None));
         this._current.Successors.Add(br.Target.Label);
         return true;
-      case IrCondBr cond when folded is { } cmp && MapPredicate(cmp.Pred) is { } cc:
-        if (!this.TryOperand(cmp.Lhs, out var lhs) || !this.TryOperand(cmp.Rhs, out var rhs))
+      case IrCondBr cond when folded is { } cmp && MapPredicate(cmp.Pred) is not null:
+        if (this.EmitCompareForFlags(cmp, cmp.Pred) is not { } cc)
           return false;
-        if (lhs is not MOperand.Register) {
-          // CMP wants a register on the left, and a constant there is not a dead end: comparing the
-          // other way round asks the same question with the predicate mirrored - `5 > x` is `x < 5` -
-          // so the operands swap and the condition follows them. Equality mirrors to itself.
-          if (rhs is MOperand.Register) {
-            (lhs, rhs) = (rhs, lhs);
-            cc = MapPredicate(Mirrored(cmp.Pred))!.Value;
-          } else {
-            // Neither side is in a register - two memory cells, or a constant against one. Mirroring
-            // cannot help when there is nothing to mirror ONTO, so the left operand is moved into a
-            // register and the comparison proceeds unmirrored. One MOV, and only on the shape that
-            // used to decline outright.
-            var held = this.FreshVreg(cmp.Lhs.Type);
-            var into = new MOperand.Register(held);
-            this._current.Instructions.Add(new MInstr(MOpcode.Mov, [into, lhs], MovEffect(into, lhs)));
-            lhs = into;
-          }
-        }
-        this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
-          new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
-            ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
         this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(cond.IfTrue.Label)],
           new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), cc));
         this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(cond.IfFalse.Label)], MInstrEffect.None));
@@ -2659,6 +2671,8 @@ public sealed partial class InstructionSelector {
     } else if (!this.TryOperand(whenTrue, out ifTrue) || !this.TryOperand(whenFalse, out ifFalse)) {
       return false;
     }
+    if (!wide && this._flagSelects.TryGetValue(sel, out var flagged))
+      return this.SelectFlagSelect(sel, flagged, ifTrue, ifFalse);
     if (!this.TryOperand(sel.Condition, out var cond))
       return false;
     if (cond is not MOperand.Register) {
@@ -2702,6 +2716,36 @@ public sealed partial class InstructionSelector {
     falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifFalse], MovEffect(destOp, ifFalse)));
     if (wide)
       falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destHi, ifFalseHi], MovEffect(destHi, ifFalseHi)));
+    falseBlock.Successors.Add(doneBlock.Label);
+
+    this._function.Blocks.Add(falseBlock);
+    this._function.Blocks.Add(doneBlock);
+    this._current = doneBlock;
+    return true;
+  }
+
+  /// <summary>
+  /// The word diamond on the compare's own flags (see <c>FlagSelectCompare</c>): CMP, the true arm's
+  /// MOV - which leaves the flags alone - and one Jcc over the false arm's.
+  /// </summary>
+  private bool SelectFlagSelect(IrSelect sel, IrCmp compare, MOperand ifTrue, MOperand ifFalse) {
+    if (this.EmitCompareForFlags(compare, this.PredicateOf(compare)) is not { } cc)
+      return false;
+    var dest = this.FreshVreg(sel.Type);
+    this._vregs[sel] = dest;
+    var destOp = new MOperand.Register(dest);
+
+    var falseBlock = new MBlock($"{this._current.Label}.selfalse{this._splitCount}");
+    var doneBlock = new MBlock($"{this._current.Label}.seldone{this._splitCount}");
+    ++this._splitCount;
+
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifTrue], MovEffect(destOp, ifTrue)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(doneBlock.Label)],
+      new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), cc));
+    this._current.Successors.Add(doneBlock.Label);
+    this._current.Successors.Add(falseBlock.Label);
+
+    falseBlock.Instructions.Add(new MInstr(MOpcode.Mov, [destOp, ifFalse], MovEffect(destOp, ifFalse)));
     falseBlock.Successors.Add(doneBlock.Label);
 
     this._function.Blocks.Add(falseBlock);

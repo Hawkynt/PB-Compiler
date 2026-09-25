@@ -2841,29 +2841,48 @@ public sealed class OptimizerTests {
       "IVSR should eliminate the per-iteration subscript scale a non-affine subscript has to keep");
   }
 
+  /// <summary>
+  /// Stepping the element address must not step past the bounds check: under <c>$ERROR BOUNDS ON</c> a
+  /// subscript the loop drives out of range still raises Error 9 where the unoptimized program does.
+  /// The trip count comes from two call sites so that neither the check nor the loop can be folded -
+  /// the first call stays inside <c>a%(1 TO 5)</c>, the second runs off its end. The handler is in
+  /// the main program, so the SUB with the loop is optimized as any other.
+  ///
+  /// <para>
+  /// This used to assert that the check SUPPRESSED the stepped pointer, by counting the scale left in
+  /// a loop over <c>1 TO 5</c> on an array of <c>1 TO 5</c>. That loop provably never leaves the array,
+  /// so eliding its check is correct and there is no scale to count; what has to hold is the error.
+  /// </para>
+  /// </summary>
   [Test]
-  public void Emit_GivenArrayReadLoop_WhenBoundsChecking_ThenNoIvsr() {
-    // $ERROR BOUNDS ON must suppress the optimization: the bounds check that the
-    // IMUL path raises for out-of-range subscripts must not be silently removed.
-    const string body = "$ERROR BOUNDS ON\nDIM a%(1 TO 5)\nDIM x%\nFOR i% = 1 TO 5\n  x% = a%(i%)\nNEXT i%\nPRINT x%\nEND";
-    var checked_ = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
-    // bounds-checked: every subscript must still go through the real address path with range checks
-    // (the IMUL may be folded away but the bounds-check emitter must still be there - we just
-    // confirm the optimization does NOT fire by checking that the image is not suspiciously tiny)
-    Assert.That(CountElementScaleByTwo(checked_), Is.GreaterThanOrEqualTo(1),
-      "$ERROR BOUNDS ON must keep the address recomputation path (with the range check), not step a blind pointer");
+  public void Execute_GivenAnOutOfRangeSubscriptInASteppedLoop_WhenBoundsChecking_ThenError9IsStillRaised() {
+    const string body = "$ERROR BOUNDS ON\nDECLARE SUB s(BYVAL m%)\nON ERROR GOTO Caught\ns 5\ns 7\nEND\n"
+      + "Caught:\nPRINT \"ERR\"; ERR\nEND\n"
+      + "SUB s(BYVAL m%) NOINLINE\nDIM a%(1 TO 5), x%\nFOR i% = 1 TO m%\n  x% = x% + a%(i%)\nNEXT i%\nPRINT x%\nEND SUB";
+    var optimized = Exec.Cpu8086.Run(Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36)).Output;
+    var plain = Exec.Cpu8086.Run(Compile("$OPTIMIZE OFF\n" + body, Dialect.Pb36)).Output;
+    Assert.Multiple(() => {
+      Assert.That(plain, Does.Contain("ERR 9"), "the reference raises Error 9 on the second call");
+      Assert.That(optimized, Is.EqualTo(plain), "and so does the stepped loop, at the same point");
+    });
   }
 
+  /// <summary>
+  /// A loop body with more than one statement is stepped as well, and prints what the unoptimized
+  /// loop prints. (The direct emitter's matcher took single-statement bodies only, and this test used
+  /// to assert that limit; nothing about a second statement makes a stepped address wrong.)
+  /// </summary>
   [Test]
-  public void Emit_GivenArrayReadLoop_WhenMultiStatementBody_ThenNoIvsr() {
-    // A body with more than one statement does not qualify - the optimization must not fire.
-    // Two-statement body: x% = a%(i%) followed by PRINT x%. Five iterations keep it above the
-    // unroll threshold (O0066 would otherwise fold the subscripts to constants), so the generic
-    // loop runs and the per-iteration address IMUL is the thing under test.
-    const string body = "$OPTIMIZE SPEED\nDIM a%(1 TO 5)\nDIM x%\nFOR i% = 1 TO 5\n  x% = a%(i%)\n  PRINT x%\nNEXT i%\nEND";
-    var image = Compile(body, Dialect.Pb36);
-    Assert.That(CountElementScaleByTwo(image), Is.GreaterThanOrEqualTo(1),
-      "two-statement body must not trigger IVSR; the address IMUL must still appear per-iteration");
+  public void Execute_GivenArrayReadLoopWithMultiStatementBody_WhenPb36Speed_ThenSteppedAndSameOutput() {
+    const string body = "DECLARE SUB s(BYVAL m%)\ns 5\ns 4\nEND\nSUB s(BYVAL m%) NOINLINE\nDIM a%(1 TO 5), x%\n"
+      + "FOR i% = 1 TO 5\n  a%(i%) = i% + m%\nNEXT i%\nFOR i% = 1 TO m%\n  x% = a%(i%)\n  PRINT x%;\nNEXT i%\nEND SUB";
+    var optimized = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
+    var plain = Compile("$OPTIMIZE OFF\n" + body, Dialect.Pb36);
+    var scales = CountElementScaleByTwoAnyRegister(ProcedureBytes("$OPTIMIZE SPEED\n" + body, "s").ToArray());
+    Assert.Multiple(() => {
+      Assert.That(scales, Is.EqualTo(0), "no subscript is scaled per iteration");
+      Assert.That(Exec.Cpu8086.Run(optimized).Output, Is.EqualTo(Exec.Cpu8086.Run(plain).Output));
+    });
   }
 
   #endregion

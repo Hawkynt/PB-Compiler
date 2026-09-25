@@ -42,6 +42,12 @@ public sealed partial class InstructionSelector {
   private readonly HashSet<IrSelect> _swappedArms = new(ReferenceEqualityComparer.Instance);
 
   /// <summary>
+  /// The selects that branch on their compare's own flags, each with that compare - which the block
+  /// loop passes by, because the select emits it where the jump needs it.
+  /// </summary>
+  private readonly Dictionary<IrSelect, IrCmp> _flagSelects = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>
   /// Finds the multi-instruction patterns before selection walks the blocks, because a pattern is
   /// owned by its LAST instruction and the ones in front of it have to be recognised as absorbed when
   /// the loop reaches them - which is earlier.
@@ -95,6 +101,10 @@ public sealed partial class InstructionSelector {
             this._integerOperands[cast] = null;
             break;
         }
+        if (instr is IrSelect flagged && FlagSelectCompare(flagged) is { } compare) {
+          this._flagSelects[flagged] = compare;
+          this._consumed.Add(compare);
+        }
       }
     }
   }
@@ -130,6 +140,26 @@ public sealed partial class InstructionSelector {
         break;
       }
     }
+  }
+
+  /// <summary>
+  /// The compare a word <c>select</c> can branch on directly: its only user is the select, it is a
+  /// 16-bit integer ordering or equality the flags can answer, and nothing between the two in the
+  /// block can change what its operands read - the CMP is emitted at the select, not where the compare
+  /// stood. PB's -1/0 truth value then never exists: <c>IF a(i) &gt; m THEN m = a(i)</c> is CMP, MOV,
+  /// Jcc, MOV instead of CMP, MOV -1, Jcc, XOR, TEST, Jcc, MOV.
+  /// </summary>
+  private static IrCmp? FlagSelectCompare(IrSelect select) {
+    if (select.Type is not { IsInteger: true, Bits: 16 }
+        || select.Condition is not IrCmp { Users.Count: 1 } compare
+        || !ReferenceEquals(compare.Parent, select.Parent)
+        || compare.Lhs.Type is not { IsInteger: true, Bits: 16 }
+        || MapPredicate(compare.Pred) is null)
+      return null;
+    var between = select.Parent!.Instructions
+      .SkipWhile(instruction => !ReferenceEquals(instruction, compare)).Skip(1)
+      .TakeWhile(instruction => !ReferenceEquals(instruction, select));
+    return between.All(instruction => instruction is IrBinary or IrCast or IrCmp or IrGep or IrSelect) ? compare : null;
   }
 
   /// <summary>The predicate to emit for a comparison - its own, unless the min/max rule relabelled it.</summary>

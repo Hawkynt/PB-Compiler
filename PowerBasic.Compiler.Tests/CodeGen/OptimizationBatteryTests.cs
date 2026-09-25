@@ -34,7 +34,8 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 ///   <item><c>present-call &lt;label&gt;</c> / <c>absent-call &lt;label&gt;</c> - the SUB
 ///     contains (or not) a near call whose target is that runtime label or procedure.</item>
 ///   <item><c>count &lt;pattern&gt; &lt;n&gt;</c> - the pattern occurs exactly n times (says what
-///     present/absent cannot: a value loaded ONCE, not recomputed).</item>
+///     present/absent cannot: a value loaded ONCE, not recomputed). Alternatives separated by
+///     <c>|</c> are summed.</item>
 ///   <item><c>bytes&lt;= &lt;n&gt;</c> - the SUB's emitted code is at most n bytes.</item>
 ///   <item><c>smaller-than-unoptimized</c> - the SUB shrank versus the same source with the
 ///     optimizer off.</item>
@@ -77,13 +78,16 @@ public sealed class OptimizationBatteryTests {
     ["xor-ax-ax"] = [0x31, 0xC0],        // XOR AX,AX - the zero idiom
     ["push-ax-pop-ax"] = [0x50, 0x58],   // PUSH AX / POP AX - staging that cancels itself out
     ["mov-ax-mem-bx"] = [0x8B, 0x87],    // MOV AX,[BX+disp16] - one read of an array element
+    ["mov-dx-mem-bx"] = [0x8B, 0x17],    // MOV DX,[BX] - the same read through a stepped pointer
     ["mov-ax-frame"] = [0x8B, 0x46],     // MOV AX,[BP+disp8] - a read of a frame cell
     ["add-ax-mem-bx"] = [0x03, 0x87],    // ADD AX,[BX+disp16] - an array element fused into the op
-    ["add-di-mem-bx"] = [0x03, 0x3F],
+    ["add-di-mem-bx"] = [0x03, 0x3F],    // ADD DI,[BX] - an element read straight into the accumulate
+    ["add-di-mem-si"] = [0x03, 0x3C],    // ADD DI,[SI] - the same through the other pointer register
     ["add-di-mem-bp"] = [0x03, 0x7E],    // ADD DI,[BP+disp8] - accumulate a frame scratch into the resident register
     ["add-si-ax"] = [0x01, 0xC6],        // ADD SI,AX - the same accumulate with the term already
                                          // in a register, so nothing goes through the frame at all
     ["add-bx-2"] = [0x83, 0xC3, 0x02],   // ADD BX,2  - the element pointer stepping over 2-byte elements
+    ["add-si-2"] = [0x83, 0xC6, 0x02],   // ADD SI,2  - the same pointer, allocated to SI
     ["mov-bx-ax"] = [0x89, 0xC3],        // MOV BX,AX - an address computed into the index register
     ["mov-ax-minus1"] = [0xB8, 0xFF, 0xFF],  // MOV AX,-1 - PB's TRUE, materialized from a comparison
     ["test-ax-ax"] = [0x85, 0xC0],       // TEST AX,AX - the branch reading that materialized truth value
@@ -383,12 +387,15 @@ public sealed class OptimizationBatteryTests {
         var parts = argument.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length != 2 || !int.TryParse(parts[1], out var want))
           return (false, $"'{argument}' is not '<pattern> <count>'");
-        if (!_patterns.TryGetValue(parts[0], out var counted))
-          return (false, $"unknown byte pattern '{parts[0]}' (known: {string.Join(", ", _patterns.Keys.Order())})");
+        // alternatives are summed: encodings of one operation, counted wherever each occurs
         var seen = 0;
-        for (var at = 0; at + counted.Length <= code.Length; ++at)
-          if (code[at..].StartsWith(counted))
-            ++seen;
+        foreach (var alternative in parts[0].Split('|', StringSplitOptions.RemoveEmptyEntries)) {
+          if (!_patterns.TryGetValue(alternative, out var counted))
+            return (false, $"unknown byte pattern '{alternative}' (known: {string.Join(", ", _patterns.Keys.Order())})");
+          for (var at = 0; at + counted.Length <= code.Length; ++at)
+            if (code[at..].StartsWith(counted))
+              ++seen;
+        }
         return (seen == want, $"{parts[0]} occurs {seen}x, expected {want}x");
       }
 

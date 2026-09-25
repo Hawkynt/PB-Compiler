@@ -193,6 +193,11 @@ public static class IrMiddleEndPipeline {
             SimplifyCfg.Run(function);
             Dce.Run(function);
           }
+      // stepped addresses are what this target's addressing modes want; after R4, which matches the
+      // counter-indexed loop they replace
+      foreach (var function in module.Functions)
+        if (!function.IsDeclaration && AddressInduction.Run(function) > 0)
+          Dce.Run(function);
       StringStackPromotion.Run(module);
       foreach (var function in module.Functions)
         if (!function.IsDeclaration)

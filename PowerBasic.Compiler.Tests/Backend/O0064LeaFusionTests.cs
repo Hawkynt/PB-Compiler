@@ -163,5 +163,5 @@ public sealed class O0064LeaFusionTests {
     return function;
   }
 
-  private static void MarkOptimized(X86MachineFunction function) => Peephole.Run(function);
+  private static void MarkOptimized(X86MachineFunction function) => MachineOptimizationState.Mark(function);
 }

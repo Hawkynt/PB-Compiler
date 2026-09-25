@@ -615,7 +615,8 @@ END SUB
 ' @what     the commonest loop there is: accumulate over an array
 ' @expect   what a person writing this by hand would produce - the counter, the
 '           accumulator and the element pointer all live in registers, so the
-'           whole loop is CMP/JG, ADD DI,[BX], ADD BX,2, ADD SI,1, JMP. There is
+'           whole loop is ADD DI,[BX], ADD BX,2, INC AX, CMP/JLE (the pointer in
+'           BX or SI, whichever the allocator has free). There is
 '           no subscript arithmetic left at all: the address is not rebuilt from
 '           the counter (no MOV BX,AX), it is stepped, and the element is read
 '           straight into the ALU op rather than staged through a register with
@@ -623,8 +624,8 @@ END SUB
 ' @assert   absent imul-bx
 ' @assert   absent push-ax-pop-ax
 ' @assert   absent mov-bx-ax
-' @assert   present add-di-mem-bx
-' @assert   present add-bx-2
+' @assert   present add-di-mem-bx|add-di-mem-si
+' @assert   present add-bx-2|add-si-2
 ' @assert   smaller-than-unoptimized
 ' @status   done
 ' ---------------------------------------------------------------------------
@@ -695,9 +696,10 @@ END SUB
 ' @expect   the element is fetched once. Cross-block CSE keeps the value the
 '           condition loaded available to the arm the condition dominates, and
 '           redundant-load elimination then drops the reload of the slot as
-'           well, because the register still holds it: one MOV AX,[BX+disp]
-'           per iteration - the arm reuses the register, not the slot
-' @assert   count mov-ax-mem-bx 1
+'           well, because the register still holds it: one MOV r,[BX] per
+'           iteration (through a displacement, or a stepped pointer) - the arm
+'           reuses the register, not the slot
+' @assert   count mov-ax-mem-bx|mov-dx-mem-bx 1
 ' @assert   smaller-than-unoptimized
 ' @status   done
 ' ---------------------------------------------------------------------------

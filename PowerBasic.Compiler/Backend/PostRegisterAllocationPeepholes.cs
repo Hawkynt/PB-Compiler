@@ -20,6 +20,11 @@ public static class PostRegisterAllocationPeepholes {
       changed += FuseLeaArithmetic(block, allocation);
 
       for (var i = 0; i < block.Instructions.Count;) {
+        if (TryStepInPlace(function, block, i, allocation)) {
+          ++changed;
+          ++i;
+          continue;
+        }
         if (IsSelfCopy(block.Instructions[i], allocation)) {
           block.Instructions.RemoveAt(i);
           ++changed;
@@ -236,6 +241,33 @@ public static class PostRegisterAllocationPeepholes {
   /// claims its whole destination set - do not keep it: they told the ALLOCATOR what not to park where,
   /// allocation is over, and the move changes no register, so any fact held across it stays true.
   /// </summary>
+  /// <summary>
+  /// <c>LEA r,[r+d]</c> - a pointer stepped by a constant, once the allocator has given the step and
+  /// the pointer one register - is <c>ADD r,d</c>, or <c>INC</c>/<c>DEC</c> for one. The same three
+  /// bytes (one for INC/DEC) at a fraction of an 8086 LEA's effective-address cycles; LEA's only merit
+  /// is leaving the flags alone, so the rewrite needs them dead.
+  /// </summary>
+  private static bool TryStepInPlace(X86MachineFunction function, MBlock block, int index,
+      IReadOnlyDictionary<int, Reg> allocation) {
+    if (block.Instructions[index] is not {
+          Opcode: MOpcode.Lea, Condition: null, Clobbers.Count: 0,
+          Operands: [MOperand.Register { Reg: { Size: MRegSize.Word } destination },
+                     MOperand.Memory { Base: { } pointer, Index: null, Segment: null, SegmentCell: null, Disp: var step }]
+        }
+        || step == 0 || !SamePhysical(destination, pointer, allocation)
+        || !MachineFlags.DeadAfter(function, block, index))
+      return false;
+    var register = new MOperand.Register(destination);
+    block.Instructions[index] = step is 1 or -1
+      ? new MInstr(step == 1 ? MOpcode.Inc : MOpcode.Dec, [register],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+            ReadsMemory: false, WritesMemory: false))
+      : new MInstr(MOpcode.Add, [register, new MOperand.Immediate(step)],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+            ReadsMemory: false, WritesMemory: false));
+    return true;
+  }
+
   private static bool IsSelfCopy(MInstr instruction, IReadOnlyDictionary<int, Reg> allocation)
     => instruction.Opcode == MOpcode.Mov && instruction.Condition is null
       && instruction.Operands is [MOperand.Register { Reg: var destination }, MOperand.Register { Reg: var source }]

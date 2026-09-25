@@ -19,7 +19,7 @@ public sealed class O0357PostRegisterAllocationPeepholeTests {
     var block = new MBlock("entry");
     block.Instructions.AddRange(instructions);
     function.Blocks.Add(block);
-    Peephole.Run(function);
+    MachineOptimizationState.Mark(function);
     return function;
   }
 

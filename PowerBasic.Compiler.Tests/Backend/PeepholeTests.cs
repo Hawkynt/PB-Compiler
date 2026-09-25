@@ -91,10 +91,11 @@ public sealed class PeepholeTests {
   [Test]
   public void Fold_GivenLoadWithASecondReader_WhenRun_ThenTheLoadStays() {
     // the value is wanted twice: folding would trade one instruction for two memory accesses
-    var fn = OneBlock(Load(1, Cell(0)), Alu(MOpcode.Add, 0, V(1)), Alu(MOpcode.Sub, 2, V(1)));
+    var fn = OneBlock(Load(1, Cell(0)), Alu(MOpcode.Add, 0, V(1)), Alu(MOpcode.Sub, 2, V(1)),
+      Store(Cell(1), 0), Store(Cell(2), 2));
 
     Assert.That(Peephole.Run(fn), Is.Zero);
-    Assert.That(Body(fn), Has.Count.EqualTo(3));
+    Assert.That(Body(fn), Has.Count.EqualTo(5));
   }
 
   [Test]
@@ -118,8 +119,9 @@ public sealed class PeepholeTests {
     // a value used as a memory base may only live in BX/SI/DI and cannot spill, so its live range is
     // never lengthened; the fold is offered only to the instruction immediately following the load
     var indirect = new MOperand.Memory(MReg.Virtual(9), null, 1, 0, MRegSize.Word);
-    var gapped = OneBlock(Load(1, indirect), Alu(MOpcode.Xor, 5, new MOperand.Immediate(1)), Alu(MOpcode.Add, 0, V(1)));
-    var adjacent = OneBlock(Load(1, indirect), Alu(MOpcode.Add, 0, V(1)));
+    var gapped = OneBlock(Load(1, indirect), Alu(MOpcode.Xor, 5, new MOperand.Immediate(1)), Alu(MOpcode.Add, 0, V(1)),
+      Store(Cell(1), 0), Store(Cell(2), 5));
+    var adjacent = OneBlock(Load(1, indirect), Alu(MOpcode.Add, 0, V(1)), Store(Cell(1), 0));
 
     Assert.That(Peephole.Run(gapped), Is.Zero, "a gap would lengthen the address register's range");
     Assert.That(Peephole.Run(adjacent), Is.EqualTo(1), "the very next instruction lengthens nothing");
@@ -202,6 +204,7 @@ public sealed class PeepholeTests {
         new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: true, WritesFlags: true,
           ReadsMemory: false, WritesMemory: false)),
       Alu(MOpcode.Cmp, 1, new MOperand.Immediate(0)),
+      Store(Cell(5), 3),
       Branch());
 
     Assert.That(Peephole.Run(fn), Is.Zero);
@@ -230,7 +233,7 @@ public sealed class PeepholeTests {
 
   [Test]
   public void Fold_GivenAStagedCopyWithASecondReader_WhenRun_ThenBothCopiesStay() {
-    var fn = OneBlock(Copy(1, 0), Copy(2, 1), Store(Cell(0), 1));
+    var fn = OneBlock(Copy(1, 0), Copy(2, 1), Store(Cell(0), 1), Store(Cell(1), 2));
 
     Assert.That(Peephole.Run(fn), Is.Zero, "the staged value is read twice, so it has to exist");
   }

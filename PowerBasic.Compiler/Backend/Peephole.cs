@@ -98,6 +98,8 @@ public static class Peephole {
         made += FoldMemorySources(block, census);
         made += FoldCopyChains(block, census);
       }
+      made += RecomputeDistantCopies(function, census);
+      made += RemoveDeadArithmetic(function);
       total += made;
       if (made == 0)
         break;
@@ -176,7 +178,7 @@ public static class Peephole {
         continue;                                // the load's own address: not a value being staged
 
       var consumer = FindSingleReader(block, i + 1, value, address);
-      if (consumer < 0 || (address.Count > 0 && consumer != i + 1))
+      if (consumer < 0 || (address.Count > 0 && !OnlyCopiesBetween(block, i + 1, consumer)))
         continue;                                // see the addressing rule in the type remarks
       var user = block.Instructions[consumer];
       // the one-operand multiply and divide read their operand from anywhere: DX:AX = AX * [n]
@@ -207,6 +209,112 @@ public static class Peephole {
       block.Instructions.RemoveAt(i);
       --i;
       ++made;
+    }
+    return made;
+  }
+
+  /// <summary>
+  /// <c>MOV d,s</c> where <c>s</c> is a frame or data address (<c>LEA s,[slot]</c>) or a constant,
+  /// defined once in ANOTHER block, becomes that definition written into <c>d</c>. It reads no register,
+  /// so it answers the same wherever it stands - and the copy was what kept <c>s</c> alive from its block
+  /// to this one. An array's base is the case: it is copied into each loop's stepped pointer, and the
+  /// copy into the second loop's held the base in a register across the whole of the first, where
+  /// coalescing then made the two one value and the pressure of that loop spilled both.
+  /// </summary>
+  private static int RecomputeDistantCopies(X86MachineFunction function, Census census) {
+    var definitions = new Dictionary<int, (MInstr Instruction, MBlock Block)>();
+    foreach (var block in function.Blocks)
+      foreach (var instruction in block.Instructions)
+        if (instruction is {
+              Condition: null, Clobbers.Count: 0,
+              Operands: [MOperand.Register { Reg: { IsVirtual: true } value }, var source]
+            }
+            && (instruction.Opcode == MOpcode.Lea && source is MOperand.StackSlot or MOperand.DataOffset
+                || instruction.Opcode == MOpcode.Mov && source is MOperand.Immediate)
+            && census.Defs.GetValueOrDefault(value.VirtualId) == 1)
+          definitions[value.VirtualId] = (instruction, block);
+
+    var made = 0;
+    foreach (var block in function.Blocks)
+      for (var i = 0; i < block.Instructions.Count; ++i)
+        if (block.Instructions[i] is {
+              Opcode: MOpcode.Mov, Condition: null, Clobbers.Count: 0,
+              Operands: [MOperand.Register { Reg: { IsVirtual: true } destination } target,
+                         MOperand.Register { Reg: { IsVirtual: true } copied }]
+            }
+            && definitions.TryGetValue(copied.VirtualId, out var definition)
+            && !ReferenceEquals(definition.Block, block)
+            && destination.Size == copied.Size) {
+          block.Instructions[i] = new MInstr(definition.Instruction.Opcode, [target, definition.Instruction.Operands[1]],
+            definition.Instruction.Effect);
+          ++made;
+        }
+    return made;
+  }
+
+  /// <summary>The opcodes whose only effects are their register operands and the flags.</summary>
+  private static bool IsPureArithmetic(MOpcode opcode) => opcode is MOpcode.Mov or MOpcode.Lea
+    or MOpcode.Add or MOpcode.Adc or MOpcode.Sub or MOpcode.Sbb or MOpcode.And or MOpcode.Or
+    or MOpcode.Xor or MOpcode.Neg or MOpcode.Not or MOpcode.Inc or MOpcode.Dec
+    or MOpcode.Shl or MOpcode.Shr or MOpcode.Sar or MOpcode.Rcl or MOpcode.Rcr;
+
+  /// <summary>
+  /// The virtuals named at more than one width. Writing <c>AL</c> of a value that <c>XOR AX,AX</c>
+  /// zeroed keeps the zeroed <c>AH</c>, but liveness counts every write as a whole definition - so to it
+  /// the <c>XOR</c> is dead, and deleting it leaves the high byte to chance. Such a value is left alone.
+  /// </summary>
+  private static HashSet<int> MixedWidthValues(X86MachineFunction function) {
+    var widths = new Dictionary<int, MRegSize>();
+    var mixed = new HashSet<int>();
+    void See(MReg register) {
+      if (!register.IsVirtual)
+        return;
+      if (widths.TryGetValue(register.VirtualId, out var seen) && seen != register.Size)
+        mixed.Add(register.VirtualId);
+      widths[register.VirtualId] = register.Size;
+    }
+    foreach (var instruction in function.AllInstructions)
+      foreach (var operand in instruction.Operands)
+        if (operand is MOperand.Register { Reg: var register })
+          See(register);
+    return mixed;
+  }
+
+  /// <summary>
+  /// Deletes register arithmetic whose result nobody reads, walking each block backwards so a whole
+  /// dead chain goes in one sweep. The selector materializes both halves of every widening, and an
+  /// idiom that consumes only the low word - the high multiply, a word product - leaves the high half
+  /// (<c>MOV r,x / ADD r,r / SBB r,r</c>) computed for no one. An instruction goes when every register
+  /// it writes is a virtual dead after it and never named at another width, it touches no memory and
+  /// has no clobbers, and - if it writes the flags - nothing reads them before they are replaced.
+  /// </summary>
+  private static int RemoveDeadArithmetic(X86MachineFunction function) {
+    var mixed = MixedWidthValues(function);
+    var liveness = LivenessAnalysis.Analyze(function);
+    var made = 0;
+    var index = 0;
+    foreach (var block in function.Blocks) {
+      var count = block.Instructions.Count;
+      if (count == 0)
+        continue;
+      var live = new HashSet<int>(liveness.LiveAfter[index + count - 1]);
+      index += count;
+      for (var i = count - 1; i >= 0; --i) {
+        var instruction = block.Instructions[i];
+        var (reads, writes) = LivenessAnalysis.RegistersOf(instruction);
+        if (IsPureArithmetic(instruction.Opcode) && instruction.Condition is null && instruction.Clobbers.Count == 0
+            && !instruction.Effect.ReadsMemory && !instruction.Effect.WritesMemory
+            && writes.Count > 0 && writes.Count == instruction.Effect.WrittenRegs.Count
+            && !writes.Any(live.Contains) && !writes.Any(mixed.Contains)
+            && (!instruction.Effect.WritesFlags || MachineFlags.DeadAfter(function, block, i))) {
+          block.Instructions.RemoveAt(i);
+          ++made;
+          continue;
+        }
+        foreach (var written in writes)
+          live.Remove(written);
+        live.UnionWith(reads);
+      }
     }
     return made;
   }
@@ -285,6 +393,23 @@ public static class Peephole {
   /// makes moving the access unsafe: a write to memory, a clobber of the register file, or a write to
   /// a register the folded address is formed from.
   /// </summary>
+  /// <summary>
+  /// Whether everything in [<paramref name="from"/>, <paramref name="to"/>) is a copy between two
+  /// virtuals - the staging of a two-address op's destination, which the allocator coalesces away. Such
+  /// copies lengthen no register-formed address in the final code, so the addressing rule's "immediately
+  /// following" is measured without them: <c>MOV v,[BX] / MOV d,s / ADD d,v</c> is an adjacent pair once
+  /// <c>d</c> and <c>s</c> share a register.
+  /// </summary>
+  private static bool OnlyCopiesBetween(MBlock block, int from, int to) {
+    for (var i = from; i < to; ++i)
+      if (block.Instructions[i] is not {
+            Opcode: MOpcode.Mov, Condition: null, Clobbers.Count: 0,
+            Operands: [MOperand.Register { Reg.IsVirtual: true }, MOperand.Register { Reg.IsVirtual: true }]
+          })
+        return false;
+    return true;
+  }
+
   private static int FindSingleReader(MBlock block, int from, MReg value, IReadOnlyCollection<MReg> address) {
     for (var i = from; i < block.Instructions.Count; ++i) {
       var instr = block.Instructions[i];

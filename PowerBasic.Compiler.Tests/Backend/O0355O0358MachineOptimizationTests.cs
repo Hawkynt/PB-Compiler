@@ -63,7 +63,7 @@ public sealed class O0355O0358MachineOptimizationTests {
     return function;
   }
 
-  private static void MarkOptimized(X86MachineFunction function) => Peephole.Run(function);
+  private static void MarkOptimized(X86MachineFunction function) => MachineOptimizationState.Mark(function);
 
   [Test]
   public void Superoptimizer_GivenAddOneAndLaterFlagOverwrite_WhenRun_ThenSearchDiscoveredIncIsUsed() {

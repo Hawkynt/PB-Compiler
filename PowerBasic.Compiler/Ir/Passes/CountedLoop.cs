@@ -103,6 +103,28 @@ internal sealed record CountedLoop(
   /// Collected by traversal, so both arms of an inner branch are inside rather than only the one a
   /// single walk would follow.
   /// </summary>
+  /// <summary>
+  /// The counter's first value and its step when both are constants of the counter's type and the
+  /// latch advances it by an add - the arithmetic progression the induction-variable passes rewrite.
+  /// </summary>
+  public bool TryConstantProgression(out IrConstantInt start, out IrConstantInt step) {
+    start = null!;
+    step = null!;
+    if (!this.Counter.Type.IsInteger
+        || this.Counter.IncomingFrom(this.Preheader) is not IrConstantInt initial
+        || this.Counter.IncomingFrom(this.Latch) is not IrBinary { Op: IrBinaryOp.Add } next
+        || !ReferenceEquals(next.Lhs, this.Counter)
+        || next.Rhs is not IrConstantInt increment
+        || !Equals(initial.Type, this.Counter.Type)
+        || !Equals(increment.Type, this.Counter.Type)
+        || increment.IsZero)
+      return false;
+
+    start = initial;
+    step = increment;
+    return true;
+  }
+
   private static HashSet<IrBasicBlock>? CollectRegion(IrBasicBlock header, IrBasicBlock entry, IrBasicBlock exit, out IrBasicBlock? latch) {
     latch = null;
     var region = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance) { header };

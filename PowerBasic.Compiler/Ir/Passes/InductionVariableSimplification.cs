@@ -58,7 +58,7 @@ public static class InductionVariableSimplification {
     foreach (var header in fn.Blocks.ToList()) {
       if (header.Parent is null
           || CountedLoop.Match(fn, header, loops, scalarEvolution) is not { } loop
-          || !TryCounter(loop, out var start, out var step))
+          || !loop.TryConstantProgression(out var start, out var step))
         continue;
 
       var candidates = loop.Region
@@ -91,24 +91,6 @@ public static class InductionVariableSimplification {
     return changed == 0
       ? IrPassResult.Unchanged
       : IrPassResult.ChangedPreservingSets(changed, IrAnalysisSets.Cfg);
-  }
-
-  private static bool TryCounter(CountedLoop loop, out IrConstantInt start, out IrConstantInt step) {
-    start = null!;
-    step = null!;
-    if (!loop.Counter.Type.IsInteger
-        || loop.Counter.IncomingFrom(loop.Preheader) is not IrConstantInt initial
-        || loop.Counter.IncomingFrom(loop.Latch) is not IrBinary { Op: IrBinaryOp.Add } next
-        || !ReferenceEquals(next.Lhs, loop.Counter)
-        || next.Rhs is not IrConstantInt increment
-        || !Equals(initial.Type, loop.Counter.Type)
-        || !Equals(increment.Type, loop.Counter.Type)
-        || increment.IsZero)
-      return false;
-
-    start = initial;
-    step = increment;
-    return true;
   }
 
   private static bool TryAffine(IrValue value, IrPhi counter, IrType type, int depth, out Affine affine) {
