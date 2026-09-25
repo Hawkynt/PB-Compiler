@@ -55,7 +55,7 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("looptemp-reuse", (fn, _) => Conservative(() => LoopTemporaryReuse.Run(fn)))
     .AddAnalyzed("overflow-version", (fn, _) => Conservative(() => SpeculativeOverflowElimination.Run(fn)))
     .AddAnalyzed("ownershipbatch", (fn, _) => Conservative(() => OwnershipBatching.Run(fn)))
-    .AddAnalyzed("unroll", (fn, _) => Conservative(() => LoopUnroll.Run(fn)))
+    .AddAnalyzed("unroll", (fn, _) => Conservative(() => LoopUnroll.Run(fn, runtimeUnrolling: optimizeForSpeed)))
     .InFunctionPhase(IrMiddleEndPhase.ScalarSimplification)
     .AddAnalyzed("instcombine", (fn, _) => Conservative(() => InstCombine.Run(fn)))
     .AddAnalyzedWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
@@ -171,7 +171,7 @@ public static class IrMiddleEndPipeline {
     pipeline().RunOnModule(module);
     pipeline().RunOnModule(module);
 
-    if (optimize && !optimizeForSize && Inliner.Run(module) > 0) {
+    if (optimize && Inliner.Run(module, optimizeForSize: optimizeForSize) > 0) {
       pipeline().RunOnModule(module);
       pipeline().RunOnModule(module);
     }

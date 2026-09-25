@@ -39,7 +39,7 @@ public sealed class IrPassObservableEquivalenceTests {
     ("dce", Dce.Run),
     ("ifconv", IfConversion.Run),
     ("simplifycfg", SimplifyCfg.Run),
-    ("unroll", LoopUnroll.Run),
+    ("unroll", fn => LoopUnroll.Run(fn)),
     ("sroa", ScalarReplaceArrays.Run),
     ("reassociate", Reassociate.Run),
     ("phicong", PhiCongruence.Run),

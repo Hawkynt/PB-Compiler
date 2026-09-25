@@ -17,7 +17,7 @@ public static class SuperoptimizedPeepholes {
     foreach (var block in function.Blocks)
       for (var i = 0; i < block.Instructions.Count; ++i) {
         var instruction = block.Instructions[i];
-        if (!MachineFlags.DeadAfter(block, i) || instruction.Condition is not null || instruction.Clobbers.Count != 0)
+        if (!MachineFlags.DeadAfter(function, block, i) || instruction.Condition is not null || instruction.Clobbers.Count != 0)
           continue;
         if (Match(instruction) is not { } pattern || !_catalog.TryGetValue(pattern, out var candidate))
           continue;

@@ -275,7 +275,7 @@ public sealed class LoopUnrollTests {
       END
       """), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrMiddleEndPipeline.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard(optimizeForSpeed: true).RunOnModule(module!);   // runtime unrolling is a SPEED trade
 
     var main = module!.FindFunction("main")!;
     Assert.That(main.Blocks.Any(b => b.Label.StartsWith("unroll4.", StringComparison.Ordinal)),

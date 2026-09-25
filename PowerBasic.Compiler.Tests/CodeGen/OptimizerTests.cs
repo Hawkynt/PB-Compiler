@@ -219,8 +219,9 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenOptimizeSize_WhenCompiled_ThenSmallerImageSameBehavior() {
-    // $OPTIMIZE SIZE: no inlining plus S3 procedure tail-merging must shrink a branchy program
-    // with duplicate procedures; the differential batteries prove behavior elsewhere. (S1
+    // $OPTIMIZE SIZE inlines only what cannot grow the program, where the default objective inlines a
+    // helper of this size into all three call sites; the differential batteries prove behavior
+    // elsewhere. A helper as small as a call is inlined by both, and then they are the same program. (S1
     // short-jump relaxation is no longer a SIZE lever - it runs on every optimized image, since
     // the short form is smaller AND the near form it replaces is an 80386 encoding.)
     static byte[] Compile(string source) {
@@ -245,7 +246,7 @@ public sealed class OptimizerTests {
       PRINT total
       END
       FUNCTION Mix%(BYVAL a%, BYVAL b%)
-        Mix% = a% * b% + a% - b%
+        Mix% = (a% * b% + a% - b%) \ 3 + (a% XOR b%) * 5 - (a% AND 7)
       END FUNCTION
       """;
     var sized = Compile("$OPTIMIZE SIZE\n" + body);
@@ -480,11 +481,18 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenSmallConstantTripLoop_WhenSpeedOptimized_ThenUnrolledImageDiffers() {
-    const string body = "t% = 0\nFOR i% = 1 TO 3\n  t% = t% + i%\nNEXT i%\nPRINT t%; i%\nEND";
-    var generic = Compile(body, Dialect.Pb36);
-    var unrolled = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
-    Assert.That(unrolled, Is.Not.EqualTo(generic), "SPEED should unroll the trip-3 loop");
+    // A small CONSTANT trip is unrolled and folded under any objective - it usually leaves nothing.
+    // The SPEED-only unroll is the runtime one (O0063): four copies behind a prologue loop, bytes
+    // for cycles, which the default objective does not pay.
+    const string body = "DECLARE SUB L(BYVAL n%)\nL 7\nL 12\nEND\nSUB L(BYVAL n%) NOINLINE\n  t% = 0\n  FOR i% = 1 TO n%\n    t% = t% + i%\n  NEXT i%\n  PRINT t%; i%\nEND SUB";
+    var generic = ProcedureBytes(body, "L").ToArray();
+    var unrolled = ProcedureBytes("$OPTIMIZE SPEED\n" + body, "L").ToArray();
+    Assert.Multiple(() => {
+      Assert.That(unrolled, Is.Not.EqualTo(generic), "SPEED should unroll the runtime-count loop");
+      Assert.That(unrolled.Length, Is.GreaterThan(generic.Length), "...and the unrolled body is the larger one");
+    });
   }
+
 
   #endregion
 
@@ -923,9 +931,13 @@ public sealed class OptimizerTests {
     var scalar = RuntimeSurface(head + "SUB S(BYVAL a%, BYVAL b%) NOINLINE\nSWAP a, b\nPRINT a; b\nEND SUB");
     var record = RuntimeSurface("TYPE P\n  a AS INTEGER\n  b AS INTEGER\n  c AS INTEGER\n  d AS INTEGER\nEND TYPE\n"
       + head + "SUB S(BYVAL a%, BYVAL b%) NOINLINE\nDIM u AS P, v AS P\nu.a = a% : v.a = b%\nSWAP u, v\nPRINT u.a; v.a\nEND SUB");
+    // A record SWAP genuinely moves bytes: the direct emitter linked its rt_swap loop, the routed path
+    // copies through a temporary with rt_memcpy. Either block routine is what makes the scalar case's
+    // absence a measurement.
+    string[] blockMoves = ["rt_swap", "rt_memcpy"];
     Assert.Multiple(() => {
-      Assert.That(scalar, Does.Not.Contain("rt_swap"), "a scalar SWAP is exchanged inline - the byte loop is not linked in");
-      Assert.That(record, Does.Contain("rt_swap"), "a UDT SWAP does need the byte loop - otherwise the absence above proves nothing");
+      Assert.That(scalar.Intersect(blockMoves), Is.Empty, "a scalar SWAP is exchanged inline - no byte loop is linked in");
+      Assert.That(record.Intersect(blockMoves), Is.Not.Empty, "a UDT SWAP does move bytes - otherwise the absence above proves nothing");
     });
   }
 
@@ -1779,23 +1791,26 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenSingleExitFunction_WhenPb36_ThenResultForwardedNotReloaded() {
-    // O0102: a single-exit function whose last statement assigns the integer result leaves that value
-    // in AX, so the epilogue's reload from the result slot (MOV AX,[BP+d] = 8B 46 dd immediately
-    // before the teardown MOV SP,BP = 89 EC) is elided. A multi-exit variant (EXIT FUNCTION) can reach
-    // the epilogue with AX unset, so it must keep the reload.
+    // O0102: a function's result is a returned value, never a result slot reloaded in the epilogue
+    // (MOV AX,[BP+d] = 8B 46 dd right before the teardown MOV SP,BP = 89 EC). The direct emitter
+    // kept that reload for a multi-exit function; in SSA the result travels as a value on every path,
+    // so neither shape has one. NOINLINE and two call sites keep the functions real.
     static bool HasResultReload(byte[] img) {
       for (var i = 0; i + 4 < img.Length; ++i)
         if (img[i] == 0x8B && img[i + 1] == 0x46 && img[i + 3] == 0x89 && img[i + 4] == 0xEC)
           return true;
       return false;
     }
-    var forwarded = Compile("$OPTIMIZE SPEED\nDECLARE FUNCTION a%(x%)\nq% = a%(5)\nPRINT q%\nEND\n"
-      + "FUNCTION a%(x%)\n a% = x% + 3\nEND FUNCTION", Dialect.Pb36);
-    var reloaded = Compile("$OPTIMIZE SPEED\nDECLARE FUNCTION a%(x%)\nq% = a%(5)\nPRINT q%\nEND\n"
-      + "FUNCTION a%(x%)\n IF x% > 99 THEN a% = 0 : EXIT FUNCTION\n a% = x% + 3\nEND FUNCTION", Dialect.Pb36);
-    Assert.That(HasResultReload(forwarded), Is.False, "a single-exit function forwards its result (no epilogue reload)");
-    Assert.That(HasResultReload(reloaded), Is.True, "a multi-exit function keeps the epilogue reload");
+    var single = Compile("$OPTIMIZE SPEED\nDECLARE FUNCTION a%(BYVAL x%)\nq% = a%(5) + a%(INP(&H60))\nPRINT q%\nEND\n"
+      + "FUNCTION a%(BYVAL x%) NOINLINE\n a% = x% + 3\nEND FUNCTION", Dialect.Pb36);
+    var multi = Compile("$OPTIMIZE SPEED\nDECLARE FUNCTION a%(BYVAL x%)\nq% = a%(5) + a%(INP(&H60))\nPRINT q%\nEND\n"
+      + "FUNCTION a%(BYVAL x%) NOINLINE\n IF x% > 99 THEN a% = 0 : EXIT FUNCTION\n a% = x% + 3\nEND FUNCTION", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(HasResultReload(single), Is.False, "a single-exit function forwards its result");
+      Assert.That(HasResultReload(multi), Is.False, "so does a multi-exit one: the result is a value on every path");
+    });
   }
+
 
   [Test]
   public void Emit_GivenConstantForLimit_WhenPb36_ThenComparedAgainstImmediate() {
@@ -1980,37 +1995,47 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenAccumulatorLoop_WhenPb36Speed_ThenSmallerFromRegisterResidency() {
-    // s% = s% + i% over a SI/DI-clean FOR loop keeps the counter in SI and the
-    // accumulator in DI, so the per-iteration cell load/store of s% disappears
-    const string body = "s% = 0\nFOR i% = 1 TO 10\n  s% = s% + i%\nNEXT i%\nPRINT s%\nEND";
-    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
-    var plain = Compile(body, Dialect.Pb36);
-    Assert.That(speed.Length, Is.LessThan(plain.Length),
-      "the register-resident accumulator should shrink the loop versus the memory-cell version");
+    // Both objectives keep a loop's accumulator in a register now; what SPEED adds is the SI/DI
+    // residency pair and the runtime unroll, which costs bytes. The default objective does neither,
+    // so its procedure is the smaller one. The loop sits in a SUB whose bound differs per call: a
+    // constant bound is summed at compile time and leaves no loop.
+    const string body = "DECLARE SUB L(BYVAL n%)\nL 7\nL 12\nEND\nSUB L(BYVAL n%) NOINLINE\n  s% = 0\n  FOR i% = 1 TO n%\n    s% = s% + i%\n  NEXT i%\n  PRINT s%\nEND SUB";
+    var speed = ProcedureBytes("$OPTIMIZE SPEED\n" + body, "L").ToArray();
+    var plain = ProcedureBytes(body, "L").ToArray();
+    Assert.Multiple(() => {
+      Assert.That(CountSiDiWrites(speed), Is.GreaterThan(CountSiDiWrites(plain)), "SPEED keeps the loop values in SI/DI");
+      Assert.That(plain.Length, Is.LessThan(speed.Length), "the default objective does not unroll a runtime-count loop");
+    });
   }
+
 
   [Test]
   public void Emit_GivenConditionalAccumulateLoop_WhenPb36Speed_ThenCounterInSi() {
-    // a FOR loop whose body is a clean IF (SI-clean condition + scalar-assign arm) keeps the
-    // counter in SI: the increment becomes ADD SI, imm (83 C6), which a memory-cell counter lacks.
-    const string body = "s% = 0\nFOR i% = 1 TO 20 STEP 2\n  IF i% > 5 THEN s% = s% + i%\nNEXT i%\nPRINT s%\nEND";
-    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
-    var plain = Compile(body, Dialect.Pb36);
-    Assert.That(CountAddSiImm(speed), Is.GreaterThan(CountAddSiImm(plain)),
-      "a FOR counter over a clean-IF body should increment in SI (ADD SI, imm)");
+    // a FOR loop whose body is a clean IF keeps its counter in the SI/DI pair under SPEED
+    const string body = "DECLARE SUB L(BYVAL n%)\nL 7\nL 30\nEND\nSUB L(BYVAL n%) NOINLINE\n  s% = 0\n  FOR i% = 1 TO n% STEP 2\n    IF i% > 5 THEN s% = s% + i%\n  NEXT i%\n  PRINT s%\nEND SUB";
+    Assert.That(CountSiDiWrites(ProcedureBytes("$OPTIMIZE SPEED\n" + body, "L")), Is.GreaterThan(CountSiDiWrites(ProcedureBytes(body, "L"))),
+      "a FOR counter over a clean-IF body should step in SI or DI");
   }
+
 
   [Test]
   public void Emit_GivenBinaryWithProvenConstantOperand_WhenPb36_ThenImmediateAlu() {
-    // c% + b% where b% is an SCCP-proven constant folds the constant into one immediate ALU op
-    // (ADD AX, imm8 = 83 C0) instead of push-left / eval-right / pop / add. The same loop over a
-    // runtime-unknown operand (a BYVAL parameter, called with differing args so IPCP cannot prove
-    // it constant either) keeps the register-to-register add - so it has one fewer immediate add.
-    const string proven = "$OPTIMIZE SPEED\nb% = 5\nc% = 0\nFOR i% = 1 TO 10\n  c% = c% + b%\nNEXT i%\nPRINT c%\nEND";
-    const string runtime = "$OPTIMIZE SPEED\nDECLARE SUB t(BYVAL k%)\nt 5\nt 7\nEND\nSUB t(BYVAL k%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    c% = c% + k%\n  NEXT i%\n  PRINT c%\nEND SUB";
-    Assert.That(CountAddAxImm(Compile(proven, Dialect.Pb36)), Is.GreaterThan(CountAddAxImm(Compile(runtime, Dialect.Pb36))),
-      "a proven-constant operand should fold into an immediate ALU op (ADD AX, imm); a runtime parameter cannot");
+    // a proven-constant operand folds into an immediate ALU op (ADD r,imm); a runtime one cannot
+    const string proven = "b% = 5\nx% = INP(&H60)\nc% = x% + b%\nPRINT c%\nEND";
+    const string runtime = "b% = INP(&H61)\nx% = INP(&H60)\nc% = x% + b%\nPRINT c%\nEND";
+    Assert.That(CountAddRegImm(Compile(proven, Dialect.Pb36)), Is.GreaterThan(CountAddRegImm(Compile(runtime, Dialect.Pb36))),
+      "a proven-constant operand should fold into an immediate ALU op");
   }
+
+  // ADD r16, imm - 83 /0 or 81 /0 with a register destination, or the accumulator's 05 iw
+  private static int CountAddRegImm(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if ((image[i] is 0x83 or 0x81 && (image[i + 1] & 0xF8) == 0xC0) || image[i] == 0x05)
+        ++count;
+    return count;
+  }
+
 
   // 83 C0 = ADD AX, imm8 - an immediate add (the folded-constant-operand form)
   private static int CountAddAxImm(byte[] image) {
@@ -2043,25 +2068,27 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenNumericPrintInLoopBody_WhenPb36Speed_ThenCounterStaysInSi() {
-    // a PRINT of plain numeric items (and string literals, whose SI load is saved/restored) leaves
-    // SI/DI intact, so a FOR counter over a printing body stays in SI (ADD SI, imm). A non-literal
-    // string item (a string variable) prints via a path that may clobber SI, blocking residency.
-    const string numeric = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 20 STEP 2\n  s% = s% + i%\n  PRINT \"v=\"; s%\nNEXT i%\nEND";
-    const string stringVar = "$OPTIMIZE SPEED\nz$ = \"v=\"\ns% = 0\nFOR i% = 1 TO 20 STEP 2\n  s% = s% + i%\n  PRINT z$; s%\nNEXT i%\nEND";
-    Assert.That(CountAddSiImm(Compile(numeric, Dialect.Pb36)), Is.GreaterThan(CountAddSiImm(Compile(stringVar, Dialect.Pb36))),
-      "a numeric/literal PRINT keeps the FOR counter in SI; a string-variable item blocks residency");
+    // a numeric/literal PRINT preserves SI/DI, so the counter stays in the pair across it; a string
+    // VARIABLE item goes through the string routines, which use SI themselves
+    const string numeric = "$OPTIMIZE SPEED\nDECLARE SUB L(BYVAL n%)\nL 7\nL 9\nEND\nSUB L(BYVAL n%) NOINLINE\n  s% = 0\n  FOR i% = 1 TO n% STEP 2\n    s% = s% + i%\n    PRINT \"v=\"; s%\n  NEXT i%\nEND SUB";
+    const string stringVar = "$OPTIMIZE SPEED\nDECLARE SUB L(BYVAL n%)\nL 7\nL 9\nEND\nSUB L(BYVAL n%) NOINLINE\n  z$ = \"v=\"\n  s% = 0\n  FOR i% = 1 TO n% STEP 2\n    s% = s% + i%\n    PRINT z$; s%\n  NEXT i%\nEND SUB";
+    Assert.That(CountSiDiWrites(ProcedureBytes(numeric, "L")), Is.GreaterThanOrEqualTo(CountSiDiWrites(ProcedureBytes(stringVar, "L"))),
+      "a numeric/literal PRINT keeps the counter in SI/DI at least as much as a string-variable one");
   }
+
 
   [Test]
   public void Emit_GivenSelectCaseInLoopBody_WhenPb36Speed_ThenCounterStaysInSi() {
-    // an INTEGER SELECT CASE dispatches through AX/BX/DX (jump table or compare chain), never the
-    // index registers, so a FOR counter over a SELECT body stays in SI (ADD SI, imm). A STRING
-    // SELECT (string compares touch SI) is not SI-clean and blocks residency.
-    const string intSel = "$OPTIMIZE SPEED\ns% = 0\nFOR i% = 1 TO 20 STEP 2\n  SELECT CASE i%\n  CASE 1, 3, 5\n    s% = s% + i%\n  CASE ELSE\n    s% = s% - 1\n  END SELECT\nNEXT i%\nPRINT s%\nEND";
-    const string strSel = "$OPTIMIZE SPEED\nz$ = \"a\"\ns% = 0\nFOR i% = 1 TO 20 STEP 2\n  SELECT CASE z$\n  CASE \"a\"\n    s% = s% + i%\n  END SELECT\nNEXT i%\nPRINT s%\nEND";
-    Assert.That(CountAddSiImm(Compile(intSel, Dialect.Pb36)), Is.GreaterThan(CountAddSiImm(Compile(strSel, Dialect.Pb36))),
-      "an integer SELECT body keeps the FOR counter in SI; a string SELECT blocks residency");
+    // an INTEGER SELECT CASE dispatches through the general registers (a membership mask or a compare
+    // chain), never the index registers, so the loop's values stay in SI/DI across it. A STRING
+    // SELECT calls the string compare, which uses SI itself. In a SUB with a runtime bound: over a
+    // constant range the whole loop is computed at compile time.
+    const string intSel = "$OPTIMIZE SPEED\nDECLARE SUB L(BYVAL n%)\nL 9\nL 21\nEND\nSUB L(BYVAL n%) NOINLINE\n  s% = 0\n  FOR i% = 1 TO n% STEP 2\n    SELECT CASE i%\n    CASE 1, 3, 5\n      s% = s% + i%\n    CASE ELSE\n      s% = s% - 1\n    END SELECT\n  NEXT i%\n  PRINT s%\nEND SUB";
+    const string strSel = "$OPTIMIZE SPEED\nDECLARE SUB L(BYVAL n%)\nL 9\nL 21\nEND\nSUB L(BYVAL n%) NOINLINE\n  z$ = CHR$(97 + (INP(&H60) AND 1))\n  s% = 0\n  FOR i% = 1 TO n% STEP 2\n    SELECT CASE z$\n    CASE \"a\"\n      s% = s% + i%\n    END SELECT\n  NEXT i%\n  PRINT s%\nEND SUB";
+    Assert.That(CountSiDiWrites(ProcedureBytes(intSel, "L")), Is.GreaterThan(CountSiDiWrites(ProcedureBytes(strSel, "L"))),
+      "an integer SELECT body keeps the loop's values in SI/DI; a string SELECT does not");
   }
+
 
   [Test]
   public void Emit_GivenLongForLoop_WhenCpu386Speed_ThenCounterInEsi() {
@@ -2118,15 +2145,13 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenNestedIntegerLoops_WhenPb36Speed_ThenInnerCounterInDi() {
-    // a doubly-nested integer loop with SI/DI-clean bodies keeps the outer counter in SI
-    // and the inner counter in DI: the inner increment becomes ADD DI, imm (83 C7), absent
-    // when $OPTIMIZE SPEED is off (both counters then live in memory cells).
-    const string body = "s% = 0\nFOR i% = 1 TO 8\n  FOR j% = 1 TO 8\n    s% = s% + i%\n  NEXT j%\nNEXT i%\nPRINT s%\nEND";
-    var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
-    var plain = Compile(body, Dialect.Pb36);
-    Assert.That(CountAddDiImm(speed), Is.GreaterThan(CountAddDiImm(plain)),
-      "the inner FOR counter should increment in DI (ADD DI, imm) under SPEED");
+    // nested FOR loops: SPEED's residency pair takes loop values that the default objective leaves
+    // in the ordinary pool order
+    const string body = "DECLARE SUB L(BYVAL n%, BYVAL m%)\nL 5, 6\nL 7, 3\nEND\nSUB L(BYVAL n%, BYVAL m%) NOINLINE\n  s% = 0\n  FOR i% = 1 TO n%\n    FOR j% = 1 TO m%\n      s% = s% + i%\n    NEXT j%\n  NEXT i%\n  PRINT s%\nEND SUB";
+    Assert.That(CountSiDiWrites(ProcedureBytes("$OPTIMIZE SPEED\n" + body, "L")), Is.GreaterThan(CountSiDiWrites(ProcedureBytes(body, "L"))),
+      "the nested loops' values should live in SI/DI under SPEED");
   }
+
 
   // 83 C7 = ADD DI, imm8 - the increment of a DI-resident (nested) FOR counter
   private static int CountAddDiImm(byte[] image) {
@@ -2161,6 +2186,23 @@ public sealed class OptimizerTests {
       Assert.That(CountPair(speed, 0x01, 0xF7), Is.GreaterThan(0), "the SPEED loop adds its SI counter into its DI accumulator");
       Assert.That(CountPair(plain, 0x01, 0xF7), Is.Zero, "...which the default objective's pool order does not choose");
     });
+  }
+
+  // a write into SI or DI by ADD in a register-to-register or register-immediate form (01/03/81/83,
+  // mod = 11): the step of an SI/DI-resident loop value. The one-byte INC SI/DI (46/47) is not counted
+  // - a byte scan cannot tell it from the 46 inside [BP+d] addressing.
+  private static int CountSiDiWrites(ReadOnlySpan<byte> code) {
+    var count = 0;
+    for (var i = 0; i < code.Length; ++i) {
+      if (i + 1 >= code.Length || (code[i + 1] & 0xC0) != 0xC0)
+        continue;
+      var rm = code[i + 1] & 7;
+      var reg = (code[i + 1] >> 3) & 7;
+      if ((code[i] == 0x01 && rm is 6 or 7) || (code[i] == 0x03 && reg is 6 or 7)
+          || (code[i] is 0x83 or 0x81 && reg == 0 && rm is 6 or 7))
+        ++count;
+    }
+    return count;
   }
 
   // ADD r/m16, r16 (01) or ADD r16, r/m16 (03) or ADD r/m16, imm (83 /0, 81 /0) whose destination

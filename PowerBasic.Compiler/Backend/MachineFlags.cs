@@ -21,26 +21,32 @@ public static class MachineFlags {
   public static bool DeadAfter(MBlock block, int index) => DeadAfter(null, block, index);
 
   /// <summary>
-  /// The same, following an unconditional <c>JMP</c> at the end of the block into its target when the
-  /// function is given - the one place control goes, so the question continues there.
+  /// The same, looking past the end of the block when the function is given: the flags are dead there
+  /// when every successor - the fallthrough, a branch target, a label an inline-assembly jump names -
+  /// replaces them before reading them. A block met again on the way counts as a reader: a loop that
+  /// comes back without overwriting them is not a proof.
   /// </summary>
-  public static bool DeadAfter(X86MachineFunction? function, MBlock block, int index) {
-    var visited = new HashSet<string>(StringComparer.Ordinal);
-    for (var from = index; visited.Add(block.Label);) {
-      for (var i = from + 1; i < block.Instructions.Count; ++i) {
-        var instruction = block.Instructions[i];
-        if (instruction.Effect.ReadsFlags)
-          return false;
-        if (Kills(instruction))
-          return true;
-      }
-      if (function is null || block.Instructions is not [.., { Opcode: MOpcode.Jmp, Condition: null } jump]
-          || jump.Operands is not [MOperand.LabelRef { Name: var target }]
-          || function.Blocks.Find(candidate => candidate.Label == target) is not { } next)
+  public static bool DeadAfter(X86MachineFunction? function, MBlock block, int index)
+    => DeadAfter(function, block, index, new HashSet<string>(StringComparer.Ordinal));
+
+  private static bool DeadAfter(X86MachineFunction? function, MBlock block, int index, HashSet<string> visited) {
+    for (var i = index + 1; i < block.Instructions.Count; ++i) {
+      var instruction = block.Instructions[i];
+      if (instruction.Effect.ReadsFlags)
         return false;
-      (block, from) = (next, -1);
+      if (Kills(instruction))
+        return true;
     }
-    return false;
+    if (function is null || !visited.Add(block.Label))
+      return false;
+    var successors = block.SuccessorsWithAsmJumps().ToList();
+    if (successors.Count == 0)
+      return false;
+    foreach (var label in successors)
+      if (function.Blocks.Find(candidate => candidate.Label == label) is not { } next
+          || !DeadAfter(function, next, -1, visited))
+        return false;
+    return true;
   }
 
   /// <summary>
