@@ -16,20 +16,17 @@ public static class MachineTargetFamilyFacts {
   /// <summary>The name diagnostics print. Never parse it: compare the family instead.</summary>
   public static string DisplayName(this MachineTargetFamily family) => family switch {
     MachineTargetFamily.X86_16 => "x86-16",
-    MachineTargetFamily.Mos6502 => "6502",
     _ => throw new ArgumentOutOfRangeException(nameof(family), family, "unknown machine target family"),
   };
 
   /// <summary>The width of an address.</summary>
   public static int PointerBits(this MachineTargetFamily family) => family switch {
     MachineTargetFamily.X86_16 => 16,
-    MachineTargetFamily.Mos6502 => 16,
     _ => throw new ArgumentOutOfRangeException(nameof(family), family, "unknown machine target family"),
   };
 
   /// <summary>The width of a general-purpose register - which is not the address width on a 6502.</summary>
   public static int RegisterBits(this MachineTargetFamily family) => family switch {
-    MachineTargetFamily.Mos6502 => 8,
     _ => family.PointerBits(),
   };
 }

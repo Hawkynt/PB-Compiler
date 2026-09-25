@@ -136,17 +136,6 @@ public sealed class MachineTargetTests {
   }
 
   [Test]
-  public void Mos6502MachineTargetHasExplicitAbiAndFunctionShell() {
-    var target = new Mos6502MachineTarget();
-    Assert.That(target.Description.PointerBits, Is.EqualTo(16));
-    Assert.That(target.Abi.ReturnRegister, Is.EqualTo(Mos6502RegisterFile.Accumulator));
-    Assert.That(target.Emitter.EmitFunction([0xA9, 0x00]).Bytes, Is.EqualTo(new byte[] { 0xA9, 0x00, 0x60 }));
-    Assert.That(IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.Mos6502), Is.TypeOf<Mos6502MachineTarget>());
-    Assert.That(IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.X86_16), Is.Null,
-      "x86-16 is lowered by X86MachineLowering directly");
-  }
-
-  [Test]
   public void MachineTargetOwnsTheLoweringContract() {
     var lowerer = new X86MachineLowering(SelectionTarget.Baseline);
     Assert.That(lowerer.Target, Is.EqualTo(new MachineTargetDescription(MachineTargetFamily.X86_16)));
@@ -170,62 +159,6 @@ public sealed class MachineTargetTests {
       Assert.That(error, Does.Contain("input IR failed verification"));
       Assert.That(error, Does.Contain("entry"));
     });
-  }
-
-  [Test]
-  public void X86MachineLoweringRejectsNonX86TargetFamilies() {
-    Assert.That(
-      () => new X86MachineLowering(new SelectionTarget(TargetFamily: MachineTargetFamily.Mos6502)),
-      Throws.TypeOf<ArgumentOutOfRangeException>());
-  }
-
-  [Test]
-  public void Mos6502OwnsAnInstructionSelector() {
-    var target = new Mos6502MachineTarget();
-    Assert.That(target.CreateLowerer(SelectionTarget.Baseline), Is.TypeOf<Mos6502MachineLowering>());
-  }
-
-  [Test]
-  public void Mos6502Lowering_GivenUnsupportedIr_ThenDeclinesWithConstructAndBlock() {
-    var function = new IrFunction("f", IrType.Void);
-    var builder = new IrBuilder(function.CreateBlock("entry"));
-    builder.InlineAsm(new IrInlineAsm("NOP"));
-    builder.Ret();
-    var lowerer = new Mos6502MachineLowering();
-
-    Assert.That(lowerer.TrySelect(function, out var selected, out var error), Is.False);
-    Assert.Multiple(() => {
-      Assert.That(selected, Is.Null);
-      Assert.That(error, Does.Contain("IrInlineAsm"));
-      Assert.That(error, Does.Contain("entry"));
-    });
-  }
-
-  [Test]
-  public void Mos6502Emitter_GivenUnselectedOpcode_ThenThrowsInsteadOfDroppingIt() {
-    var function = new X86MachineFunction("unsupported");
-    var block = new MBlock("entry");
-    block.Instructions.Add(new MInstr(MOpcode.InlineAsm, [], MInstrEffect.None));
-    function.Blocks.Add(block);
-    var target = new Mos6502MachineTarget();
-
-    Assert.Throws<NotSupportedException>(() => ((Mos6502MachineEmitter)target.Emitter).EmitFunction(function));
-  }
-
-  [Test]
-  public void MachineFunctionClonePreservesTargetFamily() {
-    var function = new X86MachineFunction("target") { TargetFamily = MachineTargetFamily.Mos6502 };
-    Assert.That(function.Clone().TargetFamily, Is.EqualTo(MachineTargetFamily.Mos6502));
-  }
-
-  [Test]
-  public void MachineTargetValidationRejectsCrossTargetProducts() {
-    var function = new X86MachineFunction("target") { TargetFamily = MachineTargetFamily.Mos6502 };
-    var lowerer = new X86MachineLowering(SelectionTarget.Baseline);
-
-    Assert.That(lowerer.TryAllocate(new IrFunction("target", IrType.Void), function, out var machine, out var error), Is.False);
-    Assert.That(machine, Is.Null);
-    Assert.That(error, Does.Contain("6502"));
   }
 
 }

@@ -42,8 +42,8 @@
   <text class="t" x="22" y="506"><tspan class="flag">  --dump-bind</tspan>    stop after semantic analysis</text>
   <text class="t" x="22" y="525"><tspan class="flag">  --emit-obj</tspan>     compile to a linkable OMF .OBJ object instead of an EXE</text>
   <text class="t" x="22" y="544"><tspan class="flag">  --emit-com</tspan>     compile to a flat DOS .COM image (no $LINK/segment relocations)</text>
-  <text class="t" x="22" y="563"><tspan class="flag">  --platform</tspan> &lt;p&gt; x86-16 (DOS, default) | x86-32 | x64: the latter two build a native</text>
-  <text class="t" x="22" y="582">                 executable through the C back end and the host C compiler</text>
+  <text class="t" x="22" y="563"><tspan class="flag">  --platform</tspan> &lt;p&gt; x86-16 (DOS, default) | x86-32 | x64 | 6502: x86-32 and x64 build a native</text>
+  <text class="t" x="22" y="582">                 executable through the C back end and the host C compiler; 6502 a C64 .PRG</text>
   <text class="t" x="22" y="601"><tspan class="flag">  --emit-lib</tspan>     with a hosted --platform: an archive of the program and its runtime</text>
   <text class="t" x="22" y="620"><tspan class="flag">  --emit-basic</tspan>   render optimized IR back to readable PowerBASIC</text>
   <text class="t" x="22" y="639"><tspan class="flag">  --emit-llvm</tspan>    optimize through the IR middle end and emit textual LLVM</text>

@@ -219,6 +219,33 @@ front-ends:
   (empty BCLOG, no `T.OBJ`). Pre-existing, reproducible, environment-side; our codegen
   is unaffected. Needs the pds7x oracle invocation re-validated under DOSBox.
 
+## D. The 6502 platform (`--platform 6502`, `docs/BACKENDS.md`)
+
+Integer programs compile to a C64 `.PRG` and run; `Mos6502BatteryTests` lists every battery program
+it still declines, with the reason, and holds a floor under how many it accepts.
+
+### Must
+- **Floating point.** BASIC reaches for it more often than the source shows: an untyped variable is
+  SINGLE, unary minus on an integer and wide integer arithmetic written straight into a `PRINT` are
+  evaluated in floating point. Needs a soft-float runtime for IEEE SINGLE and DOUBLE - add, subtract,
+  multiply, divide, compare, the integer conversions with BASIC's rounding - and `rt_print_single`/
+  `rt_print_double` formatting digit for digit as the DOS runtime does. The C64's BASIC ROM has a
+  40-bit float package, but its precision is not PowerBASIC's.
+- **Strings.** The `rt_str_*` ABI: a heap, descriptors, temporaries and their release - the same
+  contract `runtime/pbc_rt.c` implements for the hosted targets.
+
+### Should
+- **`ON ERROR`, `INPUT`** (the KERNAL's `CHRIN`), and `PEEK`/`POKE`, which reach the IR as far
+  pointers; on a 6502 the segment has no meaning and the offset is the address.
+- **Smaller frames.** Every SSA value has its own cell today; values whose live ranges do not overlap
+  can share one, which also shrinks what a recursive call saves. Hot values belong in page zero.
+- **Narrower arithmetic.** The middle end keeps integers at least 16 bits wide for x86-16; a 6502
+  pays for every byte, so values proven to fit a byte should be computed in one.
+
+### Could
+- **Other 6502 machines** - VIC-20, Apple II, Atari 8-bit: the code is the same, only the load
+  address, the character output routine and the container differ.
+
 ## Won't (for now)
 - Win16 / protected-mode targets; 32-bit OMF.
 

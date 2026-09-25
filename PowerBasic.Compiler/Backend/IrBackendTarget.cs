@@ -19,11 +19,6 @@ public static class IrBackendTargetContract {
     _ => global::PowerBasic.Compiler.Backend.SelectionTarget.Baseline,
   };
 
-  public static IMachineTarget? CreateMachineTarget(IrBackendTarget target) => target switch {
-    IrBackendTarget.Mos6502 => new Mos6502MachineTarget(),
-    _ => null,
-  };
-
   public static IrRepresentationStage RequiredInputStage(IrBackendTarget target) => target switch {
     IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35 or IrBackendTarget.X86_16
       or IrBackendTarget.Mos6502

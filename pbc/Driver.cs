@@ -1,6 +1,8 @@
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.Backend.Mos6502;
 using PowerBasic.Compiler.Emit;
+using PowerBasic.Compiler.Emit.Commodore;
 using PowerBasic.Compiler.Emit.Hosted;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
@@ -35,7 +37,7 @@ public static class Driver {
     var optimizeSpeed = false;
     var parallelLoops = false;
     bool? optimize = null; // null = dialect default (on for pb36); --optimize/--no-optimize override
-    HostedPlatform? platform = null; // null = 16-bit DOS, the native back end; else built through C
+    var platform = Platform.X86_16;
 
     for (var i = 0; i < args.Length; ++i)
       switch (args[i]) {
@@ -51,7 +53,7 @@ public static class Driver {
         case "--platform" when i + 1 < args.Length: {
           var name = args[++i];
           if (!TryParsePlatform(name, out platform)) {
-            stderr.WriteLine($"pbc: unknown platform '{name}' (use x86-16|x86-32|x64)");
+            stderr.WriteLine($"pbc: unknown platform '{name}' (use x86-16|x86-32|x64|6502)");
             return 1;
           }
           break;
@@ -189,8 +191,14 @@ public static class Driver {
         return 0;
       }
 
-      if (platform is { } hosted)
-        return BuildHosted(model, source, hosted, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+      switch (platform) {
+        case Platform.X86_32:
+          return BuildHosted(model, source, HostedPlatform.X86_32, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+        case Platform.X64:
+          return BuildHosted(model, source, HostedPlatform.X64, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+        case Platform.Mos6502:
+          return BuildC64(model, source, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+      }
 
       if (dumpStage == "--emit-lib") {
         stderr.WriteLine("pbc: --emit-lib builds a hosted archive; a DOS library is 'pbc lib build <out.PBL|out.LIB> <unit.PBU>...'");
@@ -313,7 +321,6 @@ public static class Driver {
     }
   }
 
-  /// <summary>$COMPILE UNIT selects unit emission; EXE remains the default.</summary>
   /// <summary>
   /// The IR, through the hosted middle end, rendered as C99 or LLVM text - what <c>--emit-c</c> and
   /// <c>--emit-llvm</c> print and what a hosted <c>--platform</c> build compiles. The source's own
@@ -424,20 +431,48 @@ public static class Driver {
     return 0;
   }
 
-  private static bool TryParsePlatform(string name, out HostedPlatform? platform) {
-    platform = null;
-    switch (name.ToLowerInvariant()) {
-      case "x86-16" or "x86_16" or "dos":
-        return true;
-      case "x86-32" or "x86_32" or "i386" or "ia32":
-        platform = HostedPlatform.X86_32;
-        return true;
-      case "x64" or "x86-64" or "x86_64" or "amd64":
-        platform = HostedPlatform.X64;
-        return true;
-      default:
-        return false;
+  /// <summary>The machines <c>--platform</c> selects.</summary>
+  private enum Platform { X86_16, X86_32, X64, Mos6502 }
+
+  private static bool TryParsePlatform(string name, out Platform platform) {
+    platform = name.ToLowerInvariant() switch {
+      "x86-16" or "x86_16" or "dos" => Platform.X86_16,
+      "x86-32" or "x86_32" or "i386" or "ia32" => Platform.X86_32,
+      "x64" or "x86-64" or "x86_64" or "amd64" => Platform.X64,
+      "6502" or "mos6502" or "c64" => Platform.Mos6502,
+      _ => (Platform)(-1),
+    };
+    return Enum.IsDefined(platform);
+  }
+
+  /// <summary>
+  /// A program for the 6502: the IR, through the native middle end, compiled by the 6502 back end
+  /// into a Commodore 64 <c>.PRG</c>. The C64 has one executable format, so the DOS containers and
+  /// the object formats are refused rather than approximated.
+  /// </summary>
+  private static int BuildC64(SemanticModel model, string source, string dumpStage, string? output, bool? optimize,
+      bool optimizeSpeed, TextWriter stdout, TextWriter stderr) {
+    if (dumpStage is "--emit-com" or "--emit-obj" or "--emit-lib" || IsComCompile(model) || IsUnitCompile(model)) {
+      stderr.WriteLine("error: the 6502 platform builds a C64 .PRG only; COM, units, objects and libraries are DOS or hosted formats");
+      return 1;
     }
+    var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+      Target = IrBackendTarget.Mos6502,
+      Optimize = optimize ?? true,
+      OptimizeForSpeed = optimizeSpeed,
+      RecoverIntegerArithmetic = optimize ?? true,
+    }, out var declined);
+    var image = compiled is null ? null
+      : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, C64Prg.MemoryTop, out declined);
+    if (image is null) {
+      stderr.WriteLine($"error: 6502: {declined ?? "unsupported construct"}");
+      return 1;
+    }
+    output ??= Path.ChangeExtension(source, ".PRG");
+    var file = C64Prg.Write(image);
+    File.WriteAllBytes(output, file);
+    stdout.WriteLine($"{Path.GetFileName(output)}: {file.Length} bytes (6502, C64)");
+    return 0;
   }
 
   private static bool IsUnitCompile(SemanticModel model)
@@ -566,8 +601,8 @@ public static class Driver {
     w.WriteLine("  --dump-bind    stop after semantic analysis");
     w.WriteLine("  --emit-obj     compile to a linkable OMF .OBJ object instead of an EXE");
     w.WriteLine("  --emit-com     compile to a flat DOS .COM image (no $LINK/segment relocations)");
-    w.WriteLine("  --platform <p> x86-16 (DOS, default) | x86-32 | x64: the latter two build a native");
-    w.WriteLine("                 executable through the C back end and the host C compiler");
+    w.WriteLine("  --platform <p> x86-16 (DOS, default) | x86-32 | x64 | 6502: x86-32 and x64 build a native");
+    w.WriteLine("                 executable through the C back end and the host C compiler; 6502 a C64 .PRG");
     w.WriteLine("  --emit-lib     with a hosted --platform: an archive of the program and its runtime");
     w.WriteLine("  --emit-basic   render optimized IR back to readable PowerBASIC");
     w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");

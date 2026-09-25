@@ -36,6 +36,8 @@ binaries you can run on actual DOS or in DOSBox:
 - **native x86-32 / x64** — ELF executables, `.o` objects and `.a` archives
   (`--platform x86-32|x64`), built from the same optimized IR through the C back end
   and the host's C compiler.
+- **6502** — Commodore 64 `.PRG` programs (`--platform 6502`), compiled from the same
+  optimized IR by a native 6502 back end (integer programs for now).
 
 Two things make it interesting. First, **fidelity**: for the historic dialects
 it doesn't merely *resemble* the genuine compilers — it is driven against the
@@ -145,6 +147,7 @@ pbc MAIN.BAS                  # $LINK "UNIT.PBU" / "MY.PBL" inside -> linked EXE
 pbc --emit-c PROG.BAS         # optimize through the IR and emit portable C99
 pbc --emit-llvm PROG.BAS      # ... or textual LLVM for the native toolchain
 pbc --platform x64 PROG.BAS   # a native x64 executable (also x86-32; --emit-obj/--emit-lib)
+pbc --platform 6502 PROG.BAS  # a Commodore 64 PROG.PRG
 pbc lib build MY.PBL *.PBU    # bundle units into a library
 pbc lib list MY.PBL           # show exports/imports of a library or unit
 ```

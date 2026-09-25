@@ -106,13 +106,13 @@ cc -std=c99 -O2 -I runtime -o prog prog.c runtime/pbc_rt.c -lm
 embedded runtime to a temporary directory and drives the host compiler (`$CC`, else `cc`,
 `gcc` or `clang`) with `-m32`/`-m64`. What comes out depends on the emit option:
 
-| Option | x86-16 (DOS, default) | x86-32 / x64 |
-|---|---|---|
-| *(none)* | MZ `.EXE` | ELF executable |
-| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a DOS container |
-| `$COMPILE UNIT` | `.PBU` | refused: use `--emit-obj` or `--emit-lib` |
-| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o` (the program only) |
-| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `.a` archive: the program and the runtime |
+| Option | x86-16 (DOS, default) | x86-32 / x64 | 6502 |
+|---|---|---|---|
+| *(none)* | MZ `.EXE` | ELF executable | C64 `.PRG` |
+| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a DOS container | refused |
+| `$COMPILE UNIT` | `.PBU` | refused: use `--emit-obj` or `--emit-lib` | refused |
+| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o` (the program only) | refused |
+| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `.a` archive: the program and the runtime | refused |
 
 Before any build, `HostToolchain` asks the compiler to link a one-line program for the
 requested machine. A 64-bit Linux host usually has a compiler that accepts `-m32` but no
@@ -157,6 +157,44 @@ output still runs):
 this path with the host C compiler and diffs the result against that golden — the
 same file the DOSBox battery checks the 16-bit executable against. A program outside
 the lowering's subset is reported and skipped, never quietly passed.
+
+## The 6502 back end (`--platform 6502`)
+
+```bash
+pbc --platform 6502 PROG.BAS        # -> PROG.PRG; LOAD "PROG",8 and RUN on a Commodore 64
+```
+
+`Backend/Mos6502/` compiles the optimized IR - the same module, after the same native middle end
+the DOS build runs - straight to 6502 machine code. It does not go through the x86 machine IR: a
+chip with three 8-bit registers has nothing to gain from a register allocator built for eight
+16-bit ones.
+
+- **`Mos6502Isa` / `Mos6502Assembler`** are the instruction set as types: an `M6502Op` in an
+  `M6502Mode` the chip has, or an exception where it is written. The assembler resolves labels and
+  relaxes a conditional branch that cannot reach its target into the inverse branch over a `JMP`.
+- **Values live in static frames.** Every function gets one fixed address per argument, SSA value
+  and local, addressed absolutely - the fastest access the 6502 has. Recursion is the one thing that
+  makes a static frame wrong, and the call graph says where it can happen: a function in a cycle
+  (Tarjan's SCCs over direct calls) saves its own frame to a soft stack at `$C000`-`$CFFF` before a
+  call back into the cycle and restores it after. A call out of the cycle, and every call in a program
+  without recursion, pays nothing for it.
+- **`Mos6502Runtime`** is assembled into the program routine by routine as the code asks for them:
+  `PRINT` with BASIC's sign slot, zones, `TAB` and `SPC`; 16- and 32-bit multiply and signed and
+  unsigned divide (error 11 on a zero divisor); frame save and restore; `rt_error`/`rt_end`.
+  Output goes through the KERNAL's `CHROUT` after start-up selects the lower-case character set,
+  and ASCII is mapped onto its PETSCII.
+- **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$2F`, BASIC's own)
+  and the stack pointer are saved on entry and restored on exit, so the final `RTS` - or `END`, or a
+  run-time error, from any depth - lands at `READY.` with BASIC intact.
+- **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
+  the code.
+
+What it does not lower yet it declines by name - floating point, dynamic strings, `ON ERROR`, inline
+assembly, `INPUT`, calls through pointers - rather than compiling it into something else.
+`Mos6502ProgramTests` run compiled programs on `Cpu6502` (a hand-decoded interpreter in the test
+project, independent of the compiler's opcode table); `Mos6502BatteryTests` run every DOS battery
+program the back end accepts against its DOS golden output, keep a floor under how many that is, and
+cross-check one on VICE with the real KERNAL when `x64sc` and `xvfb-run` are installed.
 
 ## The seam is a test, not an interface
 
