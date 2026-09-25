@@ -34,7 +34,16 @@ public interface IMachineEmitter {
   MachineCode EmitFunction(ReadOnlySpan<byte> body, bool preserveFramePointer = true);
 }
 
-public readonly record struct MachineTargetDescription(string Name, int PointerBits, int RegisterBits);
+/// <summary>
+/// The machine a function is lowered for. Identified by its <see cref="MachineTargetFamily"/>; the name
+/// and widths are derived from it in <see cref="MachineTargetFamilyFacts"/>, so there is one answer to
+/// each and no string to compare.
+/// </summary>
+public readonly record struct MachineTargetDescription(MachineTargetFamily Family) {
+  public string Name => this.Family.DisplayName();
+  public int PointerBits => this.Family.PointerBits();
+  public int RegisterBits => this.Family.RegisterBits();
+}
 
 public readonly record struct MachineRegister(string Name, int Encoding, int Bits, int AliasGroup = -1) {
   public override string ToString() => this.Name;

@@ -7,16 +7,11 @@ public sealed class X86MachineTarget : IMachineTarget {
 
   public X86MachineTarget(X86Mode mode, X86Abi abi) {
     ArgumentNullException.ThrowIfNull(abi);
-    var (name, expectedBits) = mode switch {
-      X86Mode.Bit16 => ("x86-16", 16),
-      X86Mode.Bit32 => ("x86-32", 32),
-      X86Mode.Bit64 => ("x86-64", 64),
-      _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported x86 mode"),
-    };
-    if (abi.PointerBits != expectedBits)
+    var family = mode.Family();
+    if (abi.PointerBits != family.PointerBits())
       throw new ArgumentException("ABI and machine mode disagree.", nameof(abi));
     this._mode = mode;
-    this.Description = new(name, abi.PointerBits, abi.PointerBits);
+    this.Description = new(family);
     this.Abi = abi;
     this.Encoder = new X86InstructionEncoder(mode);
     this.Emitter = new X86MachineEmitter(this.Encoder, abi);

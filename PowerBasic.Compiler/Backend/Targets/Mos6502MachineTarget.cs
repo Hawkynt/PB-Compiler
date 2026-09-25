@@ -4,7 +4,7 @@ namespace PowerBasic.Compiler.Backend.Targets;
 
 public sealed class Mos6502MachineTarget : IMachineTarget {
   public Mos6502MachineTarget() {
-    Description = new("MOS 6502", 16, 8);
+    Description = new(MachineTargetFamily.Mos6502);
     Abi = new Mos6502Abi();
     Encoder = new Mos6502InstructionEncoder();
     Emitter = new Mos6502MachineEmitter(Encoder);

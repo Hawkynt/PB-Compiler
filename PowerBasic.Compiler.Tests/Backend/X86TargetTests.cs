@@ -409,7 +409,7 @@ public sealed class X86TargetTests {
     var target = (X86MachineTarget)IrBackendTargetContract.CreateMachineTarget(IrBackendTarget.X86_64)!;
     var lowerer = (X86MachineLowering)target.CreateLowerer(SelectionTarget.Baseline);
     Assert.That(lowerer, Is.Not.Null);
-    Assert.That(lowerer.Target, Is.EqualTo(new MachineTargetDescription("x86-64", 64, 64)));
+    Assert.That(lowerer.Target, Is.EqualTo(new MachineTargetDescription(MachineTargetFamily.X86_64)));
     Assert.That(new X86MachineSelector(SelectionTarget.Baseline), Is.Not.Null);
     Assert.That(new X86MachineAllocator(SelectionTarget.Baseline), Is.Not.Null);
     Assert.That(new X86MachineScheduler(SelectionTarget.Baseline), Is.Not.Null);
@@ -439,7 +439,7 @@ public sealed class X86TargetTests {
     var selected = new X86MachineFunction("invalid-frame");
     selected.StackSlots.Add(slotSize);
     var machine = new IrMachineFunction(source, selected, new Dictionary<int, Reg>(),
-      new MachineTargetDescription("x86-16", 16, 16));
+      new MachineTargetDescription(MachineTargetFamily.X86_16));
 
     Assert.That(X86HostedMachineBuilder.TryBuild(machine, out var hosted, out var error), Is.False);
     Assert.Multiple(() => {
@@ -482,7 +482,7 @@ public sealed class X86TargetTests {
     };
     var selected = new X86MachineFunction("fastcall");
     var machine = new IrMachineFunction(source, selected, new Dictionary<int, Reg>(),
-      new MachineTargetDescription("x86-16", 16, 16));
+      new MachineTargetDescription(MachineTargetFamily.X86_16));
 
     Assert.That(X86HostedMachineBuilder.TryBuild(machine, out var hosted, out var error), Is.False);
     Assert.Multiple(() => {
@@ -542,7 +542,7 @@ public sealed class X86TargetTests {
   public void MachineTargetValidationRejectsCrossTargetProducts() {
     var function = new X86MachineFunction("target") { TargetFamily = MachineTargetFamily.X86_16 };
     Assert.That(X86MachineTargetValidation.TryValidate(function,
-      new MachineTargetDescription("x86-64", 64, 64), out var error), Is.False);
+      new MachineTargetDescription(MachineTargetFamily.X86_64), out var error), Is.False);
     Assert.That(error, Does.Contain("X86_64"));
   }
 

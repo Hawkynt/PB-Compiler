@@ -36,12 +36,7 @@ public static class X86HostedMachineBuilder {
       out string? error) {
     hosted = null;
     error = null;
-    var mode = machine.Target.Name switch {
-      "x86-64" => (X86Mode?)X86Mode.Bit64,
-      "x86-32" => X86Mode.Bit32,
-      "x86-16" => X86Mode.Bit16,
-      _ => null,
-    };
+    var mode = machine.Target.Family.X86Mode();
     if (mode is null) {
       error = $"target '{machine.Target.Name}' is not an x86 hosted target";
       return false;

@@ -24,7 +24,7 @@ public static class X86ProductionEmitter {
     // 16-bit emission stage because it owns the PowerBASIC stack ABI, frame layout, far/data operands,
     // runtime symbol resolution and ISA-policy virtualization. The newer hosted byte encoder remains
     // available for the other x86 modes until it reaches behavioral parity for 16-bit DOS.
-    if (function.Target.Name.Equals("x86-16", StringComparison.OrdinalIgnoreCase)) {
+    if (!function.Target.Family.EmitsFromHostedFunction()) {
       MachineEmitter.EmitFunction(
         assembler,
         function.Function,
@@ -51,11 +51,7 @@ public static class X86ProductionEmitter {
         $"{function.HostedLoweringError ?? shape}");
     }
 
-    var mode = function.Target.Name.ToLowerInvariant() switch {
-      "x86-32" => X86Mode.Bit32,
-      "x86-64" => X86Mode.Bit64,
-      _ => throw new NotSupportedException($"target '{function.Target.Name}' is not an x86 hosted target")
-    };
+    var mode = function.Target.Family.RequireX86Mode();
     var target = new X86TargetMachineEmitter(new X86InstructionEncoder(mode));
     var hosted = function.HostedFunction
       ?? throw new BackendInvariantException(

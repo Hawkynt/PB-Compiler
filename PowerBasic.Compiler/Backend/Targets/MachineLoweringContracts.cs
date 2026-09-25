@@ -53,13 +53,10 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
   private readonly X86MachinePostAllocation _postAllocation = new();
 
   public X86MachineLowering(SelectionTarget target) {
-    this.Target = target.TargetFamily switch {
-      MachineTargetFamily.X86_16 => new("x86-16", 16, 16),
-      MachineTargetFamily.X86_64 => new("x86-64", 64, 64),
-      MachineTargetFamily.X86_32 => new("x86-32", 32, 32),
-      var unsupported => throw new ArgumentOutOfRangeException(
-        nameof(target), target, $"target family '{unsupported}' is not an x86 target"),
-    };
+    if (target.TargetFamily.X86Mode() is null)
+      throw new ArgumentOutOfRangeException(
+        nameof(target), target, $"target family '{target.TargetFamily}' is not an x86 target");
+    this.Target = new(target.TargetFamily);
     this._targetFamily = target.TargetFamily;
     this._selector = new(target);
     this._allocator = new(target);
@@ -166,7 +163,7 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
     // their bytes handles - every `! DEC` without a semantic model, every $CPU 80386 function using
     // EAX in real mode - and what was lost was routing, not correctness. On x86-16 the hosted build
     // is best-effort: its reason is kept for TryEmitHostedX86, which already reports a missing one.
-    if (hostedFailure is not null && !IsDosTarget(this.Target.Name)) {
+    if (hostedFailure is not null && this.Target.Family.EmitsFromHostedFunction()) {
       error = hostedFailure;
       return false;
     }
@@ -176,27 +173,19 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
     return true;
   }
 
-  private static bool IsDosTarget(string targetName)
-    => targetName.Equals("x86-16", StringComparison.OrdinalIgnoreCase);
-
   /// <summary>Builds and encode-checks the hosted function, answering why not, or null on success.</summary>
   private static string? TryBuildHosted(IrMachineFunction provisional, out X86TargetMachineFunction? hosted) {
     if (!X86HostedMachineBuilder.TryBuild(provisional, out hosted, out var hostedError))
       return "hosted machine lowering: " + (hostedError ?? "unsupported target instruction");
     if (hosted is null)
       return "hosted machine lowering: succeeded without producing a target function";
-    if (!TryValidateEncoding(hosted, provisional.Target.Name, out var encodingError))
+    if (!TryValidateEncoding(hosted, provisional.Target.Family, out var encodingError))
       return "x86 encoding: " + encodingError;
     return null;
   }
 
-  private static bool TryValidateEncoding(X86TargetMachineFunction function, string targetName, out string? error) {
-    var mode = targetName switch {
-      "x86-16" => X86Mode.Bit16,
-      "x86-32" => X86Mode.Bit32,
-      "x86-64" => X86Mode.Bit64,
-      _ => throw new ArgumentOutOfRangeException(nameof(targetName), targetName, "not an x86 target"),
-    };
+  private static bool TryValidateEncoding(X86TargetMachineFunction function, MachineTargetFamily family, out string? error) {
+    var mode = family.RequireX86Mode();
     try {
       _ = new X86TargetMachineEmitter(new X86InstructionEncoder(mode))
         .Emit(function, preserveFramePointer: true, emitReturn: true);

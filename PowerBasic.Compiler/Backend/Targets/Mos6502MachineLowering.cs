@@ -5,7 +5,7 @@ namespace PowerBasic.Compiler.Backend.Targets;
 
 /// <summary>Minimal but real 6502 lowering boundary: Low IR CFG is preserved as machine blocks.</summary>
 public sealed class Mos6502MachineLowering : IMachineFunctionLowerer {
-  public MachineTargetDescription Target { get; } = new("6502", 16, 8);
+  public MachineTargetDescription Target { get; } = new(MachineTargetFamily.Mos6502);
 
   public bool TrySelect(IrFunction function, out X86MachineFunction? selected, out string? error) {
     selected = null;
