@@ -556,6 +556,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     this.EmitBackendDataPool(asm);
 
+    if (!this._isUnit) {
+      // The DOS runtime still contains the public READ/RESTORE compatibility entry points. Production
+      // IR DATA lowering uses its own ir.datapool/ir.datacursor cells, but an emitted runtime section
+      // may still reference these legacy ABI symbols even when the source has no DATA. Bind an EMPTY
+      // pool so the runtime ABI remains linkable without restoring the deleted syntax DATA emitter.
+      asm.Align(2);
+      asm.MarkLabel("rt_dataptr");
+      asm.Dw(asm.Lbl("rt_datapool"));
+      asm.MarkLabel("rt_datapool");
+      asm.MarkLabel("rt_dataend");
+    }
+
     foreach (var (symbol, label) in this._variableSlots) {
       asm.Align(2);
       asm.MarkLabel(label);

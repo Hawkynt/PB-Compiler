@@ -14,7 +14,10 @@ public sealed partial class Assembler {
     var labels = new Dictionary<string, Label>(StringComparer.Ordinal);
     if (code.Labels is { Count: > 0 })
       foreach (var name in code.Labels.Keys)
-        labels[name] = resolveSymbol(name) ?? this.DefineLabel(name);
+        // MachineCode.Labels are definition-local symbols. Asking the external resolver about them
+        // lets an image/linker resolver mint an unbound same-named label (s_0, s_1, ...), which then
+        // escapes the function instead of being bound at the recorded machine-code offset.
+        labels[name] = this.DefineLabel(name);
     var cursor = 0;
     foreach (var (name, offset) in (code.Labels ?? new Dictionary<string, int>()).OrderBy(pair => pair.Value)) {
       if (offset < cursor || offset > code.Bytes.Length)
