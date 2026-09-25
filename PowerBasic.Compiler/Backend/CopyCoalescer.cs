@@ -2,8 +2,8 @@ namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
 /// Merges a register-to-register <c>MOV</c>'s two virtual registers into one, so the move disappears
-/// and the value keeps a single register across it. It runs between scheduling and allocation, on the
-/// speed objective only (see <see cref="LinearScanAllocator"/>).
+/// and the value keeps a single register across it. It runs between scheduling and allocation, under
+/// any optimizing objective (see <see cref="LinearScanAllocator"/>).
 ///
 /// <para>
 /// <b>What it is for.</b> Out-of-SSA is what makes this necessary rather than merely nice. A loop's

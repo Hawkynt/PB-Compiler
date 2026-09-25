@@ -72,7 +72,7 @@ public sealed partial class LinearScanAllocator {
   /// It is a PREFERENCE and never a constraint, and the distinction is the whole safety argument.
   /// <c>SI</c> and <c>DI</c> are two of the three registers that may address memory, so reserving one
   /// across a loop is exactly the move that once left the spiller with nowhere to put an address
-  /// value. <see cref="TryResident"/> therefore falls back to the ordinary pool order for any value
+  /// value. <see cref="TryCoalesced"/> therefore falls back to the ordinary pool order for any value
   /// the pair cannot take, and to the whole plain policy on the untouched function when the preferred
   /// sweep does not answer at all - so the set of functions that allocate is unchanged and only the
   /// assignment differs (<c>BackendResidencyTests</c> measures that over the corpus).
@@ -122,17 +122,17 @@ public sealed partial class LinearScanAllocator {
   public static IReadOnlyDictionary<int, Reg>? Allocate(X86MachineFunction function, SelectionTarget target,
       out string? reason, out int rounds, int? moveBudget = null) {
     rounds = 0;
-    if (target is { Optimize: true, OptimizeSpeed: true }
-        && TryResident(function, target, moveBudget, ref rounds) is { } resident) {
+    if (target.Optimize
+        && TryCoalesced(function, target, preferLoopResidents: target.OptimizeSpeed, moveBudget, ref rounds) is { } coalesced) {
       reason = null;
-      return resident;
+      return coalesced;
     }
     return AllocatePlain(function, target, moveBudget, ref rounds, out reason);
   }
 
   /// <summary>
-  /// The <c>$OPTIMIZE SPEED</c> attempt: coalesce the out-of-SSA copies away, then allocate preferring
-  /// <c>SI</c>/<c>DI</c> for whatever is live all the way round a loop.
+  /// The optimized attempt: coalesce the out-of-SSA copies away, then allocate - under
+  /// <c>$OPTIMIZE SPEED</c> preferring <c>SI</c>/<c>DI</c> for whatever is live all the way round a loop.
   ///
   /// <para>
   /// It works on a COPY and commits only on success, which is the whole reason the two policies can be
@@ -142,9 +142,15 @@ public sealed partial class LinearScanAllocator {
   /// plain policy makes, and neither may - so the plain policy runs on the untouched function whenever
   /// this one does not answer, and the set of functions that route is exactly what it was.
   /// </para>
+  /// <para>
+  /// Coalescing used to be SPEED-only along with the preference, but the two answer different
+  /// questions. The preference picks WHICH register a loop value gets, a speed trade. Coalescing
+  /// deletes the copy a two-address machine puts in front of every ADD, which is smaller as well as
+  /// faster: without it <c>y% = x% + 1</c> was <c>MOV CX,AX / INC CX</c> under the default objective.
+  /// </para>
   /// </summary>
-  private static IReadOnlyDictionary<int, Reg>? TryResident(X86MachineFunction function, SelectionTarget target,
-      int? moveBudget, ref int rounds) {
+  private static IReadOnlyDictionary<int, Reg>? TryCoalesced(X86MachineFunction function, SelectionTarget target,
+      bool preferLoopResidents, int? moveBudget, ref int rounds) {
     var candidate = function.Clone();
     CopyCoalescer.Run(candidate);
     var progress = Spiller.Progress.Of(candidate);
@@ -154,7 +160,8 @@ public sealed partial class LinearScanAllocator {
       var asmHeld = AsmHeldByIndex(candidate, out var asmConflict);
       if (asmConflict is not null)
         return null;                             // the plain policy reports it; this one just stands aside
-      if (LivenessAnalysis.LoopCarried(candidate) is { Count: > 0 } carried
+      if (preferLoopResidents
+          && LivenessAnalysis.LoopCarried(candidate) is { Count: > 0 } carried
           && TryAllocate(candidate, asmHeld, target, carried) is { } assignment) {
         function.Adopt(candidate);
         return assignment;
