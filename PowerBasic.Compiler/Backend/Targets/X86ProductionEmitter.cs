@@ -26,38 +26,39 @@ public static class X86ProductionEmitter {
       throw new NotSupportedException($"x86 machine function '{function.Source.Name}' contains an unlowered opcode or operand: " +
         $"{function.HostedLoweringError ?? shape}");
     }
+    // DOS x86-16 production is emitted from the selected/allocated MFunction. This is the stable
+    // machine-IR emitter, not the retired syntax/body emitter: all source semantics have already
+    // crossed Bound AST -> HIR/SSA -> Low IR -> Machine IR before this point. It remains the canonical
+    // 16-bit emission stage because it owns the PowerBASIC stack ABI, frame layout, far/data operands,
+    // runtime symbol resolution and ISA-policy virtualization. The newer hosted byte encoder remains
+    // available for the other x86 modes until it reaches behavioral parity for 16-bit DOS.
+    if (function.Target.Name.Equals("x86-16", StringComparison.OrdinalIgnoreCase)) {
+      MachineEmitter.EmitFunction(
+        assembler,
+        function.Function,
+        function.Allocation,
+        parameterOffsets,
+        calleeCleanupBytes,
+        calleeLabel,
+        dataCellOf,
+        emitEpilogue,
+        alignLoops,
+        allowFrameElision,
+        registerSpills,
+        emitInlineAsm);
+      return;
+    }
+
     var mode = function.Target.Name.ToLowerInvariant() switch {
-      "x86-16" => X86Mode.Bit16,
       "x86-32" => X86Mode.Bit32,
       "x86-64" => X86Mode.Bit64,
       _ => throw new NotSupportedException($"target '{function.Target.Name}' is not an x86 hosted target")
     };
     var target = new X86TargetMachineEmitter(new X86InstructionEncoder(mode));
-    var hosted = function.HostedFunction;
-
-    // A DOS module body has no caller. Its IR terminators are still ordinary RETs because the
-    // target-neutral function model does not know that "main returns" means "terminate the process".
-    // Encoding those RETs literally makes execution pop an address from the PSP/user stack and wander
-    // into runtime/data bytes. Funnel every target RET to one local end label instead; the artifact
-    // policy hook emitted immediately after the machine body performs the actual DOS exit.
-    if (emitEpilogue is not null) {
-      const string exitLabel = "__pb_module_exit";
-      var instructions = hosted.Instructions
-        .Select(instruction => instruction.Opcode == X86TargetOpcode.Ret
-          ? new X86TargetInstruction(X86TargetOpcode.Jmp, [], Symbol: exitLabel)
-          : instruction)
-        .ToArray();
-      var labels = new Dictionary<string, int>(hosted.LabelInstructionIndices, StringComparer.Ordinal) {
-        [exitLabel] = instructions.Length,
-      };
-      hosted = new X86TargetMachineFunction(
-        hosted.Mode,
-        hosted.Abi,
-        instructions,
-        labels,
-        hosted.FrameSizeBytes,
-        hosted.ArgumentLocations);
-    }
+    var hosted = function.HostedFunction
+      ?? throw new BackendInvariantException(
+        "X86ProductionEmitter.EmitFunction",
+        function.HostedLoweringError ?? $"machine function '{function.Source.Name}' has no hosted x86 lowering");
 
     // The target-owned address lowering currently materializes frame slots relative to BP. Keep a
     // canonical frame until the target prologue itself owns frame-elision proofs; silently eliding it
@@ -66,8 +67,6 @@ public static class X86ProductionEmitter {
       emitReturn: emitEpilogue is null);
     assembler.AppendMachineCode(code, symbol =>
       calleeLabel?.Invoke(symbol) ?? dataCellOf?.Invoke(symbol)?.Label);
-    // The runtime exit sequence is artifact policy, not instruction selection. It is appended only
-    // after all machine returns have converged on the local end label above.
     emitEpilogue?.Invoke(assembler);
   }
 }

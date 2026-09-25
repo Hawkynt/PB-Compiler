@@ -1914,7 +1914,7 @@ public sealed partial class InstructionSelector {
     // SPEED's front-end identity folding is intentionally reproduced at the machine boundary for
     // routed IR.  Inline assembly is opaque to the ordinary value passes, but these forms are
     // architecturally no-ops and retaining them would regress the established size policy.
-    if (IsInlineAsmIdentity(asm.Text))
+    if (this._target is { Optimize: true, OptimizeSpeed: true } && IsInlineAsmIdentity(asm.Text))
       return true;
 
     var kinds = new AsmNameKinds(asm);
