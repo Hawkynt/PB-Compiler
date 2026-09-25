@@ -47,15 +47,18 @@ public static class StringEmptinessTest {
       foreach (var compare in function.AllInstructions.OfType<IrCmp>().ToList()) {
         if (compare.Parent is null || compare.Pred is not (IrCmpPred.Eq or IrCmpPred.Ne))
           continue;
-        if (AgainstZero(compare) is not IrCall answer)
+        if (AgainstZero(compare) is not { } zeroTested)
           continue;
-        if (EmptinessSubject(answer) is not { } subject)
+        var (value, widths) = ThroughWidthChanges(zeroTested);
+        if (value is not IrCall answer || EmptinessSubject(answer) is not { } subject)
           continue;
 
         var test = new IrCmp(compare.Pred, subject.Handle, new IrNullPtr());
         compare.Parent!.InsertBefore(test, compare);
         compare.ReplaceAllUsesWith(test);
         compare.EraseFromParent();
+        foreach (var width in widths)
+          width.EraseFromParent();                 // outermost first, each now unused
         answer.EraseFromParent();                  // its operands lose their user here...
         foreach (var consumed in subject.Consumed)
           consumed.EraseFromParent();              // ...which is what leaves these unused
@@ -70,6 +73,21 @@ public static class StringEmptinessTest {
     if (compare.Rhs is IrConstantInt { Value: 0 })
       return compare.Lhs;
     return compare.Lhs is IrConstantInt { Value: 0 } ? compare.Rhs : null;
+  }
+
+  /// <summary>
+  /// <paramref name="value"/> with single-use integer truncations and extensions peeled off, and the
+  /// peeled casts, outermost first. A length is at most 32767, so any width of it is zero exactly when
+  /// it is - and the 16-bit narrowing of a LONG compare leaves exactly such a cast between the two.
+  /// </summary>
+  private static (IrValue Value, List<IrCast> Widths) ThroughWidthChanges(IrValue value) {
+    var widths = new List<IrCast>();
+    while (value is IrCast { Op: IrCastOp.Trunc or IrCastOp.SExt or IrCastOp.ZExt, Type.IsInteger: true } cast
+           && cast.Users.Count == 1) {
+      widths.Add(cast);
+      value = cast.Value;
+    }
+    return (value, widths);
   }
 
   /// <summary>

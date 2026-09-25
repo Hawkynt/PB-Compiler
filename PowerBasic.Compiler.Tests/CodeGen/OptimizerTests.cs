@@ -224,6 +224,9 @@ public sealed class OptimizerTests {
     // elsewhere. A helper as small as a call is inlined by both, and then they are the same program. (S1
     // short-jump relaxation is no longer a SIZE lever - it runs on every optimized image, since
     // the short form is smaller AND the near form it replaces is an 80386 encoding.)
+    // The trip count reads a port and no argument has a narrow range: otherwise the default objective
+    // evaluates the loop at compile time, or specializes each inlined copy (a constant, or a product
+    // proven to fit a word), and the comparison measures folding instead of the growth of inlining.
     static byte[] Compile(string source) {
       var model = BindModel(source);
       var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
@@ -234,13 +237,13 @@ public sealed class OptimizerTests {
     const string body = """
       DECLARE FUNCTION Mix%(BYVAL a%, BYVAL b%)
       DIM i AS INTEGER, total AS LONG
-      FOR i = 1 TO 50
+      FOR i = 1 TO 50 + (INP(&H60) AND 1)
         IF i MOD 3 = 0 THEN
-          total = total + Mix%(i, 3)
+          total = total + Mix%(total AND &H7FFF, i + 3)
         ELSEIF i MOD 5 = 0 THEN
-          total = total - Mix%(i, 5)
+          total = total - Mix%(total AND &H7FFF, i - 5)
         ELSE
-          total = total + Mix%(i, 7)
+          total = total + Mix%(total AND &H7FFF, i XOR 7)
         END IF
       NEXT
       PRINT total
@@ -607,15 +610,17 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenLongDivideRangeKnown_WhenPb36_ThenNarrowedTo16BitIdiv() {
-    // a signed LONG \ by a small constant whose dividend the interval lattice proves
-    // fits int16 (a FOR counter 0..100) narrows to one 16-bit IDIV BX; an INPUT-sourced
-    // dividend (range unknown) stays on the LongDiv runtime call (no IDIV BX). No $CPU.
-    const string narrowed = "$OPTIMIZE SPEED\nFOR i& = 0 TO 100\nx& = i& \\ 3\nNEXT i&\nPRINT x&\nEND";
-    const string runtime = "$OPTIMIZE SPEED\nINPUT j&\nx& = j& \\ 3\nPRINT x&\nEND";
-    Assert.That(CountIdivBx(Compile(narrowed, Dialect.Pb36)),
-      Is.GreaterThan(CountIdivBx(Compile(runtime, Dialect.Pb36))),
-      "a range-known LONG divide should narrow to a 16-bit IDIV BX the runtime-call version lacks");
+    // a LONG \ whose operands the range analysis proves fit 16 bits (INP reads a byte; the divisor
+    // is at least 1) is one 16-bit IDIV; with ranges it cannot know it stays the rt_ldiv call
+    const string narrowed = "DECLARE SUB L()\nL\nL\nEND\nSUB L() NOINLINE\n  x& = INP(&H60)\n  y& = INP(&H61) + 1\n  PRINT x& \\ y&\nEND SUB";
+    const string wide = "DECLARE SUB L(BYVAL x&, BYVAL y&)\nL 7, 2\nL 9, 4\nEND\nSUB L(BYVAL x&, BYVAL y&) NOINLINE\n  PRINT x& \\ y&\nEND SUB";
+    Assert.Multiple(() => {
+      Assert.That(CountIdivAny(ProcedureBytes(narrowed, "L").ToArray()), Is.Positive, "the range-known LONG divide is one 16-bit IDIV");
+      Assert.That(RuntimeSurface(narrowed), Does.Not.Contain("rt_ldiv"), "...and needs no 32-bit divide routine");
+      Assert.That(RuntimeSurface(wide), Does.Contain("rt_ldiv"), "unknown ranges keep the 32-bit routine");
+    });
   }
+
 
   // 39 D8 = CMP AX, BX - the whole comparison once it has been narrowed to 16 bits
   private static int CountCmpAxBx(byte[] image) => CountPair(image, 0x39, 0xD8);
@@ -905,8 +910,9 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenLenEqualsZero_WhenPb36_ThenSameHandleTestAsEmptyCompare() {
-    // O0181: LEN(s$) = 0 is the emptiness handle test, identical to the s$ = "" spelling.
-    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL n%)\nS 1\nEND\nSUB S(BYVAL n%) NOINLINE\nDIM s$\ns$ = MID$(\"hi\", 1, n%)\n";
+    // O0181: LEN(s$) = 0 is the emptiness handle test, identical to the s$ = "" spelling. Two call
+    // sites keep n% unknown; with one, the string is a constant and both tests fold away.
+    const string head = "$OPTIMIZE SPEED\nDECLARE SUB S(BYVAL n%)\nS 0\nS 1\nEND\nSUB S(BYVAL n%) NOINLINE\nDIM s$\ns$ = MID$(\"hi\", 1, n%)\n";
     var lenForm = Compile(head + "IF LEN(s$) = 0 THEN PRINT \"a\" ELSE PRINT \"b\"\nEND SUB", Dialect.Pb36);
     var eqForm = Compile(head + "IF s$ = \"\" THEN PRINT \"a\" ELSE PRINT \"b\"\nEND SUB", Dialect.Pb36);
     Assert.That(lenForm, Is.EqualTo(eqForm), "LEN(s$) = 0 lowers to the same handle test as s$ = \"\"");
@@ -1223,35 +1229,55 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenLongCompareRangeKnown_WhenPb36_ThenNarrowedTo16BitCompare() {
-    // both operands of the LONG compare are range-known (a FOR counter 1..100 against a
-    // constant), so the nine-instruction 32-bit sequence collapses to one CMP AX, BX. The
-    // INPUT-sourced variant has the identical shape but an unknown range, so it keeps the
-    // wide compare (SBB DX, CX).
-    const string narrowed = "$OPTIMIZE SPEED\nDIM n AS LONG\nFOR i& = 1 TO 100\nIF i& < 50& THEN n = n + 1\nNEXT i&\nPRINT n\nEND";
-    const string wide = "$OPTIMIZE SPEED\nDIM n AS LONG\nINPUT k&\nFOR i& = 1 TO 100\nIF k& < 50& THEN n = n + 1\nNEXT i&\nPRINT n\nEND";
-    Assert.That(CountSbbDxCx(Compile(narrowed, Dialect.Pb36)), Is.Zero, "a range-known LONG compare should not emit the 32-bit sequence");
-    Assert.That(CountCmpAxBx(Compile(narrowed, Dialect.Pb36)), Is.GreaterThan(0), "it should compare in 16 bits instead");
-    Assert.That(CountSbbDxCx(Compile(wide, Dialect.Pb36)), Is.GreaterThan(0), "an unknown-range LONG compare must keep the 32-bit sequence");
+    // a LONG compare of two range-known values (INP reads a byte) is one 16-bit CMP; the same compare
+    // of values it cannot bound compares both halves
+    const string narrowed = "DECLARE SUB L()\nL\nL\nEND\nSUB L() NOINLINE\n  x& = INP(&H60)\n  y& = INP(&H61)\n  IF x& < y& THEN PRINT 1\nEND SUB";
+    const string wide = "DECLARE SUB L(BYVAL x&, BYVAL y&)\nL 7, 2\nL 9, 4\nEND\nSUB L(BYVAL x&, BYVAL y&) NOINLINE\n  IF x& < y& THEN PRINT 1\nEND SUB";
+    Assert.That(CountRegisterCompares(ProcedureBytes(narrowed, "L")), Is.LessThan(CountRegisterCompares(ProcedureBytes(wide, "L"))),
+      "the range-known LONG compare should be one word compare, the unknown one two");
   }
+
+  // CMP r/m16, r16 (39) or CMP r16, r/m16 (3B) with register or memory operands, or CMP r/m16, imm (83/81 /7)
+  private static int CountRegisterCompares(ReadOnlySpan<byte> code) {
+    var count = 0;
+    for (var i = 0; i + 1 < code.Length; ++i)
+      if (code[i] is 0x39 or 0x3B || (code[i] is 0x83 or 0x81 && ((code[i + 1] >> 3) & 7) == 7))
+        ++count;
+    return count;
+  }
+
 
   [Test]
   public void Emit_GivenLongCompareRangeKnown_WhenOptimizerOff_ThenWideCompareKept() {
-    // the narrowing is gated on Optimize, so the faithful build is untouched (golden gate)
-    const string source = "DIM n AS LONG\nFOR i& = 1 TO 100\nIF i& < 50& THEN n = n + 1\nNEXT i&\nPRINT n\nEND";
-    Assert.That(CountSbbDxCx(Compile(source, Dialect.Pb35)), Is.GreaterThan(0));
+    // the narrowing is the optimizer's: the faithful build compares both halves even when it could not
+    // have mattered
+    const string source = "DECLARE SUB L()\nL\nL\nEND\nSUB L()\n  x& = INP(&H60)\n  y& = INP(&H61)\n  IF x& < y& THEN PRINT 1\nEND SUB";
+    Assert.That(CountRegisterCompares(ProcedureBytes(source, "L", Dialect.Pb35)),
+      Is.GreaterThan(CountRegisterCompares(ProcedureBytes("$OPTIMIZE SPEED\n" + source.Replace("\nSUB L()\n", "\nSUB L() NOINLINE\n"), "L"))));
   }
+
 
   [Test]
   public void Emit_GivenDwordMultiplyRangeKnown_WhenPb36_ThenNarrowedTo16BitMul() {
-    // $ERROR NUMERIC ON keeps an unsigned multiply integral (no float promotion), so it
-    // reaches the 32-bit path; both operands are range-known, so it becomes one MUL BX
-    // instead of the three-MUL rt_lmul call. The INPUT-sourced variant keeps the call.
-    const string narrowed = "$ERROR NUMERIC ON\n$OPTIMIZE SPEED\nDIM c AS DWORD\nFOR i& = 1 TO 100\na??? = i&\nb??? = 3\nc = a??? * b???\nNEXT i&\nPRINT c\nEND";
-    const string wide = "$ERROR NUMERIC ON\n$OPTIMIZE SPEED\nDIM c AS DWORD\nINPUT k&\nFOR i& = 1 TO 100\na??? = k&\nb??? = 3\nc = a??? * b???\nNEXT i&\nPRINT c\nEND";
-    Assert.That(CountMulBx(Compile(narrowed, Dialect.Pb36)),
-      Is.GreaterThan(CountMulBx(Compile(wide, Dialect.Pb36))),
-      "a range-known DWORD multiply should add a 16-bit MUL BX the runtime-call version lacks");
+    // $ERROR NUMERIC ON keeps an unsigned multiply integral (no float promotion), so it reaches the
+    // 32-bit path; both factors are range-known (INP reads a byte), so it becomes one 16-bit MUL
+    // into DX:AX instead of the three-multiply rt_lmul call. Unknown factors keep the call.
+    const string narrowed = "$ERROR NUMERIC ON\nDECLARE SUB L()\nL\nL\nEND\nSUB L() NOINLINE\n  DIM c AS DWORD\n  a??? = INP(&H60)\n  b??? = INP(&H61)\n  c = a??? * b???\n  PRINT c\nEND SUB";
+    const string wide = "$ERROR NUMERIC ON\nDECLARE SUB L(BYVAL a???, BYVAL b???)\nL 7, 2\nL 9, 4\nEND\nSUB L(BYVAL a???, BYVAL b???) NOINLINE\n  DIM c AS DWORD\n  c = a??? * b???\n  PRINT c\nEND SUB";
+    // counted in the procedure: the 32-bit number printer links rt_lmul whichever way the product is made
+    Assert.That(CountWordMultiplies(ProcedureBytes(narrowed, "L")), Is.GreaterThan(CountWordMultiplies(ProcedureBytes(wide, "L"))),
+      "range-known factors multiply in one 16-bit instruction; unknown ones call rt_lmul");
   }
+
+  // MUL r/m16 or IMUL r/m16 (F7 /4, F7 /5)
+  private static int CountWordMultiplies(ReadOnlySpan<byte> code) {
+    var count = 0;
+    for (var i = 0; i + 1 < code.Length; ++i)
+      if (code[i] == 0xF7 && ((code[i + 1] >> 3) & 7) is 4 or 5)
+        ++count;
+    return count;
+  }
+
 
   [Test]
   public void Execute_GivenLongCompareRangeKnown_WhenPb36_ThenSameResultsAsWide() {
@@ -2417,9 +2443,9 @@ public sealed class OptimizerTests {
   /// failed exactly that way when local arrays began being zeroed on entry - the extra prologue in
   /// the array variant brought its whole-image count up to the other's without either INCR changing.
   /// </summary>
-  private static ReadOnlySpan<byte> ProcedureBytes(string source, string procedure) {
-    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
+  private static ReadOnlySpan<byte> ProcedureBytes(string source, string procedure, Dialect dialect = Dialect.Pb36) {
+    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
+    var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
@@ -2723,17 +2749,27 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenPowerOfTwoDivides_WhenPb36_ThenIdivDisappears() {
-    // The dividend is INPUT-sourced and the control is a NON-power-of-two divisor, not the same program
-    // under pb35. `a% = -29` is a value any constant folder proves, so all four quotients were answered
-    // at compile time and neither build contained a divide to count; and "pb35" is a proxy for
-    // "unoptimized" that only holds where the optimizations are gated on the dialect's flag. What the
-    // optimization claims is about the DIVISOR, and that is what this compares.
-    const string head = "INPUT a%\nPRINT a% \\ ";
-    var powerOfTwo = Compile(head + "8\nPRINT a% MOD 8\nPRINT a% \\ 2\nPRINT a% MOD 2\nEND", Dialect.Pb36);
-    var other = Compile(head + "3\nPRINT a% MOD 3\nPRINT a% \\ 5\nPRINT a% MOD 5\nEND", Dialect.Pb36);
-    Assert.That(CountIdivBx(powerOfTwo), Is.LessThan(CountIdivBx(other)),
-      "pb36 should shift/mask power-of-two \\ and MOD instead of IDIV BX; a divisor it cannot decompose keeps the divide");
+    // \ and MOD by a power of two are a sign-corrected shift and mask - no IDIV at all. Every other
+    // CONSTANT divisor is strength-reduced to a reciprocal multiply now as well, so the baseline that
+    // still needs the divide is a divisor known only at run time.
+    const string head = "INPUT a%\n";
+    var powerOfTwo = Compile(head + "PRINT a% \\ 8\nPRINT a% MOD 8\nPRINT a% \\ 2\nPRINT a% MOD 2\nEND", Dialect.Pb36);
+    var runtime = Compile(head + "INPUT b%\nPRINT a% \\ b%\nPRINT a% MOD b%\nEND", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(CountIdivAny(powerOfTwo), Is.Zero, "power-of-two \\ and MOD need no IDIV");
+      Assert.That(CountIdivAny(runtime), Is.Positive, "a runtime divisor does - otherwise the absence proves nothing");
+    });
   }
+
+  // F7 /7 with a register or memory operand: IDIV r/m16
+  private static int CountIdivAny(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i)
+      if (image[i] == 0xF7 && (image[i + 1] & 0x38) == 0x38)
+        ++count;
+    return count;
+  }
+
 
   [Test]
   public void Emit_GivenLongPowerOfTwoDivide_WhenPb36_ThenNoRuntimeDivCall() {

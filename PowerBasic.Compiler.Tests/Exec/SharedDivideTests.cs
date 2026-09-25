@@ -45,15 +45,18 @@ public sealed class SharedDivideTests {
     PRINT q%; r%
     """;
 
+  // The divisor is READ again between the two - the same number, but a value the optimizer cannot
+  // know is the same, so the remainder really has to be recomputed. (It was d% = d% + 0, which the
+  // pipeline folds away, making this the very program it is the baseline for.)
   private const string _twoDivides = """
-    DATA 5
+    DATA 5, 5
     n% = 47
     READ d%
     q% = n% \ d%
     FOR i% = 1 TO 3
       PRINT i%;
     NEXT i%
-    d% = d% + 0
+    READ d%
     r% = n% MOD d%
     PRINT q%; r%
     """;

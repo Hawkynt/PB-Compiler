@@ -343,6 +343,13 @@ public sealed class MachineEmitter {
         else
           asm.Imul(this.Reg(ops[0]));
         break;
+      // the unsigned twin: DX:AX = AX * r/m16
+      case MOpcode.Mul when ops.Count == 1:
+        if (this.ToSource(ops[0]) is Mem multiplier)
+          asm.Mul(multiplier);
+        else
+          asm.Mul(this.Reg(ops[0]));
+        break;
       // TEST is CMP's bitwise twin - it sets the flags from an AND and keeps neither result, which is
       // how a membership mask's bit 0 is asked about without destroying the mask
       case MOpcode.Test: this.Emit2(ops[0], ops[1], asm.Test, asm.Test, asm.Test, asm.Test, asm.Test); break;

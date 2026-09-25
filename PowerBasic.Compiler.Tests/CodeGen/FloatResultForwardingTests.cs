@@ -48,23 +48,23 @@ public sealed class FloatResultForwardingTests {
     return false;
   }
 
-  private const string SinglePrologue = "$OPTIMIZE SPEED\nDECLARE FUNCTION f!(x!)\nPRINT f!(2.5)\nEND\n";
-  private const string DoublePrologue = "$OPTIMIZE SPEED\nDECLARE FUNCTION g#(x#)\nPRINT g#(2.5)\nEND\n";
+  private const string SinglePrologue = "$OPTIMIZE SPEED\nDECLARE FUNCTION f!(x!)\nPRINT f!(2.5); f!(INP(&H60))\nEND\n";
+  private const string DoublePrologue = "$OPTIMIZE SPEED\nDECLARE FUNCTION g#(x#)\nPRINT g#(2.5); g#(INP(&H60))\nEND\n";
 
-  private const string SingleForwarded = SinglePrologue + "FUNCTION f!(x!)\n f! = x! + 1.5\nEND FUNCTION";
+  private const string SingleForwarded = SinglePrologue + "FUNCTION f!(x!) NOINLINE\n f! = x! + 1.5\nEND FUNCTION";
   private const string SingleMultiExit = SinglePrologue
-    + "FUNCTION f!(x!)\n IF x! > 99.0 THEN f! = 0.0 : EXIT FUNCTION\n f! = x! + 1.5\nEND FUNCTION";
-  private const string DoubleForwarded = DoublePrologue + "FUNCTION g#(x#)\n g# = x# + 1.5\nEND FUNCTION";
+    + "FUNCTION f!(x!) NOINLINE\n IF x! > 99.0 THEN f! = 0.0 : EXIT FUNCTION\n f! = x! + 1.5\nEND FUNCTION";
+  private const string DoubleForwarded = DoublePrologue + "FUNCTION g#(x#) NOINLINE\n g# = x# + 1.5\nEND FUNCTION";
   private const string DoubleMultiExit = DoublePrologue
-    + "FUNCTION g#(x#)\n IF x# > 99.0 THEN g# = 0.0 : EXIT FUNCTION\n g# = x# + 1.5\nEND FUNCTION";
+    + "FUNCTION g#(x#) NOINLINE\n IF x# > 99.0 THEN g# = 0.0 : EXIT FUNCTION\n g# = x# + 1.5\nEND FUNCTION";
 
   [Test]
   public void Emit_GivenSingleExitSingleFunction_ThenTheEpilogueFldIsElided() {
     Assert.Multiple(() => {
       Assert.That(HasFloatResultReload(Compile(SingleForwarded), 0xD9), Is.False,
         "a single-exit SINGLE function leaves its result in ST(0)");
-      Assert.That(HasFloatResultReload(Compile(SingleMultiExit), 0xD9), Is.True,
-        "a multi-exit function can reach the epilogue with nothing on the stack, so it must reload");
+      Assert.That(HasFloatResultReload(Compile(SingleMultiExit), 0xD9), Is.False,
+        "in SSA a multi-exit function's result is a value on every path - no slot to reload either");
     });
   }
 
@@ -73,18 +73,21 @@ public sealed class FloatResultForwardingTests {
     Assert.Multiple(() => {
       Assert.That(HasFloatResultReload(Compile(DoubleForwarded), 0xDD), Is.False,
         "a single-exit DOUBLE function leaves its result in ST(0)");
-      Assert.That(HasFloatResultReload(Compile(DoubleMultiExit), 0xDD), Is.True,
-        "a multi-exit function must reload");
+      Assert.That(HasFloatResultReload(Compile(DoubleMultiExit), 0xDD), Is.False,
+        "in SSA a multi-exit function's result is a value on every path - no slot to reload either");
     });
   }
 
-  /// <summary>Forwarding must not change the answer, and 2.5 + 1.5 is exact in both widths.</summary>
+  /// <summary>
+  /// Forwarding must not change the answer, and 2.5 + 1.5 is exact in both widths. The interpreter's
+  /// ports read 0, so the second, opaque call answers 1.5.
+  /// </summary>
   [TestCase(SingleForwarded)]
   [TestCase(SingleMultiExit)]
   [TestCase(DoubleForwarded)]
   [TestCase(DoubleMultiExit)]
   public void Run_GivenAForwardedFloatResult_ThenTheValueIsRight(string source) =>
-    Assert.That(Cpu8086.Run(Compile(source)).Output.Trim(), Is.EqualTo("4"));
+    Assert.That(Cpu8086.Run(Compile(source)).Output.Trim(), Is.EqualTo("4  1.5"));
 
   /// <summary>
   /// And the optimizer changes nothing observable - the assertion the whole battery rests on, made

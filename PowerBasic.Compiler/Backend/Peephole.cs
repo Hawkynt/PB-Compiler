@@ -180,7 +180,7 @@ public static class Peephole {
         continue;                                // see the addressing rule in the type remarks
       var user = block.Instructions[consumer];
       // the one-operand multiply and divide read their operand from anywhere: DX:AX = AX * [n]
-      if (user.Opcode is MOpcode.Imul or MOpcode.Idiv && user.Operands is [MOperand.Register { Reg: var factor }]
+      if (user.Opcode is MOpcode.Imul or MOpcode.Mul or MOpcode.Idiv && user.Operands is [MOperand.Register { Reg: var factor }]
           && factor.Equals(value)) {
         block.Instructions[consumer] = new MInstr(user.Opcode, [cell],
           new MInstrEffect(WrittenRegs: [], ReadRegs: [],

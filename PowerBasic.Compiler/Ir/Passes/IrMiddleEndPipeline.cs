@@ -24,7 +24,8 @@ public static class IrMiddleEndPipeline {
       IIrArithmeticCostModel? arithmeticCostModel = null,
       int minimumIntegerStorageBits = 16,
       bool recoverIntegerArithmetic = false,
-      IIrCallCostModel? callCostModel = null)
+      IIrCallCostModel? callCostModel = null,
+      bool narrowProvenWords = false)
     => new IrPassManager { OptimizeForSpeed = optimizeForSpeed }
     .InEarlyModulePhase(IrMiddleEndPhase.Canonicalization)
     .AddEarlyModuleConservativeWhen(includeModulePasses, "array-zero-fill", ArrayZeroFillElision.Run)
@@ -64,6 +65,8 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("bbversion", BasicBlockVersioning.Run)
     .AddAnalyzed("ptrcheck", PointerCheckElim.Run)
     .AddAnalyzed("rangefold", RangeCheckElim.Run)
+    .AddAnalyzedWhen(narrowProvenWords, "narrow-proven",
+      (fn, analyses) => Conservative(() => ProvenIntegerNarrowing.Run(fn, analyses.Get(Analysis.IrAnalyses.Ranges))))
     .AddAnalyzedWhen(optimizeForSpeed, "specnarrow", (fn, _) => Conservative(() => SpeculativeIntegerNarrowing.Run(fn)))
     .AddAnalyzed("conversion-rangefold", ConversionRangeCheckElim.Run)
     .AddAnalyzed("overflow-coalesce", (fn, _) => Conservative(() => OverflowCheckCoalescing.Run(fn)))
@@ -165,7 +168,8 @@ public static class IrMiddleEndPipeline {
           arithmeticCostModel: arithmeticCostModel,
           callCostModel: callCostModel ?? targetCost,
           minimumIntegerStorageBits: minimumIntegerStorageBits,
-          recoverIntegerArithmetic: recoverIntegerArithmetic)
+          recoverIntegerArithmetic: recoverIntegerArithmetic,
+          narrowProvenWords: minimumIntegerStorageBits <= 16)
       : () => Legalize(recoverIntegerArithmetic);
 
     pipeline().RunOnModule(module);

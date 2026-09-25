@@ -13,8 +13,10 @@ public sealed partial class InstructionSelector {
   /// intended to accelerate.
   /// </summary>
   private bool TrySelectSignedMulHigh(IrBinary multiply) {
-    if (this._target is not { Optimize: true, OptimizeSpeed: true }
-        || SignedMulHighShape(multiply) is not { } shape)
+    // Under any optimizing objective, not only SPEED: the middle end forms this shape whenever it
+    // expands a 16-bit division by a constant, and declining it leaves an i32 AShr 16 the selector has
+    // no encoding for - a failed compile, not a slower one.
+    if (!this._target.Optimize || SignedMulHighShape(multiply) is not { } shape)
       return false;
     if (!this.TryOperand(shape.Source, out var source))
       return false;
@@ -47,7 +49,9 @@ public sealed partial class InstructionSelector {
   }
 
   private static (IrValue Source, short Magic, IrBinary HighShift, IrCast Truncate)? SignedMulHighShape(IrBinary multiply) {
-    if (multiply.Op != IrBinaryOp.Mul || multiply.Type is not { IsInteger: true, Signed: true, Bits: 32 }
+    // Signedness of the TYPES is not asked: the SExt carries the semantics, and IR type identity
+    // ignores signedness everywhere else. A narrowed WORD reaches here as a sign-extended u16.
+    if (multiply.Op != IrBinaryOp.Mul || multiply.Type is not { IsInteger: true, Bits: 32 }
         || multiply.Users.Count != 1)
       return null;
 
@@ -71,8 +75,8 @@ public sealed partial class InstructionSelector {
     // occurrence: the whole function then fell back to the direct emitter over an i32 AShr 16 the
     // selector has no encoding for, and nothing but the routing census noticed.
     if (extend.Op != IrCastOp.SExt || extend.Type.Bits != 32
-        || extend.Value.Type is not { IsInteger: true, Signed: true, Bits: 16 }
-        || constant.Type is not { IsInteger: true, Signed: true, Bits: 32 }
+        || extend.Value.Type is not { IsInteger: true, Bits: 16 }
+        || constant.Type is not { IsInteger: true, Bits: 32 }
         || constant.Value is < short.MinValue or > short.MaxValue)
       return null;
 
@@ -84,13 +88,14 @@ public sealed partial class InstructionSelector {
         || !ReferenceEquals(highShift.Lhs, multiply)
         || highShift.Users.Single() is not IrCast {
           Op: IrCastOp.Trunc,
-          Type: { IsInteger: true, Signed: true, Bits: 16 }
+          Type: { IsInteger: true, Bits: 16 }
         } truncate
         || !ReferenceEquals(truncate.Value, highShift))
       return null;
 
-    if (!ReferenceEquals(extend.Parent, multiply.Parent)
-        || !ReferenceEquals(highShift.Parent, multiply.Parent)
+    // The extension itself may live in any dominating block - a loop's widened counter is hoisted to
+    // the loop head - because the IMUL reads its 16-bit source, which is live wherever the sext is.
+    if (!ReferenceEquals(highShift.Parent, multiply.Parent)
         || !ReferenceEquals(truncate.Parent, multiply.Parent))
       return null;
 

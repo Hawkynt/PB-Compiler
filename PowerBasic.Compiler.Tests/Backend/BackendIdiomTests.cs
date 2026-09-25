@@ -60,8 +60,10 @@ public sealed class BackendIdiomTests {
     var abs = entry.Append(new IrBinary(IrBinaryOp.Sub, flipped, mask));
     entry.Append(new IrRet(entry.Append(new IrBinary(IrBinaryOp.Or, abs, mask))));
 
+    // the mask is computed on its own - SAR r,15 or, optimized, its four-byte ADD r,r / SBB r,r form
     var opcodes = Opcodes(Select(fn));
-    Assert.That(opcodes, Does.Contain(MOpcode.Sar), "the shift stays because the mask has a reader of its own");
+    Assert.That(opcodes.Contains(MOpcode.Sar) || (opcodes.Contains(MOpcode.Add) && opcodes.Contains(MOpcode.Sbb)), Is.True,
+      "the sign mask stays because it has a reader of its own");
     Assert.That(opcodes, Does.Not.Contain(MOpcode.Cwd));
   }
 

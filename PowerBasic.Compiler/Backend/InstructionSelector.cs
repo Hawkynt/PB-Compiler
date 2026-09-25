@@ -994,6 +994,13 @@ public sealed partial class InstructionSelector {
   }
 
   private bool SelectConstantShift(MOpcode opcode, MOperand.Register destination, int count, IrType type) {
+    // an arithmetic shift by all but the sign bit IS the sign smear - four bytes, no CL, any CPU -
+    // and it is exactly what division by a power of two computes first
+    if (this._target.Optimize && opcode == MOpcode.Sar && type.Bits == 16 && count == 15
+        && destination.Reg.Size == MRegSize.Word) {
+      this.EmitSignSmear(destination);
+      return true;
+    }
     if (count == 1 || this._target.Cpu186OrLater) {
       this.Add(opcode, destination, new MOperand.Immediate(count));
       return true;
@@ -1707,7 +1714,49 @@ public sealed partial class InstructionSelector {
   }
 
   /// <summary>A 32-bit multiply through the runtime's <c>DX:AX, CX:BX -&gt; DX:AX</c> ABI.</summary>
-  private bool SelectWideMultiply(IrBinary bin) => this.SelectWideRuntimeBinary(bin, "rt_lmul");
+  private bool SelectWideMultiply(IrBinary bin)
+    => this._target.Optimize && WordProductOperands(bin) is var (left, right, signed)
+      ? this.SelectWordProduct(bin, left, right, signed)
+      : this.SelectWideRuntimeBinary(bin, "rt_lmul");
+
+  /// <summary>
+  /// The 16-bit operands of a 32-bit multiply whose factors are both words widened the same way - a
+  /// sign extension each, or a zero extension each, or a constant that is the same number either way.
+  /// Such a product is EXACT in one 16-bit IMUL or MUL, which leaves all 32 bits in DX:AX: the three
+  /// multiplies of rt_lmul compute nothing more.
+  /// </summary>
+  private static (IrValue Left, IrValue Right, bool Signed)? WordProductOperands(IrBinary bin) {
+    static (IrValue Word, bool? Signed)? Widened(IrValue value) => value switch {
+      IrCast { Op: IrCastOp.SExt, Value.Type: { IsInteger: true, Bits: 16 } } cast => (cast.Value, true),
+      IrCast { Op: IrCastOp.ZExt, Value.Type: { IsInteger: true, Bits: 16 } } cast => (cast.Value, false),
+      IrConstantInt { Value: >= 0 and <= short.MaxValue } constant => (new IrConstantInt(IrType.I16, constant.Value), null),
+      _ => null,
+    };
+    if (Widened(bin.Lhs) is not var (left, leftSigned) || Widened(bin.Rhs) is not var (right, rightSigned)
+        || (leftSigned is { } l && rightSigned is { } r && l != r) || (leftSigned is null && rightSigned is null))
+      return null;
+    return (left, right, leftSigned ?? rightSigned!.Value);
+  }
+
+  /// <summary>DX:AX = the exact product of two words, by the one-operand IMUL or MUL.</summary>
+  private bool SelectWordProduct(IrBinary bin, IrValue left, IrValue right, bool signed) {
+    if (!this.TryOperand(left, out var lhs) || !this.TryOperand(right, out var rhsSource))
+      return false;
+    var factor = new MOperand.Register(this.FreshVreg(IrType.I16));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [factor, rhsSource], MovEffect(factor, rhsSource)));
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
+    var dx = new MOperand.Register(MReg.Physical_(Reg.DX, MRegSize.Word));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [ax, lhs], MovEffect(ax, lhs),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+    this._current.Instructions.Add(new MInstr(signed ? MOpcode.Imul : MOpcode.Mul, [factor],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+        ReadsMemory: false, WritesMemory: false),
+      condition: null, clobbers: [Reg.AX, Reg.DX]));
+    var (lo, hi) = this.FreshPair(bin);
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [lo, ax], MovEffect(lo, ax)));
+    this._current.Instructions.Add(new MInstr(MOpcode.Mov, [hi, dx], MovEffect(hi, dx)));
+    return true;
+  }
 
   /// <summary>A signed 32-bit divide/remainder through the same pair-register ABI as the direct emitter.</summary>
   private bool SelectWideDivide(IrBinary bin) => this.SelectWideRuntimeBinary(bin,

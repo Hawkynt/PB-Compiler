@@ -733,6 +733,7 @@ public sealed class BackendCoverageTests {
     "DIFF99.BAS",
     "INCRLV.BAS",   // INCR / DECR of an array element, a record field and a float
     "INSTRC.BAS",   // INSTR of compile-time needles, short and Horspool
+    "NARROW.BAS",   // LONG divide / MOD / compare over values proven to fit sixteen bits
     "ZEROLOC.BAS",  // a local read before it is written still starts at zero
     "DIFF01.BAS",
     "DIFF01.BAS",
@@ -920,6 +921,7 @@ public sealed class BackendCoverageTests {
     "DIFF99.BAS",
     "INCRLV.BAS",
     "INSTRC.BAS",
+    "NARROW.BAS",
     "ZEROLOC.BAS",
     "DIFF01.BAS",
     "DIFF01.BAS",

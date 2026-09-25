@@ -249,8 +249,24 @@ public sealed class IrRangeAnalysis {
     IrCmp => new ValueRange(0, 1),
     IrCast cast => this.EvaluateCast(cast),
     IrBinary bin => this.EvaluateBinary(bin, this.Global(bin.Lhs), this.Global(bin.Rhs)),
+    IrCall { Callee: IrFunction { IsDeclaration: true, Name: var name } } when RuntimeResult(name) is { } bounded
+      => bounded.Meet(ValueRange.OfType(instruction.Type)),
     // a load, a call, a select over unknowns: nothing beyond the type
     _ => ValueRange.OfType(instruction.Type),
+  };
+
+  /// <summary>
+  /// What a runtime routine can answer, where the language bounds it more tightly than its return
+  /// type: INP reads one byte, ASC is a byte code (or -1), LEN never exceeds the longest string, EOF is
+  /// a truth value. Each bound is a fact about PowerBASIC's definition of the routine, so it holds for
+  /// every runtime that implements it.
+  /// </summary>
+  private static ValueRange? RuntimeResult(string name) => name switch {
+    "rt_inp" or "rt_freefile" or "rt_csrlin" => new ValueRange(0, byte.MaxValue),
+    "rt_str_asc" => new ValueRange(-1, byte.MaxValue),
+    "rt_str_len" => new ValueRange(0, short.MaxValue),
+    "rt_eof" => new ValueRange(-1, 0),
+    _ => null,
   };
 
   /// <summary>
