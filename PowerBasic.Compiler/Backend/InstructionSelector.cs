@@ -2427,10 +2427,34 @@ public sealed partial class InstructionSelector {
       }
     }
 
+    if (this._target.Optimize && AsCarryQuestion(cc, rhs, cmp.Lhs.Type) is { } carry)
+      (rhs, cc) = carry;
     this._current.Instructions.Add(new MInstr(MOpcode.Cmp, [lhs, rhs],
       new MInstrEffect(WrittenRegs: [], ReadRegs: RegReadIndices(lhs, rhs), ReadsFlags: false, WritesFlags: true,
         ReadsMemory: lhs.IsMemoryAccess() || rhs.IsMemoryAccess(), WritesMemory: false)));
     return this.MaterializeCondition(cmp, cc);
+  }
+
+  /// <summary>
+  /// The same comparison against an immediate, restated so that the CARRY answers it - the form
+  /// <see cref="MaterializeCondition"/> turns into <c>SBB r,r</c> without a branch. <c>x = 0</c> is
+  /// <c>x &lt; 1</c> unsigned; <c>x &gt; k</c> unsigned is <c>x &gt;= k+1</c>; and the complements follow.
+  /// Null when there is no such restatement: a non-immediate right side, a signed order (which the
+  /// carry does not describe), or <c>k+1</c> that no longer fits the operand.
+  /// </summary>
+  private static (MOperand Rhs, Condition Condition)? AsCarryQuestion(Condition condition, MOperand rhs, IrType type) {
+    if (rhs is not MOperand.Immediate { Value: var k })
+      return null;
+    var max = type.Bits switch { 8 => byte.MaxValue, 16 => ushort.MaxValue, _ => -1L };
+    var mask = max;
+    var unsignedK = k & mask;
+    return condition switch {
+      Condition.Equal when unsignedK == 0 => (new MOperand.Immediate(1), Condition.Below),
+      Condition.NotEqual when unsignedK == 0 => (new MOperand.Immediate(1), Condition.AboveOrEqual),
+      Condition.Above when max > 0 && unsignedK < max => (new MOperand.Immediate(unsignedK + 1), Condition.AboveOrEqual),
+      Condition.BelowOrEqual when max > 0 && unsignedK < max => (new MOperand.Immediate(unsignedK + 1), Condition.Below),
+      _ => null,
+    };
   }
 
   /// <summary>
@@ -2519,6 +2543,20 @@ public sealed partial class InstructionSelector {
     var dest = MReg.Virtual(this._nextVreg++, MRegSize.Word);
     this._vregs[cmp] = dest;
     var destOp = new MOperand.Register(dest);
+
+    // A predicate the carry answers needs no branch: SBB r,r is -CF, the truth value itself, and NOT
+    // (which leaves the flags alone) turns it into the complement. Two or four bytes where the
+    // diamond below costs eight, and nothing for the prefetch queue to throw away.
+    if (this._target.Optimize && cc is Condition.Below or Condition.AboveOrEqual) {
+      this._current.Instructions.Add(new MInstr(MOpcode.Sbb, [destOp, destOp],
+        new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: true, WritesFlags: true,
+          ReadsMemory: false, WritesMemory: false)));
+      if (cc == Condition.AboveOrEqual)
+        this._current.Instructions.Add(new MInstr(MOpcode.Not, [destOp],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: false,
+            ReadsMemory: false, WritesMemory: false)));
+      return true;
+    }
 
     var falseBlock = new MBlock($"{this._current.Label}.cmpfalse{this._splitCount}");
     var doneBlock = new MBlock($"{this._current.Label}.cmpdone{this._splitCount}");
