@@ -85,6 +85,18 @@ public sealed class BackendInlineAsmTests {
     });
   }
 
+  /// <summary>
+  /// An instruction the back end cannot produce must fail the compilation, never become a silent no-op.
+  ///
+  /// <para>
+  /// <c>DAA</c> is a real 8086 instruction that this assembler has register metadata for but no
+  /// encoding, so there is nothing that could emit it. What is pinned is the REFUSAL, not the stage
+  /// that refuses: this used to require the hosted machine builder's "has no semantic lowering"
+  /// message, but the text is rejected at selection first, so that message was never produced and the
+  /// test never passed. The hosted builder is also no longer a gate for x86-16, which is emitted from
+  /// the allocated MFunction rather than from the hosted function.
+  /// </para>
+  /// </summary>
   [Test]
   public void InlineAsm_GivenAnUnloweredMnemonic_ThenMandatoryRoutingReportsTheMissingSemantics() {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("! DAA\nEND\n", "T.BAS", Dialect.Pb36),
@@ -94,11 +106,16 @@ public sealed class BackendInlineAsmTests {
     var generator = new CodeGenerator(model) { Optimize = false };
     _ = generator.EmitExecutable();
 
-    Assert.That(generator.Errors.Any(error => error.Message.Contains(
-      "inline assembly mnemonic 'DAA' has no semantic lowering", StringComparison.OrdinalIgnoreCase)), Is.True,
+    Assert.That(generator.Errors.Any(error => error.Message.Contains("routing is mandatory", StringComparison.Ordinal)
+        && error.Message.Contains("inline asm", StringComparison.OrdinalIgnoreCase)), Is.True,
       "an unsupported instruction must fail routing instead of becoming a no-op runtime call");
   }
 
+  /// <summary>
+  /// A known mnemonic with an operand it does not take is malformed and must be refused, not assembled
+  /// as though the operand were absent. Pinned as a refusal for the reason given on the test above: the
+  /// message it used to require belongs to a stage this program never reaches.
+  /// </summary>
   [Test]
   public void InlineAsm_GivenAnUnmodeledOperandOnAMappedMnemonic_ThenMandatoryRoutingReportsIt() {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("! NOP AX\nEND\n", "T.BAS", Dialect.Pb36),
@@ -108,8 +125,9 @@ public sealed class BackendInlineAsmTests {
     var generator = new CodeGenerator(model) { Optimize = false };
     _ = generator.EmitExecutable();
 
-    Assert.That(generator.Errors.Any(error => error.Message.Contains(
-      "has operands that this lowering does not model", StringComparison.OrdinalIgnoreCase)), Is.True);
+    Assert.That(generator.Errors.Any(error => error.Message.Contains("routing is mandatory", StringComparison.Ordinal)
+        && error.Message.Contains("inline asm", StringComparison.OrdinalIgnoreCase)), Is.True,
+      "a malformed operand must fail routing instead of being assembled as if it were absent");
   }
 
   /// <summary>The asm writes a BASIC local, and BASIC reads what it wrote - through the routed path.</summary>

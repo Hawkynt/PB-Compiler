@@ -18,14 +18,6 @@ public static class X86ProductionEmitter {
       Func<string, IAsmSymbolResolver, bool>? emitInlineAsm = null) {
     ArgumentNullException.ThrowIfNull(assembler);
     ArgumentNullException.ThrowIfNull(function);
-    if (function.HostedFunction is null) {
-      var shape = string.Join(", ", function.Function.AllInstructions
-        .Select((instruction, index) => $"#{index}:{instruction.Opcode}({string.Join("|", instruction.Operands.Select(operand => operand.GetType().Name))})")
-        .Distinct()
-        .Take(64));
-      throw new NotSupportedException($"x86 machine function '{function.Source.Name}' contains an unlowered opcode or operand: " +
-        $"{function.HostedLoweringError ?? shape}");
-    }
     // DOS x86-16 production is emitted from the selected/allocated MFunction. This is the stable
     // machine-IR emitter, not the retired syntax/body emitter: all source semantics have already
     // crossed Bound AST -> HIR/SSA -> Low IR -> Machine IR before this point. It remains the canonical
@@ -47,6 +39,16 @@ public static class X86ProductionEmitter {
         registerSpills,
         emitInlineAsm);
       return;
+    }
+
+    // ...and only the hosted modes need the hosted function, since it is what they emit from
+    if (function.HostedFunction is null) {
+      var shape = string.Join(", ", function.Function.AllInstructions
+        .Select((instruction, index) => $"#{index}:{instruction.Opcode}({string.Join("|", instruction.Operands.Select(operand => operand.GetType().Name))})")
+        .Distinct()
+        .Take(64));
+      throw new NotSupportedException($"x86 machine function '{function.Source.Name}' contains an unlowered opcode or operand: " +
+        $"{function.HostedLoweringError ?? shape}");
     }
 
     var mode = function.Target.Name.ToLowerInvariant() switch {

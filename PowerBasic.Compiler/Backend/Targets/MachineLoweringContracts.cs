@@ -157,21 +157,37 @@ public sealed class X86MachineLowering : IMachineFunctionLowerer {
       return false;
     }
     var provisional = new IrMachineFunction(source, selected, allocation, this.Target);
-    if (!X86HostedMachineBuilder.TryBuild(provisional, out var hosted, out var hostedError)) {
-      error = "hosted machine lowering: " + (hostedError ?? "unsupported target instruction");
+    var hostedFailure = TryBuildHosted(provisional, out var hosted);
+    // The hosted function is how x86-32 and x86-64 are EMITTED, so there it is the product and a
+    // failure to build or encode it is a failure to compile. x86-16 is not emitted from it:
+    // X86ProductionEmitter sends DOS through MachineEmitter on the allocated MFunction, which owns
+    // the stack ABI, far operands, verbatim inline assembly and 386 operand-size prefixes. Making the
+    // hosted build a GATE for x86-16 therefore refused programs the emitter that actually produces
+    // their bytes handles - every `! DEC` without a semantic model, every $CPU 80386 function using
+    // EAX in real mode - and what was lost was routing, not correctness. On x86-16 the hosted build
+    // is best-effort: its reason is kept for TryEmitHostedX86, which already reports a missing one.
+    if (hostedFailure is not null && !IsDosTarget(this.Target.Name)) {
+      error = hostedFailure;
       return false;
     }
-    if (hosted is null) {
-      error = "hosted machine lowering: succeeded without producing a target function";
-      return false;
-    }
-    if (!TryValidateEncoding(hosted, this.Target.Name, out var encodingError)) {
-      error = "x86 encoding: " + encodingError;
-      return false;
-    }
-    machine = new IrMachineFunction(source, selected, allocation, this.Target, hosted, hostedError);
+    machine = new IrMachineFunction(source, selected, allocation, this.Target,
+      hostedFailure is null ? hosted : null, hostedFailure);
     error = null;
     return true;
+  }
+
+  private static bool IsDosTarget(string targetName)
+    => targetName.Equals("x86-16", StringComparison.OrdinalIgnoreCase);
+
+  /// <summary>Builds and encode-checks the hosted function, answering why not, or null on success.</summary>
+  private static string? TryBuildHosted(IrMachineFunction provisional, out X86TargetMachineFunction? hosted) {
+    if (!X86HostedMachineBuilder.TryBuild(provisional, out hosted, out var hostedError))
+      return "hosted machine lowering: " + (hostedError ?? "unsupported target instruction");
+    if (hosted is null)
+      return "hosted machine lowering: succeeded without producing a target function";
+    if (!TryValidateEncoding(hosted, provisional.Target.Name, out var encodingError))
+      return "x86 encoding: " + encodingError;
+    return null;
   }
 
   private static bool TryValidateEncoding(X86TargetMachineFunction function, string targetName, out string? error) {
