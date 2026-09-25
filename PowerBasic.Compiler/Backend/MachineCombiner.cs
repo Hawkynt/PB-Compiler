@@ -180,7 +180,7 @@ public static class MachineCombiner {
           || arithmetic.Opcode is not (MOpcode.Add or MOpcode.Sub)
           || arithmetic.Condition is not null || arithmetic.Clobbers.Count != 0
           || arithmetic.Operands is not [MOperand.Register { Reg: var written }, MOperand.Immediate displacement]
-          || !written.Equals(destination) || !FlagsDeadAfter(block, i + 1)
+          || !written.Equals(destination) || !MachineFlags.DeadAfter(block, i + 1)
           || !CanAddress(source, addressValues))
         continue;
 
@@ -258,16 +258,4 @@ public static class MachineCombiner {
     => instruction.Opcode is MOpcode.Add or MOpcode.Adc or MOpcode.Sub or MOpcode.Sbb or MOpcode.Cmp
       or MOpcode.Neg or MOpcode.Inc or MOpcode.Dec or MOpcode.Sahf;
 
-  private static bool FlagsDeadAfter(MBlock block, int index) {
-    for (var i = index + 1; i < block.Instructions.Count; ++i) {
-      var effect = block.Instructions[i].Effect;
-      if (effect.ReadsFlags)
-        return false;
-      if (effect.WritesFlags)
-        return true;
-    }
-    // A successor may consume the flags. The machine IR has no flag liveness across blocks, so the
-    // same conservative rule as Peephole applies: falling out of the block proves nothing.
-    return false;
-  }
 }

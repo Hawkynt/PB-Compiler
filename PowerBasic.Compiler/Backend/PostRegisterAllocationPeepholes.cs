@@ -100,7 +100,7 @@ public static class PostRegisterAllocationPeepholes {
         || add.Opcode != MOpcode.Add
         || add.Operands is not [MOperand.Register { Reg: var written }, MOperand.Register { Reg: var baseSource }]
         || !written.Equals(destination) || baseSource.Size != MRegSize.Dword
-        || !FlagsDeadAfter(block, index + 2))
+        || !MachineFlags.DeadAfter(block, index + 2))
       return false;
 
     var destinationPhysical = Resolve(destination, allocation);
@@ -130,7 +130,7 @@ public static class PostRegisterAllocationPeepholes {
         || arithmetic.Opcode is not (MOpcode.Add or MOpcode.Sub)
         || arithmetic.Operands.Count != 2
         || arithmetic.Operands[0] is not MOperand.Register { Reg: var written }
-        || !written.Equals(destination) || !FlagsDeadAfter(block, index + 1))
+        || !written.Equals(destination) || !MachineFlags.DeadAfter(block, index + 1))
       return false;
 
     if (Resolve(destination, allocation)?.IsDword() != true || Resolve(source, allocation)?.IsDword() != true)
@@ -178,18 +178,6 @@ public static class PostRegisterAllocationPeepholes {
 
   private static bool Plain(MInstr instruction)
     => instruction.Condition is null && instruction.Clobbers.Count == 0;
-
-  private static bool FlagsDeadAfter(MBlock block, int index) {
-    for (var i = index + 1; i < block.Instructions.Count; ++i) {
-      var effect = block.Instructions[i].Effect;
-      if (effect.ReadsFlags)
-        return false;
-      if (effect.WritesFlags)
-        return true;
-    }
-    // Flags may flow into a successor block, and machine IR has no cross-block flag liveness fact.
-    return false;
-  }
 
   private static bool TryPair(MInstr first, MInstr second, IReadOnlyDictionary<int, Reg> allocation,
       out bool removeFirst, out bool removeSecond) {

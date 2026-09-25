@@ -339,64 +339,85 @@ public static class Peephole {
   /// <c>MOV v,[a] / OP v,src / MOV [a],v</c> - a cell read, changed and written back with nothing else
   /// looking at the intermediate - becomes <c>OP [a],src</c>, and the <c>+/-1</c> cases become
   /// <c>INC</c>/<c>DEC</c> where the carry they leave alone is dead.
+  ///
+  /// <para>
+  /// The selector usually writes it STAGED - <c>MOV t,[a] / MOV v,t / OP v,src / MOV [a],v</c> - because
+  /// a two-address ADD overwrites the register it reads, so the loaded value is copied first. The copy
+  /// is only removed later, by the allocator's coalescer, long after this pass has looked; matching
+  /// only the unstaged shape meant <c>g% = g% + 6</c> on a SHARED variable never folded. A staging copy
+  /// whose source has no other reader is part of the pattern.
+  /// </para>
   /// </summary>
   private static int FoldReadModifyWrites(MBlock block, Census census) {
     var made = 0;
     for (var i = 0; i + 2 < block.Instructions.Count; ++i) {
       var load = block.Instructions[i];
-      var modify = block.Instructions[i + 1];
-      var store = block.Instructions[i + 2];
       if (load.Opcode != MOpcode.Mov || load.Operands.Count != 2
-          || load.Operands[0] is not MOperand.Register { Reg: { IsVirtual: true } value }
+          || load.Operands[0] is not MOperand.Register { Reg: { IsVirtual: true } loaded }
           || !IsMemory(load.Operands[1]))
         continue;
       var cell = load.Operands[1];
-      if (AddressRegisters(cell).Contains(value))
+      var staged = IsStagingCopy(block.Instructions[i + 1], loaded, census, out var value);
+      if (!staged)
+        value = loaded;
+      var modifyAt = staged ? i + 2 : i + 1;
+      if (modifyAt + 1 >= block.Instructions.Count)
+        continue;
+      var modify = block.Instructions[modifyAt];
+      var store = block.Instructions[modifyAt + 1];
+      if (AddressRegisters(cell).Contains(value) || AddressRegisters(cell).Contains(loaded))
         continue;
       if (!FoldsMemoryDestination(modify.Opcode) || modify.Operands.Count != 2
           || modify.Operands[0] is not MOperand.Register first || !first.Reg.Equals(value)
           || modify.Operands[1] is not (MOperand.Immediate or MOperand.Register))
         continue;
-      if (modify.Operands[1] is MOperand.Register source && source.Reg.Equals(value))
+      if (modify.Operands[1] is MOperand.Register source && (source.Reg.Equals(value) || source.Reg.Equals(loaded)))
         continue;                                // OP v,v is not a read-modify-write of the cell
       if (store.Opcode != MOpcode.Mov || store.Operands.Count != 2
           || !store.Operands[0].Equals(cell)
           || store.Operands[1] is not MOperand.Register written || !written.Reg.Equals(value))
         continue;
-      // the intermediate is written by the load and the modify, and read by the modify and the store:
-      // any other mention means somebody else can see it
+      // the intermediate is written by the load (or the staging copy) and the modify, and read by the
+      // modify and the store: any other mention means somebody else can see it
       if (!census.Exactly(value, definitions: 2, readers: 2))
         continue;
 
       var rhs = modify.Operands[1];
-      block.Instructions[i] = rhs is MOperand.Immediate { Value: 1 }
-          && modify.Opcode is MOpcode.Add or MOpcode.Sub && FlagsDeadAfter(block, i + 3)
-        ? new MInstr(modify.Opcode == MOpcode.Add ? MOpcode.Inc : MOpcode.Dec, [cell],
+      block.Instructions[i] = UnitStep(modify.Opcode, rhs) is { } step && MachineFlags.DeadAfter(block, modifyAt + 1)
+        ? new MInstr(step, [cell],
           new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
             ReadsMemory: true, WritesMemory: true))
         : new MInstr(modify.Opcode, [cell, rhs],
           new MInstrEffect(WrittenRegs: [], ReadRegs: rhs is MOperand.Register ? [1] : [],
             ReadsFlags: modify.Effect.ReadsFlags, WritesFlags: true,
             ReadsMemory: true, WritesMemory: true));
-      block.Instructions.RemoveRange(i + 1, 2);
+      block.Instructions.RemoveRange(i + 1, modifyAt + 1 - i);
       ++made;
     }
     return made;
   }
 
   /// <summary>
-  /// Whether nothing from <paramref name="from"/> on reads the flags before something overwrites them.
-  /// Reaching the end of the block is NOT proof - a successor may branch on them - so it answers no.
+  /// <c>MOV v,t</c> where <c>t</c> is the value just loaded and read nowhere else - the two-address
+  /// staging copy, which <see cref="FoldReadModifyWrites"/> treats as part of its pattern.
   /// </summary>
-  private static bool FlagsDeadAfter(MBlock block, int from) {
-    for (var i = from; i < block.Instructions.Count; ++i) {
-      if (block.Instructions[i].Effect.ReadsFlags)
-        return false;
-      if (block.Instructions[i].Effect.WritesFlags)
-        return true;
-    }
-    return false;
+  private static bool IsStagingCopy(MInstr copy, MReg loaded, Census census, out MReg value) {
+    value = default;
+    if (copy.Opcode != MOpcode.Mov || copy.Condition is not null || copy.Clobbers.Count != 0
+        || copy.Operands is not [MOperand.Register { Reg: { IsVirtual: true } destination }, MOperand.Register { Reg: var source }]
+        || !source.Equals(loaded) || destination.Size != loaded.Size
+        || !census.Exactly(loaded, definitions: 1, readers: 1))
+      return false;
+    value = destination;
+    return true;
   }
+
+  /// <summary>INC or DEC for an add or subtract of one, in either sign; null for anything else.</summary>
+  private static MOpcode? UnitStep(MOpcode opcode, MOperand amount) => (opcode, amount) switch {
+    (MOpcode.Add, MOperand.Immediate { Value: 1 }) or (MOpcode.Sub, MOperand.Immediate { Value: -1 }) => MOpcode.Inc,
+    (MOpcode.Sub, MOperand.Immediate { Value: 1 }) or (MOpcode.Add, MOperand.Immediate { Value: -1 }) => MOpcode.Dec,
+    _ => null,
+  };
 
   /// <summary>
   /// <c>MOV v,x / AND v,mask / CMP v,0</c> becomes <c>TEST x,mask</c>: the masked value is never
@@ -530,7 +551,7 @@ public static class Peephole {
       if (instr.Opcode != MOpcode.Mov || instr.Condition is not null
           || instr.Operands is not [MOperand.Register zero, MOperand.Immediate { Value: 0 }]
           || zero.Reg.Size is not (MRegSize.Word or MRegSize.Dword)
-          || !FlagsDeadAfter(block, i + 1))
+          || !MachineFlags.DeadAfter(block, i))
         continue;
       block.Instructions[i] = new MInstr(MOpcode.Xor, [zero, zero],
         new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: true,

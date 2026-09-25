@@ -31,7 +31,7 @@ public sealed class OptimizerTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
     var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return exe;
@@ -2286,12 +2286,14 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenSelfModifyStore_WhenPb36_ThenMemoryReadModifyWrite() {
-    // a% = a% + 1 on a non-resident direct cell becomes INC [a%] (one instruction); the same
-    // increment of a DIFFERENT target (b% = a% + 1) cannot read-modify-write and uses load/inc/store.
-    const string rmw = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  a% = n%\n  a% = a% + 1\n  PRINT a%\nEND SUB";
-    const string nonrmw = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  a% = n%\n  b% = a% + 1\n  PRINT a%; b%\nEND SUB";
-    Assert.That(CountIncMem(Compile(rmw, Dialect.Pb36)), Is.GreaterThan(CountIncMem(Compile(nonrmw, Dialect.Pb36))),
-      "a self-increment of a direct cell becomes INC [mem]; an increment into a different target does not");
+    // a% = a% + 1 on a SHARED cell becomes INC [a%] (one instruction); the same increment into a
+    // DIFFERENT target (b% = a% + 1) cannot read-modify-write and uses load/inc/store. The cell has to
+    // be one the procedure cannot keep in a register - a local is promoted to one outright, which
+    // leaves no memory to modify at all.
+    const string rmw = "$OPTIMIZE SPEED\nDECLARE SUB s()\ns\ns\nPRINT a%\nEND\nSUB s() NOINLINE\n  SHARED a%\n  a% = a% + 1\nEND SUB";
+    const string nonrmw = "$OPTIMIZE SPEED\nDECLARE SUB s()\ns\ns\nPRINT a%; b%\nEND\nSUB s() NOINLINE\n  SHARED a%, b%\n  b% = a% + 1\nEND SUB";
+    Assert.That(CountIncMem(ProcedureBytes(rmw, "s").ToArray()), Is.GreaterThan(CountIncMem(ProcedureBytes(nonrmw, "s").ToArray())),
+      "a self-increment of a shared cell becomes INC [mem]; an increment into a different target does not");
   }
 
   // FF /0 with a memory mod field = INC word [mem] - the memory read-modify-write increment
@@ -2305,12 +2307,12 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenIncrWithAmount_WhenPb36_ThenMemoryAddImmediate() {
-    // INCR a%, 5 on a non-resident direct cell becomes ADD [a%],5 (one immediate, no AX park);
-    // INCR of an array element needs an address computation and stages the amount through AX.
-    const string direct = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a% = n%\n  INCR a%, 5\n  INCR a%, 6\n  PRINT a%\nEND SUB";
-    const string array = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  DIM z%(0 TO 3)\n  z%(1) = n%\n  INCR z%(1), 5\n  INCR z%(1), 6\n  PRINT z%(1)\nEND SUB";
-    Assert.That(CountAddMemImm(ProcedureBytes(direct, "s")), Is.GreaterThan(CountAddMemImm(ProcedureBytes(array, "s"))),
-      "INCR of a direct cell with a constant amount uses ADD [mem],imm; an array element does not");
+    // INCR a%, 5 on a SHARED cell becomes ADD [a%],5 - one immediate, no register park. INCR of a
+    // value the procedure holds in a register has no cell to add to, so it has none.
+    const string shared = "$OPTIMIZE SPEED\nDECLARE SUB s()\ns\ns\nPRINT a%\nEND\nSUB s() NOINLINE\n  SHARED a%\n  INCR a%, 5\nEND SUB";
+    const string local = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  a% = n%\n  INCR a%, 5\n  PRINT a%\nEND SUB";
+    Assert.That(CountAddMemImm(ProcedureBytes(shared, "s")), Is.GreaterThan(CountAddMemImm(ProcedureBytes(local, "s"))),
+      "INCR of a shared cell with a constant amount uses ADD [mem],imm; a register-resident local does not");
   }
 
   // 83 /0 with a memory mod field = ADD word [mem], imm8 (sign-extended) - the memory add-immediate
@@ -2333,7 +2335,7 @@ public sealed class OptimizerTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     var listing = generator.DescribeImage();
