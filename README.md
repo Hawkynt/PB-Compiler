@@ -32,7 +32,10 @@ binaries you can run on actual DOS or in DOSBox:
 - **`.COM`** — flat tiny-model DOS executables (`$COMPILE COM` / `--emit-com`),
 - **`.PBU`** — documented PB-Compiler compiled units (`$COMPILE UNIT`),
 - **`.PBL`** — PB-Compiler unit libraries (linkable via `$LINK`),
-- **`.OBJ` / `.LIB`** — DOS Intel OMF objects/libraries for period-compatible linkers.
+- **`.OBJ` / `.LIB`** — DOS Intel OMF objects/libraries for period-compatible linkers,
+- **native x86-32 / x64** — ELF executables, `.o` objects and `.a` archives
+  (`--platform x86-32|x64`), built from the same optimized IR through the C back end
+  and the host's C compiler.
 
 Two things make it interesting. First, **fidelity**: for the historic dialects
 it doesn't merely *resemble* the genuine compilers — it is driven against the
@@ -141,6 +144,7 @@ pbc UNIT.BAS                  # $COMPILE UNIT inside -> UNIT.PBU
 pbc MAIN.BAS                  # $LINK "UNIT.PBU" / "MY.PBL" inside -> linked EXE
 pbc --emit-c PROG.BAS         # optimize through the IR and emit portable C99
 pbc --emit-llvm PROG.BAS      # ... or textual LLVM for the native toolchain
+pbc --platform x64 PROG.BAS   # a native x64 executable (also x86-32; --emit-obj/--emit-lib)
 pbc lib build MY.PBL *.PBU    # bundle units into a library
 pbc lib list MY.PBL           # show exports/imports of a library or unit
 ```

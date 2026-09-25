@@ -12,4 +12,11 @@
     <InternalsVisibleTo Include="PowerBasic.Compiler.Tests" />
   </ItemGroup>
 
+  <!-- The portable runtime travels inside the compiler, so a hosted build needs nothing but a C
+       toolchain on the machine that compiles. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\runtime\pbc_rt.c" LogicalName="runtime/pbc_rt.c" />
+    <EmbeddedResource Include="..\runtime\pbc_rt.h" LogicalName="runtime/pbc_rt.h" />
+  </ItemGroup>
+
 </Project>

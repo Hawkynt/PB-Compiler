@@ -102,6 +102,24 @@ pbc --emit-c PROG.BAS -O prog.c
 cc -std=c99 -O2 -I runtime -o prog prog.c runtime/pbc_rt.c -lm
 ```
 
+`--platform x86-32|x64` does both steps itself: it writes the translation unit and the
+embedded runtime to a temporary directory and drives the host compiler (`$CC`, else `cc`,
+`gcc` or `clang`) with `-m32`/`-m64`. What comes out depends on the emit option:
+
+| Option | x86-16 (DOS, default) | x86-32 / x64 |
+|---|---|---|
+| *(none)* | MZ `.EXE` | ELF executable |
+| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a DOS container |
+| `$COMPILE UNIT` | `.PBU` | refused: use `--emit-obj` or `--emit-lib` |
+| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o` (the program only) |
+| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `.a` archive: the program and the runtime |
+
+Before any build, `HostToolchain` asks the compiler to link a one-line program for the
+requested machine. A 64-bit Linux host usually has a compiler that accepts `-m32` but no
+32-bit C library behind it; that is reported as such, not as the compiler's
+`gnu/stubs-32.h` complaint. `PlatformTests` builds, links and runs all three artifacts per
+platform, and skips a platform the host cannot target.
+
 C99, no compiler extensions. Two details are load-bearing:
 
 - **Integer arithmetic runs through the unsigned type of the same width and is cast

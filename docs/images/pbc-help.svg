@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="790" height="674" viewBox="0 0 790 674" role="img"
+<svg xmlns="http://www.w3.org/2000/svg" width="790" height="731" viewBox="0 0 790 731" role="img"
      xml:space="preserve" aria-label="pbc --help, the PB-Compiler command line">
   <title>pbc --help</title>
   <style>
@@ -13,7 +13,7 @@
     .flag { fill: #7fd1e8; }
     .ps1  { fill: #9ece6a; }
   </style>
-  <rect class="bg" x="0" y="0" width="790" height="674" rx="9"/>
+  <rect class="bg" x="0" y="0" width="790" height="731" rx="9"/>
   <path class="bar" d="M0 9a9 9 0 0 1 9-9h772a9 9 0 0 1 9 9v25H0z"/>
   <circle cx="20" cy="17" r="5.5" fill="#ed6a5f"/>
   <circle cx="39" cy="17" r="5.5" fill="#f4bf50"/>
@@ -42,9 +42,12 @@
   <text class="t" x="22" y="506"><tspan class="flag">  --dump-bind</tspan>    stop after semantic analysis</text>
   <text class="t" x="22" y="525"><tspan class="flag">  --emit-obj</tspan>     compile to a linkable OMF .OBJ object instead of an EXE</text>
   <text class="t" x="22" y="544"><tspan class="flag">  --emit-com</tspan>     compile to a flat DOS .COM image (no $LINK/segment relocations)</text>
-  <text class="t" x="22" y="563"><tspan class="flag">  --emit-basic</tspan>   render optimized IR back to readable PowerBASIC</text>
-  <text class="t" x="22" y="582"><tspan class="flag">  --emit-llvm</tspan>    optimize through the IR middle end and emit textual LLVM</text>
-  <text class="t" x="22" y="601"><tspan class="flag">  --emit-c</tspan>       optimize through the IR middle end and emit portable C99</text>
-  <text class="t" x="22" y="620"><tspan class="flag">  --list</tspan>         write a human-readable .LST map of the compiled image</text>
-  <text class="t" x="22" y="639"><tspan class="flag">  -h, --help</tspan>     show this help</text>
+  <text class="t" x="22" y="563"><tspan class="flag">  --platform</tspan> &lt;p&gt; x86-16 (DOS, default) | x86-32 | x64: the latter two build a native</text>
+  <text class="t" x="22" y="582">                 executable through the C back end and the host C compiler</text>
+  <text class="t" x="22" y="601"><tspan class="flag">  --emit-lib</tspan>     with a hosted --platform: an archive of the program and its runtime</text>
+  <text class="t" x="22" y="620"><tspan class="flag">  --emit-basic</tspan>   render optimized IR back to readable PowerBASIC</text>
+  <text class="t" x="22" y="639"><tspan class="flag">  --emit-llvm</tspan>    optimize through the IR middle end and emit textual LLVM</text>
+  <text class="t" x="22" y="658"><tspan class="flag">  --emit-c</tspan>       optimize through the IR middle end and emit portable C99</text>
+  <text class="t" x="22" y="677"><tspan class="flag">  --list</tspan>         write a human-readable .LST map of the compiled image</text>
+  <text class="t" x="22" y="696"><tspan class="flag">  -h, --help</tspan>     show this help</text>
 </svg>
