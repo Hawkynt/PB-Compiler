@@ -358,39 +358,49 @@ public sealed partial class InstructionSelector {
                && staged is not null) {
       cell = staged;
       opcode = forms.Integer;
+    } else if (this.NarrowFloatCell(bin.Rhs) is { } narrow) {
+      cell = narrow;                   // a SINGLE/DOUBLE-wide value is read where it lives: FADD m32
+      opcode = forms.Real;
     } else {
       return false;
     }
 
     this.EmitX87(MOpcode.Fld, lhs, reads: true);
     this.EmitX87(opcode, cell, reads: true);
-    this.PopRounded(bin.Type, this.FloatCell(bin));    // the same width rule the staged form obeys
+    this.PopRoundedInto(bin);    // the same width rule the staged form obeys
     return true;
   }
 
   /// <summary>
-  /// A float comparison against a literal, read out of the constant pool instead of pushed:
+  /// The cell of a value that lives at SINGLE or DOUBLE width - the only float cells an x87 arithmetic
+  /// or compare instruction can take as its memory operand - or null.
+  /// </summary>
+  private MOperand.StackSlot? NarrowFloatCell(IrValue value)
+    => this._fslots.TryGetValue(value, out var cell) && cell.Size is MRegSize.Dword or MRegSize.Qword
+      ? new MOperand.StackSlot(cell.Slot, cell.Size)
+      : null;
+
+  /// <summary>
+  /// A float comparison against a literal or a SINGLE/DOUBLE-wide value, read where it lives instead
+  /// of pushed:
   /// <c>FLD a; FCOMP [k]</c>. <c>FCOMP</c> pops the one value it compared, so the stack is empty
   /// afterwards exactly as it is after the <c>FLD/FLD/FXCH/FCOMPP</c> sequence it replaces, and the
   /// status word it leaves is the same comparison of the same two values in the same order.
   /// </summary>
-  private bool TrySelectFloatMemoryCompare(IrCmp cmp, Condition cc) {
-    if (!this._target.Optimize || cmp.Rhs is not IrConstantFloat constant)
+  private bool TryEmitFloatMemoryCompare(IrCmp cmp) {
+    if (!this._target.Optimize)
       return false;
-    if (!this.TryFloatOperand(cmp.Lhs, out var lhs))
+    // the right operand where it lives: a literal in the qword pool, or a SINGLE/DOUBLE-wide cell
+    MOperand? right = cmp.Rhs is IrConstantFloat constant
+      ? new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword)
+      : this.NarrowFloatCell(cmp.Rhs);
+    if (right is null || !this.TryFloatOperand(cmp.Lhs, out var lhs))
       return false;
 
-    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
     this.EmitX87(MOpcode.Fld, lhs, reads: true);
-    this.EmitX87(MOpcode.Fcomp,
-      new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword), reads: true);
-    this._current.Instructions.Add(new MInstr(MOpcode.FstswAx, [ax],
-      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-        ReadsMemory: false, WritesMemory: false), clobbers: [Reg.AX]));
-    this._current.Instructions.Add(new MInstr(MOpcode.Sahf, [ax],
-      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
-        ReadsMemory: false, WritesMemory: false)));
-    return this.MaterializeCondition(cmp, cc);
+    this.EmitX87(MOpcode.Fcomp, right, reads: true);
+    this.EmitStatusToFlags();
+    return true;
   }
 
   /// <summary>

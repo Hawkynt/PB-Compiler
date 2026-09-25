@@ -43,7 +43,7 @@ public sealed partial class InstructionSelector {
   /// FLD/FSTP - the stack is empty again at each instruction boundary, and the value in between is
   /// simply its cell. That is also what the direct emitter does with ST0.
   /// </summary>
-  private readonly Dictionary<IrValue, int> _fslots = new(ReferenceEqualityComparer.Instance);
+  private readonly Dictionary<IrValue, (int Slot, MRegSize Size)> _fslots = new(ReferenceEqualityComparer.Instance);
 
   /// <summary>
   /// IEEE float parameters already live in caller-owned stack cells at their declared widths. x87 can
@@ -503,9 +503,9 @@ public sealed partial class InstructionSelector {
     // and then not consumed by the terminator has no register at all - which is what the branch's
     // value path then reported as "IrCmp has no register".
     => block.Terminator is IrCondBr { Condition: IrCmp { Users.Count: 1 } cmp }
-       && MapPredicate(cmp.Pred) is not null
-       && !IsWide(cmp.Lhs.Type)
-       && !cmp.Lhs.Type.IsFloat
+       && (cmp.Lhs.Type.IsFloat
+         ? cmp.Lhs.Type.IsIeeeFloat && MapFloatPredicate(cmp.Pred) is not null
+         : MapPredicate(cmp.Pred) is not null && !IsWide(cmp.Lhs.Type))
       ? cmp : null;
 
   /// <summary>
@@ -549,8 +549,10 @@ public sealed partial class InstructionSelector {
         this._current.Instructions.Add(new MInstr(MOpcode.Jmp, [new MOperand.LabelRef(br.Target.Label)], MInstrEffect.None));
         this._current.Successors.Add(br.Target.Label);
         return true;
-      case IrCondBr cond when folded is { } cmp && MapPredicate(cmp.Pred) is not null:
-        if (this.EmitCompareForFlags(cmp, cmp.Pred) is not { } cc)
+      case IrCondBr cond when folded is { } cmp:
+        // a float compare branches on the x87 status it moved into the flags, exactly as an integer
+        // one branches on its CMP - PB's -1/0 truth value is never built for an IF
+        if ((cmp.Lhs.Type.IsFloat ? this.EmitFloatCompareFlags(cmp) : this.EmitCompareForFlags(cmp, cmp.Pred)) is not { } cc)
           return false;
         this._current.Instructions.Add(new MInstr(MOpcode.Jcc, [new MOperand.LabelRef(cond.IfTrue.Label)],
           new MInstrEffect([], [], ReadsFlags: true, WritesFlags: false, ReadsMemory: false, WritesMemory: false), cc));
@@ -2574,28 +2576,42 @@ public sealed partial class InstructionSelector {
     _ => null,
   };
 
-  private bool SelectFloatCmpValue(IrCmp cmp) {
-    if (MapFloatPredicate(cmp.Pred) is not { } cc)
-      return this.Decline($"compare as a value: float {cmp.Pred}");
-    if (this.TrySelectFloatMemoryCompare(cmp, cc))
-      return true;
+  private bool SelectFloatCmpValue(IrCmp cmp)
+    => this.EmitFloatCompareFlags(cmp) is { } cc && this.MaterializeCondition(cmp, cc);
+
+  /// <summary>
+  /// A float compare as the CPU flags a Jcc reads, and the condition to read them with - for a value
+  /// the caller materializes, or for a branch that consumes them directly. Null when it declines.
+  /// </summary>
+  private Condition? EmitFloatCompareFlags(IrCmp cmp) {
+    if (MapFloatPredicate(cmp.Pred) is not { } cc) {
+      this.Decline($"compare: float {cmp.Pred}");
+      return null;
+    }
+    if (this.TryEmitFloatMemoryCompare(cmp))
+      return cc;
     if (!this.TryFloatOperand(cmp.Lhs, out var lhs) || !this.TryFloatOperand(cmp.Rhs, out var rhs))
-      return false;
+      return null;
 
     // FLD left; FLD right leaves the right operand on top. FCOMPP compares ST(0) against ST(1), so
     // FXCH restores source order. FSTSW AX + SAHF maps x87 C0/C3 to the unsigned CF/ZF conditions.
-    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
     this.EmitX87(MOpcode.Fld, lhs, reads: true);
     this.EmitX87(MOpcode.Fld, rhs, reads: true);
     this._current.Instructions.Add(new MInstr(MOpcode.Fxch, [], MInstrEffect.None));
     this._current.Instructions.Add(new MInstr(MOpcode.Fcompp, [], MInstrEffect.None));
+    this.EmitStatusToFlags();
+    return cc;
+  }
+
+  /// <summary><c>FSTSW AX / SAHF</c>: the x87 condition codes C0/C3 into CF/ZF, where an unsigned Jcc reads them.</summary>
+  private void EmitStatusToFlags() {
+    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
     this._current.Instructions.Add(new MInstr(MOpcode.FstswAx, [ax],
       new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
         ReadsMemory: false, WritesMemory: false), clobbers: [Reg.AX]));
     this._current.Instructions.Add(new MInstr(MOpcode.Sahf, [ax],
       new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: false, WritesMemory: false)));
-    return this.MaterializeCondition(cmp, cc);
   }
 
   private bool MaterializeCondition(IrCmp cmp, Condition cc) {
@@ -4171,7 +4187,7 @@ public sealed partial class InstructionSelector {
     // the direct emitter writes right after the FYL2X. Keeping all eighty bits looks more accurate
     // and is less faithful: LOG(2.718281828459045#) is .9999999999999999 at eighty bits and 1 once
     // rounded to a double, and genuine QuickBASIC prints 1. Four battery programs turned on it.
-    this.PopRounded(call.Type, this.FloatCell(call));
+    this.PopRoundedInto(call);
     return true;
   }
 
@@ -4520,13 +4536,17 @@ public sealed partial class InstructionSelector {
   /// own cell at the variable's own width, so <c>D! = x</c> still rounds to SINGLE as it must - the
   /// rounding PB does keeps happening, and the rounding it does not do stops.
   /// </summary>
-  private MOperand FloatCell(IrValue value) {
-    if (!this._fslots.TryGetValue(value, out var slot)) {
-      slot = this._function.StackSlots.Count;
-      this._function.StackSlots.Add(_X87_CELL_BYTES);
-      this._fslots[value] = slot;
-    }
-    return new MOperand.StackSlot(slot, MRegSize.Tbyte);
+  private MOperand FloatCell(IrValue value)
+    => this._fslots.TryGetValue(value, out var cell)
+      ? new MOperand.StackSlot(cell.Slot, cell.Size)
+      : this.MintFloatCell(value, MRegSize.Tbyte);
+
+  /// <summary>A new frame cell of <paramref name="size"/> for <paramref name="value"/>.</summary>
+  private MOperand.StackSlot MintFloatCell(IrValue value, MRegSize size) {
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(size switch { MRegSize.Dword => 4, MRegSize.Qword => 8, _ => _X87_CELL_BYTES });
+    this._fslots[value] = (slot, size);
+    return new MOperand.StackSlot(slot, size);
   }
 
   /// <summary>The x87's own register width, which is what an intermediate float is stored and reloaded at.</summary>
@@ -4597,7 +4617,7 @@ public sealed partial class InstructionSelector {
     this._current.Instructions.Add(new MInstr(opcode, [], MInstrEffect.None));
     // ...and the result goes back at the width the IR gave it, which for PB's own expressions is the
     // x87's own and costs nothing. See PopRounded for why a NARROWER one is not an intermediate.
-    this.PopRounded(bin.Type, this.FloatCell(bin));
+    this.PopRoundedInto(bin);
     return true;
   }
 
@@ -4661,7 +4681,7 @@ public sealed partial class InstructionSelector {
     if (this.PointerMemory(load.Pointer, RegSize(load.Type)) is not { } source)
       return false;
     this.EmitX87(MOpcode.Fld, source, reads: true);
-    this.EmitX87(MOpcode.Fstp, this.FloatCell(load), reads: false);
+    this.PopRoundedInto(load);         // a load is exact at its own width, so its cell can be that wide
     return true;
   }
 
@@ -4821,7 +4841,7 @@ public sealed partial class InstructionSelector {
       if (!this.TryQwordSlot(cast.Value, out var qslot))
         return false;
       this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(qslot, MRegSize.Qword), reads: true);
-      this.PopRounded(cast.Type, this.FloatCell(cast));
+      this.PopRoundedInto(cast);
       return true;
     }
     // FILD has no byte source form: it reads signed m16/m32/m64 integers. A BYTE/SBYTE
@@ -4848,7 +4868,7 @@ public sealed partial class InstructionSelector {
       var byteCell = new MOperand.StackSlot(byteSlot, MRegSize.Word);
       this.StoreWord(byteCell, word);
       this.EmitX87(MOpcode.Fild, byteCell, reads: true);
-      this.PopRounded(cast.Type, this.FloatCell(cast));
+      this.PopRoundedInto(cast);
       return true;
     }
     if (!from.IsInteger || from.Bits is not (16 or 32))
@@ -4888,7 +4908,7 @@ public sealed partial class InstructionSelector {
     this.EmitX87(MOpcode.Fild, new MOperand.StackSlot(slot, read), reads: true);
     // A conversion INTO a narrow float rounds like any other narrow float result: a LONG above 2^24
     // has no exact SINGLE, and sitofp says which one it becomes (see PopRounded).
-    this.PopRounded(cast.Type, this.FloatCell(cast));
+    this.PopRoundedInto(cast);
     return true;
   }
 
@@ -5037,15 +5057,22 @@ public sealed partial class InstructionSelector {
   /// </para>
   /// </summary>
   private bool SelectFloatResize(IrCast cast) {
+    // A WIDENING of a value that already has a cell is that cell: FLD of a SINGLE or DOUBLE produces
+    // exactly the wider value, so copying it into a cell of its own would only move the same number.
+    // Sharing also keeps the value a legal memory operand (FADD m32) for the arithmetic it feeds.
+    if (cast.Op == IrCastOp.FPExt && this._target.Optimize && this._fslots.TryGetValue(cast.Value, out var narrow)) {
+      this._fslots[cast] = narrow;
+      return true;
+    }
     if (!this.TryFloatOperand(cast.Value, out var source))
       return false;
     this.EmitX87(MOpcode.Fld, source, reads: true);
-    this.PopRounded(cast.Type, this.FloatCell(cast));
+    this.PopRoundedInto(cast);
     return true;
   }
 
   /// <summary>
-  /// Pops the x87 top into <paramref name="destination"/> at the width <paramref name="type"/> names,
+  /// Pops the x87 top into <paramref name="value"/>'s cell at the width the value's type names,
   /// which for anything narrower than the register's own eighty bits means a round trip through a cell
   /// of that width first - the <c>FSTP m32 / FLD m32</c> pair the direct emitter writes when a value
   /// is stored into a SINGLE variable.
@@ -5068,15 +5095,27 @@ public sealed partial class InstructionSelector {
   /// four-byte cell away - and computing that at eighty bits accumulated a different sum, 4.5000000670
   /// against the 4.5000002607 genuine PBC 3.50 and the direct emitter both answer.
   /// </para>
+  /// <para>
+  /// A value first produced here is given a cell of its own width, so the one <c>FSTP m32</c> that
+  /// rounds it is also where it lives - the value in the cell is exactly the rounded one either way,
+  /// and a narrow cell is a legal operand of <c>FADD</c>/<c>FCOMP m32/m64</c> where a ten-byte one is
+  /// not. Only a value that already has a cell (a phi's, minted ahead of its edge copies) takes the
+  /// round trip into it.
+  /// </para>
   /// </summary>
-  private void PopRounded(IrType type, MOperand destination) {
-    if (RegSize(type) is var narrow and (MRegSize.Dword or MRegSize.Qword)) {
+  private void PopRoundedInto(IrValue value) {
+    var narrow = RegSize(value.Type);
+    if (narrow is MRegSize.Dword or MRegSize.Qword && !this._fslots.ContainsKey(value)) {
+      this.EmitX87(MOpcode.Fstp, this.MintFloatCell(value, narrow), reads: false);
+      return;
+    }
+    if (narrow is MRegSize.Dword or MRegSize.Qword) {
       var slot = this._function.StackSlots.Count;
       this._function.StackSlots.Add(narrow == MRegSize.Dword ? 4 : 8);
       this.EmitX87(MOpcode.Fstp, new MOperand.StackSlot(slot, narrow), reads: false);
       this.EmitX87(MOpcode.Fld, new MOperand.StackSlot(slot, narrow), reads: true);
     }
-    this.EmitX87(MOpcode.Fstp, destination, reads: false);
+    this.EmitX87(MOpcode.Fstp, this.FloatCell(value), reads: false);
   }
 
   private void StoreWord(MOperand cell, MOperand value)

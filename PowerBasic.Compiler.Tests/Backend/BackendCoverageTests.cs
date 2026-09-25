@@ -731,6 +731,7 @@ public sealed class BackendCoverageTests {
     "DIFF96.BAS",
     "DIFF97.BAS",
     "DIFF99.BAS",
+    "FLTRET.BAS",   // a SINGLE / DOUBLE result is rounded to its width on the way out
     "HIBYTE.BAS",   // string literals keep their bytes above 127
     "INCRLV.BAS",   // INCR / DECR of an array element, a record field and a float
     "INSTRC.BAS",   // INSTR of compile-time needles, short and Horspool
@@ -920,6 +921,7 @@ public sealed class BackendCoverageTests {
     "DIFF96.BAS",
     "DIFF97.BAS",
     "DIFF99.BAS",
+    "FLTRET.BAS",
     "HIBYTE.BAS",
     "INCRLV.BAS",
     "INSTRC.BAS",

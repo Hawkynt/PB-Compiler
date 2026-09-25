@@ -2503,11 +2503,12 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenFloatBinaryWithDirectCellOperand_WhenPb36_ThenFpuMemoryOperand() {
-    // r! = a! + b! with b! a direct cell adds it straight from memory (FADD m32); an expression
-    // right operand (b! * a!) must be FLD-ed onto the stack and combined with FADDP.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  r! = a! + b!\n  r! = r! + b!\n  PRINT r!\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  r! = a! + (b! * a!)\n  r! = r! + (b! * a!)\n  PRINT r!\nEND SUB";
-    Assert.That(CountFaddMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFaddMem(Compile(staged, Dialect.Pb36))),
+    // r! = a! + b! with b! a SINGLE adds it straight from its cell (FADD m32); an expression right
+    // operand (b! * a!) is an eighty-bit intermediate, which no x87 arithmetic takes from memory, so it
+    // is FLD-ed and combined with FADDP. Two call sites, one opaque, keep n% from folding.
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns INP(&H60)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  r! = a! + b!\n  r! = r! + b!\n  PRINT r!\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns INP(&H60)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  r! = a! + (b! * a!)\n  r! = r! + (b! * a!)\n  PRINT r!\nEND SUB";
+    Assert.That(CountFaddMem(ProcedureBytes(mem, "s").ToArray()), Is.GreaterThan(CountFaddMem(ProcedureBytes(staged, "s").ToArray())),
       "a direct-cell float operand is added as an FPU memory operand (FADD m32); a staged operand uses FADDP");
   }
 
@@ -2522,11 +2523,11 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenFloatCompareWithDirectCellOperand_WhenPb36_ThenFcompMemoryOperand() {
-    // IF a! < b! with b! a direct cell compares it as an FPU memory operand (FCOMP m32); an
-    // expression right operand (b! * a!) must be FLD-ed and compared with FXCH;FCOMPP.
-    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  IF a! < b! THEN PRINT \"lt\"\n  IF a! > b! THEN PRINT \"gt\"\nEND SUB";
-    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  IF a! < (b! * a!) THEN PRINT \"lt\"\n  IF a! > (b! * a!) THEN PRINT \"gt\"\nEND SUB";
-    Assert.That(CountFcompMem(Compile(mem, Dialect.Pb36)), Is.GreaterThan(CountFcompMem(Compile(staged, Dialect.Pb36))),
+    // IF a! < b! with b! a SINGLE compares it where it lives (FCOMP m32); an expression right operand
+    // (b! * a!) is an eighty-bit intermediate and is FLD-ed and compared with FXCH;FCOMPP.
+    const string mem = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns INP(&H60)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  IF a! < b! THEN PRINT \"lt\"\n  IF a! > b! THEN PRINT \"gt\"\nEND SUB";
+    const string staged = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns INP(&H60)\ns 3\nEND\nSUB s(BYVAL n%) NOINLINE\n  a! = n%\n  b! = n% + 1\n  IF a! < (b! * a!) THEN PRINT \"lt\"\n  IF a! > (b! * a!) THEN PRINT \"gt\"\nEND SUB";
+    Assert.That(CountFcompMem(ProcedureBytes(mem, "s").ToArray()), Is.GreaterThan(CountFcompMem(ProcedureBytes(staged, "s").ToArray())),
       "a direct-cell float compare operand uses FCOMP m32; a staged operand uses FXCH;FCOMPP");
   }
 
