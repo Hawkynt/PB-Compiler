@@ -32,7 +32,7 @@ public sealed class BackendByteParameterRoutingTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Procedure_GivenUnsignedByteParameterAndResult_ThenRoutedExecutionMatchesDirect(bool optimize) {
+  public void Procedure_GivenUnsignedByteParameterAndResult_ThenTheIncrementedByteIsPrinted(bool optimize) {
     var routed = new CodeGenerator(Bind()) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
@@ -42,12 +42,9 @@ public sealed class BackendByteParameterRoutingTests {
       Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the BYTE caller did not route");
     });
 
-    var direct = new CodeGenerator(Bind()) { Optimize = optimize};
-    var directImage = direct.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-    var expected = Cpu8086.Run(directImage);
     var actual = Cpu8086.Run(routedImage);
-    Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((expected.Output, expected.ExitCode)));
+    Assert.That((actual.Output.Trim().Replace("\r\n", "|"), actual.ExitCode), Is.EqualTo(("201", 0)),
+      "200 + 1 is 201, which still fits an unsigned byte");
   }
 
   [TestCase(false, IrCastOp.UIToFP)]

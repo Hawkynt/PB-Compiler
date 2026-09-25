@@ -95,7 +95,7 @@ public sealed class OmfLinkTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Route_GivenCdeclObjectLinked_WhenBackEndEnabled_ThenMainRoutesAndMatchesDirect(bool optimize) {
+  public void Route_GivenCdeclObjectLinked_WhenBackEndEnabled_ThenMainRoutesAndPrintsTheDifferences(bool optimize) {
     const string source = """
       DECLARE FUNCTION sub2 CDECL ALIAS "_sub2" (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
       PRINT sub2(20, 7)
@@ -105,22 +105,16 @@ public sealed class OmfLinkTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var model = Binder.Bind(unit, Dialect.Pb35);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var directGenerator = new CodeGenerator(model) { Optimize = optimize };
-    var direct = directGenerator.EmitExecutable([SubTwoUnit()], []);
-    Assert.That(directGenerator.Errors, Is.Empty, "direct: " + string.Join("; ", directGenerator.Errors));
-
     var routedGenerator = new CodeGenerator(model) {
       Optimize = optimize,
     };
     var routed = routedGenerator.EmitExecutable([SubTwoUnit()], []);
-    var directOutput = Exec.Cpu8086.Run(direct).Output.Trim().Replace("\r\n", "|");
     var routedOutput = Exec.Cpu8086.Run(routed).Output.Trim().Replace("\r\n", "|");
 
     Assert.Multiple(() => {
       Assert.That(routedGenerator.Errors, Is.Empty,
         "routed: " + string.Join("; ", routedGenerator.Errors));
       Assert.That(routedGenerator.BackendRoutedNames, Does.Contain("main"));
-      Assert.That(routedOutput, Is.EqualTo(directOutput));
       Assert.That(routedOutput, Is.EqualTo("13 | 91"));
     });
   }
@@ -145,29 +139,23 @@ public sealed class OmfLinkTests {
     var model = Binder.Bind(unit, Dialect.Pb35);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var linkedUnit = RegisterMixUnit(convention);
-    var directGenerator = new CodeGenerator(model) { Optimize = optimize };
-    var direct = directGenerator.EmitExecutable([linkedUnit], []);
-    Assert.That(directGenerator.Errors, Is.Empty, "direct: " + string.Join("; ", directGenerator.Errors));
-
     var routedGenerator = new CodeGenerator(model) {
       Optimize = optimize,
     };
     var routed = routedGenerator.EmitExecutable([linkedUnit], []);
-    var directOutput = Exec.Cpu8086.Run(direct).Output.Trim().Replace("\r\n", "|");
     var routedOutput = Exec.Cpu8086.Run(routed).Output.Trim().Replace("\r\n", "|");
 
     Assert.Multiple(() => {
       Assert.That(routedGenerator.Errors, Is.Empty,
         "routed: " + string.Join("; ", routedGenerator.Errors));
       Assert.That(routedGenerator.BackendRoutedNames, Does.Contain("main"));
-      Assert.That(routedOutput, Is.EqualTo(directOutput));
       Assert.That(routedOutput, Is.EqualTo("41 | 85 | 7"));
     });
   }
 
   [TestCase("FASTCALL", "@identity")]
   [TestCase("WATCALL", "identity_")]
-  public void Route_GivenByteRegisterArgument_WhenBackEndEnabled_ThenWordValueMatchesDirect(
+  public void Route_GivenByteRegisterArgument_WhenBackEndEnabled_ThenWordValueArrivesWhole(
       string convention, string symbol) {
     var source = $"""
       DECLARE FUNCTION identity {convention} ALIAS "{symbol}" (BYVAL value AS BYTE) AS INTEGER
@@ -178,25 +166,20 @@ public sealed class OmfLinkTests {
     var model = Binder.Bind(unit, Dialect.Pb35);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var linkedUnit = RegisterIdentityUnit(convention);
-    var directGenerator = new CodeGenerator(model);
-    var direct = directGenerator.EmitExecutable([linkedUnit], []);
     var routedGenerator = new CodeGenerator(model);
     var routed = routedGenerator.EmitExecutable([linkedUnit], []);
-    var directOutput = Exec.Cpu8086.Run(direct).Output.Trim();
     var routedOutput = Exec.Cpu8086.Run(routed).Output.Trim();
 
     Assert.Multiple(() => {
-      Assert.That(directGenerator.Errors, Is.Empty, "direct: " + string.Join("; ", directGenerator.Errors));
       Assert.That(routedGenerator.Errors, Is.Empty, "routed: " + string.Join("; ", routedGenerator.Errors));
       Assert.That(routedGenerator.BackendRoutedNames, Does.Contain("main"));
-      Assert.That(routedOutput, Is.EqualTo(directOutput));
       Assert.That(routedOutput, Is.EqualTo("200"));
     });
   }
 
   [TestCase("FASTCALL", "@load")]
   [TestCase("WATCALL", "load_")]
-  public void Route_GivenByRefRegisterArgument_WhenBackEndEnabled_ThenNearPointerMatchesDirect(
+  public void Route_GivenByRefRegisterArgument_WhenBackEndEnabled_ThenNearPointerReadsTheVariable(
       string convention, string symbol) {
     var source = $"""
       DECLARE FUNCTION load {convention} ALIAS "{symbol}" (value AS INTEGER) AS INTEGER
@@ -209,25 +192,19 @@ public sealed class OmfLinkTests {
     var model = Binder.Bind(unit, Dialect.Pb35);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var linkedUnit = RegisterLoadUnit(convention);
-    var directGenerator = new CodeGenerator(model);
-    var direct = directGenerator.EmitExecutable([linkedUnit], []);
     var routedGenerator = new CodeGenerator(model);
     var routed = routedGenerator.EmitExecutable([linkedUnit], []);
-    var directOutput = Exec.Cpu8086.Run(direct).Output.Trim();
     var routedOutput = Exec.Cpu8086.Run(routed).Output.Trim();
 
     Assert.Multiple(() => {
-      Assert.That(directGenerator.Errors, Is.Empty, "direct: " + string.Join("; ", directGenerator.Errors));
       Assert.That(routedGenerator.Errors, Is.Empty, "routed: " + string.Join("; ", routedGenerator.Errors));
       Assert.That(routedGenerator.BackendRoutedNames, Does.Contain("main"));
-      Assert.That(routedOutput, Is.EqualTo(directOutput));
       Assert.That(routedOutput, Is.EqualTo("1234"));
     });
   }
 
-  [TestCase(false)]
-  [TestCase(true)]
-  public void Emit_GivenExternalRegisterConventionWithWideArgument_ThenRejectsUnsupportedAbi(bool routed) {
+  [Test]
+  public void Emit_GivenExternalRegisterConventionWithWideArgument_ThenRejectsUnsupportedAbi() {
     const string source = """
       DECLARE FUNCTION wide WATCALL ALIAS "wide_" (BYVAL value AS LONG) AS LONG
       PRINT wide(1)

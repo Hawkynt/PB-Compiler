@@ -159,8 +159,8 @@ public sealed class OptimizationBatteryTests {
     var scenarios = ParseScenarios(source);
     Assert.That(scenarios, Is.Not.Empty, $"{Path.GetFileName(file)} declares no @scenario blocks");
 
-    var optimized = Compile(source, file, optimize: true, routed: true);
-    var plain = Compile(source, file, optimize: false, routed: true);
+    var optimized = Compile(source, file, optimize: true);
+    var plain = Compile(source, file, optimize: false);
 
     var unmet = new List<string>();
     foreach (var scenario in scenarios) {
@@ -317,9 +317,7 @@ public sealed class OptimizationBatteryTests {
     return model;
   }
 
-  private static Compiled Compile(string source, string path, bool optimize) => Compile(source, path, optimize, routed: false);
-
-  private static Compiled Compile(string source, string path, bool optimize, bool routed) {
+  private static Compiled Compile(string source, string path, bool optimize) {
     var generator = new CodeGenerator(Bind(source, path)) { Optimize = optimize};
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));

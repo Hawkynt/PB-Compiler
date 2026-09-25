@@ -51,7 +51,7 @@ public sealed class BackendBoolToByteTests {
       "TRUE is -1, so a BYTE holding it reads back as 255 - not 1");
   }
 
-  /// <summary>The premise: before this the body declined and those values were the direct emitter's.</summary>
+  /// <summary>The premise: before this the body declined, so the values above were not the back end's.</summary>
   [Test]
   public void Route_GivenATruthValueInAByte_ThenTheModuleBodyIsTakenByTheBackEnd() {
     var (_, routed) = Run(optimize: false);

@@ -98,7 +98,7 @@ public sealed class BackendByteWideningTests {
     var (output, routed) = Run(_signed, optimize);
 
     Assert.Multiple(() => {
-      Assert.That(routed, Does.Contain("Widen"), "i8 -> i16 must route, or the values below are the direct emitter's");
+      Assert.That(routed, Does.Contain("Widen"), "i8 -> i16 must route, or the values below say nothing about the selection");
       Assert.That(routed, Does.Contain("WidenLong"), "i8 -> i32 must route");
       Assert.That(output, Is.EqualTo("-5 |-5 |-128 |-128"),
         "an SBYTE is signed: -5 widens to -5, and the high half of the LONG is all ones");
@@ -107,7 +107,7 @@ public sealed class BackendByteWideningTests {
 
   /// <summary>
   /// The premise: these functions must actually ROUTE. Before the selector learned the byte source
-  /// they declined, and the values above would then be the direct emitter's - correct, and proving
+  /// they declined, and the values above would then have come from a fallback - correct, and proving
   /// nothing about this back end.
   /// </summary>
   [Test]

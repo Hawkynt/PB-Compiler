@@ -35,7 +35,7 @@ public sealed class BackendComputedJumpTests {
     return model;
   }
 
-  private static (string Output, IEnumerable<string> Routed) Run(string source, bool optimize, bool routed) {
+  private static (string Output, IEnumerable<string> Routed) Run(string source, bool optimize) {
     var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
@@ -61,13 +61,10 @@ public sealed class BackendComputedJumpTests {
       PRINT "arrived"
       """;
 
-    var (output, routed) = Run(source, optimize, routed: true);
+    var (output, routed) = Run(source, optimize);
     Assert.That(routed, Does.Contain("main"));
-    Assert.Multiple(() => {
-      Assert.That(output, Is.EqualTo(Run(source, optimize, routed: false).Output));
-      Assert.That(output, Is.EqualTo("before|arrived"),
-        "the jump reached the label and the statement between them did not run");
-    });
+    Assert.That(output, Is.EqualTo("before|arrived"),
+      "the jump reached the label and the statement between them did not run");
   }
 
   /// <summary>

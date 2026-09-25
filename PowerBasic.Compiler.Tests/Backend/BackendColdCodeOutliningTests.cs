@@ -9,8 +9,8 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// O0275 on the native x86 path. The outliner appends a module-level helper that has no
 /// <see cref="ProcedureSymbol"/>, and every part of the routing used to be keyed on one - so the
 /// caller was stranded by its own optimization and fell back to the direct emitter wholesale. These
-/// tests hold the two halves of the bridge: the helper is ROUTED, and what it computes is what the
-/// direct emitter computes.
+/// tests hold the two halves of the bridge: the helper is ROUTED, and the program it is part of still
+/// prints what its source says.
 /// </summary>
 [TestFixture]
 public sealed class BackendColdCodeOutliningTests {
@@ -23,7 +23,7 @@ public sealed class BackendColdCodeOutliningTests {
     return model;
   }
 
-  private static (byte[] Image, CodeGenerator Generator) Compile(string source, bool routed) {
+  private static (byte[] Image, CodeGenerator Generator) Compile(string source) {
     var generator = new CodeGenerator(Bind(source)) {
       Optimize = true,
     };
@@ -33,7 +33,7 @@ public sealed class BackendColdCodeOutliningTests {
   }
 
   [Test]
-  public void Execute_GivenAnOutlinedColdArm_WhenRouted_ThenTheHelperIsRoutedAndMatchesTheDirectEmitter() {
+  public void Execute_GivenAnOutlinedColdArm_WhenRouted_ThenTheHelperIsRoutedAndTheHotCallStillPrints() {
     const string source = """
       $OPTIMIZE SPEED
       DECLARE FUNCTION Given%(BYVAL v%)
@@ -56,9 +56,7 @@ public sealed class BackendColdCodeOutliningTests {
       END SUB
       """;
 
-    var direct = Compile(source, routed: false);
-    var routed = Compile(source, routed: true);
-    var directResult = Cpu8086.Run(direct.Image);
+    var routed = Compile(source);
     var routedResult = Cpu8086.Run(routed.Image);
 
     Assert.Multiple(() => {
@@ -66,10 +64,9 @@ public sealed class BackendColdCodeOutliningTests {
         Has.Some.StartsWith("Walk__cold_"), "O0275's helper must be a routing target of its own");
       Assert.That(routed.Generator.BackendRoutedNames, Does.Contain("Walk"),
         "the procedure the region was lifted out of must stay on the native backend");
-      Assert.That((routedResult.Output, routedResult.ExitCode),
-        Is.EqualTo((directResult.Output, directResult.ExitCode)),
-        "the outlined helper's ABI must be observationally identical to the direct emitter");
-      Assert.That(routedResult.Output, Is.Not.Empty);
+      // Walk 2 never takes the cold EXIT SUB and prints; Walk 7 takes it on the first trip and does not
+      Assert.That((routedResult.Output, routedResult.ExitCode), Is.EqualTo(("done 2 \r\n", 0)),
+        "the outlined helper's ABI must leave the caller's control flow intact");
     });
   }
 
@@ -99,9 +96,7 @@ public sealed class BackendColdCodeOutliningTests {
       END FUNCTION
       """;
 
-    var direct = Compile(source, routed: false);
-    var routed = Compile(source, routed: true);
-    var directResult = Cpu8086.Run(direct.Image);
+    var routed = Compile(source);
     var routedResult = Cpu8086.Run(routed.Image);
 
     Assert.Multiple(() => {
@@ -109,9 +104,8 @@ public sealed class BackendColdCodeOutliningTests {
         Has.Some.StartsWith("main__cold_"), "the module body's cold arm must be outlined and routed");
       Assert.That(routed.Generator.BackendRoutedNames, Does.Contain("main"),
         "a module body that outlines a cold arm must still be owned by the back end");
-      Assert.That((routedResult.Output, routedResult.ExitCode),
-        Is.EqualTo((directResult.Output, directResult.ExitCode)));
-      Assert.That(routedResult.Output, Is.Not.Empty);
+      Assert.That((routedResult.Output, routedResult.ExitCode), Is.EqualTo(("zero\r\npath\r\ntaken\r\n", 0)),
+        "n is 0, so the cold arm runs and ENDs before the hot PRINT");
     });
   }
 }

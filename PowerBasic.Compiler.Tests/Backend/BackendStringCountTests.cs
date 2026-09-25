@@ -67,6 +67,6 @@ public sealed class BackendStringCountTests {
   public void Route_GivenALongCount_ThenTheModuleBodyIsTakenByTheBackEnd() {
     var (_, routed) = Run(optimize: false);
 
-    Assert.That(routed, Does.Contain("main"), "a LONG count must not send the body to the direct emitter");
+    Assert.That(routed, Does.Contain("main"), "a LONG count must not make the body decline");
   }
 }

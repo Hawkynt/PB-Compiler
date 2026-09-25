@@ -5,15 +5,13 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// The direct-emitter retirement question, asked directly: would the corpus still compile if
-/// <c>CodeGen/</c> were not there?
+/// Every corpus program compiles with routing mandatory: there is no fallback emitter, so a body the
+/// back end does not take is a compile error carrying the routing's own reason, and this collects
+/// those errors over the whole differential corpus.
 ///
 /// <para>
-/// Every other gate answers it only indirectly, and a fallback is why. With one present a decline is
-/// invisible - the program still compiles, the differential still agrees, the coverage census still
-/// counts the body - because for that body BOTH sides ran the same emitter. <c>RequireBackend</c>
-/// removes the fallback: a body the back end does not take becomes a compile error carrying the
-/// routing's own reason.
+/// This was the direct-emitter retirement question - would the corpus still compile without
+/// <c>CodeGen/</c>? - asked while a fallback still hid every decline behind a program that compiled.
 /// </para>
 /// <para>
 /// A bodiless EXTERNAL declaration is exempt and that is not a loophole: it is a link import with no
@@ -63,7 +61,7 @@ public sealed class MandatoryRoutingTests {
   /// </summary>
   [TestCase(false)]
   [TestCase(true)]
-  public void Compile_GivenTheCorpusWithRoutingMandatory_ThenNothingFallsBackToTheDirectEmitter(bool optimize) {
+  public void Compile_GivenTheCorpusWithRoutingMandatory_ThenTheRoutingRefusesNoBody(bool optimize) {
     var refused = new List<string>();
     var programs = 0;
     foreach (var path in CorpusPrograms()) {
@@ -74,7 +72,7 @@ public sealed class MandatoryRoutingTests {
 
     Assume.That(programs, Is.GreaterThan(0), "no corpus programs found");
     Assert.That(refused, Is.Empty,
-      $"{refused.Count} of {programs} corpus programs would not compile without the direct emitter:"
+      $"{refused.Count} of {programs} corpus programs were refused by the mandatory routing:"
         + Environment.NewLine + string.Join(Environment.NewLine, refused.Take(25)));
   }
 }

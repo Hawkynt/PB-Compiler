@@ -32,19 +32,14 @@ public sealed class BackendStackConventionRoutingTests {
   [TestCase("CDECL", true)]
   [TestCase("STDCALL", false)]
   [TestCase("STDCALL", true)]
-  public void Procedure_GivenStackConvention_ThenRoutedAndDirectExecutionAgree(string convention, bool optimize) {
+  public void Procedure_GivenStackConvention_ThenArgumentsArriveInOrderAndTheStackIsRestored(string convention, bool optimize) {
     var source = Source(convention);
     var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("S"), $"{convention} procedure did not route");
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var directImage = direct.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-
-    var expected = Cpu8086.Run(directImage);
     var actual = Cpu8086.Run(routedImage);
-    Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((expected.Output, expected.ExitCode)));
+    Assert.That((actual.Output.Trim().Replace("\r\n", "|"), actual.ExitCode), Is.EqualTo(("1  2 | 3  4 | 99", 0)));
   }
 }

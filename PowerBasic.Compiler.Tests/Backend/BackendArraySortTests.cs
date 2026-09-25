@@ -13,10 +13,9 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// and a segment register is not a value the IR can name, so <c>rt_arr_desc</c> builds it from the near
 /// address and the bounds the lowering does know (DosRuntime.ArrayDesc).
 ///
-/// Every case here asserts the actual sorted values as well as agreement with the direct emitter. A
-/// comparison alone would pass on a misunderstanding the two paths shared - and they share the whole
-/// runtime, so a wrong descriptor field or a wrong element width is exactly the kind of mistake that
-/// would be invisible to it. It is only invisible until someone reads the numbers.
+/// Every case here asserts the actual sorted values. A wrong descriptor field or a wrong element
+/// width produces a plausible order rather than a failure, and it is only invisible until someone
+/// reads the numbers.
 /// </summary>
 [TestFixture]
 public sealed class BackendArraySortTests {
@@ -27,27 +26,20 @@ public sealed class BackendArraySortTests {
     return model;
   }
 
-  /// <summary>Runs the program both ways, insisting the back end really took the code under test.</summary>
-  private static (string Direct, string Routed) RunBothWays(string source, string[] mustRoute, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var directImage = direct.EmitExecutable();
-    var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Is.SupersetOf(mustRoute),
-      "the back end did not take the code under test, so this compares the direct emitter with itself");
+  /// <summary>Runs the program, insisting the back end really took the code under test.</summary>
+  private static string Run(string source, string[] mustRoute, bool optimize) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Is.SupersetOf(mustRoute),
+      "the back end did not take the code under test");
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output;
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return Cpu8086.Run(image).Output;
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return "";
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"));
   }
 
   /// <summary>PB pads printed numbers with sign and trailing blanks; the VALUES are what these tests are about.</summary>
@@ -57,27 +49,26 @@ public sealed class BackendArraySortTests {
     .Select(line => string.Join(" ", line.Split(' ', StringSplitOptions.RemoveEmptyEntries)))
     .ToArray();
 
-  private static void AssertAgreeAndRead(string source, params string[] expected)
-    => AssertRoutedAgreeAndRead(source, ["main"], expected);
+  private static void AssertReads(string source, params string[] expected)
+    => AssertRoutedAndReads(source, ["main"], expected);
 
   /// <summary>
   /// Both optimization settings, for the reason the corpus differential runs both: they are different
-  /// emitters. With the optimizer off there is no CSE, no SCCP, no register residency and no runtime
+  /// builds. With the optimizer off there is no CSE, no SCCP, no register residency and no runtime
   /// TRIMMING - so the section a routed call reaches for is resolved one way in one build and simply
   /// present in the other, and only running both says that both resolve.
   /// </summary>
-  private static void AssertRoutedAgreeAndRead(string source, string[] mustRoute, params string[] expected) {
+  private static void AssertRoutedAndReads(string source, string[] mustRoute, params string[] expected) {
     foreach (var optimize in new[] { true, false }) {
-      var (direct, routed) = RunBothWays(source, mustRoute, optimize);
-      Assert.That(routed, Is.EqualTo(direct), $"the two back ends disagree (optimize={optimize})");
-      Assert.That(Lines(routed).Take(expected.Length), Is.EqualTo(expected).AsCollection,
-        $"...and the answer both give is not the one BASIC gives (optimize={optimize})");
+      var output = Run(source, mustRoute, optimize);
+      Assert.That(Lines(output).Take(expected.Length), Is.EqualTo(expected).AsCollection,
+        $"the answer is not the one BASIC gives (optimize={optimize})");
     }
   }
 
   [Test]
-  public void Run_GivenAnIntegerArraySort_ThenBothPathsSortItAscendingThenDescending() {
-    AssertAgreeAndRead("""
+  public void Run_GivenAnIntegerArraySort_ThenItSortsAscendingThenDescending() {
+    AssertReads("""
       DIM a%(1 TO 6)
       a%(1)=30 : a%(2)=10 : a%(3)=50 : a%(4)=20 : a%(5)=40 : a%(6)=5
       ARRAY SORT a%(1)
@@ -96,7 +87,7 @@ public sealed class BackendArraySortTests {
   /// </summary>
   [Test]
   public void Run_GivenAStartElementAndACount_ThenOnlyThatWindowMoves() {
-    AssertAgreeAndRead("""
+    AssertReads("""
       DIM b%(1 TO 6)
       b%(1)=6 : b%(2)=5 : b%(3)=4 : b%(4)=3 : b%(5)=2 : b%(6)=1
       ARRAY SORT b%(2) FOR 3
@@ -112,7 +103,7 @@ public sealed class BackendArraySortTests {
   /// </summary>
   [Test]
   public void Run_GivenANonUnitLowerBound_ThenTheDescriptorStillAddressesTheRightElements() {
-    AssertAgreeAndRead("""
+    AssertReads("""
       DIM c%(-2 TO 2)
       c%(-2)=9 : c%(-1)=7 : c%(0)=8 : c%(1)=6 : c%(2)=5
       ARRAY SORT c%(-2)
@@ -130,7 +121,7 @@ public sealed class BackendArraySortTests {
   /// </summary>
   [Test]
   public void Run_GivenEveryNumericWidth_ThenEachSortsByValueRatherThanByBytes() {
-    AssertAgreeAndRead("""
+    AssertReads("""
       DIM b&(1 TO 4)
       b&(1)=100000 : b&(2)=-5 : b&(3)=99999 : b&(4)=0
       ARRAY SORT b&(1)
@@ -171,7 +162,7 @@ public sealed class BackendArraySortTests {
   /// </summary>
   [Test]
   public void Run_GivenATagArray_ThenTheParallelArrayFollowsTheKeysOrder() {
-    AssertAgreeAndRead("""
+    AssertReads("""
       DIM kk%(1 TO 4)
       DIM tt&(1 TO 4)
       kk%(1)=30 : kk%(2)=10 : kk%(3)=20 : kk%(4)=40
@@ -200,7 +191,7 @@ public sealed class BackendArraySortTests {
   /// </summary>
   [Test]
   public void Run_GivenAComputedStartIndex_ThenTheDefaultCountRunsToTheEndOfTheArray() {
-    AssertAgreeAndRead("""
+    AssertReads("""
       DIM b%(1 TO 6)
       b%(1)=6 : b%(2)=5 : b%(3)=4 : b%(4)=3 : b%(5)=2 : b%(6)=1
       k% = 2
@@ -213,7 +204,7 @@ public sealed class BackendArraySortTests {
 
   [Test]
   public void Run_GivenANumericArrayScan_ThenEachRelopAnswersItsFirstMatchingPosition() {
-    AssertAgreeAndRead("""
+    AssertReads("""
       DIM a%(1 TO 6)
       a%(1)=5 : a%(2)=10 : a%(3)=20 : a%(4)=30 : a%(5)=40 : a%(6)=50
       ARRAY SCAN a%(1), = 20, TO s% : PRINT s%
@@ -247,8 +238,8 @@ public sealed class BackendArraySortTests {
     """;
 
   [Test]
-  public void Run_GivenAStringArraySort_ThenBothPathsOrderTheHandlesByTheirBytes() {
-    AssertRoutedAgreeAndRead($"""
+  public void Run_GivenAStringArraySort_ThenTheHandlesAreOrderedByTheirBytes() {
+    AssertRoutedAndReads($"""
       DECLARE SUB Ascending()
       DECLARE SUB Descending()
       {_stringArray}
@@ -278,7 +269,7 @@ public sealed class BackendArraySortTests {
   /// </summary>
   [Test]
   public void Run_GivenAStringArrayScan_ThenTheRelopAndTheCharacterWindowBothApply() {
-    AssertRoutedAgreeAndRead($"""
+    AssertRoutedAndReads($"""
       DECLARE SUB Ascending()
       DECLARE SUB Scans()
       DECLARE SUB Windowed()
@@ -327,7 +318,7 @@ public sealed class BackendArraySortTests {
   /// </summary>
   [Test]
   public void Run_GivenManyStringScans_ThenTheMatchHandleIsReleasedEachTime() {
-    AssertRoutedAgreeAndRead($"""
+    AssertRoutedAndReads($"""
       DECLARE SUB Repeatedly()
       {_stringArray}
       Repeatedly

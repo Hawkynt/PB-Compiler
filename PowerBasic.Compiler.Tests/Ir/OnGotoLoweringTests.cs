@@ -59,7 +59,7 @@ public sealed class OnGotoLoweringTests {
 
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
     Assert.That(LlvmEmitter.Emit(module!), Does.Contain("@rt_print_i16(i16 11)"),
-      "the direct emitter coerces 65537& to INTEGER 1 before ON GOTO dispatch");
+      "65537& is coerced to INTEGER 1 before ON GOTO dispatch");
   }
 
   [Test]

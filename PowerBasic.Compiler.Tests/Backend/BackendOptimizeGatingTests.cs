@@ -13,7 +13,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <para>
 /// The measurement needs three assertions and not one, because two of the ways it can go wrong look
 /// like a pass. The subject must still be ROUTED unoptimized - gating that simply stopped the back
-/// end taking the function would make the size comparison a statement about the direct emitter - and
+/// end taking the function would make the size comparison a statement about something else - and
 /// the unoptimized build must still be a correct program, since running fewer passes is only worth
 /// anything if what comes out still computes. Only then does "the optimized build is smaller" say
 /// what it looks like it says.
@@ -52,7 +52,7 @@ public sealed class BackendOptimizeGatingTests {
     return model;
   }
 
-  private static CodeGenerator Compile(bool optimize, bool routed, out byte[] image) {
+  private static CodeGenerator Compile(bool optimize, out byte[] image) {
     var generator = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize};
     image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
@@ -92,21 +92,21 @@ public sealed class BackendOptimizeGatingTests {
 
   [Test]
   public void Emit_GivenARoutedProcedure_WhenTheOptimizerIsOff_ThenTheBackEndStillTakesIt() {
-    var optimized = Compile(optimize: true, routed: true, out _);
-    var plain = Compile(optimize: false, routed: true, out _);
+    var optimized = Compile(optimize: true, out _);
+    var plain = Compile(optimize: false, out _);
 
     Assert.Multiple(() => {
       Assert.That(optimized.BackendRoutedNames, Does.Contain("Cse"));
       Assert.That(plain.BackendRoutedNames, Does.Contain("Cse"),
         "gating the pipeline must not un-route the function - otherwise the size comparison below "
-        + "measures the direct emitter");
+        + "measures something other than the back end");
     });
   }
 
   [Test]
   public void Emit_GivenARoutedCommonSubexpression_WhenTheOptimizerIsOff_ThenItIsComputedTwice() {
-    var optimized = Compile(optimize: true, routed: true, out var optimizedImage);
-    var plain = Compile(optimize: false, routed: true, out var plainImage);
+    var optimized = Compile(optimize: true, out var optimizedImage);
+    var plain = Compile(optimize: false, out var plainImage);
 
     Assert.Multiple(() => {
       Assert.That(MultipliesIn(optimized, optimizedImage, "Cse"), Is.EqualTo(1),
@@ -118,9 +118,9 @@ public sealed class BackendOptimizeGatingTests {
   }
 
   [Test]
-  public void Run_GivenARoutedProcedure_WhenTheOptimizerIsOff_ThenItPrintsWhatTheDirectPathPrints() {
-    Compile(optimize: false, routed: false, out var directImage);
-    Compile(optimize: false, routed: true, out var routedImage);
+  public void Run_GivenARoutedProcedure_WhenTheOptimizerIsOff_ThenItPrintsWhatTheOptimizedBuildPrints() {
+    Compile(optimize: true, out var optimizedImage);
+    Compile(optimize: false, out var plainImage);
 
     string Execute(byte[] image, string which) {
       try {
@@ -131,9 +131,10 @@ public sealed class BackendOptimizeGatingTests {
       }
     }
 
-    var direct = Execute(directImage, "direct");
-    Assert.That(Execute(routedImage, "routed"), Is.EqualTo(direct));
-    Assert.That(direct.Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
+    var plain = Execute(plainImage, "unoptimized");
+    Assert.That(plain, Is.EqualTo(Execute(optimizedImage, "optimized")));
+    // (1*345 + 2) * 2 = 694 and (3*345 + 4) * 2 = 2078
+    Assert.That(plain.Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
       Is.EqualTo(new[] { "gate", "694", "gate", "2078" }));
   }
 }

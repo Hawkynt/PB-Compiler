@@ -248,65 +248,48 @@ public sealed class BackendGlobalAccessTests {
 
   [Test]
   public void Emit_GivenRoutedGlobalAccess_ThenTheImageAssemblesAndTheBackEndTookTheFunction() {
-    var direct = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true};
     var routed = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true};
 
-    var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routedImage, Is.Not.Empty);
     // an unresolved data reference would have thrown while the fixups resolved
     Assert.That(routed.BackendRoutedNames, Does.Contain("AddG"),
       "the back end did not take the global-reading function");
-    Assert.That(directImage, Is.Not.Empty);
   }
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenSharedArrayAndPersistentStatics_ThenBothEmittersAgreeWithoutFallback(bool optimize) {
-    var direct = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
-      Optimize = optimize,
-    };
+  public void Execute_GivenSharedArrayAndPersistentStatics_ThenPrintsTheSharedAndStaticValues(bool optimize) {
     var routed = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
       Optimize = optimize,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames,
       Is.SupersetOf(new[] { "Touch", "First", "Second", "main" }),
-      "the feature under test must not pass through the direct-emitter fallback");
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-    Assert.That(directCpu.Output.Trim().Replace("\r\n", "|"), Is.EqualTo("12  12 | 1  2  10  3  20"));
+      "the feature under test must not be dropped from the back end");
+    Assert.That(routedCpu.Output.Trim().Replace("\r\n", "|"), Is.EqualTo("12  12 | 1  2  10  3  20"));
   }
 
   [Test]
   public void Execute_GivenSharedScalarSwap_WhenRouted_ThenXchgUpdatesBothObservedCells() {
-    var direct = new CodeGenerator(Bind(_sharedSwapProgram)) {
-      Optimize = true,
-      OptimizeSpeed = true,
-    };
     var routed = new CodeGenerator(Bind(_sharedSwapProgram)) {
       Optimize = true,
       OptimizeSpeed = true,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedImage = routed.EmitExecutable();
     var routedCpu = Cpu8086.Run(routedImage);
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.Multiple(() => {
       Assert.That(routed.BackendRoutedNames, Is.SupersetOf(new[] { "Show", "main" }),
         "both the exchange and its observer must stay on the routed path");
       Assert.That(routedImage, Does.Contain((byte)0x87), "the crossed stores fold to XCHG r16,r/m16");
-      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
       Assert.That(routedCpu.Output.Trim(), Is.EqualTo("2  1"));
     });
   }

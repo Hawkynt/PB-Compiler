@@ -360,7 +360,7 @@ public sealed class BackendSpillTests {
   }
 
   [Test]
-  public void Run_GivenARematerializedLocalArrayAddress_ThenBothBackendsObserveTheSameValues() {
+  public void Run_GivenARematerializedLocalArrayAddress_ThenTheElementsReadBackTheirValues() {
     const string source = """
       SUB Work() NOINLINE
         DIM values%(0 TO 20)
@@ -377,15 +377,13 @@ public sealed class BackendSpillTests {
     var trace = string.Join(Environment.NewLine, machine.AllInstructions)
       + Environment.NewLine + string.Join(", ", allocation!.OrderBy(pair => pair.Key)
         .Select(pair => $"v{pair.Key}={pair.Value}"));
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
-    Assert.That(routed.BackendRoutedNames, Does.Contain("Work"), "the back end did not take the array function");
-    Assert.That(routedCpu.ExitCode, Is.EqualTo(directCpu.ExitCode));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output), trace);
+    Assert.That(generator.BackendRoutedNames, Does.Contain("Work"), "the back end did not take the array function");
+    Assert.That(cpu.ExitCode, Is.Zero);
+    Assert.That(cpu.Output, Is.EqualTo("idx 5  0 \r\n"), trace);
   }
 
   [Test]
@@ -400,24 +398,21 @@ public sealed class BackendSpillTests {
   }
 
   [Test]
-  public void Run_GivenSplitLoopCarriedPhi_ThenBothBackendsWriteTheSameFile() {
-    var direct = new CodeGenerator(Bind(_loopCarriedAcrossFilePrints)) {
-      Optimize = true,
-    };
-    var routed = new CodeGenerator(Bind(_loopCarriedAcrossFilePrints)) {
+  public void Run_GivenSplitLoopCarriedPhi_ThenTheFileHoldsTheRunningTotals() {
+    var generator = new CodeGenerator(Bind(_loopCarriedAcrossFilePrints)) {
       Optimize = true,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the back end did not take the loop body");
-    Assert.That(routedCpu.ExitCode, Is.EqualTo(directCpu.ExitCode));
-    Assert.That(routedCpu.FileContent("O.TXT"), Is.EqualTo(directCpu.FileContent("O.TXT")));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the back end did not take the loop body");
+    Assert.That(cpu.ExitCode, Is.Zero);
+    // the first pass adds nothing, then 2 and 3
+    Assert.That(cpu.FileContent("O.TXT"), Is.EqualTo("total 1  0 \r\ntotal 2  2 \r\ntotal 3  5 \r\n"));
   }
 
   [Test]
-  public void Run_GivenSplitWrappedByteLoop_ThenBothBackendsWriteTheSameValues() {
+  public void Run_GivenSplitWrappedByteLoop_ThenTheCounterWrapsUntilTheExit() {
     var machine = Select(_wrappedByteLoop, "main");
     MachineScheduler.Schedule(machine);
     var before = $"before allocation ({machine.StackSlots.Count} slots):\n" +
@@ -428,22 +423,20 @@ public sealed class BackendSpillTests {
       string.Join(Environment.NewLine, machine.AllInstructions)
       + Environment.NewLine + string.Join(", ", allocation!.OrderBy(pair => pair.Key)
         .Select(pair => $"v{pair.Key}={pair.Value}"));
-    var direct = new CodeGenerator(Bind(_wrappedByteLoop)) {
-      Optimize = true,
-    };
-    var routed = new CodeGenerator(Bind(_wrappedByteLoop)) {
+    var generator = new CodeGenerator(Bind(_wrappedByteLoop)) {
       Optimize = true,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-    Assert.That(routedCpu.FileContent("O.TXT"), Is.EqualTo(directCpu.FileContent("O.TXT")), trace);
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    // a BYTE counter never passes 255, so it wraps to 0 and the loop only ends on the EXIT FOR: the
+    // 301st pass is 45 past the wrap, as genuine PBC 3.50 prints too
+    Assert.That(cpu.FileContent("O.TXT"), Is.EqualTo(" 301  45 \r\n"), trace);
   }
 
   [Test]
-  public void Run_GivenDescendingUnsignedLoop_ThenBothBackendsWriteTheSameValue() {
+  public void Run_GivenDescendingUnsignedLoop_ThenTheBodyNeverRunsAsInPb() {
     var machine = Select(_descendingUnsignedLoop, "main");
     MachineScheduler.Schedule(machine);
     var allocation = LinearScanAllocator.Allocate(machine);
@@ -452,17 +445,15 @@ public sealed class BackendSpillTests {
         machine.AllInstructions.Select(instruction => $"{instruction} [{instruction.Condition}]"))
       + Environment.NewLine + string.Join(", ", allocation!.OrderBy(pair => pair.Key)
         .Select(pair => $"v{pair.Key}={pair.Value}"));
-    var direct = new CodeGenerator(Bind(_descendingUnsignedLoop)) {
-      Optimize = true,
-    };
-    var routed = new CodeGenerator(Bind(_descendingUnsignedLoop)) {
+    var generator = new CodeGenerator(Bind(_descendingUnsignedLoop)) {
       Optimize = true,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-    Assert.That(routedCpu.FileContent("O.TXT"), Is.EqualTo(directCpu.FileContent("O.TXT")), trace);
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    // genuine PBC 3.50 never enters this loop - it prints 0 (checked with scripts/diff-one.sh) -
+    // and a counter that did run once would wrap past 0 and leave only on the EXIT FOR, at 6
+    Assert.That(cpu.FileContent("O.TXT"), Is.EqualTo(" 0 \r\n"), trace);
   }
 }

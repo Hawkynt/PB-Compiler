@@ -443,7 +443,7 @@ public static partial class Mos6502Compiler {
             this._asm.Memory(Lda, fixedAddress.Plus(k));
           } else {
             this._asm.Immediate(Ldy, k);
-            this._asm.IndirectY(Lda, 0x02);
+            this._asm.IndirectY(Lda, Zp.Ptr);
           }
           this._asm.Memory(Sta, destination.Plus(k));
         }
@@ -459,7 +459,7 @@ public static partial class Mos6502Compiler {
             this._asm.Memory(Sta, fixedAddress.Plus(k));
           } else {
             this._asm.Immediate(Ldy, k);
-            this._asm.IndirectY(Sta, 0x02);
+            this._asm.IndirectY(Sta, Zp.Ptr);
           }
         }
       }

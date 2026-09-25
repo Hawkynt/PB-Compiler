@@ -20,7 +20,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendFixBcdTests {
 
-  private static (string Output, IEnumerable<string> Routed) Run(string source, bool routed) {
+  private static (string Output, IEnumerable<string> Routed) Run(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = true};
@@ -29,10 +29,9 @@ public sealed class BackendFixBcdTests {
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
   }
 
-  private static void BothPathsAgree(string source, string expected) {
-    var (routed, names) = Run(source, routed: true);
+  private static void Prints(string source, string expected) {
+    var (routed, names) = Run(source);
     Assert.That(names, Does.Contain("main"), "the back end has to have taken the module body");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false).Output), "the two emitters disagree");
     Assert.That(routed, Is.EqualTo(expected));
   }
 
@@ -43,7 +42,7 @@ public sealed class BackendFixBcdTests {
   /// </summary>
   [Test]
   public void Route_GivenFixAssignments_ThenTheValueIsRoundedToTwoDecimalsAtTheStore() =>
-    BothPathsAgree("""
+    Prints("""
       f@ = 1.23456
       PRINT f@
       f@ = 2.555
@@ -59,7 +58,7 @@ public sealed class BackendFixBcdTests {
   /// </summary>
   [Test]
   public void Route_GivenFixArithmetic_ThenItComputesInExtendedAndQuantizesOnlyOnStore() =>
-    BothPathsAgree("""
+    Prints("""
       g@ = 10
       h@ = 3
       PRINT g@ / h@
@@ -77,7 +76,7 @@ public sealed class BackendFixBcdTests {
   /// </summary>
   [Test]
   public void Route_GivenBcdArithmetic_ThenItBehavesAsTheExtendedFloatItIs() =>
-    BothPathsAgree("""
+    Prints("""
       b@@ = 1.5
       c@@ = 0.0625
       PRINT b@@ + c@@
@@ -105,7 +104,7 @@ public sealed class BackendFixBcdTests {
   /// </summary>
   [Test]
   public void Route_GivenFixSuffixedLiterals_ThenTheyReachTheCellThroughTheRuntimeScaling() =>
-    BothPathsAgree("""
+    Prints("""
       v@ = 1.5@
       PRINT v@
       w@ = 2@
@@ -117,7 +116,7 @@ public sealed class BackendFixBcdTests {
   /// <summary>A FIX cell is eight bytes and a BCD cell ten - the sizes the two types are declared at.</summary>
   [Test]
   public void Route_GivenSizeof_ThenFixIsEightBytesAndBcdTen() =>
-    BothPathsAgree("""
+    Prints("""
       f@ = 1
       b@@ = 1
       PRINT SIZEOF(f@); SIZEOF(b@@)
@@ -139,7 +138,7 @@ public sealed class BackendFixBcdTests {
   /// </summary>
   [Test]
   public void Route_GivenPbvFixDigitsChanged_ThenLaterFixStoresQuantizeAtTheNewScale() =>
-    BothPathsAgree("""
+    Prints("""
       x# = 1.23456
       PRINT pbvFixDigits
       f@ = x#
@@ -167,11 +166,10 @@ public sealed class BackendFixBcdTests {
       PRINT F(v@)
       """;
 
-    var (output, names) = Run(source, routed: true);
+    var (output, names) = Run(source);
 
     Assert.Multiple(() => {
       Assert.That(names, Does.Contain("F"), "the FIX-taking function did not route");
-      Assert.That(output, Is.EqualTo(Run(source, routed: false).Output), "the two emitters disagree");
       Assert.That(output, Is.EqualTo("2.4692"), "the runtime four-digit FIX scale was not preserved across the call");
     });
   }
@@ -224,7 +222,7 @@ public sealed class BackendFixBcdTests {
       DATA 1.23456
       """;
 
-    (string Output, IEnumerable<string> Routed) Compile(bool routed) {
+    (string Output, IEnumerable<string> Routed) Compile() {
       var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
         Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -234,11 +232,10 @@ public sealed class BackendFixBcdTests {
       return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
     }
 
-    var (output, names) = Compile(routed: true);
+    var (output, names) = Compile();
 
     Assert.Multiple(() => {
       Assert.That(names, Does.Contain("main"), "the unoptimized FIX round trip did not route");
-      Assert.That(output, Is.EqualTo(Compile(routed: false).Output), "the two emitters disagree");
       Assert.That(output, Is.EqualTo("1.23 | 2.46"), "quantized at the store, then read back and doubled");
     });
   }
@@ -246,8 +243,8 @@ public sealed class BackendFixBcdTests {
   /// <summary>
   /// A FIX RESULT crosses at the other representation from a FIX argument: the callee's epilogue
   /// converts the scaled cell through rt_fixdn and returns the NUMERIC value in ST(0), where a FIX
-  /// parameter travels as the raw scaled cell. The asymmetry is the direct emitter's, and matching it
-  /// exactly is what lets a routed callee and a direct caller agree.
+  /// parameter travels as the raw scaled cell. The asymmetry is the one the direct emitter established,
+  /// and a callee and its callers have to agree on it exactly.
   ///
   /// <para>
   /// pbvFixDigits is moved to four BEFORE the calls and the argument is not representable at two
@@ -272,7 +269,7 @@ public sealed class BackendFixBcdTests {
       PRINT F(1.0) * 3
       """;
 
-    (string Output, IEnumerable<string> Routed) Compile(bool routed) {
+    (string Output, IEnumerable<string> Routed) Compile() {
       var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
         Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -282,12 +279,11 @@ public sealed class BackendFixBcdTests {
       return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
     }
 
-    var (output, names) = Compile(routed: true);
+    var (output, names) = Compile();
 
     Assert.Multiple(() => {
       Assert.That(names, Does.Contain("F"),
-        "the FIX-returning function did not route - the comparison would compare the same image twice");
-      Assert.That(output, Is.EqualTo(Compile(routed: false).Output), "the two emitters disagree");
+        "the FIX-returning function did not route");
       Assert.That(output, Is.EqualTo("1.2346 |-1.2346 | .375"),
         "9.87654/8 is 1.2345675, which only reaches 1.2346 if the four-digit runtime scale survived "
         + "the return; 1/8 quantized and then tripled is .375");

@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Backend.Mos6502;
 using PowerBasic.Compiler.Cli;
 using PowerBasic.Compiler.Emit.Commodore;
 using PowerBasic.Compiler.Tests.Exec;
@@ -44,7 +45,7 @@ public sealed class Mos6502ProgramTests {
     Assert.Multiple(() => {
       Assert.That(result.Returned, Is.True, "the program returns to BASIC");
       Assert.That(result.StackPointer, Is.EqualTo(0xFF), "and leaves the hardware stack as it found it");
-      Assert.That(result.Memory[0x02..0x30], Is.All.Zero, "and BASIC's page zero as it found it");
+      Assert.That(result.Memory[Mos6502ZeroPage.First..(Mos6502ZeroPage.Last + 1)], Is.All.Zero, "and BASIC's page zero as it found it");
     });
     return result.Output.TrimEnd('\n');
   }

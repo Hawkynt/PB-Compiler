@@ -89,9 +89,9 @@ public sealed class WideIntegerTests {
   /// nothing above it. Both numbers fit a LONG, so the truncation can report them.
   /// </para>
   /// <para>
-  /// Run through BOTH back ends, because the two compute it differently on purpose: the direct emitter
-  /// walks the words with <c>ADC</c>/<c>SBB</c> and the routed one adds each word in thirty-two bits,
-  /// the IR having no way to name a flag between two instructions.
+  /// The back end adds each word in thirty-two bits rather than walking the words with
+  /// <c>ADC</c>/<c>SBB</c>, the IR having no way to name a flag between two instructions - so the
+  /// carry is recovered from bit 16 of each partial sum, and that is what these values pin.
   /// </para>
   /// </summary>
   [Test]
@@ -118,12 +118,8 @@ public sealed class WideIntegerTests {
       PRINT lo&
       """;
 
-    var routed = Run(source, routed: true);
-    Assert.Multiple(() => {
-      Assert.That(routed, Is.EqualTo(Run(source, routed: false)), "the two back ends agree");
-      Assert.That(routed, Is.EqualTo("131070 |-1 |-5"),
-        "the carry left word zero, the borrow entered it, and a negative constant sign-extended");
-    });
+    Assert.That(Run(source), Is.EqualTo("131070 |-1 |-5"),
+      "the carry left word zero, the borrow entered it, and a negative constant sign-extended");
   }
 
   /// <summary>
@@ -149,22 +145,17 @@ public sealed class WideIntegerTests {
       PRINT lo&
       """;
 
-    var routed = Run(source, routed: true);
-    Assert.Multiple(() => {
-      Assert.That(routed, Is.EqualTo(Run(source, routed: false)), "the two back ends agree");
-      Assert.That(routed, Is.EqualTo("-5 |-1"), "both widened with their own sign");
-    });
+    Assert.That(Run(source), Is.EqualTo("-5 |-1"), "both widened with their own sign");
   }
 
-  private static string Run(string source, bool routed) {
+  private static string Run(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model) { Optimize = false};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
-    if (routed)
-      Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the body must route");
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the body must route");
     return Exec.Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
   }
 

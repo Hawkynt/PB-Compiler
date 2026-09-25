@@ -118,7 +118,7 @@ public sealed class BackendPhiSwapTests {
   /// </summary>
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenALoopCarriedSwap_WhenRouted_ThenItAgreesWithTheDirectBuild(bool optimize) {
+  public void Execute_GivenALoopCarriedSwap_WhenRouted_ThenTheOddSwapCountExchangesThePair(bool optimize) {
     // the values come out of DATA, so nothing folds the loop away and prints the answer
     const string source = """
       DIM a AS INTEGER, b AS INTEGER, t AS INTEGER, i AS INTEGER
@@ -133,18 +133,14 @@ public sealed class BackendPhiSwapTests {
       DATA 3, 8
       """;
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
     Assert.Multiple(() => {
-      Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-      Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
-      Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the module body did not route");
-      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the module body did not route");
       // five swaps of a pair is one swap
-      Assert.That(string.Join(" ", routedCpu.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)),
+      Assert.That(string.Join(" ", cpu.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)),
         Is.EqualTo("8 3"));
     });
   }

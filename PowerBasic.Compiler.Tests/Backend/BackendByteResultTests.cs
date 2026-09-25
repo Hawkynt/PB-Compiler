@@ -51,7 +51,7 @@ public sealed class BackendByteResultTests {
     r% = Signed(0) : PRINT r%
     """;
 
-  private static (string Output, IEnumerable<string> Routed) Run(bool routed, bool optimize) {
+  private static (string Output, IEnumerable<string> Routed) Run(bool optimize) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(_source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model) { Optimize = optimize};
@@ -66,12 +66,10 @@ public sealed class BackendByteResultTests {
   /// because they need different instructions - <c>XOR AH,AH</c> against <c>CBW</c> - and a fix that
   /// zero-extends everything would pass the first two lines and fail the third.
   /// </summary>
-  [TestCase(false, false)]
-  [TestCase(false, true)]
-  [TestCase(true, false)]
-  [TestCase(true, true)]
-  public void Run_GivenAByteResultFromACalleeThatDirtiesAh_ThenTheWholeWordIsTheValue(bool routed, bool optimize) {
-    var (output, _) = Run(routed, optimize);
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Run_GivenAByteResultFromACalleeThatDirtiesAh_ThenTheWholeWordIsTheValue(bool optimize) {
+    var (output, _) = Run(optimize);
 
     Assert.That(output, Is.EqualTo("1 | 0 |-3 | 2"),
       "a BYTE result must arrive zero-extended and an SBYTE one sign-extended");
@@ -88,13 +86,12 @@ public sealed class BackendByteResultTests {
   /// produced by it any more, and pinning main to the direct emitter to keep it would be asserting a
   /// gap rather than a behaviour. What still holds - and is what the fixture above actually needs -
   /// is that the byte-returning callee routes, so the values it asserts are this back end's answer
-  /// and not the other one's. The routed/direct comparison moved into those four cases, which run
-  /// both paths over the same source.
+  /// and not the other one's.
   /// </para>
   /// </summary>
   [Test]
   public void Route_GivenAByteResult_ThenTheByteReturningCalleeRoutes() {
-    var (_, routed) = Run(routed: true, optimize: false);
+    var (_, routed) = Run(optimize: false);
 
     Assert.Multiple(() => {
       Assert.That(routed, Does.Contain("Flag"), "the byte-returning callee must route");

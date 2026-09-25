@@ -7,14 +7,14 @@ namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
 /// The metastatements that describe the COMPILATION rather than the run - <c>$DYNAMIC</c>,
-/// <c>$STATIC</c>, <c>$OPTION</c>, <c>$DIM</c>, <c>$STACK</c> - over both back ends.
+/// <c>$STATIC</c>, <c>$OPTION</c>, <c>$DIM</c>, <c>$STACK</c> - through the x86-16 back end.
 ///
 /// <para>
 /// Each is consumed before or beside the emission of the statement list: <c>$DYNAMIC</c>/<c>$STATIC</c>
 /// and <c>$OPTION SIGNED</c> by the BINDER, <c>$OPTION VIDEO</c> through a model flag, and
 /// <c>$OPTION CNTLBREAK</c> and <c>$STACK</c> by a codegen pre-pass over <c>model.MetaStatements</c>.
 /// None of them is an instruction, so a routed module body - which never walks the statement list -
-/// gets exactly what a directly emitted one gets. The IR lowering nonetheless RAISED on all five,
+/// has nothing to emit for them. The IR lowering nonetheless RAISED on all five,
 /// which took the whole module off the routed path over a directive with nothing to emit.
 /// </para>
 /// <para>
@@ -29,7 +29,7 @@ public sealed class BackendMetaStatementTests {
 
   /// <param name="Label">how the case reads in the test list.</param>
   /// <param name="Source">the whole program.</param>
-  /// <param name="Expected">what both builds must print.</param>
+  /// <param name="Expected">what the optimized and the unoptimized build must both print.</param>
   public sealed record Program(string Label, string Source, string Expected) {
     public override string ToString() => this.Label;
   }
@@ -98,21 +98,17 @@ public sealed class BackendMetaStatementTests {
   }
 
   [TestCaseSource(nameof(_programs))]
-  public void Compile_GivenAMetastatementProgram_WhenRoutingIsEnabled_ThenTheModuleBodyRoutesAndAgrees(Program program) {
+  public void Compile_GivenAMetastatementProgram_WhenRoutingIsEnabled_ThenTheModuleBodyRoutesAndPrintsTheExpectedOutput(Program program) {
     foreach (var optimize in new[] { true, false }) {
-      var direct = new CodeGenerator(Bind(program.Source)) { Optimize = optimize};
       var routed = new CodeGenerator(Bind(program.Source)) { Optimize = optimize};
-      var directImage = direct.EmitExecutable();
       var routedImage = routed.EmitExecutable();
       Assert.Multiple(() => {
-        Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
         Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
         Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
-          $"[optimize={optimize}] the module body did not route, so the run below compares nothing: "
+          $"[optimize={optimize}] the module body did not route: "
             + string.Join(" | ", routed.BackendDeclines.Select(d => d.Name + ": " + d.Reason)));
-        var directOutput = Cpu8086.Run(directImage).Output;
-        Assert.That(Cpu8086.Run(routedImage).Output, Is.EqualTo(directOutput), $"[optimize={optimize}]");
-        Assert.That(directOutput.Replace("\r", "").Trim(), Is.EqualTo(program.Expected.Trim()),
+        var output = Cpu8086.Run(routedImage).Output;
+        Assert.That(output.Replace("\r", "").Trim(), Is.EqualTo(program.Expected.Trim()),
           $"[optimize={optimize}] the directive changed what the program means");
       });
     }

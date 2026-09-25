@@ -98,8 +98,12 @@ public sealed class Mos6502Assembler {
     this.Add(op, address.IsZeroPage && M6502Isa.Exists(op, zeroPage) ? zeroPage : absolute, address);
   }
 
-  /// <summary><c>op (zp),Y</c>.</summary>
-  public void IndirectY(M6502Op op, byte zeroPage) => this.Add(op, M6502Mode.IndirectIndexedY, M6502Address.Absolute(zeroPage));
+  /// <summary><c>op (pointer),Y</c>: the pointer is a page-zero cell pair.</summary>
+  public void IndirectY(M6502Op op, M6502Address pointer) {
+    if (!pointer.IsZeroPage || pointer.Offset == 0xFF)
+      throw new ArgumentException($"(pointer),Y needs a page-zero pointer, not ${pointer.Offset:X}", nameof(pointer));
+    this.Add(op, M6502Mode.IndirectIndexedY, pointer);
+  }
 
   /// <summary><c>JMP (address)</c>.</summary>
   public void JumpIndirect(M6502Address address) => this.Add(M6502Op.Jmp, M6502Mode.Indirect, address);

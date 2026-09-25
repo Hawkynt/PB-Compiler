@@ -98,7 +98,7 @@ public sealed class BackendPortOutTests {
 
   /// <summary>
   /// The premise. Before the IR named the operation this body declined, and the port traffic above
-  /// would then be the direct emitter's - correct, and proving nothing about this back end.
+  /// would then have been a fallback's - correct, and proving nothing about this back end.
   /// </summary>
   [Test]
   public void Route_GivenOut_ThenTheModuleBodyIsTakenByTheBackEnd() {
@@ -138,7 +138,7 @@ public sealed class BackendPortOutTests {
       PRINT " clear"
       """;
 
-    static (string Output, IEnumerable<string> Routed) Compile(string text, bool optimize, bool routed) {
+    static (string Output, IEnumerable<string> Routed) Compile(string text, bool optimize) {
       var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(text, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
       var generator = new CodeGenerator(model) { Optimize = optimize};
@@ -147,11 +147,8 @@ public sealed class BackendPortOutTests {
       return (Cpu8086.Run(image).Output.Trim(), generator.BackendRoutedNames.ToList());
     }
 
-    var (output, names) = Compile(source, optimize, routed: true);
+    var (output, names) = Compile(source, optimize);
     Assert.That(names, Does.Contain("main"), "a body containing WAIT must route now");
-    Assert.Multiple(() => {
-      Assert.That(output, Is.EqualTo(Compile(source, optimize, routed: false).Output));
-      Assert.That(output, Is.EqualTo("set clear"), "both polls left, and neither before its turn");
-    });
+    Assert.That(output, Is.EqualTo("set clear"), "both polls left, and neither before its turn");
   }
 }

@@ -23,7 +23,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendFloatWidthTests {
 
-  private static string Run(string body, bool routed) {
+  private static string Run(string body) {
     var source = body + "\nEND\n";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -33,22 +33,31 @@ public sealed class BackendFloatWidthTests {
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
   }
 
-  private static void Agrees(string body) =>
-    Assert.That(Run(body, routed: true), Is.EqualTo(Run(body, routed: false)));
+  private static void Prints(string body, string expected) =>
+    Assert.That(Run(body), Is.EqualTo(expected), "the answer is PB's");
 
   /// <summary>
-  /// As <see cref="Agrees"/>, and additionally that the module body ROUTED - without which the two
-  /// builds are one build and the comparison holds by construction.
+  /// A DOUBLE 2/3 at full width. Genuine PBC 3.50 prints <c>.666666666666667</c> (checked with
+  /// <c>scripts/diff-one.sh</c>, and this compiler's image prints the same under DOSBox), but
+  /// <see cref="Cpu8086"/> carries the x87 in a C# double and renders the fifteenth digit one low. So
+  /// the first fourteen digits are what is held here: the SINGLE-width fault prints
+  /// <c>.666666686534882</c> and fails at the eighth.
   /// </summary>
-  private static void AgreesRouted(string body, string expected) {
+  private static void PrintsADoubleTwoThirds(string body) =>
+    Assert.That(Run(body), Does.StartWith(".66666666666666"), "the quotient kept DOUBLE precision");
+
+  /// <summary>
+  /// As <see cref="Prints"/>, and additionally that the module body ROUTED, so the answer is the
+  /// back end's own and not a fallback's.
+  /// </summary>
+  private static void PrintsRouted(string body, string expected) {
     var source = body + "\nEND\n";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var routed = new CodeGenerator(model) { Optimize = true};
     routed.EmitExecutable();
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the back end did not take the module body under test");
-    Assert.That(Run(body, routed: true), Is.EqualTo(Run(body, routed: false)));
-    Assert.That(Run(body, routed: false), Is.EqualTo(expected), "and the answer is PB's");
+    Assert.That(Run(body), Is.EqualTo(expected), "and the answer is PB's");
   }
 
   /// <summary>
@@ -65,7 +74,7 @@ public sealed class BackendFloatWidthTests {
   /// </para>
   /// </summary>
   [Test]
-  public void Store_GivenAQuotientInASingle_ThenTheCellHoldsOnlySinglePrecision() => AgreesRouted("""
+  public void Store_GivenAQuotientInASingle_ThenTheCellHoldsOnlySinglePrecision() => PrintsRouted("""
     DECLARE FUNCTION G%(BYVAL v%)
     DIM p AS INTEGER, q AS INTEGER
     DIM sg AS SINGLE, db AS DOUBLE
@@ -88,7 +97,7 @@ public sealed class BackendFloatWidthTests {
   /// test of that width would measure nothing.
   /// </summary>
   [Test]
-  public void Store_GivenAQuotientInASingleArrayElement_ThenTheElementHoldsOnlySinglePrecision() => AgreesRouted("""
+  public void Store_GivenAQuotientInASingleArrayElement_ThenTheElementHoldsOnlySinglePrecision() => PrintsRouted("""
     DECLARE FUNCTION G%(BYVAL v%)
     DIM p AS INTEGER, q AS INTEGER
     DIM a(1 TO 2) AS SINGLE
@@ -104,7 +113,7 @@ public sealed class BackendFloatWidthTests {
     """, "1.66666662693024");
 
   [Test]
-  public void Divide_GivenDoubleOperands_ThenTheRoutedPathKeepsTheSameDigits() => Agrees("""
+  public void Divide_GivenDoubleOperands_ThenTheQuotientKeepsDoubleDigits() => PrintsADoubleTwoThirds("""
     DIM a AS DOUBLE, b AS DOUBLE
     a = 2
     b = 3
@@ -112,46 +121,49 @@ public sealed class BackendFloatWidthTests {
     """);
 
   [Test]
-  public void Divide_GivenIntegerLiteralsIntoADouble_ThenTheRoutedPathKeepsTheSameDigits() => Agrees("""
+  public void Divide_GivenIntegerLiteralsIntoADouble_ThenTheQuotientKeepsDoubleDigits() => PrintsADoubleTwoThirds("""
     DIM d AS DOUBLE
     d = 2 / 3
     PRINT d
     """);
 
   [Test]
-  public void Log_GivenEulersNumber_ThenTheRoutedPathAgreesWithTheDirectOne() => Agrees("""
+  public void Log_GivenEulersNumber_ThenItIsOne() => Prints("""
     PRINT LOG(2.718281828459045#)
-    """);
+    """, "1");
 
   [Test]
-  public void Sqrt_GivenTwo_ThenTheRoutedPathAgreesWithTheDirectOne() => Agrees("""
+  public void Sqrt_GivenTwo_ThenItPrintsTheDoubleRoot() => Prints("""
     DIM d AS DOUBLE
     d = SQR(2)
     PRINT d
-    """);
+    """, "1.4142135623731");
 
-  /// <summary>Integer over integer yields a DOUBLE in PB, and the quotient's last digit says so.</summary>
+  /// <summary>
+  /// Integer over integer, printed bare, goes through PB's seven-digit formatter: genuine PBC 3.50
+  /// prints <c>.6666667</c> for this and for both constant spellings below (checked with
+  /// <c>scripts/diff-one.sh</c>), where a DOUBLE variable holding the same quotient prints fifteen.
+  /// </summary>
   [Test]
-  public void Divide_GivenTwoIntegerVariables_ThenTheRoutedPathKeepsDoublePrecision() => Agrees("""
+  public void Divide_GivenTwoIntegerVariables_ThenItPrintsSevenDigitsAsPbDoes() => Prints("""
     C% = 2
     D% = 3
     PRINT C% / D%
-    """);
+    """, ".6666667");
 
-  /// <summary>A folded constant quotient must fold at DOUBLE width, not at SINGLE.</summary>
   [Test]
-  public void Str_GivenAConstantQuotient_ThenTheRoutedPathKeepsDoublePrecision() => Agrees("""
+  public void Str_GivenAConstantQuotient_ThenItRendersSevenDigitsAsPbDoes() => Prints("""
     PRINT STR$(2 / 3)
-    """);
+    """, ".6666667");
 
   [Test]
-  public void Print_GivenAConstantQuotient_ThenTheRoutedPathKeepsDoublePrecision() => Agrees("""
+  public void Print_GivenAConstantQuotient_ThenItPrintsSevenDigitsAsPbDoes() => Prints("""
     PRINT 2 / 3
-    """);
+    """, ".6666667");
 
   /// <summary>A double that passes through a FUNCTION must not be narrowed on the way.</summary>
   [Test]
-  public void Function_GivenADoubleResult_ThenTheRoutedPathKeepsItsWidth() => Agrees("""
+  public void Function_GivenADoubleResult_ThenItKeepsItsWidth() => PrintsADoubleTwoThirds("""
     FUNCTION Third AS DOUBLE
       DIM a AS DOUBLE
       a = 2
@@ -168,7 +180,7 @@ public sealed class BackendFloatWidthTests {
   /// emitter, whose dispatch names ByteSize 4 and falls everything else to the 64-bit renderer.
   /// </summary>
   [Test]
-  public void Str_GivenAnExtendedValue_ThenItRendersFifteenSignificantDigits() => AgreesRouted("""
+  public void Str_GivenAnExtendedValue_ThenItRendersFifteenSignificantDigits() => PrintsRouted("""
     DECLARE FUNCTION G%(BYVAL v%)
     DIM ex AS EXT, sg AS SINGLE, db AS DOUBLE
     ex = G%(5) / G%(3)
@@ -191,7 +203,7 @@ public sealed class BackendFloatWidthTests {
   /// about folding: <c>.3333333</c> is a literal, not a quotient, and still is not the SINGLE 1/3.
   /// </summary>
   [Test]
-  public void Compare_GivenASingleCellAgainstAnUnroundedConstant_ThenTheyAreNotEqual() => AgreesRouted("""
+  public void Compare_GivenASingleCellAgainstAnUnroundedConstant_ThenTheyAreNotEqual() => PrintsRouted("""
     DECLARE FUNCTION G%(BYVAL v%)
     DIM sg AS SINGLE
     sg = G%(1) / G%(3)
@@ -212,7 +224,7 @@ public sealed class BackendFloatWidthTests {
   /// widened again before either says so, PRINT of a SINGLE showing seven digits whatever it holds.
   /// </summary>
   [Test]
-  public void Csng_GivenADoubleQuotient_ThenTheResultCarriesOnlySinglePrecision() => AgreesRouted("""
+  public void Csng_GivenADoubleQuotient_ThenTheResultCarriesOnlySinglePrecision() => PrintsRouted("""
     DECLARE FUNCTION G%(BYVAL v%)
     DIM db AS DOUBLE, d2 AS DOUBLE
     db = G%(2) / G%(3)
@@ -234,7 +246,7 @@ public sealed class BackendFloatWidthTests {
   /// computed it at the register's width and stored the result in a ten-byte cell.
   /// </summary>
   [Test]
-  public void For_GivenASingleCounter_ThenEachIncrementIsRoundedToASingle() => AgreesRouted("""
+  public void For_GivenASingleCounter_ThenEachIncrementIsRoundedToASingle() => PrintsRouted("""
     DIM x AS SINGLE, total AS DOUBLE
     total = 0
     FOR x = 0 TO 1 STEP .1
@@ -251,7 +263,7 @@ public sealed class BackendFloatWidthTests {
   /// read the integer one.
   /// </summary>
   [Test]
-  public void Equate_GivenAFractionalValue_ThenItHoldsTheIntegerPbWouldStore() => AgreesRouted("""
+  public void Equate_GivenAFractionalValue_ThenItHoldsTheIntegerPbWouldStore() => PrintsRouted("""
     DECLARE FUNCTION G%(BYVAL v%)
     %THIRD = 1 / 3
     DIM sg AS SINGLE
@@ -273,7 +285,7 @@ public sealed class BackendFloatWidthTests {
   /// and the whole thing folds to an answer neither back end computed.
   /// </summary>
   [Test]
-  public void Function_GivenASingleResult_ThenItIsRoundedToASingleUnderTheOptimizer() => AgreesRouted("""
+  public void Function_GivenASingleResult_ThenItIsRoundedToASingleUnderTheOptimizer() => PrintsRouted("""
     DECLARE FUNCTION G%(BYVAL v%)
     DECLARE FUNCTION F!(BYVAL v%)
     DIM db AS DOUBLE
@@ -298,7 +310,7 @@ public sealed class BackendFloatWidthTests {
   /// else. Genuine PBC 3.50 answers 1E+300 and 2E+300 here (<c>scripts/diff-one.sh</c>).
   /// </summary>
   [Test]
-  public void Divide_GivenAMagnitudeBelowTheExtendedScalingLimit_ThenTheValueSurvivesTheTenByteCell() => AgreesRouted("""
+  public void Divide_GivenAMagnitudeBelowTheExtendedScalingLimit_ThenTheValueSurvivesTheTenByteCell() => PrintsRouted("""
     DECLARE FUNCTION GD#(BYVAL v#)
     DIM db AS DOUBLE
     db = GD#(1E-300#)

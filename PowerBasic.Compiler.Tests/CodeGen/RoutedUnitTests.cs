@@ -17,7 +17,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// it by construction rather than by a flag.
 ///
 /// The thing that matters is the artefact: a <c>.PBU</c> built through the IR path has to link
-/// against a main module built the ordinary way and produce the same output. Compiling is not the
+/// against a separately compiled main module and produce the program's output. Compiling is not the
 /// test - the test is that the two halves still fit together.
 /// </summary>
 [TestFixture]
@@ -73,7 +73,7 @@ public sealed class RoutedUnitTests {
     return model;
   }
 
-  private static PbuFile CompileUnit(bool routed, out IEnumerable<string> routedNames) {
+  private static PbuFile CompileUnit(out IEnumerable<string> routedNames) {
     var generator = new CodeGenerator(Bind(_unit, "U.BAS")) { Optimize = true};
     var unit = generator.EmitUnit("MATHU");
     Assert.That(generator.Errors, Is.Empty, "unit codegen: " + string.Join("; ", generator.Errors));
@@ -86,7 +86,7 @@ public sealed class RoutedUnitTests {
   }
 
   private static string LinkAndRun(IReadOnlyList<PbuFile> units, IReadOnlyList<PblFile> libraries,
-      bool routed, bool optimize, out IReadOnlyList<string> routedNames) {
+      bool optimize, out IReadOnlyList<string> routedNames) {
     var generator = new CodeGenerator(Bind(_main, "MAIN.BAS")) {
       Optimize = optimize,
     };
@@ -97,23 +97,22 @@ public sealed class RoutedUnitTests {
   }
 
   private static string LinkAndRun(PbuFile unit)
-    => LinkAndRun([unit], [], routed: false, optimize: true, out _);
+    => LinkAndRun([unit], [], optimize: true, out _);
 
   [Test]
   public void EmitUnit_GivenTheBackEnd_ThenItRoutesTheUnitsProcedures() {
-    CompileUnit(routed: true, out var names);
+    CompileUnit(out var names);
 
     Assert.That(names, Is.Not.Empty, "a unit's procedures are ordinary stack-ABI functions - they should route");
   }
 
-  /// <summary>The artefact contract: a routed .PBU links and behaves like an unrouted one.</summary>
+  /// <summary>The artefact contract: a routed .PBU links and the program prints what it should.</summary>
   [Test]
-  public void EmitUnit_GivenTheBackEnd_ThenTheLinkedProgramBehavesIdentically() {
-    var plain = LinkAndRun(CompileUnit(routed: false, out _));
-    var routed = LinkAndRun(CompileUnit(routed: true, out var names));
+  public void EmitUnit_GivenTheBackEnd_ThenTheLinkedProgramPrintsTheUnitsResults() {
+    var routed = LinkAndRun(CompileUnit(out var names));
 
     Assert.That(names, Is.Not.Empty, "nothing routed, so this proves nothing");
-    Assert.That(routed, Is.EqualTo(plain));
+    // AddInts(2, 3) = 5; Poly(5) = 25 + 15 - 2 = 38; Bump(35) = 42
     // PB pads a positive number with a leading sign space and a trailing one
     Assert.That(routed, Is.EqualTo("5 | 38 | 42 |HI UNIT!"));
   }
@@ -122,32 +121,26 @@ public sealed class RoutedUnitTests {
   [TestCase(false, true)]
   [TestCase(true, false)]
   [TestCase(true, true)]
-  public void EmitExecutable_GivenLinkedDefaultAbiProcedures_WhenBackEndEnabled_ThenMainRoutesAndMatchesDirect(
+  public void EmitExecutable_GivenLinkedDefaultAbiProcedures_WhenBackEndEnabled_ThenMainRoutesAndPrintsTheUnitsResults(
       bool inLibrary, bool optimize) {
-    var unit = CompileUnit(routed: true, out _);
+    var unit = CompileUnit(out _);
     var units = inLibrary ? Array.Empty<PbuFile>() : [unit];
     IReadOnlyList<PblFile> libraries = inLibrary ? [new PblFile { Units = { unit } }] : [];
-    var direct = LinkAndRun(units, libraries, routed: false, optimize, out _);
-    var routed = LinkAndRun(units, libraries, routed: true, optimize, out var routedNames);
+    var routed = LinkAndRun(units, libraries, optimize, out var routedNames);
 
     Assert.Multiple(() => {
       Assert.That(routedNames, Does.Contain("main"),
         "a linked BASIC/PASCAL declaration has the same stack ABI as the routed call site");
-      Assert.That(routed, Is.EqualTo(direct));
       Assert.That(routed, Is.EqualTo("5 | 38 | 42 |HI UNIT!"));
     });
   }
 
   /// <summary>Every procedure stays exported: routing must not change what the unit offers.</summary>
   [Test]
-  public void EmitUnit_GivenTheBackEnd_ThenTheExportsAreUnchanged() {
-    var plain = CompileUnit(routed: false, out _);
-    var routed = CompileUnit(routed: true, out _);
+  public void EmitUnit_GivenTheBackEnd_ThenEveryProcedureIsExported() {
+    var routed = CompileUnit(out _);
 
-    Assert.That(routed.Exports.Select(e => e.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase),
-      Is.EqualTo(plain.Exports.Select(e => e.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase)));
-    foreach (var export in plain.Exports)
-      Assert.That(routed.Exports.Single(e => e.Name.Equals(export.Name, StringComparison.OrdinalIgnoreCase)).SignatureHash,
-        Is.EqualTo(export.SignatureHash), $"{export.Name}'s signature must not change");
+    Assert.That(routed.Exports.Select(e => e.Name.ToUpperInvariant()).Order(),
+      Is.EqualTo(new[] { "ADDINTS", "BUMP", "GREET", "POLY" }));
   }
 }

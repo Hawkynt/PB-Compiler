@@ -23,7 +23,7 @@ public sealed class BackendByRefRoutingTests {
       n = -32768
       Bump n
       PRINT n
-      """).SetName("INTEGER storage"),
+      """, "-32767").SetName("INTEGER storage"),
     new TestCaseData("""
       SUB Bump(n AS WORD) NOINLINE
         n = n + 1
@@ -32,7 +32,7 @@ public sealed class BackendByRefRoutingTests {
       n = 65534
       Bump n
       PRINT n
-      """).SetName("WORD storage"),
+      """, "65535").SetName("WORD storage"),
     new TestCaseData("""
       SUB Bump(n AS LONG) NOINLINE
         n = n + 2
@@ -41,7 +41,7 @@ public sealed class BackendByRefRoutingTests {
       n = 65535
       Bump n
       PRINT n
-      """).SetName("LONG storage"),
+      """, "65537").SetName("LONG storage"),
     new TestCaseData("""
       SUB Bump(n AS DWORD) NOINLINE
         n = n + 1
@@ -50,7 +50,7 @@ public sealed class BackendByRefRoutingTests {
       n = 4000000000
       Bump n
       PRINT n
-      """).SetName("DWORD storage"),
+      """, "4000000001").SetName("DWORD storage"),
     new TestCaseData("""
       SUB Bump(n AS SINGLE) NOINLINE
         n = n + .25
@@ -59,7 +59,7 @@ public sealed class BackendByRefRoutingTests {
       n = 1.5
       Bump n
       PRINT n
-      """).SetName("SINGLE storage"),
+      """, "1.75").SetName("SINGLE storage"),
     new TestCaseData("""
       SUB Bump(n AS DOUBLE) NOINLINE
         n = n + .125
@@ -68,7 +68,7 @@ public sealed class BackendByRefRoutingTests {
       n = 1.5
       Bump n
       PRINT n
-      """).SetName("DOUBLE storage"),
+      """, "1.625").SetName("DOUBLE storage"),
   ];
 
   private static SemanticModel Bind(string source) {
@@ -78,36 +78,28 @@ public sealed class BackendByRefRoutingTests {
     return model;
   }
 
-  private static (Cpu8086 Direct, Cpu8086 Routed, IReadOnlyList<string> RoutedNames) Execute(
+  private static (Cpu8086 Routed, IReadOnlyList<string> RoutedNames) Execute(
       string source, bool optimize, bool optimizeSpeed = false) {
-    var direct = new CodeGenerator(Bind(source)) {
-      Optimize = optimize,
-      OptimizeSpeed = optimizeSpeed,
-    };
     var routed = new CodeGenerator(Bind(source)) {
       Optimize = optimize,
       OptimizeSpeed = optimizeSpeed,
     };
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 
-    Assert.Multiple(() => {
-      Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-      Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
-    });
-    return (directCpu, routedCpu, routed.BackendRoutedNames.ToList());
+    Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
+    return (routedCpu, routed.BackendRoutedNames.ToList());
   }
 
   [TestCaseSource(nameof(_numericCases))]
   public void Execute_GivenANearNumericByRefParameter_WhenTheCalleeMutatesIt_ThenTheWriteReachesTheCaller(
-      string source) {
+      string source, string expected) {
     foreach (var optimize in new[] { false, true }) {
-      var (direct, routed, routedNames) = Execute(source, optimize);
+      var (routed, routedNames) = Execute(source, optimize);
 
       Assert.Multiple(() => {
         Assert.That(routedNames, Does.Contain("Bump"), $"the BYREF callee did not route (optimize={optimize})");
-        Assert.That((routed.Output, routed.ExitCode), Is.EqualTo((direct.Output, direct.ExitCode)),
-          $"the routed BYREF write changed behavior (optimize={optimize})");
+        Assert.That((routed.Output.Trim(), routed.ExitCode), Is.EqualTo((expected, 0)),
+          $"the callee's BYREF write did not reach the caller (optimize={optimize})");
       });
     }
   }
@@ -127,17 +119,16 @@ public sealed class BackendByRefRoutingTests {
       PRINT value
       """;
 
-    var (direct, routed, routedNames) = Execute(source, optimize);
+    var (routed, routedNames) = Execute(source, optimize);
 
     Assert.Multiple(() => {
       Assert.That(routedNames, Does.Contain("Mutate"), "the aliasing BYREF callee did not route");
-      Assert.That(routed.Output, Is.EqualTo(direct.Output));
       Assert.That(routed.Output.Trim(), Is.EqualTo("11"));
     });
   }
 
   [Test]
-  public void Execute_GivenSpeedOptimization_WhenMainCallsAByRefProcedure_ThenBothSidesRouteWithTheStackAbi() {
+  public void Execute_GivenSpeedOptimization_WhenMainCallsAByRefProcedure_ThenCallerAndCalleeRouteWithTheStackAbi() {
     const string source = """
       SUB Bump(value AS LONG) NOINLINE
         value = value + 1
@@ -148,13 +139,12 @@ public sealed class BackendByRefRoutingTests {
       PRINT value
       """;
 
-    var (direct, routed, routedNames) = Execute(source, optimize: true, optimizeSpeed: true);
+    var (routed, routedNames) = Execute(source, optimize: true, optimizeSpeed: true);
 
     Assert.Multiple(() => {
       Assert.That(routedNames, Does.Contain("main"));
       Assert.That(routedNames, Does.Contain("Bump"),
-        "SPEED may not leave a register-converted direct callee behind a stack-ABI caller");
-      Assert.That(routed.Output, Is.EqualTo(direct.Output));
+        "SPEED may not leave a register-converted callee behind a stack-ABI caller");
       Assert.That(routed.Output.Trim(), Is.EqualTo("42"));
     });
   }
@@ -177,11 +167,10 @@ public sealed class BackendByRefRoutingTests {
       PRINT n; total
       """;
 
-    var (direct, routed, routedNames) = Execute(source, optimize);
+    var (routed, routedNames) = Execute(source, optimize);
 
     Assert.Multiple(() => {
       Assert.That(routedNames, Does.Contain("CountDown"), "the recursive BYREF callee did not route");
-      Assert.That(routed.Output, Is.EqualTo(direct.Output));
       Assert.That(routed.Output.Replace(" ", "").Trim(), Is.EqualTo("06"));
     });
   }
@@ -192,16 +181,15 @@ public sealed class BackendByRefRoutingTests {
   /// <c>DS</c> and reach the program's own data.
   ///
   /// <para>
-  /// The direct emitter's answer is a hidden stack temp, copy-IN only - its BYREF push takes an
+  /// The direct emitter's answer was a hidden stack temp, copy-IN only - its BYREF push takes an
   /// address only of a NEAR lvalue and copies anything else - so the callee's write lands in the temp
-  /// and is discarded. That is what <c>Bump values%(2)</c> does on that path, and the routed path now
-  /// does the same rather than declining the whole module. Asserting the two AGREE is the point; the
-  /// number they agree on is 10 because neither of them writes the element back.
+  /// and is discarded. The routed path does the same rather than declining the whole module, so the
+  /// program prints 10: nothing writes the element back.
   /// </para>
   /// </summary>
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenAFarDynamicArrayElementPassedByRef_ThenBothPathsCopyInOnly(bool optimize) {
+  public void Execute_GivenAFarDynamicArrayElementPassedByRef_ThenTheArgumentIsCopiedInOnly(bool optimize) {
     const string source = """
       REDIM values%(0 TO 7)
       values%(2) = 10
@@ -212,11 +200,10 @@ public sealed class BackendByRefRoutingTests {
       END SUB
       """;
 
-    var (direct, routed, routedNames) = Execute(source, optimize);
+    var (routed, routedNames) = Execute(source, optimize);
 
     Assert.Multiple(() => {
       Assert.That(routedNames, Does.Contain("main"), "a far element no longer takes the module body with it");
-      Assert.That(routed.Output, Is.EqualTo(direct.Output));
       Assert.That(routed.Output.Trim(), Is.EqualTo("10"), "copy-in only: the callee's write is discarded");
     });
   }

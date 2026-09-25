@@ -5,7 +5,10 @@ using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
-/// <summary>End-to-end coverage for O0284's ABI-preserving native x86 entry-thunk form.</summary>
+/// <summary>
+/// End-to-end coverage for O0284's ABI-preserving native x86 entry-thunk form. The merged program is
+/// held to the same program built with the optimizer off, where both bodies are still separate.
+/// </summary>
 [TestFixture]
 public sealed class BackendSemanticFunctionMergingTests {
 
@@ -18,7 +21,7 @@ public sealed class BackendSemanticFunctionMergingTests {
   }
 
   [Test]
-  public void Execute_GivenSemanticMergeUnderOptimizeSize_WhenRouted_ThenSharedHelperMatchesDirectEmitter() {
+  public void Execute_GivenSemanticMergeUnderOptimizeSize_WhenRouted_ThenSharedHelperMatchesTheUnmergedBuild() {
     const string source = """
       $OPTIMIZE SIZE
       DECLARE FUNCTION First%(BYVAL x%)
@@ -55,19 +58,20 @@ public sealed class BackendSemanticFunctionMergingTests {
       END FUNCTION
       """;
 
-    static (byte[] Image, CodeGenerator Generator) Compile(string source, bool routed) {
+    static (byte[] Image, CodeGenerator Generator) Compile(string source, bool optimize) {
       var generator = new CodeGenerator(Bind(source)) {
-        Optimize = true,
-        OptimizeSize = true,
+        Optimize = optimize,
+        OptimizeSize = optimize,
       };
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
       return (image, generator);
     }
 
-    var direct = Compile(source, routed: false);
-    var routed = Compile(source, routed: true);
-    var directResult = Cpu8086.Run(direct.Image);
+    // the unoptimized build keeps both bodies, so it is the reference the merged helper is held to
+    var unmerged = Compile(source, optimize: false);
+    var routed = Compile(source, optimize: true);
+    var unmergedResult = Cpu8086.Run(unmerged.Image);
     var routedResult = Cpu8086.Run(routed.Image);
     var routes = routed.Generator.BackendRoutedNames.ToList();
     var helpers = routed.Generator.BackendSemanticMergeHelpers.ToList();
@@ -79,14 +83,14 @@ public sealed class BackendSemanticFunctionMergingTests {
         "O0284 must replace the two native bodies with one private parameterized helper");
       Assert.That(helpers[0], Does.StartWith("__o0284_").IgnoreCase);
       Assert.That((routedResult.Output, routedResult.ExitCode),
-        Is.EqualTo((directResult.Output, directResult.ExitCode)),
-        "the thunk/helper ABI must be observationally identical to the direct emitter");
+        Is.EqualTo((unmergedResult.Output, unmergedResult.ExitCode)),
+        "the thunk/helper ABI must be observationally identical to the unmerged build");
       Assert.That(routedResult.Output, Is.Not.Empty);
     });
   }
 
   [Test]
-  public void Execute_GivenVaryingCallTargetsUnderOptimizeSize_WhenRouted_ThenIndirectHelperMatchesDirectEmitter() {
+  public void Execute_GivenVaryingCallTargetsUnderOptimizeSize_WhenRouted_ThenIndirectHelperMatchesTheUnmergedBuild() {
     const string source = """
       $OPTIMIZE SIZE
       DECLARE FUNCTION PlusOne%(BYVAL x%)
@@ -133,19 +137,20 @@ public sealed class BackendSemanticFunctionMergingTests {
       END FUNCTION
       """;
 
-    static (byte[] Image, CodeGenerator Generator) Compile(string source, bool routed) {
+    static (byte[] Image, CodeGenerator Generator) Compile(string source, bool optimize) {
       var generator = new CodeGenerator(Bind(source)) {
-        Optimize = true,
-        OptimizeSize = true,
+        Optimize = optimize,
+        OptimizeSize = optimize,
       };
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
       return (image, generator);
     }
 
-    var direct = Compile(source, routed: false);
-    var routed = Compile(source, routed: true);
-    var directResult = Cpu8086.Run(direct.Image);
+    // the unoptimized build keeps both bodies, so it is the reference the merged helper is held to
+    var unmerged = Compile(source, optimize: false);
+    var routed = Compile(source, optimize: true);
+    var unmergedResult = Cpu8086.Run(unmerged.Image);
     var routedResult = Cpu8086.Run(routed.Image);
     var routes = routed.Generator.BackendRoutedNames.ToList();
     var helpers = routed.Generator.BackendSemanticMergeHelpers.ToList();
@@ -156,8 +161,8 @@ public sealed class BackendSemanticFunctionMergingTests {
       Assert.That(helpers, Has.Count.EqualTo(1),
         "the differing direct callees must become one indirect call in the shared helper");
       Assert.That((routedResult.Output, routedResult.ExitCode),
-        Is.EqualTo((directResult.Output, directResult.ExitCode)),
-        "near-indirect O0284 dispatch must preserve direct-emitter behavior");
+        Is.EqualTo((unmergedResult.Output, unmergedResult.ExitCode)),
+        "near-indirect O0284 dispatch must preserve the unmerged build's behavior");
       Assert.That(routedResult.Output, Is.Not.Empty);
     });
   }

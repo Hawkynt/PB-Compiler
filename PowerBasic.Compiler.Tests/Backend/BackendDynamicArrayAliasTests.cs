@@ -65,27 +65,19 @@ public sealed class BackendDynamicArrayAliasTests {
     return model;
   }
 
-  /// <summary>Runs the program both ways, insisting the back end really took the module body.</summary>
-  private static (string Direct, string Routed) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+  /// <summary>Runs the program, insisting the back end really took the module body.</summary>
+  private static string Run(string source) {
     var routed = new CodeGenerator(Bind(source)) { Optimize = true};
-    var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
-      "the back end did not take the module body, so this compares the direct emitter with itself");
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the back end did not take the module body");
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output;
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return Cpu8086.Run(routedImage).Output;
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return "";
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"));
   }
 
   /// <summary>PB pads printed numbers with sign and trailing blanks; the VALUES are what this is about.</summary>
@@ -94,19 +86,17 @@ public sealed class BackendDynamicArrayAliasTests {
 
   [Test]
   public void Run_GivenTwoRuntimeBoundRedimsInOneBody_WhenRouted_ThenTheArraysDoNotShareStorage() {
-    var (direct, routed) = RunBothWays(_twoRuntimeBoundRedims);
+    var routed = Run(_twoRuntimeBoundRedims);
 
     Assert.That(Values(routed), Is.EqualTo("10 20 30 60 70 80"),
       "the second REDIM's block overlaps the first's, so b(0) reads c(2)");
-    Assert.That(routed, Is.EqualTo(direct), "the two back ends disagree");
   }
 
   [Test]
   public void Run_GivenTwoArraySlicesOfOneArray_WhenRouted_ThenEachSliceKeepsItsOwnCopy() {
-    var (direct, routed) = RunBothWays(_twoArraySlices);
+    var routed = Run(_twoArraySlices);
 
     Assert.That(Values(routed), Is.EqualTo("10 20 30 60 70 80"));
-    Assert.That(routed, Is.EqualTo(direct), "the two back ends disagree");
   }
 
   /// <summary>

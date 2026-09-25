@@ -212,6 +212,14 @@ public sealed class BackendRuntimeCallTests {
     return module;
   }
 
+  /// <summary>Compiles and runs <paramref name="source"/>, returning the generator and what the program printed.</summary>
+  private static (CodeGenerator Generator, string Output) Execute(string source, bool optimize) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    return (generator, Cpu8086.Run(image).Output);
+  }
+
   private static X86MachineFunction Select(string source, string function) {
     var fn = Optimized(source).Functions.First(f => f.Name.Equals(function, StringComparison.OrdinalIgnoreCase));
     var m = InstructionSelector.TrySelect(fn, out var reason);
@@ -370,14 +378,11 @@ public sealed class BackendRuntimeCallTests {
   }
 
   [Test]
-  public void Emit_GivenARoutedPrintingFunction_ThenTheImageAssemblesAndDiffersFromTheDirectPath() {
-    var direct = new CodeGenerator(Bind(_printingFunction)) { Optimize = true};
+  public void Emit_GivenARoutedPrintingFunction_ThenTheImageAssembles() {
     var routed = new CodeGenerator(Bind(_printingFunction)) { Optimize = true};
 
-    var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     // an unresolved runtime label or literal would have thrown while the fixups resolved
     Assert.That(routedImage, Is.Not.Empty);
@@ -512,22 +517,12 @@ public sealed class BackendRuntimeCallTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenRemainingStringKernels_ThenRoutedBehaviorMatchesTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_remainingStringKernelsProgram)) {
-      Optimize = optimize,
-    };
-    var routed = new CodeGenerator(Bind(_remainingStringKernelsProgram)) {
-      Optimize = optimize,
-    };
+  public void Execute_GivenRemainingStringKernels_ThenPrintsTheSlicedComparedAndPatchedStrings(bool optimize) {
+    var (generator, output) = Execute(_remainingStringKernelsProgram, optimize);
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
-
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("StringOps"));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("StringOps"));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(output, Is.EqualTo("bcdef\r\nless\r\naXYZef\r\n 7 \r\n"));
   }
 
   [Test]
@@ -578,42 +573,26 @@ public sealed class BackendRuntimeCallTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenBinaryRecordAliases_ThenRoutedBehaviorMatchesTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_binaryRecordAliasProgram)) {
-      Optimize = optimize,
-    };
-    var routed = new CodeGenerator(Bind(_binaryRecordAliasProgram)) {
-      Optimize = optimize,
-    };
+  public void Execute_GivenBinaryRecordAliases_ThenEveryRoundTripHolds(bool optimize) {
+    var (generator, output) = Execute(_binaryRecordAliasProgram, optimize);
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
-
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-    Assert.That(routedCpu.Output.Trim(), Is.EqualTo("-1"));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(output.Trim(), Is.EqualTo("-1"));
   }
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenBinaryRecordConversions_ThenRoutedBytesMatchTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_binaryRecordProgram)) {
-      Optimize = optimize,
-    };
-    var routed = new CodeGenerator(Bind(_binaryRecordProgram)) {
-      Optimize = optimize,
-    };
+  public void Execute_GivenBinaryRecordConversions_ThenPrintsTheValuesAndTheirBytes(bool optimize) {
+    var (generator, output) = Execute(_binaryRecordProgram, optimize);
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
-
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"),
       "the test is meaningful only when every conversion went through the IR back end");
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(output, Is.EqualTo(
+      "-12345 \r\n 199  207 \r\n"                         // &HCFC7, low byte first
+      + "-123456789 \r\n 235  50  164  248 \r\n"            // &HF8A432EB
+      + " 3000000000 \r\n 0  94  208  178 \r\n"             // &HB2D05E00
+      + " 3.5 \r\n 0  0  96  64 \r\n"                       // IEEE single &H40600000
+      + " 2.5 \r\n 4  64 \r\n"));
   }
 
   [Test]
@@ -633,22 +612,11 @@ public sealed class BackendRuntimeCallTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenRndRange_ThenTheRoutedPairResultMatchesTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_rndRangeProgram)) {
-      Optimize = optimize,
-    };
-    var routed = new CodeGenerator(Bind(_rndRangeProgram)) {
-      Optimize = optimize,
-    };
+  public void Execute_GivenRndRange_ThenEveryPairResultIsInRange(bool optimize) {
+    var (generator, output) = Execute(_rndRangeProgram, optimize);
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
-
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-    Assert.That(routedCpu.Output.Trim(), Is.EqualTo("-1"));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(output.Trim(), Is.EqualTo("-1"));
   }
 
   [Test]
@@ -688,22 +656,11 @@ public sealed class BackendRuntimeCallTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenWholeUdtComparison_ThenRoutedBytesMatchTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_udtCompareProgram)) {
-      Optimize = optimize,
-    };
-    var routed = new CodeGenerator(Bind(_udtCompareProgram)) {
-      Optimize = optimize,
-    };
+  public void Execute_GivenWholeUdtComparison_ThenEqualAndUnequalAreBothTrue(bool optimize) {
+    var (generator, output) = Execute(_udtCompareProgram, optimize);
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
-
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-    Assert.That(routedCpu.Output.Trim().Replace("\r\n", "|").Replace(" ", ""), Is.EqualTo("-1|-1"));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(output.Trim().Replace("\r\n", "|").Replace(" ", ""), Is.EqualTo("-1|-1"));
   }
 
   [Test]
@@ -719,21 +676,11 @@ public sealed class BackendRuntimeCallTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenStackLocalUdtComparison_ThenRoutedBytesMatchTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_localUdtCompareProgram)) {
-      Optimize = optimize,
-    };
-    var routed = new CodeGenerator(Bind(_localUdtCompareProgram)) {
-      Optimize = optimize,
-    };
+  public void Execute_GivenStackLocalUdtComparison_ThenTheRecordsCompareEqual(bool optimize) {
+    var (generator, output) = Execute(_localUdtCompareProgram, optimize);
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
-
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("LocalMatch"));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("LocalMatch"));
+    Assert.That(output, Is.EqualTo("-1 \r\n"));
   }
 
   [Test]
@@ -746,41 +693,26 @@ public sealed class BackendRuntimeCallTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenOddSizedUdtCopy_ThenRoutedTailByteMatchesTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_udtCopyProgram)) {
-      Optimize = optimize,
-    };
-    var routed = new CodeGenerator(Bind(_udtCopyProgram)) {
-      Optimize = optimize,
-    };
+  public void Execute_GivenOddSizedUdtCopy_ThenBothFieldsSurviveTheCopy(bool optimize) {
+    var (generator, output) = Execute(_udtCopyProgram, optimize);
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
-
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(output, Is.EqualTo("-123  987654 \r\n"));
   }
 
   [Test]
-  public void Execute_GivenOddSizedUdtCopyUnderCpu386_ThenRoutedDwordAndTailMatchTheDirectEmitter() {
+  public void Execute_GivenOddSizedUdtCopyUnderCpu386_ThenTheDwordCopyAndItsTailKeepBothFields() {
     var source = "$CPU 80386\n$OPTIMIZE SPEED\n" + _udtCopyProgram;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
     var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
-    var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
-    var directCpu = Cpu8086.Run(directImage);
     var routedCpu = Cpu8086.Run(routedImage);
 
     Assert.Multiple(() => {
-      Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
       Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
       Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
       Assert.That(Contains(routedImage, 0xF3, 0x66, 0xA5), Is.True,
         "the routed rt_memcpy should widen its sixty-seven-byte copy to DWORDs and a three-byte tail");
-      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
       Assert.That(routedCpu.Output.Trim().Replace(" ", ""), Is.EqualTo("-123987654"));
     });
   }
@@ -817,21 +749,11 @@ public sealed class BackendRuntimeCallTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenStaticArrayErase_ThenRoutedZeroFillMatchesTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_staticEraseProgram)) {
-      Optimize = optimize,
-    };
-    var routed = new CodeGenerator(Bind(_staticEraseProgram)) {
-      Optimize = optimize,
-    };
+  public void Execute_GivenStaticArrayErase_ThenEveryElementReadsZero(bool optimize) {
+    var (generator, output) = Execute(_staticEraseProgram, optimize);
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
-
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(output, Is.EqualTo(" 0  0  0 \r\n"));
   }
 
   [Test]

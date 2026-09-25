@@ -9,15 +9,14 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <summary>
 /// The routed back end must DECLINE what it cannot compile, never THROW.
 ///
-/// A decline is safe: the direct emitter compiles the function instead, and the refusal lands in the
-/// coverage histogram where it can be ranked and closed. A throw is none of those things - it kills
-/// the compilation with a stack trace, emits no executable, produces no diagnostic, and is INVISIBLE
-/// to every census this repository keeps, because the function neither routed nor declined. After
-/// <c>CodeGen/</c> is retired each remaining throw stops being a survivable fallback and becomes an
-/// unconditional compiler crash.
+/// A decline is safe: it names its reason, and the refusal lands in the coverage histogram where it
+/// can be ranked and closed. A throw is none of those things - it kills the compilation with a stack
+/// trace, emits no executable, produces no diagnostic, and is INVISIBLE to every census this
+/// repository keeps, because the function neither routed nor declined. With no second emitter left
+/// to fall back to, each remaining throw is an unconditional compiler crash.
 ///
 /// So this fixture asserts the one property that covers all of them at once: compiling a
-/// front-end-accepted program with <c>UseExperimentalBackend</c> raises NOTHING. It is deliberately
+/// front-end-accepted program raises NOTHING. It is deliberately
 /// not a coverage measurement - it does not care whether anything routed - which is what lets it stay
 /// green while a conversion from throw to decline REDUCES coverage. That trade is the correct one.
 ///
@@ -249,12 +248,12 @@ public sealed class BackendNeverThrowsTests {
   /// <summary>
   /// The shapes that were found by this audit, each one a program that ENDED the compilation with a
   /// stack trace before it was converted to a decline. They are held apart from the generator because
-  /// the assertion is stronger: the routed build must behave exactly like the unrouted one, which is
-  /// what a decline promises and a throw cannot.
+  /// the assertion is stronger: each must end in a recorded decline and the mandatory-routing
+  /// diagnostic, which is what a decline promises and a throw cannot.
   ///
   /// <para>
   /// A decline is the FLOOR and not the goal. <c>ambiguous-global</c> has left this list because it
-  /// routes now - see <see cref="AmbiguousGlobal_WhenCompiledRouted_ThenItRoutesAndAgreesWithTheDirectBuild"/>
+  /// routes now - see <see cref="AmbiguousGlobal_WhenCompiledRouted_ThenItRoutesAndKeepsBothVariablesApart"/>
   /// - and the right end for each of the four left is the same one, not a tidier fallback.
   /// </para>
   /// </summary>
@@ -281,13 +280,12 @@ public sealed class BackendNeverThrowsTests {
   /// name matches. The name had thrown away the one character telling the two apart.
   /// </para>
   /// <para>
-  /// So the assertion is the positive one now: both bodies route, and the program prints what the
-  /// direct build prints. Comparing only the output is the point - the two emitters lay out frames
-  /// differently and the images have never matched for a routed program.
+  /// So the assertion is the positive one now: both bodies route, and the program prints each
+  /// variable's own value.
   /// </para>
   /// </summary>
   [Test]
-  public void AmbiguousGlobal_WhenCompiledRouted_ThenItRoutesAndAgreesWithTheDirectBuild() {
+  public void AmbiguousGlobal_WhenCompiledRouted_ThenItRoutesAndKeepsBothVariablesApart() {
     const string source = """
       DIM total% : DIM total&
       total% = 1 : total& = 2
@@ -309,16 +307,9 @@ public sealed class BackendNeverThrowsTests {
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the module body must route");
     Assert.That(routed.BackendRoutedNames, Does.Contain("Bump"), "and so must the SUB that shares them");
 
-    var direct = new CodeGenerator(Bind()) { Optimize = false};
-    var directImage = direct.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-
     var output = Cpu8086.Run(routedImage).Output.Trim();
-    Assert.Multiple(() => {
-      Assert.That(output, Is.EqualTo(Cpu8086.Run(directImage).Output.Trim()));
-      // and the two are still two: a lowering that aliased them would print one number twice
-      Assert.That(output, Is.EqualTo("2  3"), "total% went 1 -> 2 and total& went 2 -> 3");
-    });
+    // the two are still two: a lowering that aliased them would print one number twice
+    Assert.That(output, Is.EqualTo("2  3"), "total% went 1 -> 2 and total& went 2 -> 3");
   }
 
   [Test]

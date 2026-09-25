@@ -1,6 +1,7 @@
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -33,7 +34,7 @@ public sealed class BackendInlineAsmVirtualizationTests {
 
   private const string _body = "$OPTIMIZE SPEED\nDIM a%, b%\na% = 3 : b% = 4\n! MOV AX, a%\n! PADDW MM0, MM1\n! MOV b%, AX\nPRINT b%\nEND";
 
-  private static (byte[] Image, IReadOnlyList<string> Routed) Compile(string cpu, bool? routed = null) {
+  private static (byte[] Image, IReadOnlyList<string> Routed) Compile(string cpu) {
     var source = $"$CPU {cpu}\n{_body}";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -52,10 +53,10 @@ public sealed class BackendInlineAsmVirtualizationTests {
   }
 
   /// <summary>
-  /// The values are the point. A target without MMX must not receive the MMX encoding, whichever
-  /// emitter produced the image - and <c>$CPU SSE2</c> is in the list on purpose: SSE2 does not bring
-  /// the MMX register file with it here, so it emulates too. A guard keyed on "is this 8086" rather
-  /// than on the instruction's actual feature requirement would pass the first two and miss this one.
+  /// The values are the point. A target without MMX must not receive the MMX encoding - and
+  /// <c>$CPU SSE2</c> is in the list on purpose: SSE2 does not bring the MMX register file
+  /// with it here, so it emulates too. A guard keyed on "is this 8086" rather than on the
+  /// instruction's actual feature requirement would pass the first two and miss this one.
   /// </summary>
   [TestCase("8086")]
   [TestCase("80386")]
@@ -87,18 +88,16 @@ public sealed class BackendInlineAsmVirtualizationTests {
   }
 
   /// <summary>
-  /// Both emitters must reach the same conclusion about the same instruction, which is the property
-  /// that stops them drifting apart again. Not byte identity - the two lay a program out differently
-  /// and always have - but the one thing that matters here: neither emits an encoding the declared
-  /// target cannot execute.
+  /// And the emulated image runs. Leaving the encoding out is only half the promise; the other half
+  /// is that what replaced it executes on the declared target and leaves the program's own state
+  /// alone - the PADDW touches only MM0, so AX still carries a%'s 3 into b%. SSE2's emulation is
+  /// written in SSE, which the interpreter does not execute, so that target is left to the test above.
   /// </summary>
   [TestCase("8086")]
   [TestCase("80386")]
-  [TestCase("SSE2")]
-  public void Compile_GivenInlineAsmAboveTheDeclaredCpu_ThenNeitherEmitterPassesItThrough(string cpu) {
-    Assert.Multiple(() => {
-      Assert.That(ContainsPaddw(Compile(cpu, routed: true).Image), Is.False, $"routed, $CPU {cpu}");
-      Assert.That(ContainsPaddw(Compile(cpu, routed: false).Image), Is.False, $"direct, $CPU {cpu}");
-    });
+  public void Run_GivenInlineAsmAboveTheDeclaredCpu_ThenTheEmulatedProgramPrintsTheUntouchedWord(string cpu) {
+    var (image, _) = Compile(cpu);
+
+    Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("3"), $"$CPU {cpu}");
   }
 }

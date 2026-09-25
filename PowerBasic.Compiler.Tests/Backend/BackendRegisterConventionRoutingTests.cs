@@ -27,20 +27,17 @@ public sealed class BackendRegisterConventionRoutingTests {
     return model;
   }
 
-  private static void AssertRoutedMatchesDirect(string source, string procedure, bool optimize) {
+  /// <summary>Runs the program and reads each printed line with its padding trimmed, joined by '|'.</summary>
+  private static void AssertRoutedPrints(string source, string procedure, bool optimize, string expected) {
     var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain(procedure),
-      $"{procedure} did not route - the comparison below would have compiled the same image twice");
+      $"{procedure} did not route, so the register convention under test was never selected");
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var directImage = direct.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-
-    var expected = Cpu8086.Run(directImage);
     var actual = Cpu8086.Run(routedImage);
-    Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((expected.Output, expected.ExitCode)));
+    var lines = actual.Output.Split("\r\n", StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim());
+    Assert.That((string.Join("|", lines), actual.ExitCode), Is.EqualTo((expected, 0)));
   }
 
   private static string ByValSource(string convention) => $$"""
@@ -57,8 +54,9 @@ public sealed class BackendRegisterConventionRoutingTests {
   [TestCase("FASTCALL", true)]
   [TestCase("WATCALL", false)]
   [TestCase("WATCALL", true)]
-  public void Procedure_GivenRegisterConvention_ThenRoutedAndDirectExecutionAgree(string convention, bool optimize)
-    => AssertRoutedMatchesDirect(ByValSource(convention), "S", optimize);
+  public void Procedure_GivenRegisterConvention_ThenEveryArgumentArrivesInItsPlace(string convention, bool optimize)
+    => AssertRoutedPrints(ByValSource(convention), "S", optimize,
+      "1  2  3  4  5|-13|-6  7 -8  9 -10|-4|99");
 
   /// <summary>
   /// A BYREF argument crosses a register convention as one near pointer, so the write-back has to
@@ -83,7 +81,7 @@ public sealed class BackendRegisterConventionRoutingTests {
   [TestCase("WATCALL", false)]
   [TestCase("WATCALL", true)]
   public void Procedure_GivenRegisterConventionByRef_ThenTheCallersStorageIsUpdated(string convention, bool optimize)
-    => AssertRoutedMatchesDirect(ByRefSource(convention), "S", optimize);
+    => AssertRoutedPrints(ByRefSource(convention), "S", optimize, "107  193|104  196");
 
   /// <summary>
   /// The register arguments share [BP-2], [BP-4], ... with whatever frame storage the routed body
@@ -112,5 +110,5 @@ public sealed class BackendRegisterConventionRoutingTests {
   [TestCase("WATCALL", true)]
   public void Procedure_GivenRegisterConventionWithFrameStorage_ThenLocalsDoNotOverlapTheSpilledArguments(
       string convention, bool optimize)
-    => AssertRoutedMatchesDirect(FrameSharingSource(convention), "F", optimize);
+    => AssertRoutedPrints(FrameSharingSource(convention), "F", optimize, "122|19");   // 29n + 7m
 }

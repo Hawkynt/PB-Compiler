@@ -110,7 +110,7 @@ public sealed class Mos6502Runtime(Mos6502Assembler asm) {
         var page = asm.NewLabel("rt.clearPage");
         asm.Immediate(Ldx, clearBytes >> 8);
         asm.Bind(page);
-        asm.IndirectY(Sta, 0x02);
+        asm.IndirectY(Sta, Zp.Ptr);
         asm.Emit(Iny);
         asm.Branch(Bne, page);
         asm.Memory(Inc, Zp.Ptr.Plus(1));
@@ -122,7 +122,7 @@ public sealed class Mos6502Runtime(Mos6502Assembler asm) {
         var rest = asm.NewLabel("rt.clearRest");
         asm.Immediate(Ldx, clearBytes & 0xFF);
         asm.Bind(rest);
-        asm.IndirectY(Sta, 0x02);
+        asm.IndirectY(Sta, Zp.Ptr);
         asm.Emit(Iny);
         asm.Emit(Dex);
         asm.Branch(Bne, rest);
@@ -362,7 +362,7 @@ public sealed class Mos6502Runtime(Mos6502Assembler asm) {
     asm.Memory(Ora, Zp.Arg.Plus(3));
     asm.Branch(Beq, done);
     asm.Immediate(Ldy, 0);
-    asm.IndirectY(Lda, 0x06);
+    asm.IndirectY(Lda, Zp.Arg);
     asm.Call(this.Routine(M6502Routine.PutChar));
     asm.Memory(Inc, Zp.Arg);
     asm.Branch(Bne, noCarry);
@@ -398,7 +398,7 @@ public sealed class Mos6502Runtime(Mos6502Assembler asm) {
 
   private void EmitPrintDigits() {
     // divide by ten until nothing is left, stacking the remainders; then print them back out
-    var count = Zp.Temp.Plus(7);
+    var count = Zp.DigitCount;
     var divide = asm.NewLabel("rt.printDigits.divide");
     var bit = asm.NewLabel("rt.printDigits.bit");
     var smaller = asm.NewLabel("rt.printDigits.smaller");
@@ -557,8 +557,8 @@ public sealed class Mos6502Runtime(Mos6502Assembler asm) {
     asm.Memory(Ldx, Zp.Temp.Plus(1));
     asm.Branch(Beq, partial);
     asm.Bind(page);
-    asm.IndirectY(Lda, 0x02);
-    asm.IndirectY(Sta, 0x04);
+    asm.IndirectY(Lda, Zp.Ptr);
+    asm.IndirectY(Sta, Zp.Ptr2);
     asm.Emit(Iny);
     asm.Branch(Bne, page);
     asm.Memory(Inc, Zp.Ptr.Plus(1));
@@ -569,8 +569,8 @@ public sealed class Mos6502Runtime(Mos6502Assembler asm) {
     asm.Memory(Ldx, Zp.Temp);
     asm.Branch(Beq, done);
     asm.Bind(rest);
-    asm.IndirectY(Lda, 0x02);
-    asm.IndirectY(Sta, 0x04);
+    asm.IndirectY(Lda, Zp.Ptr);
+    asm.IndirectY(Sta, Zp.Ptr2);
     asm.Emit(Iny);
     asm.Emit(Dex);
     asm.Branch(Bne, rest);

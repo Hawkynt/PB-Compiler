@@ -128,7 +128,7 @@ public sealed class BackendResidencyTests {
   }
 
   [Test]
-  public void Execute_GivenRotatedPreTestedLoop_WhenRouted_ThenZeroAndPositiveTripsMatchDirect() {
+  public void Execute_GivenRotatedPreTestedLoop_WhenRouted_ThenZeroAndPositiveTripsPrintTheirCounts() {
     const string source = """
       $OPTIMIZE SPEED
       DECLARE SUB Walk(BYVAL i%)
@@ -143,7 +143,7 @@ public sealed class BackendResidencyTests {
       END SUB
       """;
 
-    static (byte[] Image, IReadOnlyList<string> Routes) Compile(string source, bool routed) {
+    static (byte[] Image, IReadOnlyList<string> Routes) Compile(string source) {
       var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
         Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -153,13 +153,11 @@ public sealed class BackendResidencyTests {
       return (image, generator.BackendRoutedNames.ToList());
     }
 
-    var direct = Compile(source, routed: false);
-    var routed = Compile(source, routed: true);
-    var directOutput = Cpu8086.Run(direct.Image).Output;
+    var routed = Compile(source);
     var routedOutput = Cpu8086.Run(routed.Image).Output;
     Assert.Multiple(() => {
       Assert.That(routed.Routes, Does.Contain("Walk"), "the rotated procedure must not pass through fallback");
-      Assert.That(routedOutput, Is.EqualTo(directOutput));
+      // Walk 4 runs the body zero times, Walk 1 three times
       Assert.That(routedOutput.Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
         .Select(line => line.Trim()), Is.EqualTo(new[] { "1", "2", "3" }));
     });

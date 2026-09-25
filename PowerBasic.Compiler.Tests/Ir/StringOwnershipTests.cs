@@ -23,7 +23,7 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class StringOwnershipTests {
 
-  private static string Run(string source, bool routed, out IEnumerable<string> names) {
+  private static string Run(string source, out IEnumerable<string> names) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = true};
@@ -34,21 +34,19 @@ public sealed class StringOwnershipTests {
   }
 
   /// <param name="mustRoute">
-  /// Whether the back end has to have taken the program. Where it does, the test is a real
-  /// differential; where it declines for an unrelated reason the ownership rule still has to hold,
-  /// because the same lowering feeds the C and LLVM emitters.
+  /// Whether the back end has to have taken the program. Where it declines for an unrelated reason
+  /// the ownership rule still has to hold, because the same lowering feeds the C and LLVM emitters.
   /// </param>
-  private static void BothPathsAgree(string source, string expected, bool mustRoute = true) {
-    var routed = Run(source, routed: true, out var names);
+  private static void Prints(string source, string expected, bool mustRoute = true) {
+    var output = Run(source, out var names);
     if (mustRoute)
       Assert.That(names, Is.Not.Empty, "nothing was routed, so this proves nothing");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false, out _)), "the two emitters disagree");
-    Assert.That(routed, Is.EqualTo(expected));
+    Assert.That(output, Is.EqualTo(expected));
   }
 
   [Test]
   public void Run_GivenAStringPrintedTwice_ThenTheVariableSurvivesTheFirstPrint() =>
-    BothPathsAgree("""
+    Prints("""
       a$ = "hello"
       PRINT a$
       PRINT a$
@@ -57,7 +55,7 @@ public sealed class StringOwnershipTests {
 
   [Test]
   public void Run_GivenAConcatenation_ThenBothOperandsSurviveIt() =>
-    BothPathsAgree("""
+    Prints("""
       a$ = "al"
       b$ = "be"
       PRINT a$ + b$
@@ -68,7 +66,7 @@ public sealed class StringOwnershipTests {
 
   [Test]
   public void Run_GivenAStringArrayElement_ThenReadingItDoesNotEmptyIt() =>
-    BothPathsAgree("""
+    Prints("""
       DIM s$(0 TO 2)
       s$(1) = "mid"
       PRINT s$(1)
@@ -79,7 +77,7 @@ public sealed class StringOwnershipTests {
   /// <summary>An assignment from one variable to another must copy, not alias the same handle.</summary>
   [Test]
   public void Run_GivenAnAssignmentBetweenVariables_ThenTheyAreIndependent() =>
-    BothPathsAgree("""
+    Prints("""
       a$ = "one"
       b$ = a$
       a$ = "two"

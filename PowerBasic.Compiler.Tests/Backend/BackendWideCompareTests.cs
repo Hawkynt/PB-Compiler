@@ -21,7 +21,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendWideCompareTests {
 
-  private static string Run(string source, bool routed, bool optimize = true) {
+  private static string Run(string source, bool optimize = true) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = optimize};
@@ -31,9 +31,9 @@ public sealed class BackendWideCompareTests {
   }
 
   /// <summary>
-  /// As <see cref="Run"/>, but it also says the module body ROUTED. A comparison the router declined
-  /// is the direct emitter twice over, which agrees with itself by construction and measures nothing -
-  /// and a decline is exactly what a future change to the selector would produce silently.
+  /// As <see cref="Run"/>, but it also says the module body ROUTED - a decline is exactly what a
+  /// future change to the selector would produce silently, and then the selection under test would
+  /// not be what ran.
   /// </summary>
   private static string RunRouted(string source, bool optimize) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
@@ -48,8 +48,8 @@ public sealed class BackendWideCompareTests {
   }
 
   /// <summary>
-  /// Without this, the cases below could all pass by falling back: when selection declines the direct
-  /// emitter takes the function and both sides of the comparison are the same compiler.
+  /// Without this, the cases below could all pass without the wide compare ever being selected: this
+  /// says the lowered function really goes through selection and allocation.
   /// </summary>
   [Test]
   public void Compare_GivenTwoLongs_ThenTheFunctionActuallyRoutes() {
@@ -74,16 +74,16 @@ public sealed class BackendWideCompareTests {
     Assert.That(LinearScanAllocator.Allocate(m!), Is.Not.Null, "and it allocates, so the function routes");
   }
 
-  [TestCase("100000", "100001")]        // differs only in the low word
-  [TestCase("100001", "100000")]
-  [TestCase("100000", "200000")]        // differs only in the high word
-  [TestCase("65536", "1")]              // the low words compare the OTHER way from the values
-  [TestCase("1", "65536")]
-  [TestCase("-100000", "100000")]       // across zero: the sign lives in the high half
-  [TestCase("-100001", "-100000")]      // both negative
-  [TestCase("2147483647", "-2147483648")]  // the signed extremes
-  [TestCase("100000", "100000")]        // equal
-  public void Compare_GivenTwoLongs_ThenEveryPredicateAgreesWithTheDirectEmitter(string left, string right) {
+  [TestCase("100000", "100001", "-1 -1  0  0  0 -1")]         // differs only in the low word
+  [TestCase("100001", "100000", "0  0 -1 -1  0 -1")]
+  [TestCase("100000", "200000", "-1 -1  0  0  0 -1")]         // differs only in the high word
+  [TestCase("65536", "1", "0  0 -1 -1  0 -1")]                // the low words compare the OTHER way from the values
+  [TestCase("1", "65536", "-1 -1  0  0  0 -1")]
+  [TestCase("-100000", "100000", "-1 -1  0  0  0 -1")]        // across zero: the sign lives in the high half
+  [TestCase("-100001", "-100000", "-1 -1  0  0  0 -1")]       // both negative
+  [TestCase("2147483647", "-2147483648", "0  0 -1 -1  0 -1")]  // the signed extremes
+  [TestCase("100000", "100000", "0 -1  0 -1 -1  0")]          // equal
+  public void Compare_GivenTwoLongs_ThenEveryPredicateAnswersBySignedOrder(string left, string right, string expected) {
     var source = $"""
       DIM a AS LONG
       DIM b AS LONG
@@ -92,14 +92,14 @@ public sealed class BackendWideCompareTests {
       PRINT (a <  b); (a <= b); (a >  b); (a >= b); (a =  b); (a <> b)
       """;
 
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)), $"{left} vs {right}");
+    Assert.That(Run(source), Is.EqualTo(expected), $"{left} vs {right}");
   }
 
   /// <summary>The same values driving a BRANCH, which is the other half: the -1/0 is tested against zero.</summary>
-  [TestCase("100000", "100001")]
-  [TestCase("65536", "1")]
-  [TestCase("-100000", "100000")]
-  public void Compare_GivenItDrivesABranch_ThenBothPathsAgree(string left, string right) {
+  [TestCase("100000", "100001", "lt")]
+  [TestCase("65536", "1", "gt")]
+  [TestCase("-100000", "100000", "lt")]
+  public void Compare_GivenItDrivesABranch_ThenTheOrderedArmIsTaken(string left, string right, string expected) {
     var source = $"""
       DIM a AS LONG
       DIM b AS LONG
@@ -114,12 +114,12 @@ public sealed class BackendWideCompareTests {
       END IF
       """;
 
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)), $"{left} vs {right}");
+    Assert.That(Run(source), Is.EqualTo(expected), $"{left} vs {right}");
   }
 
   /// <summary>
   /// The pairs whose DIFFERENCE does not fit a LONG. Every case above writes its operands down, so
-  /// the optimizer folds the comparison and neither back end is asked the question - which is why
+  /// the optimizer folds the comparison and the back end is never asked the question - which is why
   /// the signed extremes were already listed there and still measured nothing. Here both operands
   /// come back out of a <c>NOINLINE</c> function called from two sites with different arguments, so
   /// no fold and no interprocedural propagation can prove either one.
@@ -139,7 +139,7 @@ public sealed class BackendWideCompareTests {
   [TestCase("2147483647", "-2147483648", "0 -1  0 -1  0 -1")]
   [TestCase("-2147483648", "-2147483648", "0  0 -1 -1 -1  0")]
   [TestCase("-1073741824", "3", "-1  0 -1  0  0 -1")]   // the control: the difference still fits
-  public void Compare_GivenADifferenceTooWideForTheType_ThenBothPathsGivePowerBasicsAnswer(
+  public void Compare_GivenADifferenceTooWideForTheType_ThenPowerBasicsAnswerIsGiven(
       string left, string right, string expected) {
     var source = $"""
       DECLARE FUNCTION Given&(BYVAL v&)
@@ -156,12 +156,8 @@ public sealed class BackendWideCompareTests {
       END FUNCTION
       """;
 
-    foreach (var optimize in new[] { true, false }) {
-      var direct = Run(source, routed: false, optimize);
-      Assert.That(direct, Is.EqualTo(expected), $"direct, optimize={optimize}: {left} vs {right}");
-      Assert.That(RunRouted(source, optimize), Is.EqualTo(direct),
-        $"routed, optimize={optimize}: {left} vs {right}");
-    }
+    foreach (var optimize in new[] { true, false })
+      Assert.That(RunRouted(source, optimize), Is.EqualTo(expected), $"optimize={optimize}: {left} vs {right}");
   }
 
   /// <summary>The same overflowing ordering driving a BRANCH, where the -1/0 is never materialized.</summary>
@@ -169,7 +165,7 @@ public sealed class BackendWideCompareTests {
   [TestCase("3", "-2147483648", "gt")]
   [TestCase("2147483647", "-2147483648", "gt")]
   [TestCase("-2147483648", "-2147483648", "eq")]
-  public void Compare_GivenAnOverflowingDifferenceDrivesABranch_ThenBothPathsTakeTheSameArm(
+  public void Compare_GivenAnOverflowingDifferenceDrivesABranch_ThenTheOrderedArmIsTakenAtEveryWidth(
       string left, string right, string expected) {
     var source = $"""
       DECLARE FUNCTION Given&(BYVAL v&)
@@ -192,11 +188,7 @@ public sealed class BackendWideCompareTests {
       END FUNCTION
       """;
 
-    foreach (var optimize in new[] { true, false }) {
-      var direct = Run(source, routed: false, optimize);
-      Assert.That(direct, Is.EqualTo(expected), $"direct, optimize={optimize}: {left} vs {right}");
-      Assert.That(RunRouted(source, optimize), Is.EqualTo(direct),
-        $"routed, optimize={optimize}: {left} vs {right}");
-    }
+    foreach (var optimize in new[] { true, false })
+      Assert.That(RunRouted(source, optimize), Is.EqualTo(expected), $"optimize={optimize}: {left} vs {right}");
   }
 }

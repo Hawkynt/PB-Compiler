@@ -98,20 +98,16 @@ public sealed class BackendDynamicDimTests {
   [TestCase(_dimWithARuntimeBound, "7 11")]
   [TestCase(_dimThenComputedIndex, "3 12")]
   [TestCase(_dimWithoutBoundsThenRedim, "5 6")]
-  public void Execute_GivenADimWithARuntimeBoundAndNoRedim_WhenRouted_ThenMainRoutesAndAgrees(
+  public void Execute_GivenADimWithARuntimeBoundAndNoRedim_WhenRouted_ThenMainRoutesAndPrintsTheElements(
       string source, string expected) {
     foreach (var optimize in new[] { false, true }) {
-      var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
       var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
-      var directOutput = Cpu8086.Run(direct.EmitExecutable()).Output;
       var routedOutput = Cpu8086.Run(routed.EmitExecutable()).Output;
 
       Assert.Multiple(() => {
-        Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-        Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
+        Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
         Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
           $"the module body did not route (optimize={optimize})");
-        Assert.That(Values(routedOutput), Is.EqualTo(Values(directOutput)), $"optimize={optimize}");
         Assert.That(Values(routedOutput), Does.EndWith(expected), $"optimize={optimize}");
       });
     }

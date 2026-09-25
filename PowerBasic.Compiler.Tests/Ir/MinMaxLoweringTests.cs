@@ -8,8 +8,8 @@ namespace PowerBasic.Compiler.Tests.Ir;
 /// <summary>
 /// MIN and MAX on the IR path, as a left fold of compare-and-select.
 ///
-/// The direct emitter folds them with CMP and JGE/JLE, keeping the accumulator when it already wins.
-/// The IR has to agree, and not only on the answer: the tie rule decides which of two equal
+/// The fold is CMP and JGE/JLE, keeping the accumulator when it already wins - the rule the direct
+/// emitter always used - and not only the answer matters: the tie rule decides which of two equal
 /// arguments comes back, and any-arity means the fold has to chain rather than special-case two.
 ///
 /// Constant arguments are checked through the pass pipeline rather than by reading the select, so
@@ -73,9 +73,9 @@ public sealed class MinMaxLoweringTests {
   }
 
   [Test]
-  public void Lower_GivenEqualArguments_ThenTheAccumulatorWinsAsItDoesInTheDirectEmitter() {
+  public void Lower_GivenEqualArguments_ThenTheAccumulatorWins() {
     // The fold keeps the accumulator on a tie, matching CMP + JGE. Numerically it makes no
-    // difference; it matters because the two code generators are checked against each other.
+    // difference; it is pinned so which of two equal arguments comes back stays a decided rule.
     var module = Lower("DIM a AS INTEGER\nDIM b AS INTEGER\na = 4\nb = 4\nPRINT MAX%(a, b)", optimize: false);
     var select = module.Functions.SelectMany(f => f.Blocks).SelectMany(b => b.Instructions).OfType<IrSelect>().First();
     var compare = (IrCmp)select.Condition;
