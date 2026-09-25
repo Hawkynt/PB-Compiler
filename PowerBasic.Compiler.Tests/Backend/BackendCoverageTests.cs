@@ -727,6 +727,7 @@ public sealed class BackendCoverageTests {
     "DIFF96.BAS",
     "DIFF97.BAS",
     "DIFF99.BAS",
+    "INCRLV.BAS",   // INCR / DECR of an array element, a record field and a float
     "DIFF01.BAS",
     "DIFF01.BAS",
     "DIFF02.BAS",
@@ -911,6 +912,7 @@ public sealed class BackendCoverageTests {
     "DIFF96.BAS",
     "DIFF97.BAS",
     "DIFF99.BAS",
+    "INCRLV.BAS",
     "DIFF01.BAS",
     "DIFF01.BAS",
     "DIFF02.BAS",
