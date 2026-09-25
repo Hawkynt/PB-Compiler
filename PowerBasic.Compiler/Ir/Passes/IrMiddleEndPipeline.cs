@@ -176,6 +176,10 @@ public static class IrMiddleEndPipeline {
     }
 
     if (optimize) {
+      // The DOS runtime's number printers end in the same string print a literal goes to, which is
+      // what makes rendering a constant at compile time exact on THIS target; it is not a claim about
+      // any other runtime, so it runs here and not in Standard.
+      ConstantNumericPrint.Run(module);
       StringStackPromotion.Run(module);
       foreach (var function in module.Functions)
         if (!function.IsDeclaration)

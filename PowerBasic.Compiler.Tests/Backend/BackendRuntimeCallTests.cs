@@ -145,19 +145,28 @@ public sealed class BackendRuntimeCallTests {
   // materialized under optimization without introducing a user call that would make main unroutable.
   // B spans offsets 3..6, so the 386 DWORD + three-byte-tail path must copy the tail correctly for
   // the printed LONG to survive.
+  // An odd-sized record copied through rt_memcpy: sixty-seven bytes are sixteen DWORDs and a three-byte
+  // tail on a 386. Its fields come from Opaque%, whose inline assembly the optimizer cannot see through,
+  // and it lands in an array element at an unknown index - with a known record the whole program folded
+  // to a constant PRINT, and a seven-byte copy is expanded inline rather than called.
   private const string _udtCopyProgram = """
-    TYPE Odd7
+    DECLARE FUNCTION Opaque%(BYVAL v%)
+    TYPE Odd67
       A AS INTEGER
-      Spare AS BYTE
+      Spare AS STRING * 61
       B AS LONG
     END TYPE
-    DIM sourceValue AS Odd7
-    DIM copiedValue AS Odd7
-    sourceValue.A = -123
+    DIM sourceValue AS Odd67
+    DIM records(1 TO 2) AS Odd67
+    sourceValue.A = Opaque%(-123)
     sourceValue.B = 987654
-    copiedValue = sourceValue
-    PRINT copiedValue.A; copiedValue.B
+    records(Opaque%(2)) = sourceValue
+    PRINT records(2).A; records(2).B
     END
+    FUNCTION Opaque%(BYVAL v%) NOINLINE
+      ! nop
+      Opaque% = v%
+    END FUNCTION
     """;
 
   // Same record, but the copy lands in an array element rather than a scalar-replaceable local, so
@@ -784,7 +793,7 @@ public sealed class BackendRuntimeCallTests {
       Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
       Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
       Assert.That(Contains(routedImage, 0xF3, 0x66, 0xA5), Is.True,
-        "the routed rt_memcpy should widen its seven-byte copy to one DWORD and a three-byte tail");
+        "the routed rt_memcpy should widen its sixty-seven-byte copy to DWORDs and a three-byte tail");
       Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
       Assert.That(routedCpu.Output.Trim().Replace(" ", ""), Is.EqualTo("-123987654"));
     });

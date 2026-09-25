@@ -54,8 +54,12 @@ public sealed class OptimizerTests {
 
   private const string _HELLO = "PRINT \"Hello, World!\"\nEND";
 
-  /// <summary>Non-trivial twin: the variable forces the general (trimmed-runtime) path.</summary>
-  private const string _HELLO_VAR = "x% = 1\nPRINT \"Hello, World!\"; x%\nEND";
+  /// <summary>
+  /// Non-trivial twin: a value only known at run time forces the general (trimmed-runtime) path. It was
+  /// x% = 1, which the optimizer now folds into the printed text - and a program that prints only known
+  /// text IS trivial. A port read is something no optimizer may predict.
+  /// </summary>
+  private const string _HELLO_VAR = "x% = INP(&H60)\nPRINT \"Hello, World!\"; x%\nEND";
 
   #region runtime trimming (P1/P2/P4)
 
@@ -66,8 +70,8 @@ public sealed class OptimizerTests {
     Assert.Multiple(() => {
       Assert.That(pb36, Has.Length.LessThan(2048), "trimmed hello world should be tiny");
       Assert.That(pb36.Length, Is.LessThan(pb35.Length / 4), "trimming should remove most of the runtime");
-      Assert.That(pb36[0], Is.EqualTo((byte)'M'));
-      Assert.That(pb36[1], Is.EqualTo((byte)'Z'));
+      Assert.That(pb36[..2], Is.Not.EqualTo("MZ"u8.ToArray()), "an optimized self-contained program is a flat COM");
+      Assert.That(pb35[..2], Is.EqualTo("MZ"u8.ToArray()), "...and an unoptimized one keeps the EXE");
       Assert.That(Ascii(pb36), Does.Contain("Hello, World!"));
     });
   }
@@ -78,11 +82,21 @@ public sealed class OptimizerTests {
     // pb35 reserves 64 KiB main + 2 x 64 KiB heap segments (~192 KiB); a trimmed
     // hello world keeps only the 64 KiB main segment
     var pb35 = Compile(_HELLO_VAR, Dialect.Pb35);
-    var pb36 = Compile(_HELLO_VAR, Dialect.Pb36);
+    var pb36 = Compile("$COMPILE EXE\n" + _HELLO_VAR, Dialect.Pb36);   // the claim is about the EXE header
     Assert.Multiple(() => {
       Assert.That(Resident(pb35), Is.GreaterThanOrEqualTo(0x30000), "pb35 baseline: main + string heap + array heap");
       Assert.That(Resident(pb36), Is.LessThanOrEqualTo(0x10000 + 16), "pb36: only the 64 KiB main segment");
+      // the same answer as a COM, which sizes its own block: MOV BX,1000h / MOV AH,4Ah
+      var com = Compile(_HELLO_VAR, Dialect.Pb36);
+      Assert.That(Contains(com, 0xBB, 0x00, 0x10, 0xB4, 0x4A), Is.True, "the COM keeps exactly the 64 KiB main segment");
     });
+
+    static bool Contains(byte[] image, params byte[] needle) {
+      for (var i = 0; i + needle.Length <= image.Length; ++i)
+        if (image.AsSpan(i, needle.Length).SequenceEqual(needle))
+          return true;
+      return false;
+    }
 
     static int Resident(byte[] exe) {
       var headerParagraphs = exe[0x08] | exe[0x09] << 8;
@@ -169,8 +183,13 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenNonTrivialStatement_WhenPb36_ThenGeneralMzPathTaken() {
-    var image = Compile("x% = 1\nPRINT x%\nEND", Dialect.Pb36);
-    Assert.That(image[..2], Is.EqualTo(new byte[] { (byte)'M', (byte)'Z' }), "variables need the real runtime");
+    var image = Compile("x% = INP(&H60)\nPRINT x%\nEND", Dialect.Pb36);
+    var known = Compile("x% = 1\nPRINT x%\nEND", Dialect.Pb36);
+    Assert.Multiple(() => {
+      Assert.That(image[..2], Is.Not.EqualTo(new byte[] { 0xB4, 0x09 }), "a value known only at run time needs the real runtime");
+      Assert.That(image, Has.Length.GreaterThan(64), "...which is the trimmed runtime, not the one-call image");
+      Assert.That(known[..2], Is.EqualTo(new byte[] { 0xB4, 0x09 }), "a variable the optimizer folds into known text does not");
+    });
   }
 
   [Test]
@@ -520,7 +539,8 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenUdtCopiesUnderCpu386_WhenPb36_ThenDwordMoves() {
-    const string source = "$CPU 80386\nTYPE T\n  x AS LONG\n  y AS LONG\nEND TYPE\nDIM a AS T\nDIM b AS T\na.x = 1\nb = a\nPRINT b.x\nEND";
+    // a record big enough to stay a block copy, filled from a port so the optimizer cannot fold it
+    const string source = "$CPU 80386\nTYPE T\n  x AS LONG\n  pad AS STRING * 60\nEND TYPE\nDIM a AS T\nDIM b(1 TO 2) AS T\na.x = INP(&H60)\nb((INP(&H61) AND 1) + 1) = a\nPRINT b(1).x\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -1018,7 +1038,8 @@ public sealed class OptimizerTests {
     // O7 + O0174: a six-iteration tiny FOR loop is above the fetch-bound 8086's four-copy budget (it keeps the
     // compact loop) but inside a 486's wider one (it fully unrolls the six copies). The two builds differ only
     // in that loop, so the unrolled 486 image is strictly larger than the still-looped 8086 image.
-    const string body = "$OPTIMIZE SPEED\nDIM s AS INTEGER, i AS INTEGER\ns = 0\nFOR i = 1 TO 6\ns = s + i\nNEXT\nPRINT s\nEND";
+    // k comes from a port and XOR has no closed form, so the loop survives to be unrolled or not
+    const string body = "$OPTIMIZE SPEED\nDIM s AS INTEGER, i AS INTEGER, k AS INTEGER\nk = INP(&H60)\ns = 0\nFOR i = 1 TO 6\ns = s + (i XOR k)\nNEXT\nPRINT s\nEND";
     var i8086 = Compile(body, Dialect.Pb36);
     var i486 = Compile("$CPU 80486\n" + body, Dialect.Pb36);
     Assert.That(i486.Length, Is.GreaterThan(i8086.Length),
@@ -2342,7 +2363,7 @@ public sealed class OptimizerTests {
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     var listing = generator.DescribeImage();
-    var code = exe.AsSpan(BitConverter.ToUInt16(exe, 8) * 16).ToArray();
+    var code = PowerBasic.Compiler.Tests.Exec.DosImageCode.ByListingOffset(exe);
     var target = listing.Procedures.First(p => p.Name.Equals(procedure, StringComparison.OrdinalIgnoreCase));
     var end = listing.Procedures.Where(p => p.CodeOffset > target.CodeOffset).Select(p => p.CodeOffset)
       .Concat(listing.RuntimeLabels.Where(l => !l.IsConstant && l.Offset > target.CodeOffset).Select(l => l.Offset))
@@ -3235,8 +3256,8 @@ public sealed class OptimizerTests {
       DECLARE SUB P
       P
       END
-      SUB P
-        PRINT "x"
+      SUB P NOINLINE
+        PRINT INP(&H60)
       END SUB
       """, Dialect.Pb36);
     // a NOP run (0x90) appears as the alignment pad before the aligned proc
@@ -3353,8 +3374,8 @@ public sealed class OptimizerTests {
     // k% IS written in the loop body (k% = k% + 1), so k%*m% is NOT invariant.
     // AnalyzeLicm must find zero hoistable expressions.
     const string source = """
-      k% = 7
-      m% = 13
+      k% = INP(&H60)
+      m% = INP(&H61)
       DIM a%(1 TO 10)
       FOR i% = 1 TO 10
         k% = k% + 1
@@ -3403,8 +3424,8 @@ public sealed class OptimizerTests {
     // With $OPTIMIZE SPEED, LICM hoists k%*m% to the preheader; without SPEED it
     // stays in the body. The emitted images must differ (code is in a different place).
     const string body = """
-      k% = 7
-      m% = 13
+      k% = INP(&H60)
+      m% = INP(&H61)
       DIM a%(1 TO 10)
       FOR i% = 1 TO 10
         a%(i%) = k% * m% + i%

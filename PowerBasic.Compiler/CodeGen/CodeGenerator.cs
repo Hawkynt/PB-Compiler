@@ -214,6 +214,23 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     => this.EmitDosProgram(units, libraries, omfLibraries, emitCom: false);
 
   /// <summary>
+  /// Which DOS container <see cref="EmitExecutable()"/> writes. <see cref="DosContainer.Auto"/> - the
+  /// default - makes an optimized, self-contained program a flat COM: nothing is lost (the MZ layout is
+  /// a single 64 KiB segment too, so a program fits a COM exactly when it fits that) and the header,
+  /// its alignment padding and the relocation table all go. An explicit <c>$COMPILE EXE</c> or
+  /// <c>$COMPILE CHAIN</c> pins the EXE, as does this property.
+  /// </summary>
+  public DosContainer Container { get; set; } = DosContainer.Auto;
+
+  /// <summary>Whether this build, as resolved so far, is written as a flat COM although EXE was asked for.</summary>
+  private bool ChoosesComContainer()
+    => this.Container == DosContainer.Auto
+       && this.Optimize && !this._allowExternalCalls && !this._isUnit
+       && !model.MetaStatements.Any(m => m.Command == "COMPILE" && m.Arguments is [{ } target, ..]
+         && (target.Text.Equals("EXE", StringComparison.OrdinalIgnoreCase)
+           || target.Text.Equals("CHAIN", StringComparison.OrdinalIgnoreCase)));
+
+  /// <summary>
   /// Emits a flat DOS COM image at the conventional PSP:0100h load address. COM has no relocation
   /// table, so this form is intentionally standalone: external units/libraries require EXE.
   /// </summary>
@@ -233,6 +250,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return [];
     }
     var optimizeMeta = this.ResolveOptimizeMetastatement();
+    var autoCom = !emitCom && this.ChoosesComContainer();
+    emitCom |= autoCom;
 
     // BASICA/GW dead interpreter text, decided before anything rewrites the body: which
     // DeferredSourceStmt nodes control cannot reach. Not gated on the optimizer - whether a program
@@ -271,6 +290,14 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // still opt into that emitter explicitly as a behavioural oracle.
     if (this.RaiseWhenRoutingIsMandatoryAndSomethingDeclined())
       return [];
+
+    // P7: a program whose optimized body only prints known text is a raw COM-style image of a few
+    // dozen bytes (docs/PB36.md) - a lean-output optimization, available to any dialect under the
+    // optimizer flag
+    if ((emitCom || this.ChoosesComContainer())
+        && this.Optimize && !this._allowExternalCalls && !this._isUnit
+        && this._backendModule is { } optimized && Emit.DosTrivialImage.TryBuild(optimized) is { } trivial)
+      return trivial;
 
     var asm = this._asm;
     // Model COM's PSP:0100h load origin inside the assembler itself. The prefix is not written to
@@ -318,6 +345,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._rt.EnableBss = this.Optimize && !this._allowExternalCalls && !this._isUnit;
     this._rt.EnableUmb = this.Optimize && !this._allowExternalCalls && !this._isUnit;   // C6: HUGE-array heap prefers upper memory
     this._rt.EnableFastVideo = model.FastVideo;   // R1: $OPTION VIDEO direct-video console PRINT
+    this._rt.ResizeComBlock = emitCom;
     this._rt.Target = this.RuntimeTargetForRuntime();
     // $CPU says what the runtime MAY encode, $OPTIMIZE says whether it may trade bytes for cycles.
     // Keeping the second out of the target is what lets $FLOAT NPX still reach native x87 with the
@@ -423,6 +451,10 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._listingDataLength = asm.Position - this._listingCodeLength;
     this._rt.PlaceBss(asm); // pb36 P3: zero blobs live behind the image
 
+    var heapParagraphs = HeapParagraphs(trimmedSections);
+    if (emitCom)
+      DosRuntime.BindComParagraphs(asm, 0x1000 + heapParagraphs);   // the whole 64 KiB segment, then the heaps
+
     RelocatableImage? comImage = null;
     var image = this._allowExternalCalls
       ? this.LinkImage(units, libraries, omfLibraries)
@@ -437,7 +469,8 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         var virtualEnd = this._rt.EnableBss ? asm.Lbl("rt_bss_end").Position : image.Length;
         return ComWriter.Write(comImage!, virtualEnd);
       } catch (InvalidDataException e) {
-        this.Errors.Add(new(default, "COM: " + e.Message));
+        this.Errors.Add(new(default, "COM: " + e.Message
+          + (autoCom ? " (this program became a COM because it is optimized and self-contained; $COMPILE EXE keeps the MZ header)" : "")));
         return [];
       }
     }
@@ -445,14 +478,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // grow the single segment to its full 64 KiB so data + stack always fit,
     // then reserve the far string and array heap segments behind it - under
     // pb36 trimming unused heap segments are not reserved at all (P4)
-    var heapParagraphs = DosRuntime.ExtraHeapParagraphs;
-    if (trimmedSections != null && !trimmedSections.Contains("chain")) {
-      var needArrayHeap = trimmedSections.Contains("arrays") || trimmedSections.Contains("ems");
-      var needStringHeap = trimmedSections.Contains("strings");
-      heapParagraphs = needArrayHeap ? DosRuntime.ExtraHeapParagraphs
-        : needStringHeap ? DosRuntime.ExtraHeapParagraphs / 2
-        : 0;
-    }
     var extraParagraphs = (ushort)((0x10000 - image.Length % 0x10000 + 15) / 16 + heapParagraphs);
     var writer = new MzExeWriter(image) {
       EntrySegment = 0,
@@ -466,6 +491,20 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     };
     writer.AddRelocations(this._allowExternalCalls ? this._linkedSegmentSites : asm.SegmentRelocations);
     return writer.ToArray();
+  }
+
+  /// <summary>
+  /// The far heap segments reserved behind the 64 KiB main segment: both unless the trimmed runtime
+  /// proves a heap unused (P4). The EXE header and the COM block resize read the same answer.
+  /// </summary>
+  private static int HeapParagraphs(HashSet<string>? trimmedSections) {
+    if (trimmedSections is null || trimmedSections.Contains("chain"))
+      return DosRuntime.ExtraHeapParagraphs;
+    var needArrayHeap = trimmedSections.Contains("arrays") || trimmedSections.Contains("ems");
+    var needStringHeap = trimmedSections.Contains("strings");
+    return needArrayHeap ? DosRuntime.ExtraHeapParagraphs
+      : needStringHeap ? DosRuntime.ExtraHeapParagraphs / 2
+      : 0;
   }
 
   #region slots, literals & labels

@@ -27,7 +27,7 @@ public sealed class DosArtifactPipelineE2ETests {
   public void Program_GivenSameIrPipeline_WhenEmittedAsExeAndCom_ThenBothExecuteIdentically() {
     const string source = "END 7";
 
-    var exeGen = new CodeGenerator(Bind(source)) { Optimize = true };
+    var exeGen = new CodeGenerator(Bind(source)) { Optimize = true, Container = DosContainer.Exe };
     var exe = exeGen.EmitExecutable();
     var comGen = new CodeGenerator(Bind(source)) { Optimize = true };
     var com = comGen.EmitCom();

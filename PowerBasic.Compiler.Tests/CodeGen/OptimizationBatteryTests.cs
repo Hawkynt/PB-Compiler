@@ -322,7 +322,7 @@ public sealed class OptimizationBatteryTests {
     var listing = generator.DescribeImage();
 
     // the listing's offsets index the raw image, which the MZ header prefixes
-    var code = exe.AsSpan(BitConverter.ToUInt16(exe, 8) * 16).ToArray();
+    var code = PowerBasic.Compiler.Tests.Exec.DosImageCode.ByListingOffset(exe);
 
     // a procedure runs to the next thing bound after it - the next procedure, the first runtime
     // label past it, or the end of the code

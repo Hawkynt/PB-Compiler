@@ -419,13 +419,16 @@ END FUNCTION
 
 ' ---------------------------------------------------------------------------
 ' @scenario ZeroUsesXorIdiom
-' @what     assigning the constant zero
-' @expect   O8 emits XOR AX,AX rather than MOV AX,0
+' @what     a constant zero handed to the runtime in a register
+' @expect   O8 emits XOR AX,AX rather than MOV AX,0. The zero goes to OUT (port 80h, the POST
+'           diagnostic port, harmless) because PRINT alone no longer needs a register: the
+'           printed " 0 " is rendered at compile time.
 ' @assert   present xor-ax-ax
 ' @status   done
 ' ---------------------------------------------------------------------------
 SUB ZeroUsesXorIdiom() NOINLINE
   z% = 0
+  OUT &H80, z%
   PRINT "zero"; z%
 END SUB
 

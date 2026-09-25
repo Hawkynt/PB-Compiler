@@ -338,7 +338,10 @@ public static class Driver {
         artifact = generator.EmitExecutable(units, libraries);
         var isChain = model.MetaStatements.Any(m => m.Command == "COMPILE"
           && m.Arguments is [{ } chainTarget, ..] && chainTarget.Text.Equals("CHAIN", StringComparison.OrdinalIgnoreCase));
-        output ??= Path.ChangeExtension(source, isChain ? ".PBC" : ".EXE");
+        // an optimized self-contained program is written as a flat COM (CodeGenerator.Container), and
+        // the file is named for what it holds
+        var isCom = artifact is not [(byte)'M', (byte)'Z', ..] && artifact.Length > 0;
+        output ??= Path.ChangeExtension(source, isChain ? ".PBC" : isCom ? ".COM" : ".EXE");
       }
 
       if (generator.Errors.Count > 0) {
@@ -464,7 +467,8 @@ public static class Driver {
     w.WriteLine("       pbc lib build <out.PBL|out.LIB> <unit.PBU>...");
     w.WriteLine("       pbc lib list <file.PBL|file.PBU>");
     w.WriteLine();
-    w.WriteLine("A source with $COMPILE UNIT produces .PBU; $COMPILE COM produces flat .COM;");
+    w.WriteLine("A source with $COMPILE UNIT produces .PBU; $COMPILE COM produces flat .COM,");
+    w.WriteLine("as does any optimized program without $LINK ($COMPILE EXE keeps the .EXE);");
     w.WriteLine("$LINK \"X.PBU\" / $LINK \"Y.PBL\" directives (relative to the source");
     w.WriteLine("directory) are linked into the executable.");
     w.WriteLine();

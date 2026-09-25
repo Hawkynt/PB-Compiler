@@ -61,6 +61,15 @@ public sealed partial class DosRuntime {
   public bool EnableUmb { get; set; }
 
   /// <summary>
+  /// Whether the image is a flat COM, which must size its own memory block. DOS gives a COM every free
+  /// paragraph; an EXE gets what its header asks for. Left alone, a COM would leave nothing for SHELL,
+  /// CHAIN or anything else that allocates, so the entry stub shrinks the block to what the EXE header
+  /// would have reserved (<c>rt_com_paragraphs</c>, bound by <see cref="BindComParagraphs"/> once the
+  /// trimmed runtime's heaps are known) - and stops with DOS error 8 when not even that is free.
+  /// </summary>
+  public bool ResizeComBlock { get; set; }
+
+  /// <summary>
   /// Target-aware forward byte copy of CX bytes (DS:SI -> ES:DI, DF clear). Long runs first consume
   /// the widest legal vector width, a 386+ target then consumes DWORDs, and the final <=3 bytes use
   /// MOVSB. Borrowed vector state is preserved by <see cref="EmitVectorCopyPrefix"/>.
@@ -151,6 +160,14 @@ public sealed partial class DosRuntime {
     return bound;
   }
 
+  /// <summary>Binds the paragraph count the COM entry stub resizes its block to; see <see cref="ResizeComBlock"/>.</summary>
+  public static void BindComParagraphs(Assembler asm, int paragraphs) {
+    ArgumentNullException.ThrowIfNull(asm);
+    var label = asm.Lbl("rt_com_paragraphs");
+    label.IsConstant = true;                      // a count: never relocates
+    label.Position = paragraphs;
+  }
+
   /// <summary>Lays the recorded BSS blobs out behind the image and patches the entry stub's zero range; call once after all emission.</summary>
   public void PlaceBss(Assembler asm) {
     ArgumentNullException.ThrowIfNull(asm);
@@ -177,6 +194,17 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Reg.CS);
     asm.Mov(Reg.DS, Reg.AX);
     asm.Mov(Reg.ES, Reg.AX);
+    if (this.ResizeComBlock) {
+      // a COM's CS is its PSP, which is its memory block: AH=4Ah resizes ES to BX paragraphs
+      var sized = asm.DefineLabel();
+      asm.Mov(Reg.BX, Imm.OffsetOf(asm.Lbl("rt_com_paragraphs")));
+      asm.Mov(Reg.AH, 0x4A);
+      asm.Int(0x21);
+      asm.Jnc(sized);
+      asm.Mov(Reg.AX, 0x4C08);                    // DOS error 8: insufficient memory
+      asm.Int(0x21);
+      asm.MarkLabel(sized);
+    }
     if (this.EnableBss) {
       asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_bss_off")));
       asm.Mov(Reg.CX, Imm.OffsetOf(asm.Lbl("rt_bss_words")));

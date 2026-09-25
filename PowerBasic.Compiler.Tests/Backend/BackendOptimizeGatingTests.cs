@@ -80,7 +80,7 @@ public sealed class BackendOptimizeGatingTests {
   /// <summary>The emitted bytes of one procedure - it runs to whatever the codegen bound next.</summary>
   private static byte[] CodeOf(CodeGenerator generator, byte[] image, string procedure) {
     var listing = generator.DescribeImage();
-    var code = image.AsSpan(BitConverter.ToUInt16(image, 8) * 16).ToArray();
+    var code = PowerBasic.Compiler.Tests.Exec.DosImageCode.ByListingOffset(image);
     var entry = listing.Procedures.Single(p => p.Name.Equals(procedure, StringComparison.OrdinalIgnoreCase));
     Assert.That(entry.CodeOffset, Is.GreaterThanOrEqualTo(0), $"{procedure} was not emitted");
     var end = listing.Procedures.Where(p => p.CodeOffset > entry.CodeOffset).Select(p => p.CodeOffset)
