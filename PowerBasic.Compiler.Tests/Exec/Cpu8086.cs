@@ -1,4 +1,5 @@
 using System.Text;
+using PowerBasic.Compiler.Numerics;
 
 namespace PowerBasic.Compiler.Tests.Exec;
 
@@ -16,9 +17,10 @@ namespace PowerBasic.Compiler.Tests.Exec;
 /// The design rule that matters more than coverage: <b>it fails loudly</b>. An unimplemented opcode,
 /// an unhandled DOS call, a runaway loop - all throw <see cref="Cpu8086Exception"/> naming what was
 /// hit and where. An interpreter that quietly does the wrong thing would prove the opposite of what it
-/// is for, so a program it cannot run is a skipped test, never a passing one. Its x87 model preserves
-/// integral values exactly and approximates non-integral values with doubles; the latter still bounds
-/// which floating-point fidelity claims this interpreter can make.
+/// is for, so a program it cannot run is a skipped test, never a passing one. Its default x87 model
+/// preserves integers exactly and uses host doubles for throughput. Tests that assert storage below
+/// IEEE64 precision opt into the compiler's software <see cref="Extended80"/> arithmetic; the
+/// transcendental instructions remain host-double approximations in either mode.
 /// </summary>
 public sealed class Cpu8086 {
 
@@ -31,6 +33,7 @@ public sealed class Cpu8086 {
   private const ushort _EMS_FRAME_SEGMENT = 0xE000;
 
   private readonly byte[] _memory = new byte[_MEMORY];
+  private readonly bool _exactFloatingPoint;
 
   /// <summary>The BIOS video mode last set through INT 10h AH=00h; 03h (80x25 colour text) at reset.</summary>
   private byte _videoMode = 0x03;
@@ -139,9 +142,13 @@ public sealed class Cpu8086 {
   /// </summary>
   public IEnumerable<string> FileNames => this._byName.Keys;
 
-  /// <summary>Loads an MZ executable and runs it to termination (or until <paramref name="maxSteps"/> instructions).</summary>
-  public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000) {
-    var cpu = new Cpu8086();
+  /// <summary>
+  /// Loads an MZ executable and runs it to termination (or until <paramref name="maxSteps"/>
+  /// instructions). <paramref name="exactFloatingPoint"/> selects bit-exact software x87 arithmetic;
+  /// leave it off for corpus throughput when IEEE64 observation is sufficient.
+  /// </summary>
+  public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000, bool exactFloatingPoint = false) {
+    var cpu = new Cpu8086(exactFloatingPoint);
     cpu._executables["T.EXE"] = exe;                    // the test harness runs each image under this DOS name
     cpu.Load(exe);
     cpu.Execute(maxSteps);
@@ -149,7 +156,7 @@ public sealed class Cpu8086 {
   }
 
   /// <summary>
-  /// As <see cref="Run(byte[],int)"/>, but with files already on the (in-memory) disk, and reporting
+  /// As <see cref="Run(byte[],int,bool)"/>, but with files already on the (in-memory) disk, and reporting
   /// rather than throwing what stopped the program - the machine comes back either way.
   ///
   /// <para>
@@ -161,8 +168,8 @@ public sealed class Cpu8086 {
   /// </para>
   /// </summary>
   public static Cpu8086 Run(byte[] exe, IReadOnlyDictionary<string, byte[]> disk,
-      out Cpu8086Exception? fault, int maxSteps = 20_000_000) {
-    var cpu = new Cpu8086();
+      out Cpu8086Exception? fault, int maxSteps = 20_000_000, bool exactFloatingPoint = false) {
+    var cpu = new Cpu8086(exactFloatingPoint);
     foreach (var (name, bytes) in disk)
       cpu._byName[name] = new MemoryFile { Name = name, Bytes = [.. bytes] };
     cpu.Load(exe);
@@ -174,6 +181,8 @@ public sealed class Cpu8086 {
     }
     return cpu;
   }
+
+  private Cpu8086(bool exactFloatingPoint) => this._exactFloatingPoint = exactFloatingPoint;
 
   /// <summary>
   /// The environment a loaded program sees, as DOS lays it out: NAME=VALUE strings, each
@@ -262,7 +271,7 @@ public sealed class Cpu8086 {
     if (this._execDepth >= _MAX_EXEC_DEPTH)
       throw new Cpu8086Exception($"EXEC nesting exceeded {_MAX_EXEC_DEPTH} images");
 
-    var child = new Cpu8086 { _execDepth = this._execDepth + 1 };
+    var child = new Cpu8086(this._exactFloatingPoint) { _execDepth = this._execDepth + 1 };
     foreach (var (name, file) in this._byName)
       child._byName[name] = file;
     foreach (var (name, executable) in this._executables)
@@ -1014,23 +1023,38 @@ public sealed class Cpu8086 {
   // ---- x87 ---------------------------------------------------------------------------------------
 
   /// <summary>
-  /// One x87 value. FILD must retain every bit of a signed 64-bit integer: extended precision has a
-  /// 64-bit significand, while a host double has only 53. Keeping that integral form alongside the
-  /// floating approximation prevents FILD/FISTP and integral x87 arithmetic from losing low bits.
+  /// One x87 value. The optional extended representation is populated by exact-mode calculations
+  /// and ten-byte loads; the optional integer keeps integer-only paths exact in both execution modes.
   /// </summary>
-  private readonly record struct X87Value(double Approximation, Int128? Integer = null) {
-    public double AsDouble => this.Integer is { } exact ? (double)exact : this.Approximation;
+  private readonly record struct X87Value(
+      double Approximation, Extended80? ExtendedValue = null, Int128? Integer = null) {
 
-    public static X87Value Exact(Int128 value) => new(0, value);
+    public double AsDouble => this.Integer is { } integer ? (double)integer : this.Approximation;
+
+    public Extended80 AsExtended => this.ExtendedValue ?? (this.Integer is { } integer
+      && integer >= long.MinValue && integer <= long.MaxValue
+        ? Extended80.FromInt64((long)integer)
+        : Extended80.FromDouble(this.AsDouble));
+
+    public static X87Value Exact(Int128 value) => new((double)value, Integer: value);
+
     public static X87Value Floating(double value) => new(value);
+
+    public static X87Value Floating(float value) => new(value);
+
+    public static X87Value Extended(Extended80 value) => new(value.ToDouble(), value);
 
     public X87Value Abs() => this.Integer is { } exact
       ? Exact(Int128.Abs(exact))
-      : Floating(Math.Abs(this.Approximation));
+      : this.ExtendedValue is { } extended
+        ? Extended(Extended80.Abs(extended))
+        : Floating(Math.Abs(this.Approximation));
 
     public X87Value Negate() => this.Integer is { } exact
       ? Exact(-exact)
-      : Floating(-this.Approximation);
+      : this.ExtendedValue is { } extended
+        ? Extended(Extended80.Negate(extended))
+        : Floating(-this.Approximation);
   }
 
   private readonly X87Value[] _st = new X87Value[8];
@@ -1059,14 +1083,12 @@ public sealed class Cpu8086 {
   private void FPop() => this._top = (this._top + 1) & 7;
 
   /// <summary>
-  /// x87, with exact integral values and host doubles standing in for non-integral extended values.
+  /// x87, with exact software extended values for the specified arithmetic operations.
   ///
-  /// That approximation is deliberate and it bounds what this interpreter may be used for. Both
-  /// non-integral values in a differential comparison run on the SAME approximation. Integer loads
-  /// are not allowed that shortcut: the hardware represents every signed qword exactly, and reducing
-  /// one to 53 bits made the two code generators appear to disagree when only the interpreter did.
-  /// This is still NOT a statement about matching the eleven extra fraction bits of a real 8087 for
-  /// non-integral temporaries; the golden battery remains the authority there.
+  /// Transcendentals still convert through host doubles: real x87 implementations do not promise
+  /// correctly-rounded transcendentals, so matching those needs an instruction-specific oracle. Add,
+  /// subtract, multiply, divide, square root, conversion and comparison do have specified rounding
+  /// and use <see cref="Extended80"/> so an MBF64 or EXT test can observe all 64 significand bits.
   /// </summary>
   private void X87(byte opcode) {
     var start = this._ip - 1;
@@ -1077,9 +1099,13 @@ public sealed class Cpu8086 {
 
     var (_, reg, address) = this.ModRm();
     switch (opcode) {
-      case 0xD9 when reg == 0: this.FPush(BitConverter.Int32BitsToSingle((int)this.ReadDword(address))); return;
+      case 0xD9 when reg == 0:
+        this.FPush(X87Value.Floating(BitConverter.Int32BitsToSingle((int)this.ReadDword(address))));
+        return;
       case 0xD9 when reg is 2 or 3:
-        this.WriteDword(address, (uint)BitConverter.SingleToInt32Bits((float)this.St(0).AsDouble));
+        this.WriteDword(address, (uint)BitConverter.SingleToInt32Bits(this._exactFloatingPoint
+          ? this.St(0).AsExtended.ToSingle(this.RoundingMode)
+          : (float)this.St(0).AsDouble));
         if (reg == 3) this.FPop();
         return;
       // FLDCW. Ignoring this used to be harmless-looking and was not: INT and FIX are implemented by
@@ -1088,9 +1114,13 @@ public sealed class Cpu8086 {
       // otherwise, which is exactly backwards for a reference implementation.
       case 0xD9 when reg == 5: this._controlWord = this.ReadWord(address); return;
       case 0xD9 when reg == 7: this.WriteWord(address, this._controlWord); return;  // FSTCW/FNSTCW
-      case 0xDD when reg == 0: this.FPush(BitConverter.Int64BitsToDouble((long)this.ReadQword(address))); return;
+      case 0xDD when reg == 0:
+        this.FPush(X87Value.Floating(BitConverter.Int64BitsToDouble((long)this.ReadQword(address))));
+        return;
       case 0xDD when reg is 2 or 3:
-        this.WriteQword(address, (ulong)BitConverter.DoubleToInt64Bits(this.St(0).AsDouble));
+        this.WriteQword(address, (ulong)BitConverter.DoubleToInt64Bits(this._exactFloatingPoint
+          ? this.St(0).AsExtended.ToDouble(this.RoundingMode)
+          : this.St(0).AsDouble));
         if (reg == 3) this.FPop();
         return;
       // FSTSW m2byte - the 8087 way to get at the condition codes a compare just set. The 287's
@@ -1102,8 +1132,18 @@ public sealed class Cpu8086 {
         this.WriteDword(address, (uint)NarrowInt32(this.RoundToInteger(this.St(0))));
         if (reg == 3) this.FPop();
         return;
-      case 0xDB when reg == 5: this.FPush(this.ReadExtended(address)); return;
-      case 0xDB when reg == 7: this.WriteExtended(address, this.St(0).AsDouble); this.FPop(); return;
+      case 0xDB when reg == 5:
+        this.FPush(this._exactFloatingPoint
+          ? X87Value.Extended(this.ReadExtended(address))
+          : X87Value.Floating(this.ReadExtendedApproximation(address)));
+        return;
+      case 0xDB when reg == 7:
+        if (this._exactFloatingPoint)
+          this.WriteExtended(address, this.St(0).AsExtended);
+        else
+          this.WriteExtendedApproximation(address, this.St(0).AsDouble);
+        this.FPop();
+        return;
       case 0xDF when reg == 0: this.FPushInteger((short)this.ReadWord(address)); return;
       case 0xDF when reg is 2 or 3:
         this.WriteWord(address, (ushort)NarrowInt16(this.RoundToInteger(this.St(0))));
@@ -1150,7 +1190,11 @@ public sealed class Cpu8086 {
       case (0xD9, 0xEA): this.FPush(Math.Log2(Math.E)); return;               // FLDL2E
       case (0xD9, 0xEC): this.FPush(Math.Log10(2)); return;                   // FLDLG2
       case (0xD9, 0xED): this.FPush(Math.Log(2)); return;                     // FLDLN2
-      case (0xD9, 0xFA): this.SetFloatingSt(0, Math.Sqrt(this.St(0).AsDouble)); return; // FSQRT
+      case (0xD9, 0xFA):
+        this.SetSt(0, this._exactFloatingPoint
+          ? X87Value.Extended(Extended80.SquareRoot(this.St(0).AsExtended, this.RoundingMode))
+          : X87Value.Floating(Math.Sqrt(this.St(0).AsDouble)));
+        return;                                                               // FSQRT
       case (0xD9, 0xFE): this.SetFloatingSt(0, Math.Sin(this.St(0).AsDouble)); return;  // FSIN
       case (0xD9, 0xFF): this.SetFloatingSt(0, Math.Cos(this.St(0).AsDouble)); return;  // FCOS
       // FPTAN replaces ST(0) with its tangent and then PUSHES 1.0 - the extra push is why every
@@ -1159,7 +1203,7 @@ public sealed class Cpu8086 {
         this.SetFloatingSt(0, Math.Tan(this.St(0).AsDouble));
         this.FPushInteger(1);
         return;
-      case (0xD9, 0xFC): this.SetSt(0, X87Value.Exact(this.RoundToInteger(this.St(0)))); return; // FRNDINT
+      case (0xD9, 0xFC): this.SetSt(0, this.RoundToIntegral(this.St(0))); return;   // FRNDINT
       case (0xD9, 0xF0):
         this.SetFloatingSt(0, Math.Pow(2, this.St(0).AsDouble) - 1);
         return;
@@ -1258,7 +1302,7 @@ public sealed class Cpu8086 {
     }
   }
 
-  private static X87Value Arithmetic(int op, X87Value a, X87Value b) {
+  private X87Value Arithmetic(int op, X87Value a, X87Value b) {
     if (a.Integer is { } ai && b.Integer is { } bi) {
       var exact = op switch {
         0 => ai + bi,
@@ -1274,6 +1318,17 @@ public sealed class Cpu8086 {
       if (exact.HasValue && exact.Value >= long.MinValue && exact.Value <= long.MaxValue)
         return X87Value.Exact(exact.Value);
     }
+
+    if (this._exactFloatingPoint)
+      return X87Value.Extended(op switch {
+        0 => Extended80.Add(a.AsExtended, b.AsExtended, this.RoundingMode),
+        1 => Extended80.Multiply(a.AsExtended, b.AsExtended, this.RoundingMode),
+        4 => Extended80.Subtract(a.AsExtended, b.AsExtended, this.RoundingMode),
+        5 => Extended80.Subtract(b.AsExtended, a.AsExtended, this.RoundingMode),
+        6 => Extended80.Divide(a.AsExtended, b.AsExtended, this.RoundingMode),
+        7 => Extended80.Divide(b.AsExtended, a.AsExtended, this.RoundingMode),
+        _ => throw new Cpu8086Exception($"unimplemented x87 arithmetic {op}"),
+      });
 
     var ad = a.AsDouble;
     var bd = b.AsDouble;
@@ -1292,6 +1347,13 @@ public sealed class Cpu8086 {
   /// <summary>The x87 control word; only its rounding-control field (bits 11-10) is modelled.</summary>
   private ushort _controlWord = 0x037F;
 
+  private FloatRounding RoundingMode => (this._controlWord & 0x0C00) switch {
+    0x0400 => FloatRounding.Down,
+    0x0800 => FloatRounding.Up,
+    0x0C00 => FloatRounding.Truncate,
+    _ => FloatRounding.ToNearestEven,
+  };
+
   /// <summary>
   /// FRNDINT and the integer stores round by the control word's RC field, not always to nearest:
   /// 00 nearest-even, 01 toward -infinity (BASIC's INT), 10 toward +infinity, 11 toward zero (FIX).
@@ -1299,15 +1361,35 @@ public sealed class Cpu8086 {
   private Int128 RoundToInteger(X87Value value) {
     if (value.Integer is { } exact)
       return exact;
-    var rounded = (this._controlWord & 0x0C00) switch {
-      0x0400 => Math.Floor(value.Approximation),
-      0x0800 => Math.Ceiling(value.Approximation),
-      0x0C00 => Math.Truncate(value.Approximation),
-      _ => Math.Round(value.Approximation, MidpointRounding.ToEven),
+    if (this._exactFloatingPoint)
+      return value.AsExtended.ToInt64(this.RoundingMode) is { } rounded ? rounded : Int128.MinValue;
+    var approximation = (this._controlWord & 0x0C00) switch {
+      0x0400 => Math.Floor(value.AsDouble),
+      0x0800 => Math.Ceiling(value.AsDouble),
+      0x0C00 => Math.Truncate(value.AsDouble),
+      _ => Math.Round(value.AsDouble, MidpointRounding.ToEven),
     };
-    return double.IsFinite(rounded) && rounded >= (double)Int128.MinValue && rounded <= (double)Int128.MaxValue
-      ? (Int128)rounded
-      : Int128.MinValue;
+    return double.IsFinite(approximation)
+      && approximation >= (double)Int128.MinValue
+      && approximation <= (double)Int128.MaxValue
+        ? (Int128)approximation
+        : Int128.MinValue;
+  }
+
+  private X87Value RoundToIntegral(X87Value value) {
+    if (value.Integer is not null)
+      return value;
+    if (this._exactFloatingPoint) {
+      if (value.AsExtended.ToInt64(this.RoundingMode) is { } rounded)
+        return X87Value.Exact(rounded);
+    } else {
+      var rounded = this.RoundToInteger(value);
+      if (rounded != Int128.MinValue)
+        return X87Value.Exact(rounded);
+    }
+    // At magnitudes outside Int64, extended precision's unit is at least one: a finite value is
+    // already integral. Infinities and NaNs are unchanged by FRNDINT as well.
+    return value;
   }
 
   private static short NarrowInt16(Int128 value)
@@ -1332,14 +1414,25 @@ public sealed class Cpu8086 {
         this._status |= 0x4000;
       return;
     }
+    if (this._exactFloatingPoint) {
+      var comparison = Extended80.Compare(a.AsExtended, b.AsExtended);
+      if (comparison is null)
+        this._status |= 0x4500;                        // unordered: C3 C2 C0
+      else if (comparison < 0)
+        this._status |= 0x0100;                        // C0
+      else if (comparison == 0)
+        this._status |= 0x4000;                        // C3
+      return;
+    }
+
     var ad = a.AsDouble;
     var bd = b.AsDouble;
     if (double.IsNaN(ad) || double.IsNaN(bd))
-      this._status |= 0x4500;                          // unordered: C3 C2 C0
+      this._status |= 0x4500;
     else if (ad < bd)
-      this._status |= 0x0100;                          // C0
+      this._status |= 0x0100;
     else if (ad == bd)
-      this._status |= 0x4000;                          // C3
+      this._status |= 0x4000;
   }
 
   private uint ReadDword(int at) => (uint)(this.ReadWord(at) | (this.ReadWord(at + 2) << 16));
@@ -1356,17 +1449,20 @@ public sealed class Cpu8086 {
     this.WriteDword(at + 4, (uint)(value >> 32));
   }
 
-  // An 80-bit extended value read into (and written from) a double - the mantissa bits that do not
-  // fit are exactly the approximation this interpreter is explicit about.
-  //
-  // The SCALING is done with Math.ScaleB and not with a multiply by Math.Pow(2, n), which is not a
-  // tidy-up: the intermediate power overflows for a small magnitude long before the result would.
-  // 1E-300 has a binary exponent of -997, so writing it asked for 2^1060, got +infinity, and stored a
-  // mantissa of zero - the value came back as 0. Reading it back had the mirror fault, 2^-1060
-  // underflowing to zero. Every extended value below about 1E-289 was therefore ZERO to this
-  // interpreter, and only on the path that parks intermediates in ten-byte cells - which is the
-  // ROUTED one - so it read as a back-end miscompile of the tiny-magnitude cases.
-  private double ReadExtended(int at) {
+  private Extended80 ReadExtended(int at) {
+    Span<byte> bytes = stackalloc byte[10];
+    BitConverter.TryWriteBytes(bytes[..8], this.ReadQword(at));
+    BitConverter.TryWriteBytes(bytes[8..], this.ReadWord(at + 8));
+    return Extended80.FromBytes(bytes);
+  }
+
+  private void WriteExtended(int at, Extended80 value) {
+    var bytes = value.ToBytes();
+    this.WriteQword(at, BitConverter.ToUInt64(bytes, 0));
+    this.WriteWord(at + 8, BitConverter.ToUInt16(bytes, 8));
+  }
+
+  private double ReadExtendedApproximation(int at) {
     var mantissa = this.ReadQword(at);
     var signExponent = this.ReadWord(at + 8);
     var exponent = signExponent & 0x7FFF;
@@ -1377,7 +1473,7 @@ public sealed class Cpu8086 {
     return negative ? -value : value;
   }
 
-  private void WriteExtended(int at, double value) {
+  private void WriteExtendedApproximation(int at, double value) {
     if (value == 0) {
       this.WriteQword(at, 0);
       this.WriteWord(at + 8, (ushort)(double.IsNegative(value) ? 0x8000 : 0));

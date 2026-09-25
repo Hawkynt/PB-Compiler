@@ -153,6 +153,120 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
     asm.Ret();
+
+    this.EmitMbfDoubleLoad(asm);
+    this.EmitMbfDoubleStore(asm);
+  }
+
+  /// <summary>MBF64 near cell in AX to an exact x87 value in ST(0).</summary>
+  private void EmitMbfDoubleLoad(Assembler asm) {
+    var zero = asm.DefineLabel();
+    var noSign = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    asm.MarkLabel("rt_mbfld8");
+    asm.Push(Reg.BX);
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.BX, 7));
+    asm.Or(Reg.AL, Reg.AL);
+    asm.Jz(zero);
+    asm.Mov(Reg.AX, Mem.Word(Reg.BX));
+    asm.Mov(Mem.Word(this._scratch, 1), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(Reg.BX, 2));
+    asm.Mov(Mem.Word(this._scratch, 3), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(Reg.BX, 4));
+    asm.Mov(Mem.Word(this._scratch, 5), Reg.AX);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.BX, 6));
+    asm.Mov(Reg.DL, Reg.AL);
+    asm.And(Reg.AL, (Imm)0x7F);
+    asm.Or(Reg.AL, (Imm)0x80);
+    asm.Mov(Mem.Byte(this._scratch, 7), Reg.AL);
+    asm.Mov(Mem.Byte(this._scratch), (Imm)0);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.BX, 7));
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.Add(Reg.AX, (Imm)0x3F7E);
+    asm.Test(Reg.DL, (Imm)0x80);
+    asm.Jz(noSign);
+    asm.Or(Reg.AH, (Imm)0x80);
+    asm.MarkLabel(noSign);
+    asm.Mov(Mem.Word(this._scratch, 8), Reg.AX);
+    asm.Fld(Mem.Tbyte(this._scratch));
+    asm.Jmp(done);
+    asm.MarkLabel(zero);
+    asm.Fldz();
+    asm.MarkLabel(done);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+  }
+
+  /// <summary>ST(0) to an MBF64 near cell in AX, rounded to the historical 56-bit precision.</summary>
+  private void EmitMbfDoubleStore(Assembler asm) {
+    var zero = asm.DefineLabel();
+    var overflow = asm.DefineLabel();
+    var noSign = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    asm.MarkLabel("rt_mbfst8");
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.SI);
+    asm.Mov(Reg.SI, Reg.AX);
+    asm.Fstp(Mem.Tbyte(this._scratch));
+    this.EmitRoundMbfDoubleScratch(asm, zero, overflow);
+    asm.Mov(Reg.AX, Mem.Word(this._scratch, 1));
+    asm.Mov(Mem.Word(Reg.SI), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(this._scratch, 3));
+    asm.Mov(Mem.Word(Reg.SI, 2), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(this._scratch, 5));
+    asm.Mov(Mem.Word(Reg.SI, 4), Reg.AX);
+    asm.Mov(Reg.AL, Mem.Byte(this._scratch, 7));
+    asm.And(Reg.AL, (Imm)0x7F);
+    asm.Test(Reg.DH, (Imm)0x80);
+    asm.Jz(noSign);
+    asm.Or(Reg.AL, (Imm)0x80);
+    asm.MarkLabel(noSign);
+    asm.Mov(Mem.Byte(Reg.SI, 6), Reg.AL);
+    asm.Mov(Mem.Byte(Reg.SI, 7), Reg.BL);
+    asm.Jmp(done);
+    asm.MarkLabel(overflow);
+    asm.Mov(Reg.AX, (Imm)6);
+    asm.Call(asm.Lbl("rt_raise"));
+    asm.MarkLabel(zero);
+    asm.Xor(Reg.AX, Reg.AX);
+    for (var offset = 0; offset < 8; offset += 2)
+      asm.Mov(Mem.Word(Reg.SI, offset), Reg.AX);
+    asm.MarkLabel(done);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+  }
+
+  /// <summary>Rounds the tbyte scratch value to MBF64 and returns its exponent in BX, sign in DX.</summary>
+  private void EmitRoundMbfDoubleScratch(Assembler asm, Label zero, Label overflow) {
+    var rounded = asm.DefineLabel();
+    var notTie = asm.DefineLabel();
+    asm.Mov(Reg.DX, Mem.Word(this._scratch, 8));
+    asm.Mov(Reg.BX, Reg.DX);
+    asm.And(Reg.BX, (Imm)0x7FFF);
+    asm.Or(Reg.BX, Reg.BX);
+    asm.Jz(zero);
+    asm.Add(Mem.Word(this._scratch), (Imm)0x80);
+    asm.Jnc(rounded);
+    foreach (var offset in new[] { 2, 4, 6 }) {
+      asm.Inc(Mem.Word(this._scratch, offset));
+      asm.Jnz(rounded);
+    }
+    asm.Mov(Mem.Word(this._scratch, 6), (Imm)0x8000);
+    asm.Inc(Reg.BX);
+    asm.MarkLabel(rounded);
+    asm.Cmp(Mem.Byte(this._scratch), (Imm)0);
+    asm.Jnz(notTie);
+    asm.And(Mem.Byte(this._scratch, 1), (Imm)0xFE);
+    asm.MarkLabel(notTie);
+    asm.Cmp(Reg.BX, (Imm)0x3F7E);
+    asm.Jbe(zero);
+    asm.Sub(Reg.BX, (Imm)0x3F7E);
+    asm.Cmp(Reg.BX, (Imm)0xFF);
+    asm.Ja(overflow);
   }
 
   private void EmitRounding(Assembler asm) {

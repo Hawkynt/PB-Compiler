@@ -817,7 +817,10 @@ public sealed partial class IrLowering {
         elem = IrType.Ptr; count = arr.ElementCount;   // an array of string handles
       } else if (arr.Element is UdtType ue) {
         elem = IrType.I8; count = arr.ElementCount * ue.Size;   // a packed buffer of records
-      } else if (IrTypeMapper.TryMap(arr.Element, out elem) && !elem.IsMbf) {
+      } else if (IrTypeMapper.TryMap(arr.Element, out elem)) {
+        // An MBF element is still scalar STORAGE. Its typed alloca fixes the 4/8-byte stride while
+        // each load/store keeps the computed element address for the MBF conversion routines; unlike
+        // a scalar alloca, an array cannot be promoted away from that address by Mem2Reg.
         count = arr.ElementCount;
       } else
         throw new IrLoweringException("non-scalar array element");
@@ -6815,21 +6818,14 @@ public sealed partial class IrLowering {
   }
 
   /// <summary>
-  /// Maps a PB type for a lowered value. The IR type system can express Microsoft Binary Format
-  /// (<c>mbf32</c>/<c>mbf64</c> - the SINGLE/DOUBLE storage of BASICA, GW-BASIC and the
-  /// BASCOM-heritage QuickBASIC releases), but the lowering does not yet emit the
-  /// <see cref="IrCastOp.MbfToFP"/>/<see cref="IrCastOp.FPToMbf"/> conversions a load and a store of
-  /// such a cell perform, so it declines rather than treat the bits as IEEE - which would be a
-  /// miscompile, the two encodings disagreeing on exponent bias and layout.
-  /// </summary>
-  /// <summary>
   /// Maps a PB type for a lowered value, Microsoft Binary Format included.
   ///
   /// MBF used to be refused here, which kept every BASICA and GW-BASIC program with a SINGLE variable
   /// off the IR path entirely. It is carried instead: the IR type system already distinguishes it
-  /// (<see cref="IrFloatFormat.Mbf"/>), and a back end that cannot compute on those bits declines on
-  /// the TYPE - which the x86-16 selector and the C and LLVM emitters all do. Carrying a fact and
-  /// refusing to act on it is what a type system is for; refusing to record it loses the program.
+  /// (<see cref="IrFloatFormat.Mbf"/>). The x86-16 selector converts supported address-bound cells;
+  /// C and LLVM decline on the type rather than silently substituting IEEE. Carrying a fact and
+  /// refusing it where unsupported is what a type system is for; refusing to record it loses the
+  /// program.
   ///
   /// The BASIC writer does act on it, by dropping it: pb35 has no MBF, so a rendered SINGLE is IEEE
   /// and the writer says so rather than pretending the storage survived.
@@ -6884,19 +6880,23 @@ public sealed partial class IrLowering {
   }
 
   /// <summary>
-  /// The IEEE scalar an MBF type computes as. Microsoft Binary Format is STORAGE - the x87 cannot
-  /// add two of them - so a value is converted to IEEE the moment it is used and back when it is
-  /// stored, which is exactly what the direct emitter does around an MBF cell.
+  /// The IEEE/x87 scalar an MBF cell converts through. Microsoft Binary Format is STORAGE - the x87
+  /// cannot add two of them - so a value is converted the moment it is used and back when it is
+  /// stored. MBF64 has 56 significant bits and therefore uses x87 extended rather than binary64,
+  /// whose 53 bits would narrow the value before the MBF boundary applied its own rounding.
   /// </summary>
   private static ScalarType IeeeFormOf(MbfType mbf) =>
-    new(mbf.IsDouble ? ScalarKind.Double : ScalarKind.Single, mbf.IsDouble ? 8 : 4, true, true);
+    mbf.IsDouble ? PbType.Ext : PbType.Single;
 
   /// <summary>
-  /// The value form of a PB type - what arithmetic on it happens AT, which for FIX and BCD is the
-  /// x87's own extended, exactly as the direct emitter classifies both as
-  /// <c>ValueKind.Float</c>. Everything else is its own value form.
+  /// The value form of a PB type - what arithmetic on it happens AT. FIX/BCD compute as x87 extended;
+  /// MBF cells compute as the IEEE/x87 type that can preserve their storage precision.
   /// </summary>
-  private static PbType Valued(PbType type) => type is BcdType ? PbType.Ext : type;
+  private static PbType Valued(PbType type) => type switch {
+    BcdType => PbType.Ext,
+    MbfType mbf => IeeeFormOf(mbf),
+    _ => type,
+  };
 
   /// <summary>
   /// One of the FIX scaling helpers applied to a value on the x87: <c>rt_fix_down</c> divides by ten

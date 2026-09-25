@@ -1837,7 +1837,7 @@ What declines, measured rather than assumed - the corpus figures are what
 
 | construct | C | LLVM | why |
 |---|---|---|---|
-| Microsoft Binary Format (`mbf32`/`mbf64`) | declines | declines | a DOS storage encoding with no C or LLVM type; `MbfToFP` has to run first. Unreachable through `pbc` today - the lowering refuses an MBF lvalue first - so it is reached only through the emitters' own API |
+| Microsoft Binary Format (`mbf32`/`mbf64`) | declines | declines | a DOS storage encoding with no C or LLVM type. Lowering now emits `MbfToFP`/`FPToMbf`, and x86-16 converts address-bound scalar cells; portable emitters still refuse the foreign storage rather than silently substitute IEEE |
 | the address of a basic block | declines | renders | `ON ERROR` arms a handler with one and `CODEPTR32` of a label is one; standard C has no such value (see above) |
 | `IrFarPtr` | declines | declines | a segment:offset pointer (`DIM … AT`, a segmented access); flattening it to a near pointer silently substitutes the default segment |
 | `IrInlineAsm` | declines | declines | x86-16 machine code by definition |
