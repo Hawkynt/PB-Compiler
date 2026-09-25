@@ -33,16 +33,41 @@ public static class X86ProductionEmitter {
       _ => throw new NotSupportedException($"target '{function.Target.Name}' is not an x86 hosted target")
     };
     var target = new X86TargetMachineEmitter(new X86InstructionEncoder(mode));
-    // The target-owned address lowering currently materializes frame slots relative to BP.  Keep a
+    var hosted = function.HostedFunction;
+
+    // A DOS module body has no caller. Its IR terminators are still ordinary RETs because the
+    // target-neutral function model does not know that "main returns" means "terminate the process".
+    // Encoding those RETs literally makes execution pop an address from the PSP/user stack and wander
+    // into runtime/data bytes. Funnel every target RET to one local end label instead; the artifact
+    // policy hook emitted immediately after the machine body performs the actual DOS exit.
+    if (emitEpilogue is not null) {
+      const string exitLabel = "__pb_module_exit";
+      var instructions = hosted.Instructions
+        .Select(instruction => instruction.Opcode == X86TargetOpcode.Ret
+          ? new X86TargetInstruction(X86TargetOpcode.Jmp, [], Symbol: exitLabel)
+          : instruction)
+        .ToArray();
+      var labels = new Dictionary<string, int>(hosted.LabelInstructionIndices, StringComparer.Ordinal) {
+        [exitLabel] = instructions.Length,
+      };
+      hosted = new X86TargetMachineFunction(
+        hosted.Mode,
+        hosted.Abi,
+        instructions,
+        labels,
+        hosted.FrameSizeBytes,
+        hosted.ArgumentLocations);
+    }
+
+    // The target-owned address lowering currently materializes frame slots relative to BP. Keep a
     // canonical frame until the target prologue itself owns frame-elision proofs; silently eliding it
     // here would turn valid stack-slot addresses into references to the caller's frame.
-    var code = target.Emit(function.HostedFunction, preserveFramePointer: true,
+    var code = target.Emit(hosted, preserveFramePointer: true,
       emitReturn: emitEpilogue is null);
     assembler.AppendMachineCode(code, symbol =>
       calleeLabel?.Invoke(symbol) ?? dataCellOf?.Invoke(symbol)?.Label);
-    // The runtime exit sequence is target policy, not instruction selection.  It is appended only
-    // after the target emitter has finished the function and therefore cannot reintroduce a legacy
-    // body-emission fallback.
+    // The runtime exit sequence is artifact policy, not instruction selection. It is appended only
+    // after all machine returns have converged on the local end label above.
     emitEpilogue?.Invoke(assembler);
   }
 }
