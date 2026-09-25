@@ -174,7 +174,7 @@ public sealed partial class CodeGenerator {
     var unit = new PbuFile { Name = name, CpuFlags = this.CpuRequirementFlags() };
     foreach (var (proc, label) in this._procLabels)
       if (!proc.IsExternal)
-        unit.Exports.Add(new(proc.Name, proc.IsFunction ? PbuExportKind.Function : PbuExportKind.Sub,
+        unit.Exports.Add(new(proc.Alias ?? proc.Name, proc.IsFunction ? PbuExportKind.Function : PbuExportKind.Sub,
           PbuFile.HashSignature(SignatureOf(proc)), (uint)label.Position));
 
     this.AddImportsAndFixups(unit, relocatable, codeLength);
@@ -198,7 +198,7 @@ public sealed partial class CodeGenerator {
 
     foreach (var (proc, label) in this._procLabels)
       if (!proc.IsExternal)
-        main.Exports.Add(new(proc.Name, proc.IsFunction ? PbuExportKind.Function : PbuExportKind.Sub,
+        main.Exports.Add(new(proc.Alias ?? proc.Name, proc.IsFunction ? PbuExportKind.Function : PbuExportKind.Sub,
           PbuFile.HashSignature(SignatureOf(proc)), (uint)label.Position));
 
     // runtime export table: every bound named label (rt_*), hash 0 = unchecked
