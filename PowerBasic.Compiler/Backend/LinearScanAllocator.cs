@@ -366,6 +366,8 @@ public sealed partial class LinearScanAllocator {
     var inFlightAt = InFlightByIndex(function);       // ...and the ones already carrying a value to a named reader
     var sizes = RegisterSizes(function);
     var dwordInductions = DwordInductionRegisters(function);
+    var copyHints = target.Optimize ? CopyHints(function) : [];
+    var byIndex = copyHints.Count > 0 ? function.AllInstructions.ToList() : [];
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
     var active = new List<LivenessAnalysis.LiveInterval>();  // live intervals holding a register, kept sorted by End
@@ -389,6 +391,22 @@ public sealed partial class LinearScanAllocator {
       var size = sizes.GetValueOrDefault(interval.VirtualId, MRegSize.Word);
       var legal = LegalFor(interval.VirtualId, size, addressVregs, byteRegisters, target);
       bool Usable(Reg r) => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r);
+      // A staging move claims its whole destination set as clobbers, so a value can never be parked in
+      // a register a LATER staging move overwrites. The value's own staging move is the exception: when
+      // its last use is exactly MOV hinted,v, holding it in the hinted register already is the move. So
+      // the hint is safe when that is the only clobber of the register anywhere in the value's range.
+      bool HintSurvivesItsOwnStaging(Reg hint) {
+        if (System.Array.IndexOf(legal, hint) < 0 || interval.End >= byIndex.Count
+            || byIndex[interval.End] is not { Opcode: MOpcode.Mov, Condition: null } last
+            || last.Operands is not [MOperand.Register { Reg: { IsVirtual: false } into }, MOperand.Register { Reg: var read }]
+            || WholeRegister(into.Physical) != hint || !read.IsVirtual || read.VirtualId != interval.VirtualId)
+          return false;
+        var before = ClobberedOver(clobbersAt, liveAt, interval, interval.End - 1);
+        before.UnionWith(ClobberedOver(pinnedAt, liveAt, interval, interval.End - 1));
+        before.UnionWith(ClobberedOver(inFlightAt, liveAt, interval, interval.End));
+        before.UnionWith(ClobberedOver(asmHeld, liveAt, interval, interval.End));
+        return !before.Contains(hint);
+      }
       var slot = -1;
       if (resident is not null && resident.Contains(interval.VirtualId)) {
         var preferences = size == MRegSize.Dword && !dwordInductions.Contains(interval.VirtualId)
@@ -398,6 +416,9 @@ public sealed partial class LinearScanAllocator {
           if (Usable(preferred) && (slot = free.IndexOf(preferred)) >= 0)
             break;
       }
+      if (slot < 0 && copyHints.TryGetValue(interval.VirtualId, out var hinted)
+          && (Usable(hinted) || HintSurvivesItsOwnStaging(hinted)))
+        slot = free.IndexOf(hinted);
       if (slot < 0)
         slot = free.FindIndex(Usable);              // the preference is spent - take the ordinary order
       if (slot < 0)
@@ -406,6 +427,7 @@ public sealed partial class LinearScanAllocator {
       var reg = free[slot];
       free.RemoveAt(slot);
       assignment[interval.VirtualId] = SizedRegister(reg, size);
+
       active.Add(interval);
       active.Sort((x, y) => x.End.CompareTo(y.End));
     }
@@ -671,6 +693,28 @@ public sealed partial class LinearScanAllocator {
     return addressing.IndexedBase.Contains(virtualId) ? _indexedBase
       : addressing.Base.Contains(virtualId) ? _addressing
       : _pool;
+  }
+
+  /// <summary>
+  /// The physical register each virtual is copied straight into or out of - the AX a value is handed
+  /// to a runtime routine in, the AX a result arrives in. Allocating the virtual THERE, when it is free
+  /// and legal for the whole range, turns the copy into a self-move the peephole deletes: a truth value
+  /// computed for PRINT was SBB CX,CX / MOV AX,CX, where SBB AX,AX is the whole thing. It is only a
+  /// preference, tried before the ordinary order, so it can never cost an allocation.
+  /// </summary>
+  private static Dictionary<int, Reg> CopyHints(X86MachineFunction function) {
+    var hints = new Dictionary<int, Reg>();
+    foreach (var instr in function.AllInstructions) {
+      if (instr.Opcode != MOpcode.Mov || instr.Condition is not null
+          || instr.Operands is not [MOperand.Register { Reg: var to }, MOperand.Register { Reg: var from }]
+          || to.Size != from.Size || to.Size is not (MRegSize.Word or MRegSize.Byte))
+        continue;
+      if (to.IsVirtual == from.IsVirtual)
+        continue;
+      var (virtualReg, physical) = to.IsVirtual ? (to, from.Physical) : (from, to.Physical);
+      hints.TryAdd(virtualReg.VirtualId, WholeRegister(physical));
+    }
+    return hints;
   }
 
   private static Reg SizedRegister(Reg register, MRegSize size)

@@ -229,8 +229,13 @@ public static class PostRegisterAllocationPeepholes {
     return false;
   }
 
+  /// <summary>
+  /// A MOV whose source and destination are the same physical register. Its clobbers - a staging move
+  /// claims its whole destination set - do not keep it: they told the ALLOCATOR what not to park where,
+  /// allocation is over, and the move changes no register, so any fact held across it stays true.
+  /// </summary>
   private static bool IsSelfCopy(MInstr instruction, IReadOnlyDictionary<int, Reg> allocation)
-    => instruction.Opcode == MOpcode.Mov && instruction.Condition is null && instruction.Clobbers.Count == 0
+    => instruction.Opcode == MOpcode.Mov && instruction.Condition is null
       && instruction.Operands is [MOperand.Register { Reg: var destination }, MOperand.Register { Reg: var source }]
       && SamePhysical(destination, source, allocation);
 
