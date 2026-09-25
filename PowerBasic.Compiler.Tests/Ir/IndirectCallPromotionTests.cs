@@ -18,11 +18,15 @@ public sealed class IndirectCallPromotionTests {
 
   private static IrConstantInt Const(long value) => new(IrType.I16, value);
 
+  /// <param name="pinTarget">
+  /// Declares the target NOINLINE, for a test that runs the whole pipeline: "hot" is pure, and a pure
+  /// call with a constant argument is answered at compile time (O0025) before anything can see it.
+  /// </param>
   private static (IrModule Module, IrFunction Target, IrFunction Caller, IrArgument Handler, IrCall Call, IrBinary Use)
-      Program() {
+      Program(bool pinTarget = false) {
     var module = new IrModule("t");
     var targetParameter = new IrArgument(IrType.I16, 0, "x");
-    var target = module.AddFunction(new IrFunction("hot", IrType.I16, [targetParameter]));
+    var target = module.AddFunction(new IrFunction("hot", IrType.I16, [targetParameter]) { NoInline = pinTarget });
     var targetEntry = target.AddBlock(new IrBasicBlock("entry"));
     targetEntry.Append(new IrRet(targetEntry.Append(new IrBinary(IrBinaryOp.Add, targetParameter, Const(1)))));
 
@@ -239,7 +243,7 @@ public sealed class IndirectCallPromotionTests {
 
   [Test]
   public void StandardPipeline_GivenProfiledIndirectCall_ThenRunsPromotionAsAModulePass() {
-    var (module, target, caller, handler, call, _) = Program();
+    var (module, target, caller, handler, call, _) = Program(pinTarget: true);
     call.SetIndirectTargetProfile(new IrIndirectCallProfile(100, new IrIndirectCallTarget(target, 90)));
 
     IrMiddleEndPipeline.Standard().RunOnModule(module);

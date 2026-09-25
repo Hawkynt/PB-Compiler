@@ -5,7 +5,7 @@ done ones - the evidence and the wrong turns, because a finding recorded without
 its false starts invites the next person to take them again.
 
 Entries are grouped by frontier (foreign-object interop, the BASIC features
-codegen still rejects, dialect front-end completeness, the two optimizer tiers)
+codegen still rejects, dialect front-end completeness, the optimizer and back end)
 and each opens with its state in bold: **Done**, **Open**, or done in a named
 partial sense. Claims here are measured - a differential count against the
 genuine compiler, a named battery, an emitted instruction - not estimated.
@@ -42,7 +42,9 @@ does, would be faithful. `pb36/DIFF35.BAS` is a known writer gap for that reason
 
 ### The direct emitter holds an integral operand on the x87 stack across a CALL — eight deep and it is silently wrong
 
-**Open, oracle-confirmed, not fixed here.** PB computes integral `+`/`-`/`*` in floating point, and
+**Closed by the direct emitter's retirement.** Every program now compiles through the IR back end,
+which was already right on both reproductions below; the record is kept for the fault it describes.
+PB computes integral `+`/`-`/`*` in floating point, and
 `CodeGenerator` evaluates the LEFT operand onto the x87 stack before evaluating the right. When the
 right operand contains a CALL, the left operand stays on that stack across it — and the 8087 has eight
 registers. The eighth pending value overflows the stack and the answer is quietly wrong; there is no
@@ -222,29 +224,33 @@ front-ends:
 
 ## The direct tier's own optimizer and assembler
 
-Two pieces of work that are deliberately not IR work, recorded here because the porting ledger below
-would otherwise read as the whole optimizer story.
+Two pieces of work that were deliberately not IR work, recorded here because the porting ledger below
+would otherwise read as the whole optimizer story. The first went with the syntax-level optimizer; the
+second is the assembler's and is still in use.
 
 ### O0016 value facts are a reduced product, not three lattices side by side
 
-**Done.** `ValueFacts` carried an interval, a known-bit set and a congruence next to each other, and
-every consumer asked whichever domain happened to answer its question. `CodeGen/ValueFactReduction.cs`
-now reduces the three against each other to a local fixpoint before anyone sees them: `[0,1]` proves
+**Removed with the syntax-level optimizer.** `CodeGen/ValueFactReduction.cs`, `IntervalRange` and
+`KnownBits` were deleted together with the direct tier; value ranges and known bits now come from
+`Ir/Analysis/IrRangeAnalysis.cs` and `Ir/Analysis/IrKnownBitsAnalysis.cs`.
+
+What it did: `ValueFacts` carried an interval, a known-bit set and a congruence next to each other,
+and every consumer asked whichever domain happened to answer its question. `ValueFactReduction`
+reduced the three against each other to a local fixpoint before anyone saw them: `[0,1]` proves
 every bit above bit 0 is zero, a mod-8 residue fixes three low bits, and fixed low bits in turn imply
-a power-of-two congruence. `IntervalRange` routes its binary, negate, `NOT`, compare and store-join
+a power-of-two congruence. `IntervalRange` routed its binary, negate, `NOT`, compare and store-join
 transfers through that reduction instead of computing an interval and discarding what the other two
 domains would have added.
 
-Contradiction is a first-class answer rather than a narrower lie: a range that leaves its declared
-type's bounds, or a bit set demanding a bit be both one and zero, collapses to `ValueFacts.Unknown`.
-One representational hole is recorded rather than papered over - the interval payload is a signed
-`long` and cannot represent an unsigned 64-bit value with bit 63 set, so that case keeps the bit
-domain and drops only the interval.
+Contradiction was a first-class answer rather than a narrower lie: a range that left its declared
+type's bounds, or a bit set demanding a bit be both one and zero, collapsed to `ValueFacts.Unknown`.
+One representational hole was recorded rather than papered over - the interval payload was a signed
+`long` and could not represent an unsigned 64-bit value with bit 63 set, so that case kept the bit
+domain and dropped only the interval.
 
-This is a pre-emission lattice the DIRECT emitter consults (`CodeGenerator.FactsOf` /
-`LatticeFactsOf`), gated on `--optimize`. The IR's own range reasoning is `Sccp`,
-`CorrelatedValueProp` and `RangeCheckElim` - separate passes with separate proofs, sharing nothing
-with this one.
+This was a pre-emission lattice the DIRECT emitter consulted, gated on `--optimize`. The IR's range
+reasoning - `Sccp`, `CorrelatedValueProp`, `RangeCheckElim` over `IrRangeAnalysis` - never shared
+anything with it.
 
 ### O0092: flag-safe zero and INC/DEC encodings, chosen after scheduling
 
@@ -270,9 +276,9 @@ every alternative encoding against the selected CPU, rather than two hand-writte
 
 ## The IR path towards output parity with the direct emitter
 
-The retargetable path (`Ir/` -> `Backend/`, gated behind `--x-backend`) is meant to eventually
-produce what the direct emitter produces. Measured by `BackendCoverageTests` over the 165-program
-battery, it currently reaches:
+The IR path (`Ir/` -> `Backend/`) is now the only code generator: routing is mandatory, and a body
+it declines is a compile error. What follows is the record of how it got there. Measured by
+`BackendCoverageTests` over the 165-program battery, it reached:
 
 | | |
 |---|---|
@@ -870,7 +876,7 @@ Ported so far:
 - **O0002 dead-code elimination** — `Dce` + `DeadStoreElim`.
 - **O0003 common subexpression elimination** — `Gvn`, and *global* where the emitter's is
   block-local: a subexpression shared across two blocks is still computed once.
-- **O0006 inlining** — `Ir/Passes/Inliner.cs`, run by `CodeGenerator.BackendProcs` and followed by
+- **O0006 inlining** — `Ir/Passes/Inliner.cs`, run by `IrMiddleEndPipeline.RunNativeModule` and followed by
   another full pass sweep: the point of inlining is not the call overhead but that the callee body
   becomes visible to the caller's optimizer, and nothing sees it until the passes run again.
 - **O0007 loop unrolling** — `Ir/Passes/LoopUnroll.cs`, in the standard pipeline.
@@ -904,9 +910,10 @@ Ported so far:
   sounds like it would never fire, and it fires because DOS-era BASIC uses `DIM SHARED` where a
   modern program would use `CONST`.
 - **O0022 dead procedure elimination** and **O0023 dead global elimination** — `Ir/Passes/GlobalDce.cs`,
-  run from the driver on the `--emit-c` / `--emit-llvm` path. Deliberately NOT in the hybrid x86
-  pipeline: there the IR module is not the whole program, so removing a function only stops it being
-  routed. Measured, that cost six corpus comparisons and saved nothing.
+  on the `--emit-c` / `--emit-llvm` path. On the native build `RunNativeModule` runs it for
+  procedures only (`removeGlobals: false`, because DOS data is laid out from the bound program), and
+  only when `IrModule.OwnsProcedureAbi` says the module sees every caller. It was once kept out of the
+  hybrid x86 pipeline, where the IR module was not the whole program; with routing mandatory it is.
 - **O0278 global variable localization** — `Ir/Passes/LocalizeGlobals.cs`. A scalar global whose only
   user is one function becomes an alloca there. "Only one user" is NOT the whole condition: a global
   keeps its value between calls and a local does not, so it also requires a store in the entry block
@@ -917,20 +924,20 @@ Ported so far:
   circular - which is also why GVN skips phis entirely and leaves these untouched.
 - **O0161 function summaries (mod/ref)** — `Ir/Passes/FunctionSummaries.cs`. Two bits per procedure,
   computed as a fixpoint over the call graph that starts from PURE and only ever adds impurity - which
-  is what makes a recursive pure function come out pure. Its first consumer, `RemoveDeadPureCalls`, is
-  NOT in the standard pipeline: `DIFF113` declares `SUB Opaque(v&)` with an empty body precisely to be
-  an optimization barrier, and dropping the call hands the DIRECT emitter's optimizer code it could not
-  previously see through. What it then does with it differs from the original - a finding about that
-  optimizer rather than about this pass, and one that needs chasing before the consumer is turned on.
+  is what makes a recursive pure function come out pure. Its first consumer, `RemoveDeadPureCalls`, now
+  runs in the standard pipeline's Interprocedural phase (`dead-pure-calls`, after `IpConstantProp`
+  and `PureCallEvaluation`). It was held back while the direct emitter's optimizer still compiled
+  code behind it: `DIFF113`'s empty `SUB Opaque(v&)`, dropped, handed that optimizer code it then
+  compiled differently from the original.
   Its SECOND consumer is on: `IsPureExternal` / `IsSpeculatableExternal` name the externals `Gvn` may
   number and `Licm` may hoist. Eight rows, all float math intrinsics, and the interesting part is what
   is kept OFF - `rt_str_len` looks like a pure read and is not one, because the DOS entry frees the
   handle it is given, which is why the lowering copies every read of a string variable in the first
   place.
 - **O0225 SSA construction** — `Ir/IrDominators.cs` + `Ir/Passes/Mem2Reg.cs`, the same Cytron
-  construction the direct tier has.
+  construction the retired direct tier had.
 - **O0185 CSE past a merge**, **O0186 CSE into a loop preheader** and **O0188 CSE of an IF
-  condition** — no pass of their own either. All three are the direct tier PROVING, by walking the
+  condition** — no pass of their own either. All three were the direct tier PROVING, by walking the
   writes, that nothing between the two computations disturbed an input; in SSA that proof is the
   dominance relation `Gvn` already keys on, so the three shapes are one rule.
 - **O0012 float demotion** — `Ir/Passes/FloatDemotion.cs`, the FOR-counter case, after `Mem2Reg` has
@@ -958,6 +965,10 @@ Ported so far:
 - **O0320-O0329** — the data-layout family, one section of its own above; all ten carry an `IR` row,
   including the three the routed path never registers.
 
+Not yet ported: **O0062's loop fusion**. The retired `OptLoopFusion` pre-pass merged two adjacent
+loops with the same trip count; it was deleted with the syntax-level optimizer and has no IR pass
+yet, so O0062 is partial until one exists.
+
 One piece of bookkeeping is outstanding and is recorded rather than quietly fixed: **O0330-O0339,
 O0354 and O0359 are implemented on the IR** — the sections above name the passes and where they run —
 **but their documents do not carry an `IR` row yet**, so the ledger does not count them and reports 41
@@ -982,7 +993,10 @@ cells a handler reads. See [IR.md](IR.md) for how a construct whose control flow
 kept sound - `IrBlockAddress` names the handler and `IrFunction.HasErrorHandler` takes the whole
 function out of the optimizer, the same trade the direct emitter makes with `_trackResume`.
 
-Ranked by the census, what stands between that and full coverage:
+Ranked by the census at the time, what stood between that and full coverage. The list predates
+mandatory routing and is kept as a record; every procedure body now routes or fails to compile, and
+a procedure that arms a handler preserves its caller's through
+`Backend/ProcedureErrorHandlerPreservation`.
 
 1. **A PROCEDURE that arms a handler is still not routed** (the module body now is). The direct path
    saves the caller's handler triple on entry and restores it on every exit; the routed prologue has
@@ -1022,12 +1036,16 @@ Ranked by the census, what stands between that and full coverage:
 
 ### Differential execution without the vintage oracle - DONE
 
-The parity question the IR path has to answer is narrower than the one the golden battery answers.
-Byte-identity with PBC 3.50 is the *direct* emitter's job and always will be - the IR path is a
-different code generator and will never match those bytes. What it must match is the direct emitter's
-**observable behaviour**: the same program, compiled both ways, printing the same thing. And the
-direct emitter is a sound reference for exactly that, because the golden battery holds *it* to the
-genuine compiler.
+**Record from the two-path period.** With the direct emitter retired there is no second code
+generator to compare against: both builds these fixtures make now go through the same back end, and
+the reference is the golden battery itself, which holds the program's observable output to the
+genuine compilers. What follows describes the harness as it was built.
+
+The parity question the IR path had to answer was narrower than the one the golden battery answers.
+Byte-identity with PBC 3.50 was the *direct* emitter's job - the IR path is a different code generator
+and does not match those bytes. What it had to match was the direct emitter's **observable
+behaviour**: the same program, compiled both ways, printing the same thing. And the direct emitter was
+a sound reference for exactly that, because the golden battery held *it* to the genuine compiler.
 
 `PowerBasic.Compiler.Tests/Exec/Cpu8086.cs` is that executor: a real-mode 8086 interpreter over the
 emitted MZ image (loader, relocations, the single-segment model the runtime documents, and the INT

@@ -331,20 +331,23 @@ detail in [docs/PB36.md](docs/PB36.md); the highlights:
 
 ## ⚡ Optimizations
 
-The optimizer sits between the binder and the emitter, working on the bound
-`SemanticModel` — the shared intermediate representation every dialect produces.
-Because it reads each dialect's own types, wrap rules and semantics, it preserves
-observable behavior for *all* dialects, not just PB. It is therefore
+The optimizer sits between the binder and the x86-16 back end, working on the
+typed SSA IR that `IrLowering` builds from the bound `SemanticModel` every dialect
+produces. Because the lowering carries each dialect's own types, wrap rules and
+semantics, the optimizer preserves observable behavior for *all* dialects, not just PB. It is therefore
 **dialect-agnostic machinery** (the *what if there had been one more release?* point
 of `pb36`), driven entirely by the `--optimize` / `--no-optimize` switches described
 above. Even with the optimizer forced on for every historic dialect, all
 differential batteries still pass byte-identically — so optimization never costs
 fidelity.
 
-At its center is a real SSA mid-end (`CodeGen/Ssa/`): control-flow graph →
-dominator tree and dominance frontiers → SSA construction → sparse conditional
-constant propagation → dead-store elimination. A second, LLVM-shaped mid-end
-(`Ir/Passes/`) runs on the SSA IR that feeds the C and LLVM back ends.
+At its center is an LLVM-shaped mid-end (`Ir/Passes/IrMiddleEndPipeline.cs`) over
+that IR: SSA construction, then named phases of scalar simplification (InstCombine,
+SCCP, GVN), memory optimization (dead-store elimination), loop optimization (LICM,
+unswitching, versioning) and interprocedural passes (IPCP, pure-call evaluation,
+inlining, dead-procedure removal). The same IR feeds the x86-16 back end
+(`Backend/`: instruction selection, peephole, scheduling, linear-scan allocation)
+and the C and LLVM emitters, so all three get the same optimizer.
 
 Every pass has its own reference page in
 [docs/optimizations/](docs/optimizations/README.md): what it recognizes, the
@@ -362,10 +365,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 178 | 77 | 152 | 407 |
+| O — optimization passes | 177 | 78 | 152 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **192** | **77** | **152** | **421** |
+| **all** | **191** | **78** | **152** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -379,32 +382,32 @@ next free number rather than displacing anything.
 | | # | Optimization | What it does |
 |---|---|---|---|
 | ✅ | [O0001](docs/optimizations/O0001-constant-folding.md) | Constant folding | Folds pure integral expressions at the emitter, wrapped to the bound type (bit-equal to the runtime ALU). |
-| ✅ | [O0002](docs/optimizations/O0002-dead-code-elimination.md) | Dead-code / dead-store elimination | Drops unreachable statements (`OptPruner`) and, over SSA, removes stores whose value is never really read (`Ssa/DeadStore`). |
-| ✅ | [O0003](docs/optimizations/O0003-common-subexpression-elimination.md) | Common-subexpression elimination | Block-local CSE, with inheritance into dominated branches, past merges and through loop preheaders (`OptCommonSubexpr`). |
+| ✅ | [O0002](docs/optimizations/O0002-dead-code-elimination.md) | Dead-code / dead-store elimination | Drops unreachable statements (`SimplifyCfg`, `Dce`) and, over SSA, removes stores whose value is never really read (`DeadStoreElim`). |
+| ✅ | [O0003](docs/optimizations/O0003-common-subexpression-elimination.md) | Common-subexpression elimination | Block-local CSE, with inheritance into dominated branches, past merges and through loop preheaders (`Gvn`). |
 | ✅ | [O0004](docs/optimizations/O0004-strength-reduction.md) | Strength reduction | `x * 2^n`, `x \ 2^n`, `x MOD 2^n` lower to shift/mask sequences (with PB's truncation fix-ups); richer multiplier shapes under `$OPTIMIZE SPEED`; subscript scaling becomes shifts, not the 80186 `IMUL r,r,imm`. |
 | ✅ | [O0005](docs/optimizations/O0005-register-residency.md) | Register residency | Keeps a FOR counter in SI and a hot integer accumulator in DI across a loop; nested counters, DO loops and dual accumulators included. |
 | ✅ | [O0006](docs/optimizations/O0006-inlining.md) | Procedure inlining | Inlines a small leaf SUB/FUNCTION body at its call sites; a procedure inlined everywhere is purged from the image. |
 | ✅ | [O0007](docs/optimizations/O0007-loop-unrolling.md) | Loop unrolling | Fully unrolls small constant-trip INTEGER FOR loops under `$OPTIMIZE SPEED`. |
 | ✅ | [O0008](docs/optimizations/O0008-peephole-zero-idiom.md) | Peephole / zero-idiom | `XOR r,r` for zero, immediate-folded ALU ops, `INC`/`DEC` and `OR AX,AX` collapses (16- and 32-bit paths). |
 | ✅ | [O0009](docs/optimizations/O0009-string-temp-economy.md) | String-temp economy | Folds literal concatenations into one pooled literal; self-append grows the topmost heap block in place instead of recopying. |
-| ✅ | [O0010](docs/optimizations/O0010-redundant-statement-elimination.md) | Redundant-statement / statement coalescing | Drops a `DEF SEG`/`LOCATE` whose window contains only segment-transparent statements. |
+| 🟡 | [O0010](docs/optimizations/O0010-redundant-statement-elimination.md) | Redundant-statement / statement coalescing | Drops a `DEF SEG`/`LOCATE` whose window contains only segment-transparent statements. |
 | 🟡 | [O0011](docs/optimizations/O0011-literal-overlap-pooling.md) | Literal overlap pooling | Overlapping/contained string literals share bytes in one pool. |
-| 🟡 | [O0012](docs/optimizations/O0012-float-demotion.md) | Float demotion | Re-types accidental SINGLE/DOUBLE loop counters back to INTEGER/LONG when every use is value-exact (`OptFloatDemotion`). |
+| 🟡 | [O0012](docs/optimizations/O0012-float-demotion.md) | Float demotion | Re-types accidental SINGLE/DOUBLE loop counters back to INTEGER/LONG when every use is value-exact (`FloatDemotion`). |
 | ✅ | [O0013](docs/optimizations/O0013-promotion-lowering.md) | Promotion lowering | PB computes `+ - *` over integral operands in floating point; those trees run on the plain 16- or 32-bit ALU whenever that is bit-identical. |
 | 🟡 | [O0014](docs/optimizations/O0014-tail-call-optimization.md) | Tail-call optimization | A tail self-call jumps to frame entry, a tail `CALL B` reuses the caller's frame — recursion in constant stack space. |
 | 🟡 | [O0015](docs/optimizations/O0015-udt-zero-cost.md) | UDT zero-cost copy/compare | Word/DWORD-wide block copy & compare; self-copy elided, self-compare folded. |
 | 🟡 | [O0016](docs/optimizations/O0016-value-fact-analysis.md) | Value-fact analysis (ranges, bits, congruences) | Three domains per value remove provably-safe `$ERROR` checks, fold impossible comparisons, drop identity operations and narrow 32-bit work onto the 16-bit ALU. |
 | ✅ | [O0017](docs/optimizations/O0017-sccp.md) | SCCP / branch folding | Sparse conditional constant propagation over SSA folds constant branches and proves zero-initialized reads (`Ssa/Sccp`). |
-| ✅ | [O0018](docs/optimizations/O0018-interprocedural-constant-propagation.md) | Interprocedural constant propagation | A parameter that is the same constant at every call site and never written reads as that literal inside the callee (`OptIpcp`). |
+| ✅ | [O0018](docs/optimizations/O0018-interprocedural-constant-propagation.md) | Interprocedural constant propagation | A parameter that is the same constant at every call site and never written reads as that literal inside the callee (`IpConstantProp`). |
 | ✅ | [O0019](docs/optimizations/O0019-zero-elision.md) | Definite-assignment zero elision | Drops per-invocation frame zeroing when a straight-line proof shows no local is read before assignment. |
 | 🟡 | [O0020](docs/optimizations/O0020-idiom-replacement.md) | Algorithmic idiom replacement | An empty loop becomes its counter end value, a constant fill one `REP STOSW`, an arithmetic series its closed form. |
 | ✅ | [O0021](docs/optimizations/O0021-register-parameters.md) | Register parameters | Leading word-sized `BYVAL` parameters of a fully-owned procedure travel in AX/DX/BX/CX instead of on the stack. |
-| ✅ | [O0022](docs/optimizations/O0022-dead-procedure-elimination.md) | Dead procedure elimination | Procedures unreachable from the program entry are not emitted, transitively (`OptReachability`). |
-| 🟡 | [O0023](docs/optimizations/O0023-dead-global-elimination.md) | Dead global / data tree-shaking | A module global nothing reachable ever reads loses its data slot and every pure store to it (`OptDeadGlobals`). |
+| ✅ | [O0022](docs/optimizations/O0022-dead-procedure-elimination.md) | Dead procedure elimination | Procedures unreachable from the program entry are not emitted, transitively (`GlobalDce`). |
+| 🟡 | [O0023](docs/optimizations/O0023-dead-global-elimination.md) | Dead global / data tree-shaking | A module global nothing reachable ever reads stops being a data cell: `LocalizeGlobals` turns a write-first global one procedure uses into a local, which `Mem2Reg`/`Dce` then remove. |
 | ✅ | [O0024](docs/optimizations/O0024-multi-concat.md) | Multi-concat single allocation | Three or more concatenated strings build with one heap allocation and one copy per operand instead of N−1 allocations. |
-| ✅ | [O0025](docs/optimizations/O0025-pure-function-folding.md) | Pure-function compile-time evaluation | An inferred-pure integer `FUNCTION` called with constant arguments is interpreted at compile time and replaced by the literal (`OptPureFold`). |
+| ✅ | [O0025](docs/optimizations/O0025-pure-function-folding.md) | Pure-function compile-time evaluation | An inferred-pure integer `FUNCTION` called with constant arguments is interpreted at compile time and replaced by the literal (`PureCallEvaluation`). |
 | ✅ | [O0026](docs/optimizations/O0026-auto-vectorization.md) | Auto-vectorization | `FOR i: c(i) = a(i) OP b(i)` over 2-byte arrays becomes 4/8/16/32-wide MMX/SSE2/AVX/AVX-512 with a scalar tail. |
-| ✅ | [O0027](docs/optimizations/O0027-copy-propagation.md) | Copy propagation | A copy `y = x` redirects reads of `y` to `x`'s cell and drops the copy (`OptCopyProp`). |
+| ✅ | [O0027](docs/optimizations/O0027-copy-propagation.md) | Copy propagation | A copy `y = x` redirects reads of `y` to `x`'s cell and drops the copy (`Mem2Reg`, `Gvn`, `Dce`). |
 | ✅ | [O0028](docs/optimizations/O0028-loop-invariant-code-motion.md) | Loop-invariant code motion | Hoists a pure loop-invariant subexpression to the FOR/DO preheader under `$OPTIMIZE SPEED`. |
 | ✅ | [O0029](docs/optimizations/O0029-select-jump-table.md) | `SELECT CASE` → jump table | A dense integer `SELECT CASE` dispatches through a word jump table instead of a compare chain. |
 | ✅ | [O0030](docs/optimizations/O0030-induction-variable-strength-reduction.md) | Induction-variable strength reduction | An array loop steps a pointer by the element size instead of recomputing `base + (i−lbound)*size` each iteration. |
@@ -574,7 +577,7 @@ next free number rather than displacing anything.
 | ✅ | [O0189](docs/optimizations/O0189-multiply-shift-add-shapes.md) | Multiply by `2^a ± 2^b` | Multipliers beyond a single power of two:. |
 | ✅ | [O0190](docs/optimizations/O0190-divide-power-of-two.md) | Integer divide by a power of two | `x \ 2^n` becomes an arithmetic shift — with PB's truncation fix-up, because `SAR` rounds toward negative infinity while `\` truncates toward zero. |
 | ✅ | [O0191](docs/optimizations/O0191-modulo-power-of-two.md) | Modulo by a power of two | `x MOD 2^n` becomes a mask — but PB's remainder takes the dividend's sign, so the signed form reconstructs it as `((x + b) AND mask) - b` where `b` is the sign bias. |
-| ⬜ | [O0192](docs/optimizations/O0192-parity-mask.md) | Parity / zero-test modulo mask | The everyday even/odd test `IF n MOD 2 = 0` does not need the remainder's *value*, only whether it is zero. |
+| ✅ | [O0192](docs/optimizations/O0192-parity-mask.md) | Parity / zero-test modulo mask | The everyday even/odd test `IF n MOD 2 = 0` does not need the remainder's *value*, only whether it is zero. |
 | ✅ | [O0193](docs/optimizations/O0193-subscript-shift-scaling.md) | Subscript scaling by shift | A subscript is scaled by the element size before it is added to the base. |
 | ✅ | [O0194](docs/optimizations/O0194-accumulator-residency.md) | Hot accumulator in DI | One hot 2-byte INTEGER accumulator lives in DI across the loop, so its per-iteration load and store disappear. |
 | ✅ | [O0195](docs/optimizations/O0195-nested-counter-residency.md) | Nested FOR counter residency | An inner INTEGER `FOR` under an SI-resident outer loop keeps its counter in DI, instead of giving DI to an accumulator. |
@@ -593,7 +596,7 @@ next free number rather than displacing anything.
 | ✅ | [O0208](docs/optimizations/O0208-inplace-literal-append.md) | In-place literal append | `s$ = s$ + "literal"` calls `rt_strcatlit`, which — when `s$` is the topmost heap block and there is room under the `$STRING` cap. |
 | ✅ | [O0209](docs/optimizations/O0209-inplace-variable-append.md) | In-place variable append | `s$ = s$ + v$` (with `v$` a bare string variable) reads `v$`'s raw handle — no `StrDup` temp, so `s$` stays topmost. |
 | ✅ | [O0210](docs/optimizations/O0210-concat-chain-temp-reuse.md) | Concat-chain dead-temp reuse | In a left-associative chain `a$ + b$ + c$` = `(a$ + b$) + c$`, the inner concat produces a fresh, dead, topmost temp. |
-| ✅ | [O0211](docs/optimizations/O0211-console-setter-elimination.md) | Redundant console-setter elimination | A console-state statement that sets the value already in effect changes nothing observable and is dropped. |
+| ⬜ | [O0211](docs/optimizations/O0211-console-setter-elimination.md) | Redundant console-setter elimination | A console-state statement that sets the value already in effect changes nothing observable and is dropped. |
 | ✅ | [O0212](docs/optimizations/O0212-promotion-lowering-32.md) | 32-bit promotion lowering | `total& = total& + delta&` lowered faithfully is `FILD` / the x87 op / `FISTP` plus a memory staging cell at each end. |
 | 🟡 | [O0213](docs/optimizations/O0213-cross-procedure-tail-call.md) | Cross-procedure tail call | A `SUB A` whose last action is `CALL B(args)` — B another in-module `SUB`. |
 | ⬜ | [O0214](docs/optimizations/O0214-udt-compare-widening.md) | Whole-UDT compare widening | The PowerBASIC 3.1 whole-value `=`/`<>` comparison of two `TYPE` values is a memory compare. |

@@ -159,6 +159,12 @@ public static class InstCombine {
         if (IsOne(r)) return Zero(t);
         if (b.Op == IrBinaryOp.URem && r is IrConstantInt rc && Pow2Shift(rc) is not null)
           return new IrBinary(IrBinaryOp.And, l, new IrConstantInt(t, (long)(rc.ZeroExtended - 1)));  // unsigned x % 2^k -> x & (2^k-1)
+        // O0192: a signed x MOD 2^k that is only ever compared with zero is x AND (2^k-1). The sign
+        // fixup of a signed remainder moves a nonzero remainder, never makes or unmakes a zero one:
+        // 2^k divides x exactly when x's low k bits are clear, whatever its sign.
+        if (b.Op == IrBinaryOp.SRem && r is IrConstantInt sc && sc.Value > 0 && Pow2Shift(sc) is not null
+            && b.Users.Count > 0 && b.Users.All(user => IsZeroTest(user, b)))
+          return new IrBinary(IrBinaryOp.And, l, new IrConstantInt(t, sc.Value - 1));
         break;
     }
     return null;
@@ -190,6 +196,12 @@ public static class InstCombine {
 
   private static IrValue? SimplifyGep(IrGep g) =>
     g.ByteOffset is IrConstantInt { IsZero: true } ? g.BasePtr : null;   // gep p, 0 -> p
+
+  /// <summary>Whether <paramref name="user"/> asks only whether <paramref name="value"/> is zero.</summary>
+  private static bool IsZeroTest(IrInstruction user, IrValue value)
+    => user is IrCmp { Pred: IrCmpPred.Eq or IrCmpPred.Ne } compare
+       && (ReferenceEquals(compare.Lhs, value) && compare.Rhs is IrConstantInt { IsZero: true }
+           || ReferenceEquals(compare.Rhs, value) && compare.Lhs is IrConstantInt { IsZero: true });
 
   private static IrValue? SimplifyCmp(IrCmp c) {
     // canonicalize a constant operand to the right (swapping the predicate accordingly)

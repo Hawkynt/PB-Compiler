@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Not implemented on the IR path |
-| **Stage** | — |
-| **Source** | None. The modulo is still lowered to the full mask-and-fix-up of [O0191](O0191-modulo-power-of-two.md) by `Ir/Passes/VerifiedArithmeticLowering.cs`, and no pass reduces its compare against zero |
+| **Status** | ✅ Implemented |
+| **Stage** | IR scalar simplification (`InstCombine`), before [O0191](O0191-modulo-power-of-two.md) expands the remainder |
+| **Source** | `Ir/Passes/InstCombine.cs` — `SimplifyBinary` (`SRem` case), `IsZeroTest` |
 | **Gate** | `--optimize` |
 | **Verified by** | scenario `ParityTestIsAMask`, oracle-verified over negative dividends and MOD 2/4/8 |
 | **Split from** | [O0004](O0004-strength-reduction.md) |
@@ -20,9 +20,11 @@ whether it is zero.
 So the condition can become a bare `AND` driving the branch on its own flags:
 three instructions where the full modulo was eight.
 
-Not implemented on the IR path; the syntax-level version was retired with the
-direct emitter. Today `IF n% MOD 2 = 0` compiles to the sign bias, `ADD`, `AND`,
-`SUB` and a test of the result — no `IDIV`, but not the bare mask either.
+On the IR it is a rewrite of the remainder itself: a signed `x SREM 2^k` whose
+every user compares it with zero becomes `x AND (2^k-1)`, which each compare then
+tests. It runs in `InstCombine`, ahead of `VerifiedArithmeticLowering`, so the
+sign-biased expansion of [O0191](O0191-modulo-power-of-two.md) is never built for
+it. A remainder whose value is used keeps its sign and its full lowering.
 
 ## Sample
 

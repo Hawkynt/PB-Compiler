@@ -96,6 +96,7 @@ BoundedMultiplyStaysOffTheFpu 9
 HotAccumulatorWinsTheRegister 7
 AndOrConditionShortCircuits 42
 ParityTestIsAMask -7
+ParityTestIsAMask 12
 END
 
 ' ---------------------------------------------------------------------------
@@ -801,8 +802,13 @@ END SUB
 '           is zero, so it is dead here. The condition becomes AND ax,1 driving
 '           the branch on its own flags, not a full IDIV-style modulo followed by
 '           a compare
+' @note     TWO call sites with different arguments: from one, IPCP proves n and the SUB
+'           computes nothing - every absent-assertion here would hold for no reason. The
+'           byte bound is what separates the mask (63 bytes) from the sign-biased
+'           remainder it replaces (95), which uses neither CWD nor IDIV either.
 ' @assert   absent cwd
 ' @assert   absent idiv-bx
+' @assert   bytes<= 70
 ' @assert   smaller-than-unoptimized
 ' @status   done
 ' ---------------------------------------------------------------------------

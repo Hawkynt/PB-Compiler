@@ -2,35 +2,25 @@
 
 ## Production route status
 
-The direct emitter is retired from the production compiler route. Normal `CodeGenerator` construction
-uses the IR/native backend and requires routing to succeed; the routing selector is internal test-oracle
-state rather than public product policy. `pbc --no-x-backend`, `--x-backend`, and `--x-backend-strict` are rejected as retired controls.
-
-Production image and unit emission no longer contain a semantic fallback branch. EXE/module bodies and
-PBU/OBJ/LIB procedure bodies must already have an x86-16 machine body; a lowering/selection/allocation
-gap is a compile diagnostic. Unit compilation also no longer runs the old bound-AST optimizer before
-IR lowering, so executable semantics pass through exactly one optimizer: `IrMiddleEndPipeline`.
-
-The historical syntax-emission implementation is still present in the source tree only while shared
-DOS image/runtime/linker infrastructure is extracted from `CodeGenerator` and old direct-vs-routed
-oracle fixtures are converted. It is unreachable from production artifact emission and is now deletion
-work rather than a fallback architecture.
-
-
-The DOS compiler is being migrated to one production path:
+**Retirement is complete** (see [Completion](#completion) at the end). There is one code generator:
 
 ```text
 source -> parser/binder -> typed SSA IR -> middle-end -> x86-16 machine IR -> assembler/linker
 ```
 
-`CodeGen/CodeGenerator*.cs` currently contains two different kinds of code which must not be deleted together:
+Routing through the IR back end is mandatory. A procedure body the back end declines is a compile
+error ("routing is mandatory and 'X' was not taken by the x86-16 back end: <reason>"), never a fallback.
+There is no routing selector left: `CodeGenerator.UseExperimentalBackend` and `RequireBackend` are gone,
+`pbc` rejects `--x-backend`, `--no-x-backend` and `--x-backend-strict` as retired controls, and the
+`PBC_X_BACKEND*` environment variables do nothing. Executable semantics pass through exactly one
+optimizer, `IrMiddleEndPipeline`.
 
-1. the **legacy direct emitter**, which lowers bound syntax straight to x86 while performing target-specific optimizations; and
-2. **whole-program DOS infrastructure** shared by the routed back end: image/data layout, runtime selection, OMF/PBU/PBL linking, labels, literal pools and executable construction.
+What stays in `CodeGen/CodeGenerator*.cs` is the whole-program DOS infrastructure the back end is
+driven from: image and data layout, runtime selection and trimming, OMF/PBU/PBL linking, labels,
+literal pools, inline assembly and executable construction.
 
-The first has now been disconnected from EXE/PBU/OBJ/LIB production. The second remains until equivalent
-target-facing infrastructure has been separated into an IR-native DOS artifact builder; once that split
-is complete the syntax-emission files can be deleted without taking the linker/runtime shell with them.
+The sections below are the record of how the removal was gated and measured; their numbers and
+present-tense statements describe the state at the time each was written.
 
 ## Removal gates
 
@@ -56,6 +46,9 @@ done
 # the language: the compiler's own suite, likewise
 PBC_X_BACKEND_STRICT=1 dotnet test PowerBasic.Compiler.Tests -c Release --filter "Category!=Performance"
 ```
+
+Routing is now mandatory in every build, so the `PBC_X_BACKEND_STRICT=1` prefix does nothing and the
+same commands work without it.
 
 **Gate 1 is met.** The corpus has **no routing declines**, from 127; the suite has **no failing tests** with routing mandatory, from 337. A third measurement was added along the way, because the first two together still missed things: `Compile_GivenEveryStatementForm` compiles every statement form the language has through BOTH emitters, and it is at **299 of 299** but `FILES`, which neither emitter generates.
 
@@ -491,3 +484,23 @@ and is why the work is sequenced as gate 5 rather than as a cleanup.
 ## Reference architecture
 
 This split follows the same layering used by LLVM's code-generation pipeline: target-independent IR optimization is followed by target machine lowering, scheduling, target-specific machine optimizations and register allocation. x87 stack handling and ABI mechanics therefore belong in the x86 backend rather than in a target-neutral source emitter.
+
+## Completion
+
+The last step deleted what was left of the syntax-level compiler. The direct emitter's statement and
+expression emitters had already gone; this step removed every syntax-level optimizer pass with them:
+`OptCommonSubexpr`, `OptCopyProp`, `OptDeadGlobals`, `OptFloatDemotion`, `OptInlining`, `OptIpcp`,
+`OptLoopFusion`, `OptReachability`, `OptRegParm`, `IntervalRange`, `ValueFactReduction`, `KnownBits`
+and the whole `CodeGen/Ssa/` directory. It also removed `CodeGenerator.UseExperimentalBackend` and
+`RequireBackend`, so there is no longer a second path to select.
+
+Each deleted pass has an IR counterpart except one: CSE is `Gvn`, LICM is `Licm`, IPCP is
+`IpConstantProp`, inlining is `Inliner`, dead procedures are `GlobalDce`, float demotion is
+`FloatDemotion`, dead stores are `DeadStoreElim`, SCCP is `Sccp`, value ranges and known bits are
+`Ir/Analysis/IrRangeAnalysis` and `IrKnownBitsAnalysis`, and O0282/O0021 register parameters are
+`Ir/Passes/PrivateCallingConvention`. Loop fusion has no IR counterpart yet (`docs/ROADMAP.md`).
+
+Two syntax-level passes remain, `CodeGen/OptPruner` and `CodeGen/OptPureFold`, used only by the
+`--emit-basic` decompiler in `pbc/Driver.cs`. The complete syntax walker formerly
+`OptReachability.DescendantNodes` is now `Syntax/Ast/AstWalker.DescendantNodes`, used by the IR
+lowering and the code generator.

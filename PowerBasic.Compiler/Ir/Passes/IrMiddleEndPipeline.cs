@@ -143,6 +143,7 @@ public static class IrMiddleEndPipeline {
     .AddModuleConservativeWhen(includeModulePasses, "localize-globals", LocalizeGlobals.Run)
     .AddModuleAnalyzedWhen(includeModulePasses, "devirt", WholeProgramDevirtualization.Run)
     .AddModuleAnalyzedWhen(includeModulePasses, "ipconstprop", IpConstantProp.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "pure-calls", PureCallEvaluation.Run)
     .AddModuleAnalyzedWhen(includeModulePasses, "dead-pure-calls", FunctionSummaries.RemoveDeadPureCalls)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSize, "semantic-merge", SemanticFunctionMerging.Run);
 

@@ -1,26 +1,42 @@
 # Back ends — retargeting without giving up the optimizer
 
-`pbc` has two ways to turn a bound program into output, and they exist for different
-reasons. Knowing which layer a change belongs to is the whole point of this document.
+`pbc` has one way to turn a bound program into code: lower it to a typed SSA IR,
+optimize the IR, and hand it to a back end. Which back end is the only choice left,
+and knowing which layer a change belongs to is the whole point of this document.
 
 ```mermaid
 flowchart TD
   SRC[".BAS"] --> FE["Front end<br/>lexer · parser · binder<br/>(dialect-driven, no optimization)"]
   FE --> SM["SemanticModel<br/>(bound AST + side tables)"]
-  SM --> DIRECT["DIRECT PATH<br/>CodeGen/CodeGenerator*.cs<br/>optimize while emitting x86-16"]
   SM --> IRL["Ir/IrLowering<br/>bound AST → typed SSA IR"]
-  IRL --> OPT["Ir/Passes (11 passes)<br/>mem2reg · instcombine · sccp · gvn ·<br/>licm · dse · dce · ifconv · simplifycfg …"]
+  IRL --> OPT["Ir/Passes/IrMiddleEndPipeline<br/>mem2reg · instcombine · sccp · gvn ·<br/>licm · dse · dce · inliner · globaldce …"]
+  OPT --> X86["Backend/ — x86-16<br/>select · peephole · schedule ·<br/>linear-scan allocate · emit"]
   OPT --> LLVM["Ir/LlvmEmitter → .ll"]
   OPT --> CEM["Ir/CEmitter → .c"]
   OPT --> NEXT["a native ARM/68k/… back end<br/>(the seam this is built for)"]
-  DIRECT --> EXE[".EXE — oracle-checked: same OUTPUT as genuine PBC"]
+  X86 --> EXE[".EXE — oracle-checked: same OUTPUT as genuine PBC"]
   LLVM --> NATIVE["llc → native object"]
   CEM --> CC["any C compiler"]
 ```
 
-## The two paths, and why both exist
+## One code generator
 
-**The direct path** (`CodeGen/`) is the fidelity path. Its job is to be
+`CodeGen/CodeGenerator` drives the x86-16 back end for every procedure body and
+module body, and wraps it in what a DOS image needs: runtime selection and trimming,
+data layout, inline assembly, units and linking. There is no second emitter to fall
+back on. Routing is mandatory: a body the back end declines is a compile error
+("routing is mandatory and 'X' was not taken by the x86-16 back end: <reason>").
+The syntax-tree emitter that used to compile programs directly, and the AST
+optimizer passes that fed it, are gone ([DIRECT-EMITTER-RETIREMENT.md](DIRECT-EMITTER-RETIREMENT.md));
+`pbc` rejects `--x-backend`, `--no-x-backend` and `--x-backend-strict`, and the
+`PBC_X_BACKEND*` environment variables do nothing.
+
+`IrLowering` turns the bound model into a target-independent typed SSA IR,
+`IrMiddleEndPipeline` optimizes it (`RunNativeModule` for DOS, `RunHostedModule`
+for hosted targets such as C), and a back end renders it. Adding a target means writing one emitter —
+not a compiler. With the optimizer off the middle end runs only `Legalize`, so
+unoptimized output is not shaped by any optimization.
+
 ### What the fidelity gates actually enforce
 
 Worth stating plainly, because the phrase "byte-identical" appears throughout this repository and
@@ -29,20 +45,14 @@ Worth stating plainly, because the phrase "byte-identical" appears throughout th
 - `GoldenTests` compiles every `tests/NAME.BAS` and compares its **DOSBox stdout** against
   `tests/NAME.expected`.
 - `scripts/run-diff-tests.sh` compiles each `tests/diff/*.BAS` twice — once with the genuine
-  `PBC.EXE`, once with ours — **runs both**, and diffs `RESULT.TXT`.
+  `PBC.EXE`, once with ours — **runs both**, and diffs `RESULT.TXT`. Last measured on
+  dosbox-staging: 592 pass / 0 fail / 0 skip.
 
 Both are observational. The contract this compiler is actually held to is: *the same program behaves
 the same way*, and the artefacts it produces (`.EXE`, `.PBU`, `.LIB`) are usable the same way. Byte
-identity with PBC 3.50 was an aim and is a useful discipline, but it is not a gate, and it is not
-what stands between the IR path and retiring the direct emitter.
-
-### Retiring the direct emitter — the actual checklist
-
-| | now |
-|---|---|
-| every program compiles through the IR | 135 / 162 lower; **65 / 135** module bodies fully owned; 137 / 224 functions routed, 178 selected |
-| observable behaviour identical | **0 disagreements** over 136 compilations |
-| units and libraries (`.PBU`, `.LIB`) route | **yes** — a routed `.PBU` links against an ordinarily-built main module and behaves identically (`RoutedUnitTests`) |
+identity with PBC 3.50 was an aim and is a useful discipline, but it is not a gate. Throughout this
+repository "byte-identical" describes the **output** a program produces — the `RESULT.TXT` an oracle
+battery diffs — not the executable image.
 
 ### Could the IR path be byte-identical unoptimized?
 
@@ -62,31 +72,9 @@ because the IR path does real register allocation where the direct emitter is AX
 construction; longer because the IR pipeline runs transformations of its own (loop unrolling trades
 size for speed) and the routed prologue zeroes its frame unconditionally.
 
-So byte-identity is not a near-miss to be closed by tidying. It would require the IR back end to
-reproduce the direct emitter's instruction selection — the opposite of why it exists. The contract
-the IR path is held to is **observable equivalence**, which is measured continuously by
-`BackendCorpusDifferentialTests`.
-
----
-
-observably identical to the genuine vintage compilers with the optimizer off, and to
-optimize aggressively with it on while *staying* observably identical. Its
-optimizations are interleaved with emission on purpose — many of them are decisions
-about 8086 encodings (which register stays resident, whether a `CMP AX,BX` can stand
-in for a 32-bit compare). That interleaving is not a design flaw to be refactored
-away; it is what lets encoding-level decisions be made at all. This path is not
-retargetable and is not meant to be.
-
-Note on wording: throughout this repository "byte-identical" describes the **output** a program
-produces — the `RESULT.TXT` an oracle battery diffs — not the executable image. No test compares
-executables; see "What the fidelity gates actually enforce" above.
-
-**The IR path** (`Ir/`) is the retargeting path. `IrLowering` turns the bound model
-into a target-independent typed SSA IR; the pass pipeline optimizes it; a back end
-renders it. Adding a target means writing one emitter — not a compiler.
-
-Nothing in the production DOS pipeline depends on the IR path, so experiments there
-cannot regress the golden gate.
+So byte-identity was not a near-miss to be closed by tidying. It would have required the IR back end
+to reproduce the direct emitter's instruction selection — the opposite of why it exists. The contract
+is **observable equivalence**.
 
 ## What a new back end costs
 
@@ -161,7 +149,7 @@ cross-checking:
 
 | Check | What it proves |
 |---|---|
-| `scripts/run-diff-tests.sh` | the direct path still matches the genuine vintage compilers |
+| `scripts/run-diff-tests.sh` | the x86-16 path still matches the genuine vintage compilers |
 | `CBackendTests` | the IR path's C output matches the DOS goldens |
 | `EmitLlvmTests` | the IR path's LLVM output is accepted by `llvm-as` and lowered by `llc` |
 | `IrVerifier` | every pass leaves structurally valid, well-typed SSA |
@@ -169,7 +157,7 @@ cross-checking:
 | `BackendRoutingGateTests` | one program per construct, so a construct that silently STOPS routing is a red test rather than a quiet fallback |
 
 Any new back end should add one row to that table. The cross-check has already earned
-its keep. Running the DOS battery through both paths found five real defects that a
+its keep. Running the DOS battery through both the C back end and the DOS build found five real defects that a
 single back end cannot expose, because there was nothing to disagree with:
 
 | Defect | Symptom |
@@ -184,6 +172,11 @@ The last two were miscompiles: correct-looking IR, wrong program. `tests/SHAREDG
 now pins both, in the DOS battery and in `CBackendTests`.
 
 ## The bar for retiring the direct emitter
+
+**Met; the direct emitter is gone.** This section is the record of the four gates and how each
+was measured while two code generators still existed; its "today" and "now" are the state at the
+time each part was written, and names such as `UseExperimentalBackend`, `PBC_X_BACKEND` and the
+`Opt*` AST passes refer to code that has since been deleted.
 
 Worth stating plainly, because coverage numbers make the distance look shorter than it is. Dropping
 `CodeGen/` needs THREE things, and only the first is being measured today.
@@ -1819,10 +1812,10 @@ disagrees with the DOS golden, which is the only thing that fixture exists to ca
 ### These two back ends decline; they never throw
 
 The rule the x86-16 path states for itself ([X86-BACKEND.md](X86-BACKEND.md)) binds
-here **more** tightly, not less. There a decline is caught by `CodeGenerator` and the
-direct emitter compiles the function instead, so a throw was a crash where a
-survivable fallback would have done. `CEmitter` and `LlvmEmitter` have *no fallback at
-all*: a C translation unit and a `.ll` module have exactly one producer each, so the
+here just as tightly. There a decline is caught by `CodeGenerator` and reported as a
+compile error naming the procedure and the reason, so a throw is a crash where a
+named diagnostic would have done. `CEmitter` and `LlvmEmitter` have no fallback
+either: a C translation unit and a `.ll` module have exactly one producer each, so the
 named refusal is the entire value either can offer for a program it cannot render, and
 a throw produces no output, no actionable exit code and no name for what stopped it.
 
@@ -1870,29 +1863,16 @@ in the fixture looking like far-pointer coverage and been none.
 
 Beyond widening that subset, the two items that would most change the picture:
 
-- **A native IR → x86-16 back end** that reproduces the same program output for a
-  subset. That is the fidelity proof that would let the IR path augment, and
-  eventually replace, the direct emitter. It exists and is live behind
-  `--x-backend` for integer functions (docs/X86-BACKEND.md); what it still
-  declines is now *measured* rather than guessed — `BackendCoverageTests` ranks
-  the blockers over the whole corpus, and the top one at any time is the next
-  increment. Both standing gaps are now closed - the data-layout bridge (a load
-  of a module-level global) and the runtime-label bridge (a call to an `rt_*`
-  helper, mapped per routine onto the DOS runtime's register convention in
-  `Backend/RuntimeAbi.cs`) - alongside signed division and spilling, which took
-  the corpus from 14 to 32 routed functions of 139. What ranks next is floating
-  point (the x87 stack), strings (the runtime's handle representation), and the
-  `main` body, which additionally needs the startup/exit sequence.
-- **Feeding the direct path's range facts into the IR — the analysis is DONE, one
-  consumer is not.** `Ir/Analysis/IrRangeAnalysis.cs` is the interval lattice restated
-  for SSA, and `Ir/Passes/RangeCheckElim.cs` spends it on the proofs that are pure
-  optimization for every back end at once: a subscript that cannot leave its
-  dimension, a sum that cannot overflow its type, a divisor that cannot be zero. What
-  it does not yet feed is the one proof that is target-specific in its *use* — "a
-  32-bit operation fits 16 bits" — which lives in `InstructionSelector.WordSizedRange`
-  and still computes its own, much weaker, interval. It is one leaf less weak than it
-  was — a widened CONSTANT contributes its value rather than its type's span, which is
-  what keeps the proof from depending on `instcombine` having run — but it still cannot
-  see a loop guard or an `IF` refinement, because those are properties of the CFG.
-  Rewiring it onto the analysis is the next increment and the prerequisite for the four
-  narrowing assertions in gate 3.
+- **The native IR → x86-16 back end** is no longer a subset: it is the only DOS code
+  generator and compiles every program ([X86-BACKEND.md](X86-BACKEND.md)). What is
+  next there is optimization quality rather than coverage.
+- **Range facts for the 16-bit target.** `Ir/Analysis/IrRangeAnalysis.cs` is the
+  interval lattice restated for SSA (the direct emitter's `IntervalRange`, which it
+  replaced, is deleted). `Ir/Passes/RangeCheckElim.cs` spends it on the proofs that are
+  pure optimization for every back end at once: a subscript that cannot leave its
+  dimension, a sum that cannot overflow its type, a divisor that cannot be zero.
+  `Ir/Passes/ProvenIntegerNarrowing.cs` spends it on the target-specific one, "a
+  32-bit operation fits 16 bits", for divides, remainders, compares and multiply
+  operands. `InstructionSelector.WordSizedRange`, which decides when a 32-bit operand
+  may be taken as a word, still computes its own weaker interval and cannot see a loop
+  guard or an `IF` refinement; moving it onto the analysis is the remaining step.
