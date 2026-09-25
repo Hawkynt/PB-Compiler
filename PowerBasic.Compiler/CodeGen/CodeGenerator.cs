@@ -542,7 +542,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       if (trimmedSections == null || trimmedSections.Contains("consts"))
         this._rt.EmitConstants(asm);
       this._rt.EmitData(asm, trimmedSections == null ? null : trimmedSections.Contains);
-      this.EmitDataPool();
     }
 
     asm.Align(2);
@@ -555,23 +554,13 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Dq(value);
     }
 
-    foreach (var (slot, value) in this._quadConstants) {
-      asm.Align(2);
-      asm.MarkLabel(slot);
-      asm.Db([.. BitConverter.GetBytes(value)]);
-    }
-
     this.EmitBackendDataPool(asm);
 
     foreach (var (symbol, label) in this._variableSlots) {
-      // pb36 O23: a dead global's data slot carries no live value - emit no bytes for it.
-      // (its only stores were skipped, so SlotOf was normally never even called for it.)
-      if (this._deadGlobals != null && this._deadGlobals.Contains(symbol))
-        continue;
       asm.Align(2);
       asm.MarkLabel(label);
       var bytes = symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms
-        ? HvDescriptorBytes                       // dword bounds + EMS handle + page cache (EMS/XMS ride the same paged descriptor)
+        ? _PAGED_ARRAY_DESCRIPTOR_BYTES
         : Math.Max(symbol.Type.Size, 1);
       // pb36 $RESOURCE: the array's slot IS the embedded file (padded to the slot size)
       if (model.ResourceData.TryGetValue(symbol, out var resource)) {
@@ -581,12 +570,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         continue;
       }
       asm.Db(new byte[bytes]);
-    }
-
-    foreach (var (symbol, label) in this._shadowDescriptors) {
-      asm.Align(2);
-      asm.MarkLabel(label);
-      asm.Db(new byte[8 + ((ArrayType)symbol.Type).Rank * 4]);
     }
 
     asm.Align(2);

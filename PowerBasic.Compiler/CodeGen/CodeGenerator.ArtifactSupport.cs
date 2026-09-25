@@ -14,6 +14,24 @@ public sealed partial class CodeGenerator {
   /// <summary>Master middle-end optimizer gate.</summary>
   public bool Optimize { get; set; } = model.Dialect == Dialect.Pb36;
 
+  /// <summary>The normalized integer-core generation selected by $CPU.</summary>
+  private int CpuLevel => this.RuntimeTargetForRuntime().CpuLevel;
+
+  /// <summary>True when 32-bit general-purpose instructions are legal.</summary>
+  private bool Has32BitCpu => this.CpuLevel >= 386;
+
+  /// <summary>True when 80486-or-later target policy may be used.</summary>
+  private bool Cpu486 => this.CpuLevel >= 486;
+
+  /// <summary>Target profitability model shared by the IR middle end, selector and machine emission.</summary>
+  private TargetCost Cost => TargetCost.For(this.CpuLevel, this.OptimizeSpeed, this.OptimizeSize);
+
+  /// <summary>
+  /// Packed DOS descriptor bytes used only for source globals whose storage is shared with the
+  /// IR/x86-16 artifact shell. This is an image-layout constant, not a syntax-emitter operation.
+  /// </summary>
+  private const int _PAGED_ARRAY_DESCRIPTOR_BYTES = 20;
+
   private MetaStmt? ResolveOptimizeMetastatement() {
     var metas = model.MetaStatements
       .Where(m => m.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase))
@@ -198,6 +216,16 @@ public sealed partial class CodeGenerator {
 
   private static bool CallerCleansStack(ProcedureSymbol procedure)
     => procedure.CallConv == CallConvention.Cdecl;
+
+  /// <summary>
+  /// Whether a source-visible procedure uses the ordinary stack ABI shape shared by the IR backend
+  /// and DOS artifact/linker metadata. Register conventions and caller-clean/reversed-stack variants
+  /// are represented explicitly elsewhere and are not interchangeable with this shape.
+  /// </summary>
+  private static bool IsBackendAbiConvention(ProcedureSymbol procedure)
+    => !IsRegisterConvention(procedure)
+       && !PushesRightToLeft(procedure)
+       && !CallerCleansStack(procedure);
 
   private int LayoutFrame(ProcedureSymbol procedure) {
     this._frameLocalBytes = 0;
