@@ -203,6 +203,13 @@ public static class IrMiddleEndPipeline {
           SimplifyCfg.Run(function);
           Dce.Run(function);
         }
+
+    // Whole-program dead code: a procedure nothing calls or takes the address of any more - inlined
+    // into every caller, or only ever reached from code that is itself gone - is removed, and what it
+    // alone kept alive with it. Only where the module owns every procedure's callers: a unit exports
+    // to callers that are not here, and a linked object may call one by name.
+    if (optimize && module.OwnsProcedureAbi)
+      GlobalDce.Run(module, removeGlobals: false);
   }
 
   /// <summary>

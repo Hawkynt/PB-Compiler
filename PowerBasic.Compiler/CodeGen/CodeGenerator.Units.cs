@@ -115,6 +115,7 @@ public sealed partial class CodeGenerator {
     var asm = this._asm;
     this._isUnit = true;
     this._allowExternalCalls = true;
+    this.ValidateRegisterConventions();
     this.ResetPostLinkFunctions();
     this._scratch = asm.DefineLabel("cg_scratch");
     this._rt.BindExternal(asm);

@@ -25,7 +25,7 @@ public sealed class IrOnlyProductionPipelineTests {
     var generator = new CodeGenerator(Bind("""
       PRINT Twice%(21)
       END
-      FUNCTION Twice%(BYVAL n%)
+      FUNCTION Twice%(BYVAL n%) NOINLINE
         Twice% = n% * 2
       END FUNCTION
       """)) {

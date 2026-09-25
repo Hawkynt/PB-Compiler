@@ -22,7 +22,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 public sealed class BackendRuntimeCallTests {
 
   private const string _printingFunction = """
-    FUNCTION Announce%
+    FUNCTION Announce% NOINLINE
       PRINT "HI"
       Announce% = 7
     END FUNCTION
@@ -326,7 +326,7 @@ public sealed class BackendRuntimeCallTests {
     // the runtime has no per-file print entries: rt_fselect routes the console routines at a file,
     // and the caller resets rt_curout/rt_colptr afterwards - exactly what the direct emitter does
     var m = Select("""
-      FUNCTION Log%
+      FUNCTION Log% NOINLINE
         PRINT #1, "hi"
         Log% = 0
       END FUNCTION
@@ -351,13 +351,13 @@ public sealed class BackendRuntimeCallTests {
   [Test]
   public void Emit_GivenAFileWritingProgram_ThenTheImageAssembles() {
     const string source = """
-      FUNCTION Log%(BYVAL v%)
+      FUNCTION WriteLog%(BYVAL v%) NOINLINE
         PRINT #1, v%
-        Log% = v%
+        WriteLog% = v%
       END FUNCTION
 
       OPEN "O.TXT" FOR OUTPUT AS #1
-      PRINT Log%(3)
+      PRINT WriteLog%(3)
       CLOSE #1
       """;
     var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
@@ -366,7 +366,7 @@ public sealed class BackendRuntimeCallTests {
 
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(image, Is.Not.Empty);
-    Assert.That(routed.BackendRoutedNames, Does.Contain("Log"), "the back end did not take the file-writing function");
+    Assert.That(routed.BackendRoutedNames, Does.Contain("WriteLog"), "the back end did not take the file-writing function");
   }
 
   [Test]

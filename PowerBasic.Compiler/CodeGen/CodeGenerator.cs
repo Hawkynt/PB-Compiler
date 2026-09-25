@@ -250,6 +250,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       return [];
     }
     var optimizeMeta = this.ResolveOptimizeMetastatement();
+    this.ValidateRegisterConventions();
+    if (this.Errors.Count > 0)
+      return [];
     var autoCom = !emitCom && this.ChoosesComContainer();
     emitCom |= autoCom;
 

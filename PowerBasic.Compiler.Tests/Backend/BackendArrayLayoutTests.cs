@@ -224,7 +224,7 @@ public sealed class BackendArrayLayoutTests {
       PRINT a%(2, 11)
       END
 
-      FUNCTION Mark%(BYVAL value%, BYVAL code%)
+      FUNCTION Mark%(BYVAL value%, BYVAL code%) NOINLINE
         SHARED seq AS INTEGER
         seq = seq * 10 + code%
         Mark% = value%
@@ -254,7 +254,7 @@ public sealed class BackendArrayLayoutTests {
       PRINT seq
       END
 
-      FUNCTION Mark%(BYVAL n%)
+      FUNCTION Mark%(BYVAL n%) NOINLINE
         SHARED seq AS INTEGER
         seq = seq * 10 + n% + 1
         Mark% = n%

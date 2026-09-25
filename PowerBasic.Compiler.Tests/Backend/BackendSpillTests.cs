@@ -82,7 +82,7 @@ public sealed class BackendSpillTests {
   // interprocedural constant propagation replaces v% with the literal and the function no longer has
   // a parameter to spill - a correct optimization that would quietly turn this into a test of nothing.
   private const string _liveAcrossACall = """
-    FUNCTION Twice%(BYVAL v%)
+    FUNCTION Twice%(BYVAL v%) NOINLINE
       PRINT "X"
       Twice% = v% + v%
     END FUNCTION
@@ -127,7 +127,7 @@ public sealed class BackendSpillTests {
   [Test]
   public void Allocate_GivenNoPressure_ThenSpillsNothing() {
     var m = Select("""
-      FUNCTION Twice%(BYVAL v%)
+      FUNCTION Twice%(BYVAL v%) NOINLINE
         Twice% = v% + v%
       END FUNCTION
 
@@ -209,7 +209,7 @@ public sealed class BackendSpillTests {
   public void Allocate_GivenALocalArrayAddressLiveAcrossRuntimeCalls_ThenRematerializesItsGepChain() {
     var m = Select("""
       $ERROR BOUNDS ON
-      SUB Work()
+      SUB Work() NOINLINE
         DIM values%(0 TO 20)
         index% = 5
         values%(index%) = index%
@@ -362,7 +362,7 @@ public sealed class BackendSpillTests {
   [Test]
   public void Run_GivenARematerializedLocalArrayAddress_ThenBothBackendsObserveTheSameValues() {
     const string source = """
-      SUB Work()
+      SUB Work() NOINLINE
         DIM values%(0 TO 20)
         values%(5) = 5
         PRINT "idx"; values%(5); values%(10)

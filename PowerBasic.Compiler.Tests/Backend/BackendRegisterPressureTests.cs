@@ -50,7 +50,7 @@ public sealed class BackendRegisterPressureTests {
   /// constant propagation cannot fold the array away and leave a test of nothing.
   /// </summary>
   private const string _fourSimultaneousLongAccumulators = """
-    SUB Accumulate(BYVAL seed%)
+    SUB Accumulate(BYVAL seed%) NOINLINE
       DIM a%(1 TO 8)
       FOR i% = 1 TO 8
         a%(i%) = i% * seed%
@@ -72,7 +72,7 @@ public sealed class BackendRegisterPressureTests {
   /// stays an argument.
   /// </summary>
   private const string _longLiveAcrossACall = """
-    FUNCTION Scaled&(BYVAL base%)
+    FUNCTION Scaled&(BYVAL base%) NOINLINE
       value& = base%
       value& = value& * 1000
       PRINT "step"

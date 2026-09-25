@@ -98,7 +98,7 @@ public sealed class BackendOnGosubTests {
 
   /// <summary>Inside a procedure, where the labels and the return stack are the procedure's own.</summary>
   private const string _dispatchesInsideAProcedure = """
-    SUB Pick(BYVAL n AS INTEGER)
+    SUB Pick(BYVAL n AS INTEGER) NOINLINE
       DIM hit AS INTEGER
       hit = 0
       ON n GOSUB one, two
@@ -177,7 +177,7 @@ public sealed class BackendOnGosubTests {
   /// </para>
   /// </summary>
   private static string DispatchesThenGosubsInsideAnInlinedProcedure(int selector) => $"""
-    SUB Pick(BYVAL n AS INTEGER)
+    SUB Pick(BYVAL n AS INTEGER) NOINLINE
       DIM hit AS INTEGER
       hit = 0
       ON n GOSUB one, two

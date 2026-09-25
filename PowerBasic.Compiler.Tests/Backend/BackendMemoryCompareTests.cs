@@ -61,7 +61,7 @@ public sealed class BackendMemoryCompareTests {
     b = 5
     CALL Report
     END
-    SUB Report()
+    SUB Report() NOINLINE
       IF a < b THEN PRINT "lt";
       IF a <= b THEN PRINT "le";
       IF a > b THEN PRINT "gt";

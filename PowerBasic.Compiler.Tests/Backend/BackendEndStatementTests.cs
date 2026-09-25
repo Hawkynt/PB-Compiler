@@ -76,7 +76,7 @@ public sealed class BackendEndStatementTests {
       Stop2
       PRINT "never"
       END
-      SUB Stop2()
+      SUB Stop2() NOINLINE
         PRINT "in"
         END 7
         PRINT "unreached"

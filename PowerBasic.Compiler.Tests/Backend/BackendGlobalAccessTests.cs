@@ -27,7 +27,7 @@ public sealed class BackendGlobalAccessTests {
   private const string _sharedGlobalProgram = """
     DIM g AS SHARED INTEGER
 
-    FUNCTION AddG%(BYVAL v%)
+    FUNCTION AddG%(BYVAL v%) NOINLINE
       AddG% = v% + g
     END FUNCTION
 
@@ -38,18 +38,18 @@ public sealed class BackendGlobalAccessTests {
   private const string _sharedArrayAndStaticsProgram = """
     DIM tally(3) AS SHARED INTEGER
 
-    FUNCTION Touch%(BYVAL index%)
+    FUNCTION Touch%(BYVAL index%) NOINLINE
       tally(index%) = tally(index%) + 10
       Touch% = tally(index%)
     END FUNCTION
 
-    FUNCTION First%()
+    FUNCTION First%() NOINLINE
       STATIC count AS INTEGER
       count = count + 1
       First% = count
     END FUNCTION
 
-    FUNCTION Second%()
+    FUNCTION Second%() NOINLINE
       STATIC count AS INTEGER
       count = count + 10
       Second% = count
@@ -229,7 +229,7 @@ public sealed class BackendGlobalAccessTests {
       Grab
       END
 
-      SUB Grab
+      SUB Grab NOINLINE
         DIM t AS STRING
         READ t
         PRINT t

@@ -190,12 +190,14 @@ public sealed class BackendCoverageTests {
         proceduresNotLowered.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')}::{procName}: {procWhy}");
 
       List<string> routedNames;
+      List<string> eliminatedNames;
       List<(string Name, string Reason)> routingDeclineList;
       try {
         var linkedUnits = CompileLinkedUnits(model, dir, optimize: true);
         var generator = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
         generator.EmitExecutable(linkedUnits, []);
         routedNames = generator.BackendRoutedNames.ToList();
+        eliminatedNames = generator.BackendEliminatedNames.ToList();
         routingDeclineList = generator.BackendDeclines.ToList();
       } catch (Exception e) {
         // The fourth outcome. A throw is no executable at all, so it is neither a routed function
@@ -203,7 +205,9 @@ public sealed class BackendCoverageTests {
         threw.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')}: {e.GetType().Name}: {e.Message}");
         continue;
       }
-      routed += routedNames.Count;
+      // A procedure the optimized pipeline removed as unreachable needs no code at all, so it is
+      // covered rather than declined; the unoptimized half below compiles every one of them anyway.
+      routed += routedNames.Count + eliminatedNames.Count;
       if (!routedNames.Contains("main", StringComparer.OrdinalIgnoreCase))
         mainBodiesNotRouted.Add(name);
       foreach (var (declinedName, declinedBecause) in routingDeclineList) {

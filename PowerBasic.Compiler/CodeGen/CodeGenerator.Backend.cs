@@ -253,6 +253,7 @@ public sealed partial class CodeGenerator {
     // decision. A 386 keeps a LONG in a dword register, so narrowing it to a word costs a partial
     // register there rather than saving anything; only a 16-bit target profits from word storage.
     var narrowestStorageBits = this.Has32BitCpu ? 32 : 16;
+    var definedBefore = module.Functions.Where(f => !f.IsDeclaration).Select(f => f.Name).ToList();
     IrMiddleEndPipeline.RunNativeModule(module,
       optimize: this.Optimize,
       optimizeForSpeed: this.OptimizeSpeed,
@@ -263,10 +264,13 @@ public sealed partial class CodeGenerator {
       targetCost: this.Cost,
       packedVectorBytes: this._rt.Target.PackedIntegerWidthBytes);
 
-    // Artifact routing deliberately retains every source definition. Whole-program GlobalDCE belongs
-    // inside IrMiddleEndPipeline once export/linkage preservation is modeled there; the code generator
-    // must not own optimization choreography.
-    var eliminatedByGlobalDce = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    // The definitions the pipeline's whole-program DCE removed: nothing reaches them, so they are not
+    // emitted. The code generator only reads the answer; the decision is IrMiddleEndPipeline's.
+    var eliminatedByGlobalDce = definedBefore.Where(name => module.FindFunction(name) is null)
+      .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    this._eliminatedProcedures = model.ProcedureList
+      .Where(proc => eliminatedByGlobalDce.Contains(Ir.IrLowering.IrNameOf(proc)))
+      .ToHashSet(ReferenceEqualityComparer.Instance);
 
     // O0284 on native x86 uses ABI-preserving entry thunks. The source-visible procedures keep their
     // original signatures while private helpers carry the one varying context parameter.
@@ -527,6 +531,13 @@ public sealed partial class CodeGenerator {
   /// own blob and <c>rt_dataptr</c> is an absolute pointer, so each would advance a cell the other
   /// never consults.
   /// </summary>
+  /// <summary>
+  /// The procedures the pipeline's whole-program DCE removed. Nothing reaches them and neither side
+  /// emits them, so they are no side's user of anything - the ownership checks below skip them, and so
+  /// does the routing census.
+  /// </summary>
+  private HashSet<object> _eliminatedProcedures = new(ReferenceEqualityComparer.Instance);
+
   private bool DataReadersRouteTogether() {
     if (!this.UseExperimentalBackend || this._backendProcs is null)
       return true;
@@ -539,7 +550,7 @@ public sealed partial class CodeGenerator {
         ++routed;
     }
     foreach (var proc in model.ProcedureList) {
-      if (proc.Body is not { } body || !ContainsDataRead(body))
+      if (proc.Body is not { } body || !ContainsDataRead(body) || this._eliminatedProcedures.Contains(proc))
         continue;
       if (this._backendProcs.ContainsKey(proc))
         ++routed;
@@ -769,7 +780,8 @@ public sealed partial class CodeGenerator {
       // old bound. Both halves ran, neither faulted, and the program printed a stale number.
       var receivers = this.ProceduresReceiving(symbol.Name);
       foreach (var proc in model.ProcedureList) {
-        if (proc.Body is not { } body || (!ReferencesVariable(body, symbol.Name) && !receivers.Contains(proc)))
+        if (proc.Body is not { } body || (!ReferencesVariable(body, symbol.Name) && !receivers.Contains(proc))
+            || this._eliminatedProcedures.Contains(proc))
           continue;
         if (this._backendProcs.ContainsKey(proc))
           ++routed;
@@ -1272,6 +1284,18 @@ public sealed partial class CodeGenerator {
   /// </summary>
   public IEnumerable<string> BackendRoutedNames =>
     this.BackendProcs().Keys.Select(p => p.Name).Concat(this.BackendMain() is null ? [] : ["main"]);
+
+  /// <summary>
+  /// The procedures the pipeline removed as unreachable - inlined into every caller, or reached only
+  /// from code that is itself gone. They are neither routed nor declined: nothing compiles them because
+  /// nothing needs them, which is what a coverage count has to be told.
+  /// </summary>
+  public IEnumerable<string> BackendEliminatedNames {
+    get {
+      _ = this.BackendProcs();
+      return this._eliminatedProcedures.OfType<Semantics.ProcedureSymbol>().Select(p => p.Name);
+    }
+  }
 
   /// <summary>True when <paramref name="proc"/> is compiled by the x86-16 back end (so it is excluded from inlining and the register-parameter convention, and emitted via the back end).</summary>
   /// <summary>

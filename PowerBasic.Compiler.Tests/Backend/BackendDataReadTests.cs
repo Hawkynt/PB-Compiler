@@ -203,7 +203,7 @@ public sealed class BackendDataReadTests {
       DATA 11, 22, 33
       DECLARE SUB Take()
       DIM v AS INTEGER
-      SUB Take()
+      SUB Take() NOINLINE
         DIM a AS INTEGER
         DIM b AS INTEGER
         READ a

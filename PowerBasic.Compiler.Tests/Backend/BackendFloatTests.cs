@@ -101,7 +101,7 @@ public sealed class BackendFloatTests {
   [Test]
   public void Execute_GivenUnsuffixedSingleLiteralsInADoubleForLoop_ThenTheRoutedPathPreservesTheirBits() {
     const string source = """
-      FUNCTION Walk%
+      FUNCTION Walk% NOINLINE
         total# = 0
         FOR counter# = 0.1 TO 1 STEP 0.3
           total# = total# + counter#
@@ -286,7 +286,7 @@ public sealed class BackendFloatTests {
   [Test]
   public void Emit_GivenAFloatComputingFunction_ThenTheImageAssemblesAndTheBackEndTookIt() {
     const string source = """
-      FUNCTION Scaled%(BYVAL n%)
+      FUNCTION Scaled%(BYVAL n%) NOINLINE
         DIM s AS SINGLE
         s = n% * 1.5
         Scaled% = 0

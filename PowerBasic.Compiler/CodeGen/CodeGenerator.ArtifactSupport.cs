@@ -227,10 +227,20 @@ public sealed partial class CodeGenerator {
        && !PushesRightToLeft(procedure)
        && !CallerCleansStack(procedure);
 
+  /// <summary>
+  /// Rejects a register-convention procedure with a parameter that is not word-sized - a property of
+  /// the DECLARATION, so it is checked for every procedure up front. It used to be raised while laying
+  /// out the procedure's frame, and a procedure the optimizer inlined and removed never had one laid
+  /// out: the program compiled or not depending on the optimizer.
+  /// </summary>
+  private void ValidateRegisterConventions() {
+    foreach (var procedure in model.ProcedureList)
+      if (!procedure.IsExternal && HasUnsupportedRegisterParam(procedure))
+        this.Errors.Add(new(procedure.Position, UnsupportedRegisterParamMessage(procedure)));
+  }
+
   private int LayoutFrame(ProcedureSymbol procedure) {
     this._frameLocalBytes = 0;
-    if (HasUnsupportedRegisterParam(procedure))
-      this.Errors.Add(new(procedure.Position, UnsupportedRegisterParamMessage(procedure)));
 
     var registerCount = RegisterParamCount(procedure);
     for (var i = 0; i < registerCount; ++i) {

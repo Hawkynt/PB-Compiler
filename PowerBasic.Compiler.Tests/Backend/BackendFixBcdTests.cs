@@ -157,7 +157,7 @@ public sealed class BackendFixBcdTests {
   [Test]
   public void Route_GivenByValFixParameter_ThenTheScaledQwordCrossesTheProcedureBoundary() {
     const string source = """
-      FUNCTION F(BYVAL a@) AS DOUBLE
+      FUNCTION F(BYVAL a@) AS DOUBLE NOINLINE
         F = a@ * 2
       END FUNCTION
       DIM x AS DOUBLE, v@

@@ -233,7 +233,7 @@ public sealed class BackendPointerTests {
       PRINT g
       END
 
-      FUNCTION Poked% ()
+      FUNCTION Poked% () NOINLINE
         SHARED g AS WORD
         DEF SEG = VARSEG(g)
         POKE VARPTR(g), 77

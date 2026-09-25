@@ -51,7 +51,7 @@ public sealed class BackendDifferentialTests {
   [Test]
   public void Run_GivenAnIntegerFunction_ThenBothPathsPrintTheSameThing() {
     var (direct, routed, names) = RunBothWays("""
-      FUNCTION Twice%(BYVAL v%)
+      FUNCTION Twice%(BYVAL v%) NOINLINE
         Twice% = v% + v%
       END FUNCTION
 
@@ -66,7 +66,7 @@ public sealed class BackendDifferentialTests {
   [Test]
   public void Run_GivenAConstantDivide_ThenBothPathsAgree() {
     var (direct, routed, names) = RunBothWays("""
-      FUNCTION Tenth%(BYVAL v%)
+      FUNCTION Tenth%(BYVAL v%) NOINLINE
         Tenth% = v% \ 10
       END FUNCTION
 
@@ -96,7 +96,7 @@ public sealed class BackendDifferentialTests {
     // the parameter is live across a PRINT, so the back end spills it into the caller's own word -
     // this is the first check that the spill actually preserves the value rather than merely allocating
     var (direct, routed, names) = RunBothWays("""
-      FUNCTION Twice%(BYVAL v%)
+      FUNCTION Twice%(BYVAL v%) NOINLINE
         PRINT "in"
         Twice% = v% + v%
       END FUNCTION
@@ -112,7 +112,7 @@ public sealed class BackendDifferentialTests {
   [Test]
   public void Run_GivenALoopAndAControlFlowMerge_ThenBothPathsAgree() {
     var (direct, routed, names) = RunBothWays("""
-      FUNCTION SumTo%(BYVAL n%)
+      FUNCTION SumTo%(BYVAL n%) NOINLINE
         DIM i AS INTEGER
         DIM total AS INTEGER
         total = 0
@@ -280,7 +280,7 @@ public sealed class BackendDifferentialTests {
     var (direct, routed, names) = RunBothWays("""
       DIM g AS SHARED INTEGER
 
-      FUNCTION AddG%(BYVAL v%)
+      FUNCTION AddG%(BYVAL v%) NOINLINE
         AddG% = v% + g
       END FUNCTION
 
