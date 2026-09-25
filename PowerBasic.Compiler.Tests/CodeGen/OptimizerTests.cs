@@ -2228,10 +2228,14 @@ public sealed class OptimizerTests {
   // NOINLINE is what makes it a barrier rather than a decoration: an EMPTY body is
   // absorbable at every call site, and once absorbed the store is dead and the whole
   // program folds to nothing - so the assertion below would be about no code at all.
+  // T hands its argument to code the optimizer cannot see through, so a value passed to it is
+  // unknown afterwards. An EMPTY T no longer does that: function summaries prove it writes nothing,
+  // and every "opaque" operand folded back to its constant. Inline assembly is opaque to them, and a
+  // NOP adds one byte and no runtime - these tests count patterns over the whole image.
   private const string _TOUCH = "DECLARE SUB T(a%)\n";
-  private const string _TOUCH_END = "\nSUB T(a%) NOINLINE\nEND SUB";
+  private const string _TOUCH_END = "\nSUB T(a%) NOINLINE\n  ! nop\nEND SUB";
   private const string _TOUCHL = "DECLARE SUB TL(a&)\n";
-  private const string _TOUCHL_END = "\nSUB TL(a&) NOINLINE\nEND SUB";
+  private const string _TOUCHL_END = "\nSUB TL(a&) NOINLINE\n  ! nop\nEND SUB";
 
   [Test]
   public void Emit_GivenBitwiseMaskConstant_WhenPb36_ThenFoldsToImmediateNoRegisterLoad() {
