@@ -2139,25 +2139,45 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenDoLoopAccumulator_WhenPb36Speed_ThenAccumulatorInSi() {
-    // an SI/DI-clean DO/LOOP keeps its hot accumulator in SI (no FOR counter competes): the
-    // accumulate becomes MOV SI, AX (89 F0), absent when $OPTIMIZE SPEED is off (s% lives in
-    // its memory cell). Generalizes register residency beyond the FOR-loop shape.
-    const string body = "s% = 0\ni% = 1\nDO\n  s% = s% + i%\n  i% = i% + 1\nLOOP UNTIL i% > 10\nPRINT s%\nEND";
+    // an SI/DI-clean DO/LOOP keeps its loop-carried values in SI/DI under SPEED - the accumulate is an
+    // ADD into one of them - and in the ordinary pool order otherwise. The start comes from a port:
+    // with a constant one the loop is computed at compile time and nothing is left to allocate.
+    const string body = "s% = 0\ni% = INP(&H60) AND 7\nDO\n  s% = s% + i%\n  i% = i% + 1\nLOOP UNTIL i% > 10\nPRINT s%\nEND";
     var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
     var plain = Compile(body, Dialect.Pb36);
-    Assert.That(CountMovSiAx(speed), Is.GreaterThan(CountMovSiAx(plain)),
-      "a DO-loop accumulator should be written in SI (MOV SI, AX) under SPEED");
+    Assert.That(CountAddIntoSiDi(speed), Is.GreaterThan(CountAddIntoSiDi(plain)),
+      "a DO-loop accumulator should be added into SI or DI under SPEED");
   }
 
   [Test]
-  public void Emit_GivenDoLoopTwoAccumulators_WhenPb36Speed_ThenSecondInDi() {
-    // a DO loop has no counter, so both SI and DI are free: two hot accumulators live in
-    // registers. The second is written via MOV DI, AX (89 F8), absent when SPEED is off.
-    const string body = "s% = 0\np% = 1\ni% = 1\nDO\n  s% = s% + i%\n  p% = p% + 2\n  i% = i% + 1\nLOOP UNTIL i% > 8\nPRINT s%; p%\nEND";
+  public void Emit_GivenDoLoopTwoAccumulators_WhenPb36Speed_ThenTheLoopValuesShareTheSiDiPair() {
+    // a DO loop has no FOR counter claiming SI, so SPEED's residency pair holds loop values: the
+    // counter and the accumulator it feeds end up as SI and DI, and the accumulate is ADD DI,SI
+    // (01 F7). Every loop value is register-resident either way; the pair is SPEED's choice.
+    const string body = "s% = 0\np% = 1\ni% = INP(&H60) AND 7\nDO\n  s% = s% + i%\n  p% = p% + 2\n  i% = i% + 1\nLOOP UNTIL i% > 8\nPRINT s%; p%\nEND";
     var speed = Compile("$OPTIMIZE SPEED\n" + body, Dialect.Pb36);
     var plain = Compile(body, Dialect.Pb36);
-    Assert.That(CountMovDiAx(speed), Is.GreaterThan(CountMovDiAx(plain)),
-      "a second DO-loop accumulator should live in DI (MOV DI, AX) under SPEED");
+    Assert.Multiple(() => {
+      Assert.That(CountPair(speed, 0x01, 0xF7), Is.GreaterThan(0), "the SPEED loop adds its SI counter into its DI accumulator");
+      Assert.That(CountPair(plain, 0x01, 0xF7), Is.Zero, "...which the default objective's pool order does not choose");
+    });
+  }
+
+  // ADD r/m16, r16 (01) or ADD r16, r/m16 (03) or ADD r/m16, imm (83 /0, 81 /0) whose destination
+  // register is SI or DI - the write of an SI/DI-resident loop value
+  private static int CountAddIntoSiDi(byte[] image) {
+    var count = 0;
+    for (var i = 0; i + 1 < image.Length; ++i) {
+      var modrm = image[i + 1];
+      if ((modrm & 0xC0) != 0xC0)
+        continue;
+      var rm = modrm & 7;
+      var reg = (modrm >> 3) & 7;
+      if ((image[i] == 0x01 && rm is 6 or 7) || (image[i] == 0x03 && reg is 6 or 7)
+          || (image[i] is 0x83 or 0x81 && reg == 0 && rm is 6 or 7))
+        ++count;
+    }
+    return count;
   }
 
   // 89 F8 = MOV DI, AX - the write of a DI-resident accumulator

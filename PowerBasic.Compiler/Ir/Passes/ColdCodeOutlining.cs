@@ -126,14 +126,22 @@ public static class ColdCodeOutlining {
     var falseRegion = TryCollectRegion(function, branchBlock, branch.IfFalse, branch.IfTrue, addressTaken);
 
     // An edge whose terminal leaves are all unreachable is the strongest structural coldness signal.
-    if (trueRegion?.EndsInUnreachable != falseRegion?.EndsInUnreachable)
-      return trueRegion?.EndsInUnreachable == true ? trueRegion : falseRegion;
+    // Exactly one side has to end that way: comparing the two nullable flags instead read a missing
+    // region (null) as different from a region that does NOT end in unreachable (false), and outlined
+    // whatever the other side was - the rest of a module body, hot loop and all.
+    var trueUnreachable = trueRegion?.EndsInUnreachable == true;
+    var falseUnreachable = falseRegion?.EndsInUnreachable == true;
+    if (trueUnreachable != falseUnreachable)
+      return trueUnreachable ? trueRegion : falseRegion;
 
     // A side that loops back through the branch source is the continuing/hot path; the other terminal
-    // side is the loop exit. Prefer this structural signal over generic value heuristics.
-    if (trueRegion is not null && CanReachWithoutCrossing(branch.IfFalse, branchBlock, stop: branch.IfTrue))
+    // side is the loop exit. Prefer this structural signal over generic value heuristics - but only
+    // while the exit is straight-line. An exit region with a loop of its own is not a cold side, it is
+    // the rest of the program: the first loop of a module body had the second, hot one outlined as
+    // "cold" behind a call, out of reach of everything that optimizes a loop in its function.
+    if (trueRegion is not null && !HasCycle(trueRegion) && CanReachWithoutCrossing(branch.IfFalse, branchBlock, stop: branch.IfTrue))
       return trueRegion;
-    if (falseRegion is not null && CanReachWithoutCrossing(branch.IfTrue, branchBlock, stop: branch.IfFalse))
+    if (falseRegion is not null && !HasCycle(falseRegion) && CanReachWithoutCrossing(branch.IfTrue, branchBlock, stop: branch.IfFalse))
       return falseRegion;
 
     // LLVM's static branch-probability analysis predicts equality with zero/null as the unlikely
@@ -324,6 +332,23 @@ public static class ColdCodeOutlining {
       candidate = $"{functionName}{GeneratedHelperMarker}{suffix++}";
     while (module.FindFunction(candidate) is not null);
     return candidate;
+  }
+
+  /// <summary>Whether control can go round inside the region - a loop the region contains.</summary>
+  private static bool HasCycle(Region region) {
+    var inRegion = region.Blocks.ToHashSet(ReferenceEqualityComparer.Instance);
+    var state = new Dictionary<IrBasicBlock, bool>(ReferenceEqualityComparer.Instance);   // false: on the path, true: done
+    bool Visit(IrBasicBlock block) {
+      if (state.TryGetValue(block, out var done))
+        return !done;
+      state[block] = false;
+      foreach (var successor in block.Successors)
+        if (inRegion.Contains(successor) && Visit(successor))
+          return true;
+      state[block] = true;
+      return false;
+    }
+    return region.Blocks.Any(Visit);
   }
 
   private sealed record Region(IReadOnlyList<IrBasicBlock> Blocks, int InstructionCount, bool EndsInUnreachable);
