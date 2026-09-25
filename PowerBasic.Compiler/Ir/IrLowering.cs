@@ -4429,17 +4429,27 @@ public sealed partial class IrLowering {
     return null;
   }
 
+  /// <summary>
+  /// <c>INCR v[, n]</c> / <c>DECR v[, n]</c>: a read-modify-write of any numeric lvalue - a variable,
+  /// an array element, a record field, a pointer target. It used to accept only a plain variable, so
+  /// <c>INCR z%(1), 5</c> was a compile failure once the back end stopped having a fallback.
+  /// </summary>
   private void LowerIncrDecr(IncrDecrStmt id) {
-    var symbol = this.SymbolOf(id.Target);
-    var slot = this.SlotFor(symbol);
-    var ty = MapType(symbol.Type);
-    if (ty.IsFloat)
-      throw new IrLoweringException("INCR/DECR on float");
+    var (slot, type) = this.LValue(id.Target, "INCR/DECR");
+    if (type is not ScalarType scalar)
+      throw new IrLoweringException($"INCR/DECR of a {type.GetType().Name}");
+    var ty = MapType(scalar);
     var current = this._b.Load(ty, slot);
-    var amount = id.Amount is null
-      ? new IrConstantInt(ty, 1)
-      : this.Coerce(this.LowerExpr(id.Amount), this._model.TypeOf(id.Amount), symbol.Type);
-    this._b.Store(this._b.Binary(id.Increment ? IrBinaryOp.Add : IrBinaryOp.Sub, current, amount), slot);
+    IrValue amount = id.Amount is not null
+      ? this.Coerce(this.LowerExpr(id.Amount), this._model.TypeOf(id.Amount), scalar)
+      : scalar.IsFloat ? IrBuilder.ConstFloat(ty, 1) : new IrConstantInt(ty, 1);
+    var op = (id.Increment, scalar.IsFloat) switch {
+      (true, false) => IrBinaryOp.Add,
+      (false, false) => IrBinaryOp.Sub,
+      (true, true) => IrBinaryOp.FAdd,
+      (false, true) => IrBinaryOp.FSub,
+    };
+    this._b.Store(this._b.Binary(op, current, amount), slot);
   }
 
   /// <summary>
