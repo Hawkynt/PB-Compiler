@@ -157,19 +157,15 @@ public sealed class BackendSpillTests {
 
   [Test]
   public void Emit_GivenASpilledParameter_ThenTheImageAssemblesAndTheBackEndTookTheFunction() {
-    var direct = new CodeGenerator(Bind(_liveAcrossACall)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_liveAcrossACall)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(_liveAcrossACall)) { Optimize = true };
 
-    var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
+    // The image used to be compared against a direct-emitter build as well, to prove the back end
+    // emitted its own body. There is no direct emitter left to differ from; routing is the proof.
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routedImage, Is.Not.Empty);
     Assert.That(routed.BackendRoutedNames, Does.Contain("Twice"), "the back end did not take the function");
-    // it emits its own code for the body - a spilled parameter read straight from [BP+6] rather than
-    // reloaded around the call - and the whole image still assembles and links
-    Assert.That(routedImage, Is.Not.EqualTo(directImage));
   }
 
   [Test]

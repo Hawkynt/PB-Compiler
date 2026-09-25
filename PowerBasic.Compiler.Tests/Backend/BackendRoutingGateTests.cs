@@ -6,9 +6,8 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// One tiny program per construct, compiled twice - with routing on and with routing off - so that a
-/// construct which silently STOPS routing is a red test rather than a quiet fallback to the direct
-/// emitter.
+/// One tiny program per construct, compiled with the routing mandatory, so that a construct which
+/// STOPS routing is a red test rather than a compile failure first seen in someone's program.
 ///
 /// <para>
 /// The corpus census (<see cref="BackendCoverageTests"/>) ranks what the back end refuses, but it can
@@ -28,17 +27,18 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// </para>
 ///
 /// <para>
-/// <b>Two signals, on purpose.</b> <c>BackendRoutedNames</c> is the honest question - did the back
-/// end take this function - and execution equivalence is the observable one. A declined procedure
-/// may coexist with a routed caller when their stack ABI is shared, so byte identity no longer means
-/// whole-program fallback. Both signals are asserted: a routing table can name a function the emitter
-/// never reached, while a mixed routed/direct image must still behave like the direct build.
+/// <b>One signal.</b> <c>BackendRoutedNames</c> is the question - did the back end take this
+/// function - and the recorded decline is the answer when it did not. These cases used to compare the
+/// image against a routing-off build too, and fail when the two were byte-identical. With the direct
+/// emitter gone there is no routing-off build: both compiles run the same back end, the images agree by
+/// construction, and the comparison could only ever fail. Execution equivalence is proven where it can
+/// be - against the golden oracles and the DOS battery - not against a second copy of ourselves.
 /// </para>
 ///
 /// <para>
 /// <b>The optimizer is OFF here, and that is load-bearing.</b> It keeps the call standing so the test
-/// observes the routed/direct ABI boundary rather than an inliner absorbing the declined procedure.
-/// It is also the state the historic dialects compile in.
+/// observes the procedure itself rather than an inliner absorbing it into its caller. It is also the
+/// state the historic dialects compile in.
 /// </para>
 ///
 /// <para>
@@ -464,33 +464,26 @@ public sealed class BackendRoutingGateTests {
     return model;
   }
 
-  /// <summary>Compiles the program twice, routed and direct, and reports what the routing did.</summary>
-  private static (IReadOnlyList<string> Routed, string? Reason, bool ImagesIdentical,
-    byte[] DirectImage, byte[] RoutedImage) Compile(Construct construct) {
-    var generator = new CodeGenerator(Bind(construct.Source)) { Optimize = false, UseExperimentalBackend = true };
-    var routedImage = generator.EmitExecutable();
+  /// <summary>Compiles the program and reports what the routing took and, for the subject, why not.</summary>
+  private static (IReadOnlyList<string> Routed, string? Reason) Compile(Construct construct) {
+    var generator = new CodeGenerator(Bind(construct.Source)) { Optimize = false };
+    generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "routed: " + string.Join("; ", generator.Errors));
-    var direct = new CodeGenerator(Bind(construct.Source)) { Optimize = false, UseExperimentalBackend = false };
-    var directImage = direct.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
     var reason = generator.BackendDeclines
       .Where(d => d.Name.Equals(construct.Subject, StringComparison.OrdinalIgnoreCase))
       .Select(d => d.Reason)
       .FirstOrDefault();
-    return (generator.BackendRoutedNames.ToList(), reason, routedImage.SequenceEqual(directImage),
-      directImage, routedImage);
+    return (generator.BackendRoutedNames.ToList(), reason);
   }
 
   [TestCaseSource(nameof(_routes))]
-  public void Compile_GivenARoutedConstruct_WhenRoutingIsEnabled_ThenTheBackEndTakesItAndTheImageChanges(Construct construct) {
-    var (routed, _, identical, _, _) = Compile(construct);
+  public void Compile_GivenARoutedConstruct_WhenCompiled_ThenTheBackEndTakesIt(Construct construct) {
+    var (routed, reason) = Compile(construct);
 
     Assert.Multiple(() => {
       Assert.That(routed.Contains(construct.Subject, StringComparer.OrdinalIgnoreCase), Is.True,
         $"'{construct.Subject}' no longer routes; the back end took: {string.Join(", ", routed)}");
-      Assert.That(identical, Is.False,
-        $"'{construct.Subject}' is named as routed but the image is byte-identical to the unrouted "
-        + "build - the routing table says one thing and the emitted program another");
+      Assert.That(reason, Is.Null, $"'{construct.Subject}' recorded a decline: {reason}");
     });
   }
 }

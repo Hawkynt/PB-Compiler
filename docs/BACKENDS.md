@@ -46,8 +46,9 @@ what stands between the IR path and retiring the direct emitter.
 
 ### Could the IR path be byte-identical unoptimized?
 
-Measured, not assumed (`UnoptimizedByteCompatibilityTests`). Over the 33 corpus programs the back end
-takes part in with `--no-optimize`:
+Measured, not assumed, while the direct emitter still existed to compare against (the
+`UnoptimizedByteCompatibilityTests` fixture, retired with it). Over the 33 corpus programs the back end
+took part in with `--no-optimize`:
 
 | | |
 |---|---|

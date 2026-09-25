@@ -199,31 +199,36 @@ public sealed class BackendErrorTrapTests {
   /// <summary>
   /// What the fix must NOT cost: a check the range analysis can prove will not fire is still elided.
   /// The counter runs 1 to 2 over an array dimensioned 1 to 2, so that subscript needs no guard, while
-  /// the subscript it produces is unknown and keeps one. Routed therefore emits FEWER raises than the
-  /// direct emitter and the program still stops - which is the whole point of the pass, and an
-  /// over-conservative repair would have shown up here as an equal count.
+  /// the subscript it produces is unknown and keeps one. The baseline is the same program with the
+  /// counter's bound read at run time, which makes the first subscript unprovable too: the proven build
+  /// must emit FEWER raises than that and still stop. An over-conservative repair shows up as an equal
+  /// count. (The baseline used to be the direct emitter; it is gone, and the analysis being measured
+  /// now lives only in the back end, so the comparison is between two programs, not two compilers.)
   /// </summary>
   [Test]
   public void Execute_GivenAProvablyInRangeSubscript_WhenRouted_ThenOnlyThatCheckIsElided() {
-    const string source = """
+    const string template = """
       $ERROR BOUNDS ON
       DIM a%(1 TO 5)
       DIM p%(1 TO 2)
-      FOR i% = 1 TO 2
+      n% = LEN(COMMAND$) + 2
+      FOR i% = 1 TO {0}
         x% = a%(p%(i%))
         PRINT x%
       NEXT i%
       END
       """;
-    var directImage = Compile(source, routed: false);
-    var routedImage = Compile(source, routed: true);
+    var provenImage = Compile(template.Replace("{0}", "2"), routed: true);
+    var unprovenImage = Compile(template.Replace("{0}", "n%"), routed: true);
 
     Assert.Multiple(() => {
-      Assert.That(Run(routedImage), Is.EqualTo(Run(directImage)),
+      Assert.That(Run(provenImage), Is.EqualTo(Run(unprovenImage)),
         "the out-of-range read must still stop the program");
-      Assert.That(CountRaise(routedImage, 0x09), Is.LessThan(CountRaise(directImage, 0x09)),
+      Assert.That(Run(provenImage), Does.Contain("RUNTIME ERROR"),
+        "the out-of-range read must raise Error 9 at all");
+      Assert.That(CountRaise(provenImage, 0x09), Is.LessThan(CountRaise(unprovenImage, 0x09)),
         "the provable check should still be elided");
-      Assert.That(CountRaise(routedImage, 0x09), Is.Positive, "and the unprovable one kept");
+      Assert.That(CountRaise(provenImage, 0x09), Is.Positive, "and the unprovable one kept");
     });
   }
 }
