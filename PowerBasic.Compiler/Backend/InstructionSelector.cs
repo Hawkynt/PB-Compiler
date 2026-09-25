@@ -1911,11 +1911,13 @@ public sealed partial class InstructionSelector {
     if (!asm.Routable)
       return this.Decline("inline asm: a name in it is not a variable this pass could bind");
 
-    // SPEED's front-end identity folding is intentionally reproduced at the machine boundary for
-    // routed IR.  Inline assembly is opaque to the ordinary value passes, but these forms are
-    // architecturally no-ops and retaining them would regress the established size policy.
-    if (this._target is { Optimize: true, OptimizeSpeed: true } && IsInlineAsmIdentity(asm.Text))
-      return true;
+    // No identity folding here. SPEED's erasure of architectural no-ops (MOV AX, AX; PMINUD XMM0,
+    // XMM0) belongs to the ISA policy at emission, which runs it only AFTER the target diagnostics
+    // and on PARSED operands - see CodeGenerator.TryEmitPolicyInlineAsm. A second copy here decided on
+    // the operand TEXT before any of that, so `$ISA SSE4.1 ERROR` on an 8086 lost its "forbids
+    // emulation" diagnostic, and `PBLENDW AX, AX, 0` - an XMM instruction given AX - was accepted
+    // because "AX" equals "AX". The instruction is selected like any other and emits nothing when the
+    // policy proves it a no-op.
 
     var kinds = new AsmNameKinds(asm);
     // The re-parse is here to catch the EMITTER's resolver disagreeing with the lowering's stand-in
@@ -1961,23 +1963,6 @@ public sealed partial class InstructionSelector {
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
     return true;
-  }
-
-  private static bool IsInlineAsmIdentity(string text) {
-    var line = text.Trim().ToUpperInvariant();
-    var split = line.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries);
-    if (split.Length != 2)
-      return false;
-    var mnemonic = split[0];
-    var operands = split[1].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-    if (operands.Length < 2)
-      return false;
-    if (mnemonic is "MOV" or "XCHG" or "MOVQ" or "MOVDQA" or "MOVDQU" or "PAND" or "POR"
-        or "PMINSB" or "PMINSD" or "PMINUW" or "PMINUD" or "PMAXSB" or "PMAXSD" or "PMAXUW" or "PMAXUD")
-      return operands[0] == operands[1];
-    if (mnemonic == "PBLENDW" && operands.Length == 3)
-      return operands[0] == operands[1] || operands[2] == "0";
-    return mnemonic == "PALIGNR" && operands.Length == 3 && operands[0] == operands[1] && operands[2] == "0";
   }
 
   /// <summary>
