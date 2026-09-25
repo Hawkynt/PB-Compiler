@@ -178,6 +178,19 @@ public static class Peephole {
       if (consumer < 0 || (address.Count > 0 && consumer != i + 1))
         continue;                                // see the addressing rule in the type remarks
       var user = block.Instructions[consumer];
+      // the one-operand multiply and divide read their operand from anywhere: DX:AX = AX * [n]
+      if (user.Opcode is MOpcode.Imul or MOpcode.Idiv && user.Operands is [MOperand.Register { Reg: var factor }]
+          && factor.Equals(value)) {
+        block.Instructions[consumer] = new MInstr(user.Opcode, [cell],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [],
+            ReadsFlags: user.Effect.ReadsFlags, WritesFlags: user.Effect.WritesFlags,
+            ReadsMemory: true, WritesMemory: user.Effect.WritesMemory),
+          user.Condition, user.Clobbers);
+        block.Instructions.RemoveAt(i);
+        --i;
+        ++made;
+        continue;
+      }
       // the value must be the SOURCE of a two-address ALU op whose destination is a register: the
       // machine has no memory-to-memory form, and the destination is where the result goes
       if (!FoldsMemorySource(user.Opcode) || user.Operands.Count != 2
@@ -199,10 +212,16 @@ public static class Peephole {
 
   /// <summary>
   /// <c>MOV v,src / MOV w,v</c> - a value staged into a register only to be copied straight on - is
-  /// <c>MOV w,src</c>. The source may be an immediate, which depends on nothing at all, or a register,
-  /// which the barrier scan requires nobody to write in between; a MEMORY source is left alone,
-  /// because forwarding a load into a plain copy buys nothing that
-  /// <see cref="FoldMemorySources"/> does not already buy where it counts.
+  /// <c>MOV w,src</c>. The source may be an immediate, which depends on nothing at all, a register,
+  /// which the barrier scan requires nobody to write in between, or a memory cell, which it requires
+  /// nobody to write either - and whose address registers, as in <see cref="FoldMemorySources"/>, are
+  /// only trusted across an adjacent pair.
+  ///
+  /// <para>
+  /// Memory used to be excluded on the grounds that <see cref="FoldMemorySources"/> already buys what
+  /// matters. It does not when the copy's target is a PINNED register: <c>x% * z%</c> loaded
+  /// <c>x%</c> into a virtual and then copied it into AX for the IMUL, where one load into AX does both.
+  /// </para>
   /// </summary>
   private static int FoldCopyChains(MBlock block, Census census) {
     var made = 0;
@@ -211,7 +230,7 @@ public static class Peephole {
       if (stage.Opcode != MOpcode.Mov || stage.Condition is not null || stage.Clobbers.Count > 0
           || stage.Operands is not [MOperand.Register { Reg: { IsVirtual: true } value }, var source])
         continue;
-      if (source is not (MOperand.Immediate or MOperand.Register))
+      if (source is not (MOperand.Immediate or MOperand.Register) && !IsMemory(source))
         continue;
       if (source is MOperand.Register { Reg: var from }
           && (from.Equals(value) || from.Size != value.Size))
@@ -219,12 +238,14 @@ public static class Peephole {
       if (!census.Exactly(value, definitions: 1, readers: 1))
         continue;
 
-      var address = source is MOperand.Register register ? new List<MReg> { register.Reg } : [];
+      var address = source is MOperand.Register register ? new List<MReg> { register.Reg } : AddressRegisters(source);
+      if (address.Contains(value))
+        continue;                                // the load's own address: not a value being staged
       var consumer = FindSingleReader(block, i + 1, value, address);
-      if (consumer < 0)
+      if (consumer < 0 || (IsMemory(source) && address.Count > 0 && consumer != i + 1))
         continue;
       var user = block.Instructions[consumer];
-      if (user.Opcode != MOpcode.Mov || user.Condition is not null || user.Clobbers.Count > 0
+      if (user.Opcode != MOpcode.Mov || user.Condition is not null
           || user.Operands is not [MOperand.Register { Reg: var target }, MOperand.Register { Reg: var read }]
           || !read.Equals(value) || target.Size != value.Size)
         continue;
@@ -241,15 +262,16 @@ public static class Peephole {
       // the low half copied back into AX for the RET, and folding those two away left AX mentioned
       // NOWHERE between the call and the return - so the allocator handed AX to the (dead) high half
       // and `MOV AX, DX` overwrote the result on its way out. The function returned 0 for every input.
-      if (identity && !target.IsVirtual)
-        continue;
+      if (identity && (!target.IsVirtual || user.Clobbers.Count > 0))
+        continue;                                // ...nor when deleting the copy deletes the window it opens
 
       if (identity)
         block.Instructions.RemoveAt(consumer);
       else
         block.Instructions[consumer] = new MInstr(MOpcode.Mov, [user.Operands[0], source],
           new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [],
-            ReadsFlags: false, WritesFlags: false, ReadsMemory: false, WritesMemory: false));
+            ReadsFlags: false, WritesFlags: false, ReadsMemory: IsMemory(source), WritesMemory: false),
+          condition: null, user.Clobbers);           // a pinned copy keeps the window it opens
       block.Instructions.RemoveAt(i);
       --i;
       ++made;
@@ -275,10 +297,19 @@ public static class Peephole {
   }
 
   /// <summary>Whether an instruction in between invalidates a memory operand that is being moved past it.</summary>
+  /// <remarks>
+  /// A CLOBBER only disturbs an operand that names a clobbered PHYSICAL register. Moving the use of a
+  /// virtual later lengthens its live range across the clobber, and keeping a live value out of a
+  /// clobbered register is exactly what the allocator does with clobbers - so it is pressure, never a
+  /// wrong answer. Treating every clobber as a wall kept a load from folding into the IMUL whose
+  /// pinned accumulator load sits between them.
+  /// </remarks>
   private static bool Disturbs(MInstr instr, IReadOnlyCollection<MReg> address) {
-    if (instr.Effect.WritesMemory || instr.Clobbers.Count > 0)
+    if (instr.Effect.WritesMemory)
       return true;
     if (instr.Opcode is MOpcode.Call or MOpcode.CallFar or MOpcode.InlineAsm || instr.IsTerminator)
+      return true;
+    if (address.Any(register => !register.IsVirtual && instr.Clobbers.Contains(register.Physical)))
       return true;
     if (address.Count == 0)
       return false;
