@@ -4,7 +4,7 @@ namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
 /// Stage 5 of the x86-16 back end (docs/X86-BACKEND.md): emission. Given a selected
-/// <see cref="MFunction"/> and the linear-scan allocation (stage 4), it rewrites every virtual
+/// <see cref="X86MachineFunction"/> and the linear-scan allocation (stage 4), it rewrites every virtual
 /// register operand to its physical register, resolves each stack slot to a <c>[BP+disp]</c> frame
 /// cell, and emits the instruction through the existing <see cref="Assembler"/> - so encoding, length
 /// and fixups are handled there (no byte patching, the reason the asm-IL layer avoids the byte-level
@@ -21,7 +21,7 @@ public sealed class MachineEmitter {
   private readonly Func<string, Mem?>? _resolveData;
   private readonly int[] _paramOffsets;
 
-  private MachineEmitter(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
+  private MachineEmitter(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation,
       Func<string, Label?>? resolveCallee = null, Func<string, Mem?>? resolveData = null,
       int[]? paramOffsets = null, int registerSpillBytes = 0) {
     PostRegisterAllocationPeepholes.Run(function, allocation);
@@ -51,7 +51,7 @@ public sealed class MachineEmitter {
   }
 
   /// <summary>Emits the body of <paramref name="function"/> into <paramref name="asm"/> using the given register allocation.</summary>
-  public static void Emit(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
+  public static void Emit(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     var emitter = new MachineEmitter(asm, function, allocation);
     foreach (var block in function.Blocks) {
       asm.MarkLabel(emitter._labels[block.Label]);
@@ -98,7 +98,7 @@ public sealed class MachineEmitter {
   /// The optimized IR proved that the function owns no fixed local stack storage. The emitter still
   /// re-checks the final machine function and target ABI before acting on that proof.
   /// </param>
-  public static void EmitFunction(Assembler asm, MFunction function, IReadOnlyDictionary<int, Reg> allocation,
+  public static void EmitFunction(Assembler asm, X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation,
       int[] paramOffsets, int paramBytes, Func<string, Label?>? resolveCallee = null,
       Func<string, Mem?>? resolveData = null, Action<Assembler>? onReturn = null, bool alignLoops = false,
       bool allowFrameElision = false, IReadOnlyList<Asm.Reg>? registerSpills = null,
@@ -209,7 +209,7 @@ public sealed class MachineEmitter {
   /// A parameter that remains a <see cref="MOperand.ParamCell"/> in the body still needs BP throughout,
   /// as does any alloca/spill slot or inline assembly.
   /// </summary>
-  private static bool CanElideFrame(MFunction function, bool requested) {
+  private static bool CanElideFrame(X86MachineFunction function, bool requested) {
     if (!requested || function.StackSlots.Count != 0)
       return false;
     foreach (var instruction in function.AllInstructions) {
@@ -225,7 +225,7 @@ public sealed class MachineEmitter {
   /// Finds loop headers from machine layout: a successor at or before its predecessor is a backward
   /// edge, and its target is the block a repeated iteration re-enters.
   /// </summary>
-  private static HashSet<string> FindLoopHeaders(MFunction function) {
+  private static HashSet<string> FindLoopHeaders(X86MachineFunction function) {
     var positions = function.Blocks
       .Select((block, index) => (block.Label, Index: index))
       .ToDictionary(item => item.Label, item => item.Index, StringComparer.Ordinal);
