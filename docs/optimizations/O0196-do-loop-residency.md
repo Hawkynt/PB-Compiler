@@ -3,17 +3,18 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `TryEmitDoLoopInRegister` |
-| **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
+| **Stage** | IR middle end + x86 back end (register allocation) |
+| **Source** | `Ir/Passes/Mem2Reg.cs` (the variable becomes SSA values); `Backend/LinearScanAllocator.cs` — `TryCoalesced` (under SPEED, SI/DI are offered first to what `LivenessAnalysis.LoopCarried` reports); `Backend/CopyCoalescer.cs` |
+| **Gate** | `--optimize`; the SI/DI preference needs `$OPTIMIZE SPEED` |
 | **Verified by** | `tests/diff/DIFF96.BAS` |
 | **Split from** | [O0005](O0005-register-residency.md) |
 
 ## What it is
 
-The first generalization past the `FOR`-loop shape: a `DO`/`WHILE`/`LOOP` has no
-counter, so **SI is free**. When the body and the loop tests are SI/DI-clean,
-one hot INTEGER accumulator becomes SI-resident.
+A hot INTEGER accumulator in a `DO`/`WHILE`/`LOOP` lives in a register across
+the loop. The allocator treats every loop shape alike: the accumulator is a
+loop-carried SSA value, and under `$OPTIMIZE SPEED` SI and DI are offered to it
+first.
 
 ## Sample
 
@@ -40,12 +41,16 @@ Done:
     mov     [s], si
 ```
 
+The listing shows the shape the retired direct emitter produced. The allocator
+now keeps `n%` in a register as well, and picks the registers per function.
+
 ## Why it is safe
 
-The loop **tests** must be SI-clean as well as the body — a `DO WHILE` evaluates
-its condition every iteration, and a condition that clobbered SI would destroy
-the resident value. The accumulator is flushed on every exit, including `EXIT
-DO`.
+The loop test is part of the value's live range like the body, so anything in
+it that clobbers a register (a call, for instance) is seen by the allocator, which
+then keeps the value elsewhere. Every exit, including `EXIT DO`, carries the
+current SSA value to its successor, so a read after the loop sees the final
+value.
 
 ## See also
 

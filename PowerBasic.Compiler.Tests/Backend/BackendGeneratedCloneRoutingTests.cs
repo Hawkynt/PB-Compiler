@@ -53,7 +53,6 @@ public sealed class BackendGeneratedCloneRoutingTests {
     var routed = new CodeGenerator(Bind(source)) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = true,
     };
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
@@ -63,7 +62,6 @@ public sealed class BackendGeneratedCloneRoutingTests {
     var direct = new CodeGenerator(Bind(source)) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = false,
     };
     var directImage = direct.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));

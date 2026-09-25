@@ -234,8 +234,8 @@ public sealed class BackendWordNarrowingTests {
       PRINT ""
       """;
     foreach (var optimize in new[] { true, false }) {
-      var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-      var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+      var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+      var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
       var directImage = direct.EmitExecutable();
       var routedImage = routed.EmitExecutable();
       Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));

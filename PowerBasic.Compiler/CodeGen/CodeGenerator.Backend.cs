@@ -13,7 +13,7 @@ public sealed partial class CodeGenerator {
 
   // eligible functions compiled by the x86-16 back end, with their selected+scheduled machine IR,
   // register allocation, and the middle-end proof that no fixed local frame storage survived.
-  // null until first queried. Empty unless UseExperimentalBackend.
+  // null until first queried.
   private Dictionary<ProcedureSymbol, (IrMachineFunction Machine, bool ElideFrame)>? _backendProcs;
 
   // the routed frame of a SOURCE procedure whose IR signature an interprocedural pass rewrote. It is
@@ -216,13 +216,10 @@ public sealed partial class CodeGenerator {
     this._backendProcs = new(ReferenceEqualityComparer.Instance);
     // A $COMPILE UNIT can be routed. It was excluded along with _allowExternalCalls, and the reason
     // does not hold for procedures: a unit exports its procedures with the STACK convention (they are
-    // called from outside, so OptRegParm never converts them), which is exactly the ABI this back end
+    // called from outside, so O0282 never gives them a private one), which is exactly the ABI this back end
     // emits. Imported calls are checked individually after lowering: a linked BASIC/PASCAL
     // declaration crosses a selectable stack ABI, while a missing link input or register convention
     // declines its caller before selection.
-    if (!this.UseExperimentalBackend)
-      return this._backendProcs;
-
     var module = IrLowering.TryLowerModule(model, this._unreachableDeferred, out var moduleDeclinedBecause);
     this._moduleLoweringDecline = moduleDeclinedBecause;
     if (module is null) {
@@ -364,12 +361,10 @@ public sealed partial class CodeGenerator {
     }
 
     // A selected function may CALL another procedure, and the two sides have to agree on the ABI.
-    // Stack-only conventions are represented on IrCall and selected from X86CallAbi. SPEED
-    // optimization can still convert a directly-emitted procedure through OptRegParm after this set
-    // is known, so an unrouted local callee must remain one of the direct-compatible conventions.
-    // Generated definitions participate in the exact same reachability set: if a source caller was
-    // rebound to an O0283 clone, that clone is now a real private ABI partner rather than a stranded
-    // name which forces the caller back to the direct emitter.
+    // Every convention is represented on IrCall and selected from X86CallAbi; O0282 respecifies a
+    // private one on a definition and all of its call sites together. Generated definitions take part
+    // in the same reachability set: if a source caller was rebound to an O0283 clone, that clone is
+    // its real ABI partner, and a caller whose callee has no definition cannot be emitted at all.
     // Drops every candidate that calls something not routed and not directly callable, to a fixpoint -
     // dropping one strands its own callers. Run TWICE, because the set shrinks twice: selection
     // decides the first membership and ALLOCATION decides the second.
@@ -398,8 +393,7 @@ public sealed partial class CodeGenerator {
     // set here, and the pass above has already counted it as routable: its callers stayed routed
     // pointing at a label nothing would ever bind, and the failure surfaced at EMISSION as a broken
     // invariant that ended the whole compilation. `Shifted 3 : Shifted 5` under $OPTIMIZE SPEED is
-    // the case - SPEED is also what stops the direct definition being callable, because OptRegParm
-    // may still convert it.
+    // the case.
     var allocated = new List<(ProcedureSymbol Proc, IrFunction Fn, IrMachineFunction Machine)>();
     foreach (var (proc, irFn, mfn) in candidates) {
       if (!IrMachinePipeline.TryAllocateFunction(irFn, mfn, this.SelectionTarget, out var machineProduct, out var allocationError)) {
@@ -446,10 +440,8 @@ public sealed partial class CodeGenerator {
   /// it takes no arguments, it has no caller to RET to (it falls into the runtime's exit), and it is
   /// not in <c>ProcedureList</c>, so the routing has to look it up by name.
   ///
-  /// Under SPEED optimization, everything it calls must itself be routed, for the ABI reason the
-  /// procedure fixpoint already covers: <c>OptRegParm</c> may convert a direct procedure to registers.
-  /// Otherwise a locally defined BASIC/PASCAL callee keeps the same stack ABI and may remain on the
-  /// direct emitter. CHAIN no longer disqualifies main: the IR lowers both halves of
+  /// Everything it calls must itself be routed or be an external import: a routed definition is the
+  /// only one there is. CHAIN no longer disqualifies main: the IR lowers both halves of
   /// the handoff - LowerChain streams the COMMON block out, LowerChainCommonLoad absorbs it at the head
   /// of the body - and the filter that refused it only ever matched a TOP-LEVEL ChainStmt, so a CHAIN
   /// inside an IF was already routing and passing BackendChainTests.
@@ -515,7 +507,7 @@ public sealed partial class CodeGenerator {
   /// </para>
   /// </summary>
   private bool RewrittenSignaturesRouteTogether() {
-    if (!this.UseExperimentalBackend || this._backendModule is null || this._backendProcs is null)
+    if (this._backendModule is null || this._backendProcs is null)
       return true;
     if (!model.ProcedureList.Any(proc => !proc.IsExternal && proc.Body is not null
         && this._backendModule.FindFunction(Ir.IrLowering.IrNameOf(proc)) is { IsDeclaration: false, SignatureRewritten: true }))
@@ -539,7 +531,7 @@ public sealed partial class CodeGenerator {
   private HashSet<object> _eliminatedProcedures = new(ReferenceEqualityComparer.Instance);
 
   private bool DataReadersRouteTogether() {
-    if (!this.UseExperimentalBackend || this._backendProcs is null)
+    if (this._backendProcs is null)
       return true;
     var routed = 0;
     var direct = 0;
@@ -566,8 +558,6 @@ public sealed partial class CodeGenerator {
     // Error handling in main is selected inline just like it is in a procedure. The only difference
     // is the procedure boundary: ProcedureErrorHandlerPreservation saves/restores the caller's handler
     // triple there, while main has no caller and therefore needs no wrapper.
-    if (!this.UseExperimentalBackend)
-      return null;
     // The module body's own filter, recorded for the same reason a procedure's is: 161/161 owned
     // bodies is a claim about the bodies the routing ATTEMPTED, and a main that calls an unrouted
     // procedure inherits every blind spot the procedure filter has.
@@ -758,7 +748,7 @@ public sealed partial class CodeGenerator {
   /// </para>
   /// </summary>
   private bool SharedDynArrayUsersRouteTogether() {
-    if (!this.UseExperimentalBackend || this._backendProcs is null)
+    if (this._backendProcs is null)
       return true;
     foreach (var symbol in model.ModuleVariables.Values) {
       if (symbol.Type is not ArrayType { IsDynamic: true })
@@ -834,7 +824,7 @@ public sealed partial class CodeGenerator {
   private HashSet<ProcedureSymbol> ProceduresReceiving(string name) {
     var receivers = new HashSet<ProcedureSymbol>(ReferenceEqualityComparer.Instance);
     foreach (var body in AllBodies(model))
-      foreach (var node in OptReachability.DescendantNodes(body)) {
+      foreach (var node in AstWalker.DescendantNodes(body)) {
         var (arguments, site) = node switch {
           Syntax.Ast.CallStmt call => ((IReadOnlyList<Syntax.Ast.Expression>?)call.Arguments, (object)call),
           Syntax.Ast.CallOrIndexExpr call => (call.Arguments, call),
@@ -868,7 +858,7 @@ public sealed partial class CodeGenerator {
   /// <summary>
   /// Whether a statement list names <paramref name="name"/> anywhere inside it, at any nesting depth.
   ///
-  /// It walks with <see cref="OptReachability.DescendantNodes"/> rather than naming the compound
+  /// It walks with <see cref="AstWalker.DescendantNodes"/> rather than naming the compound
   /// statements to descend into, for the reason <see cref="ContainsDataRead"/> records: a hand-written
   /// walk knew about IF, FOR, DO and SELECT and therefore not about TRY, and the one answer that turns
   /// a guard like this into a miscompile is a false "not used here".
@@ -881,7 +871,7 @@ public sealed partial class CodeGenerator {
       Syntax.Ast.DimStmt d => d.Variables.Any(v => v.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase)),
       _ => false,
     };
-    return body.Any(statement => Names(statement) || OptReachability.DescendantNodes(statement).Any(Names));
+    return body.Any(statement => Names(statement) || AstWalker.DescendantNodes(statement).Any(Names));
   }
 
   /// <summary>
@@ -893,14 +883,14 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// Whether a statement list contains a <c>READ</c> or <c>RESTORE</c> anywhere inside it, at any
-  /// nesting depth. It walks with <see cref="OptReachability.DescendantNodes"/> rather than by naming
+  /// nesting depth. It walks with <see cref="AstWalker.DescendantNodes"/> rather than by naming
   /// the compound statements it should descend into: the hand-written version knew about IF, FOR,
   /// DO and SELECT and therefore not about TRY, and a <c>READ</c> inside a <c>TRY</c> block read as a
   /// body with no DATA in it - which is the one answer that turns this guard into a miscompile.
   /// </summary>
   private static bool ContainsDataRead(IReadOnlyList<Syntax.Ast.Statement> body)
     => body.Any(statement => statement is Syntax.Ast.ReadStmt or Syntax.Ast.RestoreStmt
-      || OptReachability.DescendantNodes(statement).Any(n => n is Syntax.Ast.ReadStmt or Syntax.Ast.RestoreStmt));
+      || AstWalker.DescendantNodes(statement).Any(n => n is Syntax.Ast.ReadStmt or Syntax.Ast.RestoreStmt));
 
   /// <summary>
   /// The label a back-end-emitted CALL targets. A user procedure's label is the one the whole-program
@@ -1180,44 +1170,6 @@ public sealed partial class CodeGenerator {
     return null;
   }
 
-  /// <summary>
-  /// Every procedure a body the x86-16 back end compiles still CALLS, by name - main included.
-  ///
-  /// <para>
-  /// Dead-procedure elimination walks the bound AST; the routed path emits from the IR, which the
-  /// middle end has since inlined, cloned and specialized. The two can disagree about a real call,
-  /// and when they do the AST is the one that is wrong: it decides a body is unreachable, nobody
-  /// emits it, and the link stops on a label nothing bound. <c>VGA.BAS</c> in the SVGA corpus is
-  /// the shape - routed main inlines <c>ClrScr</c> and then <c>Vga_ClearScreen</c>, and what is left
-  /// standing in main is a real <c>CALL</c> to a pure-assembly SUB that no AST edge from main
-  /// reaches any more.
-  /// </para>
-  /// </summary>
-  /// <param name="isEmitted">
-  /// Whether a procedure will actually be emitted - the caller's own emission condition, passed in
-  /// rather than re-derived. Routing is decided for dead procedures too, so asking every routed body
-  /// would resurrect whole trees reachability was right to drop, and asking only the LIVE ones misses
-  /// a body kept for a different reason: a procedure a linked object could call by name is emitted
-  /// whether or not this program reaches it.
-  /// </param>
-  private IEnumerable<string> BackendCalleeNames(Func<Semantics.ProcedureSymbol, bool> isEmitted) {
-    foreach (var proc in this.BackendProcs().Keys)
-      if (isEmitted(proc) && this._backendModule?.FindFunction(Ir.IrLowering.IrNameOf(proc)) is { IsDeclaration: false } fn)
-        foreach (var name in CalleeNames(fn))
-          yield return name;
-    if (this.BackendMain() is not null && this._backendModule?.FindFunction("main") is { IsDeclaration: false } main)
-      foreach (var name in CalleeNames(main))
-        yield return name;
-    // A GENERATED definition is emitted outside ProcedureList and calls like any other body. Missing
-    // them is what left VGA.BAS stranded even after the source procedures were accounted for: the one
-    // thing emitted there is an O0069 shape clone of ClrScr, with Vga_ClearScreen inlined into it and
-    // the pure-assembly SUB that inlining left behind still called.
-    foreach (var name in this.BackendGeneratedNames.Concat(this.BackendSemanticMergeNames))
-      if (this._backendModule?.FindFunction(name) is { IsDeclaration: false } generated)
-        foreach (var callee in CalleeNames(generated))
-          yield return callee;
-  }
-
   /// <summary>The names of the defined functions <paramref name="fn"/> calls directly (its ABI partners).</summary>
   private static IEnumerable<string> CalleeNames(IrFunction fn) {
     foreach (var instruction in fn.Blocks.SelectMany(b => b.Instructions)) {
@@ -1232,14 +1184,6 @@ public sealed partial class CodeGenerator {
           yield return farEntry.Target.Name;
     }
   }
-
-  /// <summary>
-  /// Whether every defined callee uses the stack ABI emitted at this call site. Speed-optimized
-  /// direct callees are excluded because <see cref="OptRegParm"/> may convert them after routing is
-  /// decided; otherwise an unambiguous BASIC/PASCAL procedure remains stack-compatible.
-  /// </summary>
-  private bool CalleesHaveCompatibleAbi(IrFunction fn, Func<string, bool> isRouted)
-    => CalleeNames(fn).All(name => isRouted(name) || this.CanCallDirectCallee(name));
 
   private bool CanCallDirectCallee(string name) => this.DirectCalleeWithCompatibleAbi(name) is not null;
 
@@ -1297,21 +1241,6 @@ public sealed partial class CodeGenerator {
     }
   }
 
-  /// <summary>True when <paramref name="proc"/> is compiled by the x86-16 back end (so it is excluded from inlining and the register-parameter convention, and emitted via the back end).</summary>
-  /// <summary>
-  /// Whether the back end took <paramref name="proc"/>. It settles the MODULE BODY first, which looks
-  /// redundant and is not: the DATA re-decision in <see cref="BackendMain"/> can discard and recompute
-  /// the whole procedure set, and this question's first caller is <c>OptRegParm</c>, which MUTATES
-  /// the model's calling conventions on the strength of the answer. Recomputing after that would
-  /// lower a model the first pass never saw.
-  /// </summary>
-  private bool IsBackendRouted(ProcedureSymbol proc) {
-    if (!this.UseExperimentalBackend)
-      return false;
-    _ = this.BackendMain();
-    return this.BackendProcs().ContainsKey(proc);
-  }
-
   /// <summary>Emits a back-end-compiled function, eliding its BP frame only when O0070's IR and final-machine proofs both hold.</summary>
   private void EmitBackendFunction(ProcedureSymbol proc) {
     var (machine, elideFrame) = this.BackendProcs()[proc];
@@ -1321,6 +1250,7 @@ public sealed partial class CodeGenerator {
       asm.AlignCode(16);
     asm.MarkLabel(this.ProcLabelOf(proc));
     var paramOffsets = proc.Parameters.Select(p => p.Offset).ToArray();
+    IReadOnlyList<Asm.Reg>? irLayoutSpills = null;   // set where the layout comes from the IR signature
     // ...but a source parameter is not always ONE IR argument. A pb36 delegate is four, because eight
     // bytes of closure are not a shape the IR's type lattice has, so an array with one entry per
     // source parameter is both too short to index and wrong where it does. Where the counts differ,
@@ -1331,6 +1261,7 @@ public sealed partial class CodeGenerator {
         && X86CallAbi.TryDefinitionStackLayout(routedSignature, out var widened, out _)) {
       paramOffsets = widened.ParameterOffsets;
       paramBytes = widened.ParameterBytes;
+      irLayoutSpills = widened.Spills;
     }
     // Source procedures still get their public/export frame from ProcedureSymbol. Generated private
     // definitions use the equivalent IR-derived layout in CodeGenerator.BackendGenerated.cs.
@@ -1342,12 +1273,15 @@ public sealed partial class CodeGenerator {
     if (this._backendRewrittenFrames?.TryGetValue(proc, out var rewritten) == true) {
       paramOffsets = rewritten.ParameterOffsets;
       paramBytes = rewritten.ParameterBytes;
+      irLayoutSpills = rewritten.Spills;
     }
-    var calleeCleanupBytes = CallerCleansStack(proc) ? 0 : paramBytes;
+    var convention = this.EffectiveConvention(proc);
+    var calleeCleanupBytes = CallerCleansStack(convention) ? 0 : paramBytes;
     // paramBytes counts only the STACK parameters, so a register convention's RET n is already right:
     // its leading arguments never reached the stack, and the pushes that spilled them are discarded by
     // the epilogue's MOV SP,BP rather than popped.
-    var spillRegs = ConventionRegisters(proc.CallConv)[..RegisterParamCount(proc)];
+    // ...and the registers its prologue spills come from the same place as its offsets
+    var spillRegs = irLayoutSpills?.ToArray() ?? ConventionRegisters(convention)[..RegisterParamCount(proc, convention)];
     X86ProductionEmitter.EmitFunction(asm, machine, paramOffsets, calleeCleanupBytes, this.CalleeLabel, this.DataCellOf,
       alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: elideFrame, registerSpills: spillRegs,
       emitInlineAsm: this.EmitRoutedInlineAsm);

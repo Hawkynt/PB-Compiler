@@ -105,8 +105,8 @@ public sealed class BackendRegisterPressureTests {
   }
 
   private static (Cpu8086 Direct, Cpu8086 Routed, CodeGenerator Generator) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));

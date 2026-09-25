@@ -74,7 +74,7 @@ public sealed class BackendPagedArrayTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenAHugeArray_WhenRouted_ThenElementsAcrossSegmentsKeepTheirOwnValues(bool optimize) {
-    var routed = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize};
 
     var cpu = Cpu8086.Run(routed.EmitExecutable());
 
@@ -88,8 +88,8 @@ public sealed class BackendPagedArrayTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenAHugeArray_WhenRouted_ThenItAgreesWithTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -99,8 +99,8 @@ public sealed class BackendPagedArrayTests {
 
   [Test]
   public void Execute_GivenAVirtualArray_WhenRouted_ThenMappedPagesAndFreeCountMatchTheDirectEmitter() {
-    var direct = new CodeGenerator(Bind(_virtualProgram)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_virtualProgram)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(_virtualProgram)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(_virtualProgram)) { Optimize = true};
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
 
@@ -129,7 +129,7 @@ public sealed class BackendPagedArrayTests {
       v(4097) = 4097
       PRINT v(1); v(4097); FRE(-11) > 0
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var image = routed.EmitExecutable();
 

@@ -200,7 +200,7 @@ public sealed partial class IrLowering {
   /// </summary>
   private static IEnumerable<VariableSymbol> ArraysPassedToProcedures(SemanticModel model) {
     foreach (var body in AllProgramBodies(model))
-      foreach (var node in CodeGen.OptReachability.DescendantNodes(body)) {
+      foreach (var node in Syntax.Ast.AstWalker.DescendantNodes(body)) {
         var arguments = node switch {
           CallStmt call when model.CallBindings.ContainsKey(call) => call.Arguments,
           CallOrIndexExpr call when model.CallBindings.ContainsKey(call) => call.Arguments,
@@ -228,7 +228,7 @@ public sealed partial class IrLowering {
     foreach (var proc in model.Procedures.Values) {
       if (proc.Body is not { } body)
         continue;
-      foreach (var node in CodeGen.OptReachability.DescendantNodes(body)) {
+      foreach (var node in Syntax.Ast.AstWalker.DescendantNodes(body)) {
         if (node is Expression e && model.VariableBindings.TryGetValue(e, out var symbol)
             && symbol.Storage == VariableStorage.Global)
           used.Add(symbol);
@@ -277,7 +277,7 @@ public sealed partial class IrLowering {
   /// registration outlives the statement either way.
   /// </summary>
   private static IEnumerable<VariableSymbol> FieldTargets(SemanticModel model) {
-    foreach (var node in CodeGen.OptReachability.DescendantNodes(model.MainBody))
+    foreach (var node in Syntax.Ast.AstWalker.DescendantNodes(model.MainBody))
       if (node is FieldStmt field)
         foreach (var (_, target) in field.Fields)
           if (model.VariableBindings.TryGetValue(target, out var symbol))
@@ -3098,8 +3098,7 @@ public sealed partial class IrLowering {
     // A bind-time rewrite is lowered through its DESUGARED form, which is where the meaning is. An
     // interpolated string is the shape that needs it: $"a{n}b" is bound as the concatenation of the
     // pieces, with a numeric hole already wrapped in STR$ and a formatted one in USING$, so there is
-    // nothing left here to interpret. The direct emitter's expression entry does the same first
-    // thing, and OptReachability walks it too.
+    // nothing left here to interpret.
     if (this._model.Desugared.TryGetValue(expr, out var rewritten))
       return this.LowerStringExpr(rewritten);
     switch (expr) {

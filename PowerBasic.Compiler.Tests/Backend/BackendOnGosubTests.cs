@@ -33,8 +33,8 @@ public sealed class BackendOnGosubTests {
 
   private static (Cpu8086 Direct, Cpu8086 Routed, IReadOnlyList<string> RoutedNames) Execute(
       string source, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
     Assert.Multiple(() => {

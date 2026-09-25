@@ -26,7 +26,7 @@ public sealed class SegmentAndWidePeekTests {
   }
 
   private static string Run(string source, bool routed) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output;

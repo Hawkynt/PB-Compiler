@@ -226,7 +226,7 @@ public sealed partial class CodeGenerator {
       X86ProductionEmitter.EmitFunction(this._asm, generated.MachineProduct,
         generated.StackLayout.ParameterOffsets, cleanupBytes, this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: generated.ElideFrame,
-        emitInlineAsm: this.EmitRoutedInlineAsm);
+        registerSpills: [.. generated.StackLayout.Spills], emitInlineAsm: this.EmitRoutedInlineAsm);
     }
   }
 

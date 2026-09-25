@@ -13,7 +13,15 @@ public enum X86StackCleanup { Caller, Callee }
 public enum X86CallDistance { Near, Far }
 
 /// <summary>The BP-relative incoming-parameter layout of a stack-only x86-16 function definition.</summary>
-public readonly record struct X86DefinitionStackLayout(int[] ParameterOffsets, int ParameterBytes);
+public readonly record struct X86DefinitionStackLayout(int[] ParameterOffsets, int ParameterBytes,
+    IReadOnlyList<Reg>? RegisterSpills = null) {
+
+  /// <summary>
+  /// The argument registers a register convention's prologue pushes, in parameter order, to give the
+  /// leading parameters the negative offsets in <see cref="ParameterOffsets"/>. Empty for a stack ABI.
+  /// </summary>
+  public IReadOnlyList<Reg> Spills => this.RegisterSpills ?? [];
+}
 
 /// <summary>
 /// The concrete x86-16 rules selected from a source-level calling-convention identity. Register
@@ -65,9 +73,9 @@ public sealed record X86CallAbi(
   /// <summary>
   /// Derives the complete incoming stack layout of an IR function definition. This is deliberately
   /// definition-side: generated functions have no <c>ProcedureSymbol</c>, but their IR signature and
-  /// <see cref="IrFunction.Convention"/> are sufficient for every stack-only ABI the routed backend
-  /// supports. Register conventions still decline until the prologue has an explicit register spill
-  /// plan rather than pretending their arguments live at positive BP offsets.
+  /// <see cref="IrFunction.Convention"/> are sufficient for every ABI the routed backend supports. A
+  /// register convention's leading word parameters get the negative offsets of the cells its prologue
+  /// pushes them into (<see cref="X86DefinitionStackLayout.Spills"/>).
   /// </summary>
   public static bool TryDefinitionStackLayout(IrFunction function,
       out X86DefinitionStackLayout layout, out string? declineReason) {
@@ -80,11 +88,6 @@ public sealed record X86CallAbi(
       declineReason = $"far definition ABI is not supported ({function.Convention})";
       return false;
     }
-    if (abi.ArgumentRegisters.Count > 0) {
-      declineReason = $"register definition ABI is not supported ({function.Convention})";
-      return false;
-    }
-
     var sizes = new int[function.Parameters.Count];
     for (var i = 0; i < sizes.Length; ++i)
       if (StackSlotSize(function.Parameters[i].Type) is not { } size) {
@@ -93,17 +96,28 @@ public sealed record X86CallAbi(
       } else
         sizes[i] = size;
 
+    // A register convention's leading parameters arrive in its argument registers and are pushed by
+    // the prologue in parameter order, so parameter 0 lives at [BP-2], parameter 1 at [BP-4], ...
+    // Each has to be one word - that is what one register holds.
+    var registerCount = Math.Min(abi.ArgumentRegisters.Count, sizes.Length);
     var offsets = new int[sizes.Length];
+    for (var i = 0; i < registerCount; ++i) {
+      if (sizes[i] != 2) {
+        declineReason = $"register parameter {i} is not one word ({function.Parameters[i].Type})";
+        return false;
+      }
+      offsets[i] = -2 * (i + 1);
+    }
+
     var offset = 4;
-    IEnumerable<int> order = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
-      ? Enumerable.Range(0, sizes.Length)
-      : Enumerable.Range(0, sizes.Length).Reverse();
+    var stack = Enumerable.Range(registerCount, sizes.Length - registerCount);
+    IEnumerable<int> order = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft ? stack : stack.Reverse();
     foreach (var index in order) {
       offsets[index] = offset;
       offset += sizes[index];
     }
 
-    layout = new X86DefinitionStackLayout(offsets, offset - 4);
+    layout = new X86DefinitionStackLayout(offsets, offset - 4, [.. abi.ArgumentRegisters.Take(registerCount)]);
     return true;
   }
 

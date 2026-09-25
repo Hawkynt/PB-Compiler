@@ -265,11 +265,9 @@ public sealed class BackendSwitchTests {
   public void Execute_GivenOnGotoBoundaries_ThenTheRoutedEmitterMatchesFallthroughAndEveryArm(bool optimize) {
     var direct = new CodeGenerator(Bind(_onGotoProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_onGotoProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());

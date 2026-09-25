@@ -42,7 +42,7 @@ public sealed class BackendErrorTrapTests {
   }
 
   private static byte[] Compile(string source, bool routed) {
-    var generator = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     if (routed)

@@ -377,8 +377,8 @@ public sealed class BackendSpillTests {
     var trace = string.Join(Environment.NewLine, machine.AllInstructions)
       + Environment.NewLine + string.Join(", ", allocation!.OrderBy(pair => pair.Key)
         .Select(pair => $"v{pair.Key}={pair.Value}"));
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -403,11 +403,9 @@ public sealed class BackendSpillTests {
   public void Run_GivenSplitLoopCarriedPhi_ThenBothBackendsWriteTheSameFile() {
     var direct = new CodeGenerator(Bind(_loopCarriedAcrossFilePrints)) {
       Optimize = true,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_loopCarriedAcrossFilePrints)) {
       Optimize = true,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -432,11 +430,9 @@ public sealed class BackendSpillTests {
         .Select(pair => $"v{pair.Key}={pair.Value}"));
     var direct = new CodeGenerator(Bind(_wrappedByteLoop)) {
       Optimize = true,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_wrappedByteLoop)) {
       Optimize = true,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -458,11 +454,9 @@ public sealed class BackendSpillTests {
         .Select(pair => $"v{pair.Key}={pair.Value}"));
     var direct = new CodeGenerator(Bind(_descendingUnsignedLoop)) {
       Optimize = true,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_descendingUnsignedLoop)) {
       Optimize = true,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());

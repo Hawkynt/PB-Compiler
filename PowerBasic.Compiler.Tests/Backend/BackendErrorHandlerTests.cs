@@ -30,7 +30,7 @@ public sealed class BackendErrorHandlerTests {
       string source, bool routed, bool optimize = true) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = optimize};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());

@@ -5399,9 +5399,9 @@ public sealed partial class InstructionSelector {
   /// named data cell for a module-level variable - which the whole-program codegen resolves to the
   /// very <c>Mem</c> the direct emitter uses, so both paths address the same storage.
   ///
-  /// Reading that cell is sound because a global a procedure can see is <c>SHARED</c>, and
-  /// <c>SsaForm.IsTrackableShape</c> excludes SHARED variables from SSA tracking - so no store to it
-  /// is ever elided and no read is ever folded away. Register residency cannot strand a value there
+  /// Reading that cell is sound because a global a procedure can see is <c>SHARED</c>, and a global
+  /// is an <c>IrGlobalVariable</c>, which <c>Mem2Reg</c> never promotes - only allocas are - so no
+  /// store to it is ever elided and no read is ever folded away. Register residency cannot strand a value there
   /// either: it requires an SI/DI-clean region, and a call is not clean.
   /// </summary>
   private MOperand? PointerMemory(IrValue pointer, MRegSize size) {

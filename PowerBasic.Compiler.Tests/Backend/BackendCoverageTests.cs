@@ -73,7 +73,6 @@ public sealed class BackendCoverageTests {
         continue;
       var generator = new CodeGenerator(unitModel) {
         Optimize = optimize,
-        UseExperimentalBackend = true,
       };
       var unit = generator.EmitUnit(unitName.ToUpperInvariant());
       if (generator.Errors.Count == 0)
@@ -194,7 +193,7 @@ public sealed class BackendCoverageTests {
       List<(string Name, string Reason)> routingDeclineList;
       try {
         var linkedUnits = CompileLinkedUnits(model, dir, optimize: true);
-        var generator = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+        var generator = new CodeGenerator(model) { Optimize = true};
         generator.EmitExecutable(linkedUnits, []);
         routedNames = generator.BackendRoutedNames.ToList();
         eliminatedNames = generator.BackendEliminatedNames.ToList();
@@ -229,7 +228,7 @@ public sealed class BackendCoverageTests {
       // loan from the inliner.
       try {
         var linkedUnits = CompileLinkedUnits(model, dir, optimize: false);
-        var unoptimized = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+        var unoptimized = new CodeGenerator(model) { Optimize = false};
         unoptimized.EmitExecutable(linkedUnits, []);
         var unoptimizedRoutedNames = unoptimized.BackendRoutedNames.ToList();
         routedNoOptimize += unoptimizedRoutedNames.Count;

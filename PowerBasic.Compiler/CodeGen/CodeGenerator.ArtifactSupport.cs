@@ -77,7 +77,7 @@ public sealed partial class CodeGenerator {
       IReadOnlyList<Statement> body,
       ConstantFolder folder) {
     var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    foreach (var node in body.SelectMany(OptReachability.DescendantNodes).Prepend(body))
+    foreach (var node in body.SelectMany(AstWalker.DescendantNodes).Prepend(body))
       switch (node) {
         case GotoStmt g: referenced.Add(g.Target); break;
         case GosubStmt g: referenced.Add(g.Target); break;
@@ -201,8 +201,19 @@ public sealed partial class CodeGenerator {
   private static bool IsRegisterConvention(ProcedureSymbol procedure)
     => ConventionRegisters(procedure.CallConv).Length > 0;
 
-  private static int RegisterParamCount(ProcedureSymbol procedure)
-    => Math.Min(ConventionRegisters(procedure.CallConv).Length, procedure.Parameters.Count);
+  private static int RegisterParamCount(ProcedureSymbol procedure, CallConvention convention)
+    => Math.Min(ConventionRegisters(convention).Length, procedure.Parameters.Count);
+
+  /// <summary>
+  /// The convention a procedure is compiled with: its declaration's, unless O0282 gave the routed
+  /// definition a private register convention - which it may only do for a procedure this module owns
+  /// completely, so the declaration's stays what every public artifact describes.
+  /// </summary>
+  private CallConvention EffectiveConvention(ProcedureSymbol procedure)
+    => procedure.CallConv == CallConvention.Basic
+       && this._backendModule?.FindFunction(Ir.IrLowering.IrNameOf(procedure)) is { Convention: Ir.IrCallConvention.Watcall }
+      ? CallConvention.Watcall
+      : procedure.CallConv;
 
   private static bool HasUnsupportedRegisterParam(ProcedureSymbol procedure)
     => IsRegisterConvention(procedure) && procedure.Parameters.Any(parameter => ParamSlotSize(parameter) != 2);
@@ -211,11 +222,11 @@ public sealed partial class CodeGenerator {
     => $"{procedure.CallConv} {procedure.Name}: a register-convention parameter must be word-sized "
       + "(BYVAL <= 2 bytes or BYREF); multiword values need the full per-compiler ABI rules";
 
-  private static bool PushesRightToLeft(ProcedureSymbol procedure)
-    => procedure.CallConv is CallConvention.Cdecl or CallConvention.Stdcall or CallConvention.Watcall;
+  private static bool PushesRightToLeft(CallConvention convention)
+    => convention is CallConvention.Cdecl or CallConvention.Stdcall or CallConvention.Watcall;
 
-  private static bool CallerCleansStack(ProcedureSymbol procedure)
-    => procedure.CallConv == CallConvention.Cdecl;
+  private static bool CallerCleansStack(CallConvention convention)
+    => convention == CallConvention.Cdecl;
 
   /// <summary>
   /// Whether a source-visible procedure uses the ordinary stack ABI shape shared by the IR backend
@@ -224,8 +235,8 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private static bool IsBackendAbiConvention(ProcedureSymbol procedure)
     => !IsRegisterConvention(procedure)
-       && !PushesRightToLeft(procedure)
-       && !CallerCleansStack(procedure);
+       && !PushesRightToLeft(procedure.CallConv)
+       && !CallerCleansStack(procedure.CallConv);
 
   /// <summary>
   /// Rejects a register-convention procedure with a parameter that is not word-sized - a property of
@@ -242,7 +253,8 @@ public sealed partial class CodeGenerator {
   private int LayoutFrame(ProcedureSymbol procedure) {
     this._frameLocalBytes = 0;
 
-    var registerCount = RegisterParamCount(procedure);
+    var convention = this.EffectiveConvention(procedure);
+    var registerCount = RegisterParamCount(procedure, convention);
     for (var i = 0; i < registerCount; ++i) {
       this._frameLocalBytes += 2;
       procedure.Parameters[i].Offset = -this._frameLocalBytes;
@@ -251,7 +263,7 @@ public sealed partial class CodeGenerator {
     var offset = 4;
     var stackParameters = Enumerable.Range(
       registerCount, procedure.Parameters.Count - registerCount).ToList();
-    foreach (var i in PushesRightToLeft(procedure)
+    foreach (var i in PushesRightToLeft(convention)
       ? stackParameters
       : Enumerable.Reverse(stackParameters)) {
       procedure.Parameters[i].Offset = offset;
@@ -356,14 +368,4 @@ public sealed partial class CodeGenerator {
   // executable lowering path.
   private enum ValueKind { Int16, Int32, Int64, Float, Str }
 
-  private static ValueKind KindOf(PbType type) => type switch {
-    ScalarType { IsFloat: true } => ValueKind.Float,
-    ScalarType { ByteSize: <= 2 } => ValueKind.Int16,
-    ScalarType { ByteSize: 8 } => ValueKind.Int64,
-    ScalarType => ValueKind.Int32,
-    PointerType or ProcPtrType => ValueKind.Int32,
-    BcdType or MbfType => ValueKind.Float,
-    StringType or FixedStringType or FlexType or AsciizType => ValueKind.Str,
-    _ => ValueKind.Int16,
-  };
 }

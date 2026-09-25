@@ -2,28 +2,32 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (simple scalar module globals, self-contained main) |
-| **Stage** | Whole-program analysis, before emission |
-| **Source** | `CodeGen/OptDeadGlobals.cs` |
-| **Gate** | `--optimize`, no unit compile, nothing linked |
-| **IR** | ✅ `Ir/Passes/GlobalDce.cs` — the same sweep's second half: a global with no users is removed, after the dead functions are gone and have dropped their uses of it. Same placement and same caveat as [O0022](O0022-dead-procedure-elimination.md) |
+| **Status** | 🟡 Partial — the native build drops a global only when no emitted code references it; `GlobalDce`'s global sweep runs only on the C/LLVM path |
+| **Stage** | IR middle end (module passes) + data layout at emission |
+| **Source** | `Ir/Passes/LocalizeGlobals.cs` (a write-first global used by one procedure becomes a local), then `Mem2Reg`/`Dce`; `CodeGen/CodeGenerator.cs` — `SlotOf`, `EmitDataArea` (a data slot exists only once code references it); `Ir/Passes/GlobalDce.cs` with `removeGlobals` (C/LLVM path only) |
+| **Gate** | `--optimize` |
 | **Related** | [O0022](O0022-dead-procedure-elimination.md), [O0002](O0002-dead-code-elimination.md), [P0003](P0003-bss.md) |
 
 ## What it is
 
-The DATA dimension of the tree-shaker. A fully-owned simple scalar module global
-that no reachable code ever **reads** is dead: its data slot contributes
-nothing, and so does every pure store to it (`global = <pure rhs>`).
+The DATA dimension of the tree-shaker. A module global that no code ever
+**reads** is dead: its data slot contributes nothing, and so does every pure
+store to it.
 
-References are classified soundly — a global occurrence is a **read** unless it
-is exactly a top-level `AssignStmt` whose target is `NameExpr(global)`. Every
-other form keeps it live: `INCR`/`SWAP`, an array index, a BYREF argument,
-`VARPTR`/`VARSEG`, a dotted-name `MemberExpr`, any operand position.
+On the native build there is no dedicated pass for this. The data area is laid
+out from the bound program, but a variable's slot is created only when emitted
+code first references it (`SlotOf`), so a global whose every access the IR
+removed gets no slot. The IR removes such accesses mainly through
+`LocalizeGlobals`: a scalar global touched by one non-reentrant procedure, with
+only plain loads and stores, whose entry block stores it before any load,
+becomes a local; `Mem2Reg` then promotes it and `Dce` drops the stores nothing
+reads. `GlobalDce`'s sweep of globals with no users is switched off on the
+native build (`removeGlobals: false`), because IR globals are resolved there by
+name; the C/LLVM path runs it.
 
-Because a `CODEPTR(P)` that appears **only** as the RHS of a store to a dead
-global is not a live edge to `P`, the dead-global set, the dead-store set and
-the live-procedure set are solved together to a **fixpoint**: a procedure kept
-alive only by a never-read function pointer cascades to dead as well.
+There is no common fixpoint with [O0022](O0022-dead-procedure-elimination.md):
+a procedure kept alive only by a function pointer stored into a dead global
+goes only when that store has been removed before `GlobalDce` runs.
 
 ## Sample
 
@@ -64,7 +68,8 @@ Data
 
 `debugFlag%` and `hook&` lose their slots and their stores; `hook&` was the only
 reference to `Handler`, so the cascade takes the procedure body too
-([O0022](O0022-dead-procedure-elimination.md)).
+([O0022](O0022-dead-procedure-elimination.md)). This is the intended result; on
+the native build it holds only where the stores are removed as described above.
 
 ## Equivalent BASIC
 
@@ -76,15 +81,16 @@ PRINT counter%
 
 ## Why it is safe
 
-Hard conservative guards keep a global no matter what the read analysis says:
+A global keeps its slot and its stores while any emitted instruction still
+references it, so nothing is dropped on a guess. `LocalizeGlobals` declines:
 
-- its address is taken (`VARPTR`/`VARSEG`/`STRPTR`/… and the `32` variants);
-- it is `SHARED`, `COMMON` or exported;
-- it is an array, UDT, string, BCD or FIX value, or declared `DIM … AT`;
-- it is a PB internal cell;
-- a store's RHS could **trap** — a function call, or (under `$ERROR
-  NUMERIC/OVERFLOW/BOUNDS`) arithmetic or an array read, since dropping the
-  store would skip the Error 6/9 the program is observed to raise.
+- a global whose address is used other than by a direct load or store (an
+  address handed to a call, stored, or indexed into);
+- a runtime (`rt_`) cell, an array or any other multi-slot global;
+- a global used by more than one procedure, or by a recursive, error-handling
+  or inline-assembly procedure;
+- a global its procedure may read before writing, since a global keeps its value
+  between calls and a local does not.
 
-The pass is restricted to a self-contained main, so `pb35` and unoptimized
-output stay byte-identical.
+Removing a store removes only the store; a right-hand side that could trap is
+still evaluated. Unoptimized, none of these passes run.

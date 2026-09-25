@@ -51,7 +51,7 @@ public sealed class BackendNeverThrowsTests {
       var bound = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, name, Dialect.Pb36), name, Dialect.Pb36), Dialect.Pb36);
       if (bound.Errors.Count > 0)
         return null;
-      var routed = new CodeGenerator(bound) { Optimize = optimize, UseExperimentalBackend = true };
+      var routed = new CodeGenerator(bound) { Optimize = optimize};
       routed.EmitExecutable();
       _ = routed.BackendRoutedNames.ToList();
       return null;
@@ -225,7 +225,7 @@ public sealed class BackendNeverThrowsTests {
         rejected.Add($"{bodyName}: {bound.Errors[0].Message}");
         continue;
       }
-      var gen = new CodeGenerator(bound) { Optimize = true, UseExperimentalBackend = true };
+      var gen = new CodeGenerator(bound) { Optimize = true};
       gen.EmitExecutable();
       var names = gen.BackendRoutedNames.ToList();
       if (names.Count > 0)
@@ -303,13 +303,13 @@ public sealed class BackendNeverThrowsTests {
 
     SemanticModel Bind() => Binder.Bind(
       Parser.Parse(Lexer.Tokenize(source, "AMBIG.BAS", Dialect.Pb36), "AMBIG.BAS", Dialect.Pb36), Dialect.Pb36);
-    var routed = new CodeGenerator(Bind()) { Optimize = false, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind()) { Optimize = false};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the module body must route");
     Assert.That(routed.BackendRoutedNames, Does.Contain("Bump"), "and so must the SUB that shares them");
 
-    var direct = new CodeGenerator(Bind()) { Optimize = false, UseExperimentalBackend = false };
+    var direct = new CodeGenerator(Bind()) { Optimize = false};
     var directImage = direct.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
 
@@ -331,7 +331,7 @@ public sealed class BackendNeverThrowsTests {
           var bound = Binder.Bind(
             Parser.Parse(Lexer.Tokenize(source, name + ".BAS", Dialect.Pb36), name + ".BAS", Dialect.Pb36),
             Dialect.Pb36);
-          var routed = new CodeGenerator(bound) { Optimize = optimize, UseExperimentalBackend = true };
+          var routed = new CodeGenerator(bound) { Optimize = optimize};
           var image = routed.EmitExecutable();
 
           if (image.Length != 0)
@@ -370,7 +370,7 @@ public sealed class BackendNeverThrowsTests {
       }
       if (bound.Errors.Count > 0)
         continue;
-      var gen = new CodeGenerator(bound) { Optimize = true, UseExperimentalBackend = true };
+      var gen = new CodeGenerator(bound) { Optimize = true};
       try {
         gen.EmitExecutable();
         routed += gen.BackendRoutedNames.Any() ? 1 : 0;

@@ -29,7 +29,7 @@ public sealed class BackendMainRoutingTests {
 
   [Test]
   public void Emit_GivenASelectableModuleBody_ThenTheBackEndOwnsTheWholeProgram() {
-    var routed = new CodeGenerator(Bind(_wholeProgram)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(_wholeProgram)) { Optimize = true};
 
     var image = routed.EmitExecutable();
 
@@ -42,7 +42,6 @@ public sealed class BackendMainRoutingTests {
   public void Emit_GivenTheRetiredBackendSwitch_ThenItCannotReenableTheDirectEmitter() {
     var generator = new CodeGenerator(Bind(_wholeProgram)) {
       Optimize = true,
-      UseExperimentalBackend = false,
     };
 
     var image = generator.EmitExecutable();
@@ -73,7 +72,7 @@ public sealed class BackendMainRoutingTests {
       END
       oops:
       RESUME NEXT
-      """)) { Optimize = true, UseExperimentalBackend = true };
+      """)) { Optimize = true};
 
     routed.EmitExecutable();
 
@@ -99,7 +98,7 @@ public sealed class BackendMainRoutingTests {
         oops:
         RESUME NEXT
       END SUB
-      """)) { Optimize = true, UseExperimentalBackend = true };
+      """)) { Optimize = true};
 
     routed.EmitExecutable();
 

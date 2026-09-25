@@ -111,7 +111,6 @@ public sealed class OmfLinkTests {
 
     var routedGenerator = new CodeGenerator(model) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
     var routed = routedGenerator.EmitExecutable([SubTwoUnit()], []);
     var directOutput = Exec.Cpu8086.Run(direct).Output.Trim().Replace("\r\n", "|");
@@ -152,7 +151,6 @@ public sealed class OmfLinkTests {
 
     var routedGenerator = new CodeGenerator(model) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
     var routed = routedGenerator.EmitExecutable([linkedUnit], []);
     var directOutput = Exec.Cpu8086.Run(direct).Output.Trim().Replace("\r\n", "|");
@@ -182,7 +180,7 @@ public sealed class OmfLinkTests {
     var linkedUnit = RegisterIdentityUnit(convention);
     var directGenerator = new CodeGenerator(model);
     var direct = directGenerator.EmitExecutable([linkedUnit], []);
-    var routedGenerator = new CodeGenerator(model) { UseExperimentalBackend = true };
+    var routedGenerator = new CodeGenerator(model);
     var routed = routedGenerator.EmitExecutable([linkedUnit], []);
     var directOutput = Exec.Cpu8086.Run(direct).Output.Trim();
     var routedOutput = Exec.Cpu8086.Run(routed).Output.Trim();
@@ -213,7 +211,7 @@ public sealed class OmfLinkTests {
     var linkedUnit = RegisterLoadUnit(convention);
     var directGenerator = new CodeGenerator(model);
     var direct = directGenerator.EmitExecutable([linkedUnit], []);
-    var routedGenerator = new CodeGenerator(model) { UseExperimentalBackend = true };
+    var routedGenerator = new CodeGenerator(model);
     var routed = routedGenerator.EmitExecutable([linkedUnit], []);
     var directOutput = Exec.Cpu8086.Run(direct).Output.Trim();
     var routedOutput = Exec.Cpu8086.Run(routed).Output.Trim();
@@ -238,7 +236,7 @@ public sealed class OmfLinkTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var model = Binder.Bind(unit, Dialect.Pb35);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model);
 
     generator.EmitExecutable([ObjectUnit("WIDE", "wide_", [0xC3])], []);
 

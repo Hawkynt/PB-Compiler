@@ -29,8 +29,8 @@ public sealed class BackendArraySortTests {
 
   /// <summary>Runs the program both ways, insisting the back end really took the code under test.</summary>
   private static (string Direct, string Routed) RunBothWays(string source, string[] mustRoute, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));

@@ -235,7 +235,7 @@ public sealed class BackendGlobalAccessTests {
         PRINT t
       END SUB
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     _ = routed.EmitExecutable();
 
@@ -248,8 +248,8 @@ public sealed class BackendGlobalAccessTests {
 
   [Test]
   public void Emit_GivenRoutedGlobalAccess_ThenTheImageAssemblesAndTheBackEndTookTheFunction() {
-    var direct = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true};
 
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
@@ -268,11 +268,9 @@ public sealed class BackendGlobalAccessTests {
   public void Execute_GivenSharedArrayAndPersistentStatics_ThenBothEmittersAgreeWithoutFallback(bool optimize) {
     var direct = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -292,12 +290,10 @@ public sealed class BackendGlobalAccessTests {
     var direct = new CodeGenerator(Bind(_sharedSwapProgram)) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_sharedSwapProgram)) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());

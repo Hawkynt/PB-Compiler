@@ -28,7 +28,7 @@ public sealed partial class CodeGenerator {
   private void PrepareBackendSemanticMerges(IrModule module) {
     this._backendSemanticMerges = new(StringComparer.OrdinalIgnoreCase);
     this._backendSemanticMergesEmitted = false;
-    if (!this.UseExperimentalBackend || !this.Optimize || !this.OptimizeSize)
+    if (!this.Optimize || !this.OptimizeSize)
       return;
 
     var sourceFunctions = new Dictionary<string, ProcedureSymbol>(StringComparer.OrdinalIgnoreCase);

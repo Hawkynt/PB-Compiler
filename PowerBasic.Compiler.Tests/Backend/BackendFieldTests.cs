@@ -50,7 +50,7 @@ public sealed class BackendFieldTests {
   }
 
   private static (byte[] Image, IEnumerable<string> Routed) Compile(string source, bool backend) {
-    var codegen = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = backend };
+    var codegen = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = codegen.EmitExecutable();
     Assert.That(codegen.Errors, Is.Empty, string.Join("; ", codegen.Errors));
     return (image, codegen.BackendRoutedNames.ToList());

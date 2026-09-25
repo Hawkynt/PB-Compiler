@@ -1,8 +1,8 @@
 namespace PowerBasic.Compiler.Ir.Analysis;
 
 /// <summary>
-/// What interval an integer SSA value is provably confined to - the IR's answer to the direct
-/// emitter's O16 interval lattice (<c>CodeGen/IntervalRange.cs</c>).
+/// What interval an integer SSA value is provably confined to - the IR's successor to the O16
+/// interval lattice the retired direct emitter kept over syntax.
 ///
 /// <para>
 /// The proofs it supplies are the ones <c>docs/BACKENDS.md</c> names as target-independent and

@@ -83,12 +83,10 @@ public sealed class BackendByRefRoutingTests {
     var direct = new CodeGenerator(Bind(source)) {
       Optimize = optimize,
       OptimizeSpeed = optimizeSpeed,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(source)) {
       Optimize = optimize,
       OptimizeSpeed = optimizeSpeed,
-      UseExperimentalBackend = true,
     };
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());

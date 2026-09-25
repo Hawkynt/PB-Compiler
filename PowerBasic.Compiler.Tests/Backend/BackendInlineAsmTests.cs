@@ -24,7 +24,7 @@ public sealed class BackendInlineAsmTests {
   private static string Run(string source, bool routed, out bool ownsMain) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     ownsMain = cg.BackendRoutedNames.Contains("main", StringComparer.OrdinalIgnoreCase);
@@ -576,7 +576,7 @@ public sealed class BackendInlineAsmTests {
 
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(model) { Optimize = true};
     cg.EmitExecutable();
 
     Assert.That(cg.BackendRoutedNames, Does.Contain("GetPix").IgnoreCase,
@@ -655,7 +655,7 @@ public sealed class BackendInlineAsmTests {
   private static (string Output, bool Routed) RunProcedure(string source, string procedure, bool routed) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = false};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"),

@@ -53,7 +53,7 @@ public sealed class BackendOptimizeGatingTests {
   }
 
   private static CodeGenerator Compile(bool optimize, bool routed, out byte[] image) {
-    var generator = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize};
     image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return generator;

@@ -24,82 +24,19 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private readonly Dictionary<string, Label> _stringLiterals = new(StringComparer.Ordinal);
   private readonly Dictionary<ProcedureSymbol, Label> _procLabels = new(ReferenceEqualityComparer.Instance);
   private readonly List<(Label Slot, double Value)> _floatConstants = [];
-  private readonly Stack<Label> _exitFor = new();
-  private readonly Stack<Label> _exitDo = new();
-  private readonly Stack<Label> _exitSelect = new();
-  private readonly Stack<Label> _iterateFor = new();
-  private readonly Stack<Label> _iterateDo = new();
-  private readonly Stack<Label> _iterateAny = new();
-  private Dictionary<string, Label> _userLabels = new(StringComparer.OrdinalIgnoreCase);
   private Label _scratch = null!;
 
   // current frame (main or procedure)
-  private ProcedureSymbol? _currentProc;
-  private HashSet<Statement>? _tailSelfCalls;
-  private Label? _tailEntry;
   // pb36 O14 general tail calls: a tail-position CALL to ANOTHER in-module proc B
   // becomes "tear down A's frame, lay out B's call frame at A's caller's boundary,
   // jmp B" - B returns straight to A's caller. Keyed by the CallStmt -> target B.
-  private Dictionary<Statement, ProcedureSymbol>? _tailGeneralCalls;
   // byte count of the current procedure's stack parameters ([BP+4..]); the tail-call
   // teardown discards exactly these before laying out the callee's arguments.
-  private int _currentParamBytes;
-  private Dictionary<VariableSymbol, (Mem Cell, PbType Type)>? _inlineParamSlots;
   // pb36: inlined parameters that are BYREF (the receiver THIS of a member method) - their slot
   // holds a near pointer to the argument, so a field access THIS.f loads the pointer then [BX+off].
-  private HashSet<VariableSymbol>? _inlineByRefParams;
-  private Label _epilogue = null!;
-  private Label _frameBytesLabel = null!;
-  private Label _frameWordsLabel = null!;
   private int _frameLocalBytes;
-  private int _cseBytes;
-  private Dictionary<Expression, OptCommonSubexpr.CseMark>? _cseMarks;
-  private Dictionary<Syntax.Ast.NameExpr, long>? _provenReads;
-  private IReadOnlyDictionary<Syntax.Ast.NameExpr, VariableSymbol>? _copyReads;
-  private HashSet<Statement>? _deadStatements;
-  // O23 whole-program data tree-shaking: globals nothing reachable reads, and the pure
-  // stores to them - both removed under Optimize for a self-contained main (see OptDeadGlobals).
-  private HashSet<VariableSymbol>? _deadGlobals;
-  private HashSet<Statement>? _deadGlobalStores;
-  private Dictionary<VariableSymbol, ConstantValue>? _ipcp;
-  private Dictionary<CallOrIndexExpr, ConstantValue>? _pureFold;
-  /// <summary>
-  /// O8 branch fusion: the comparison node whose CMP flags may drive a branch directly instead of
-  /// materializing PB's -1/0 truth value, together with where to jump and on which outcome. Armed
-  /// by <see cref="EmitConditionalBranch"/> for one node only and matched by identity.
-  /// </summary>
-  private (BinaryExpr Node, Label Target, bool WhenFalse)? _compareBranch;
-  private bool _compareBranchTaken;
 
-  private (VariableSymbol Symbol, Reg Reg)? _registerCounter;
-  private (VariableSymbol Symbol, Reg Reg)? _registerAccumulator;
 
-  /// <summary>
-  /// O6b: the array whose current element address is parked in BX for the loop being emitted,
-  /// together with the counter that indexes it. Only an accumulate-over-an-array body establishes
-  /// it (see <c>MatchSteppedAccumulateBody</c>), and that body's single read is the only thing
-  /// that touches BX - so the address steps by the element size per iteration instead of being
-  /// recomputed from the counter.
-  /// </summary>
-  private (VariableSymbol Array, VariableSymbol Counter)? _residentElementPtr;
-
-  /// <summary>True when a register-resident loop counter or accumulator currently lives in SI (or ESI, whose low half is SI), so a code path that overwrites SI (e.g. loading a string-literal pointer) must save and restore it.</summary>
-  private bool SiHoldsResident =>
-    this._registerCounter?.Reg is Reg.SI or Reg.ESI || this._registerAccumulator?.Reg is Reg.SI or Reg.ESI;
-
-  /// <summary>O16 interval lattice: the per-statement-entry interval environment of the main body
-  /// (<see cref="IntervalRangeAnalysis"/>), consulted by <see cref="IndexRangeOf"/> through
-  /// <see cref="_currentStatement"/> to prove a non-FOR-counter variable's range at a use site.</summary>
-  private IReadOnlyDictionary<Statement, IReadOnlyDictionary<VariableSymbol, ValueFacts>>? _intervalPoints;
-  private Statement? _currentStatement;
-
-  /// <summary>O16: the proven [lo,hi] range of each FOR counter active over the current body
-  /// (constant From/To, counter never written or aliased in the body). Used to drop a bounds
-  /// check whose index is exactly such a counter and whose range lies inside the array bounds.</summary>
-  private readonly Dictionary<VariableSymbol, (long Lo, long Hi)> _forRanges = new(ReferenceEqualityComparer.Instance);
-
-  private int _tempBytes;
-  private int _tempMax;
 
   /// <summary>Generated diagnostics for constructs the generator does not support yet.</summary>
   public List<Diagnostic> Errors { get; } = [];
@@ -117,70 +54,20 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// <summary>S1 $OPTIMIZE SIZE: bias for image size - short-jump relaxation on, inlining off (unrolling/alignment/scheduler are SPEED-only anyway).</summary>
   public bool OptimizeSize { get; set; }
 
-  /// <summary>
-  /// Compile every eligible function through the in-house x86-16 back end (docs/X86-BACKEND.md) - it
-  /// owns the whole function via its SSA IR (no shared cells), so it never reads an optimizer-stale
-  /// cell. <b>Default ON.</b> Set <c>PBC_X_BACKEND=0</c> / <c>--no-x-backend</c> to compile through
-  /// the direct emitter instead, which is retained only until the fixtures that assert its byte
-  /// output have been read (docs/DIRECT-EMITTER-RETIREMENT.md).
-  ///
-  /// <para>
-  /// Default-on was tried and reverted once, and the reason has since gone. That measurement read
-  /// 109 failures, of which the two that settled it needed TAIL RECURSION to run in constant stack -
-  /// a behavioural promise rather than code quality. Both now run and pass. Re-measured with the
-  /// emulator actually present, default-on costs <b>62 of 6493</b>: 57 assertions about emitted
-  /// code, 3 an opcode the test interpreter did not decode, 2 the pre-existing TIMER corpus case,
-  /// and <b>zero behavioural failures</b>. The differential oracle agrees with the genuine vintage
-  /// compilers either way, and the golden gate holds.
-  /// </para>
-  /// <para>
-  /// The 57 are the remaining work, and they are not a regression: each names an INSTRUCTION the
-  /// routed path reaches by another shape. Two of the first three read turned out to be measuring
-  /// nothing on either path - a probe whose body constant-folds away, and a detector scanning a
-  /// whole image for a marker every epilogue carries.
-  /// </para>
-  /// </summary>
-  // The analysis-aware backend is the sole production and test compilation path.  Keep the old
-  // internal spelling temporarily so downstream test fixtures compile, but make attempts to select
-  // the retired emitter a no-op rather than allowing a second architecture to re-enter the graph.
-  internal bool UseExperimentalBackend {
-    get => true;
-    set { }
-  }
-
-  /// <summary>
-  /// Routing is MANDATORY: a body the back end does not take is a compile error rather than a quiet
-  /// fall back to the direct emitter. Off by default; <c>PBC_X_BACKEND_STRICT</c> / <c>--x-backend-strict</c>.
-  ///
-  /// <para>
-  /// This is the measurement the direct-emitter retirement needs and the one the ordinary routed
-  /// build cannot give. With a fallback present, every gate is satisfied by construction: a decline
-  /// is invisible, the program still compiles, and the differential still agrees - because both sides
-  /// ran the SAME emitter for that body. Turning declines into errors is what asks the real question,
-  /// which is whether the program would still compile if <c>CodeGen/</c> were not there.
-  /// </para>
-  /// <para>
-  /// A bodiless EXTERNAL declaration is exempt, and that is not a loophole: it is a link import with
-  /// no code to emit on either path, so it is nobody's coverage. Everything else counts.
-  /// </para>
-  /// </summary>
-  internal bool RequireBackend { get; set; } = true;
 
 
   /// <summary>
-  /// Turns every routing decline into a compile error when <see cref="RequireBackend"/> is set.
+  /// Turns every routing decline into a compile error: the IR back end is the only code generator,
+  /// so a body it does not take has no code at all.
   ///
   /// <para>
-  /// The exemption is a bodiless EXTERNAL declaration: it is a link import, so neither emitter
-  /// produces code for it and it is nobody's coverage. Every other decline is reported with the
-  /// reason the routing itself gave, because the reason is the work item - a shape the ABI cannot
-  /// express reads differently from a body the allocator ran out of registers on.
+  /// The exemption is a bodiless EXTERNAL declaration: it is a link import with no code to emit.
+  /// Every other decline is reported with the reason the routing itself gave, because the reason is
+  /// the work item - a shape the ABI cannot express reads differently from a body the allocator ran
+  /// out of registers on.
   /// </para>
   /// </summary>
   private bool RaiseWhenRoutingIsMandatoryAndSomethingDeclined() {
-    if (!this.RequireBackend || !this.UseExperimentalBackend)
-      return false;
-
     var declined = false;
     foreach (var (name, reason) in this.BackendDeclines) {
       if (reason.StartsWith("filter: external declaration", StringComparison.Ordinal))
@@ -190,16 +77,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
         $"routing is mandatory and '{name}' was not taken by the x86-16 back end: {reason}"));
     }
     return declined;
-  }
-
-  /// <summary>Raises trappable runtime error <paramref name="code"/> when the preceding Jcc falls through.</summary>
-  private void EmitRaiseWhen(Action<Label> skipJump, int code) {
-    var asm = this._asm;
-    var ok = asm.DefineLabel();
-    skipJump(ok);
-    asm.Mov(Reg.AX, code);
-    asm.Call(this._rt.Raise);
-    asm.MarkLabel(ok);
   }
 
   public byte[] EmitExecutable() => this.EmitExecutable([], []);
@@ -261,7 +138,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // COMPILES must not depend on it.
     if (model.Dialect.IsGwBasica()) {
       this._unreachableDeferred = UnreachableDeferredSource(model.MainBody, this.OptFolder);
-      if (this.UseExperimentalBackend && !this.ValidateDeferredInterpreterSource())
+      if (!this.ValidateDeferredInterpreterSource())
         return [];
     }
 
@@ -537,35 +414,6 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     return slot;
   }
 
-  private Label UserLabel(string name) {
-    if (!this._userLabels.TryGetValue(name, out var label))
-      this._userLabels[name] = label = this._asm.DefineLabel($"l_{name}");
-    return label;
-  }
-
-  /// <summary>
-  /// True when the compiler sees every caller of <paramref name="proc"/> and nothing
-  /// external can reach it, so it may be freely rewritten or dropped. A nested procedure
-  /// is always private to its container; in a self-contained main every procedure is ours.
-  /// A $COMPILE UNIT's top-level procedures are exported, and a main linked with foreign
-  /// objects could be called by name from them - those are not fully owned.
-  /// </summary>
-  private bool IsFullyOwned(ProcedureSymbol proc) => proc.IsNested || (!this._isUnit && !this._allowExternalCalls);
-
-  /// <summary>
-  /// O23 soundness: true when $ERROR NUMERIC/OVERFLOW/BOUNDS checking is active initially or any
-  /// <c>$ERROR ... ON</c> (or <c>ALL</c>) metastatement could turn it on - the data tree-shaker
-  /// must then treat a trap-capable store RHS (arithmetic, an array read) as side-effecting and
-  /// keep the global, lest it drop a store whose evaluation was meant to raise Error 6/9.
-  /// </summary>
-  private bool NumericCheckingPossible()
-    => this.CheckNumeric || this.CheckOverflow || this.CheckBounds
-       || model.MetaStatements.Any(m =>
-            m.Command.Equals("ERROR", StringComparison.OrdinalIgnoreCase)
-            && m.Arguments.Count >= 2
-            && m.Arguments[0].Text.ToUpperInvariant() is "NUMERIC" or "OVERFLOW" or "BOUNDS" or "ALL"
-            && m.Arguments[^1].Text.Equals("ON", StringComparison.OrdinalIgnoreCase));
-
   private Label ProcLabelOf(ProcedureSymbol proc) {
     if (!this._procLabels.TryGetValue(proc, out var label))
       // DECLAREd-but-undefined procedures resolve at link time by name; overloaded
@@ -671,19 +519,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     }
   }
 
-  private void Unsupported(Statement s) => this.Errors.Add(new(s.Position, $"not yet generated: {(s is CommandStmt c ? $"command {c.Keyword}" : s.GetType().Name)}"));
-  private void Unsupported(Expression e, string what) => this.Errors.Add(new(e.Position, $"not yet generated: {what}"));
   private void Unsupported(SourcePosition position, string what) => this.Errors.Add(new(position, $"not yet generated: {what}"));
-
-  /// <summary>Replicates the binder's variable table key (name + canonical suffix text; arrays carry a "()" tail).</summary>
-  private static string KeyOf(string name, TypeSuffix suffix, bool isArray = false) => name + suffix.KeyText() + (isArray ? "()" : "");
-
-  private VariableSymbol? LookupVariable(string name, TypeSuffix suffix, bool isArray = false) {
-    var key = KeyOf(name, suffix, isArray);
-    if (this._currentProc != null && this._currentProc.Variables.TryGetValue(key, out var local))
-      return local;
-    return model.ModuleVariables.GetValueOrDefault(key);
-  }
 
   #endregion
 

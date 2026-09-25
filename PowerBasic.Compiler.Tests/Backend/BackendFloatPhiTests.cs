@@ -55,7 +55,7 @@ public sealed class BackendFloatPhiTests {
   [Test]
   public void Phi_GivenAFloatCarriedRoundALoop_ThenBothPathsPrintTheSame() {
     string Run(bool routed) {
-      var cg = new CodeGenerator(Bind(_carriesAFloat)) { Optimize = true, UseExperimentalBackend = routed };
+      var cg = new CodeGenerator(Bind(_carriesAFloat)) { Optimize = true};
       var image = cg.EmitExecutable();
       Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
       return Cpu8086.Run(image).Output.Trim();

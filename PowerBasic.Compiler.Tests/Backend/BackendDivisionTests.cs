@@ -174,8 +174,8 @@ public sealed class BackendDivisionTests {
       PRINT Quot&(m&, -1); Remain&(m&, -1)
       PRINT Quot&(m&, 3); Remain&(m&, 3)
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -204,8 +204,8 @@ public sealed class BackendDivisionTests {
       PRINT ERR
       END
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -228,7 +228,7 @@ public sealed class BackendDivisionTests {
       """;
 
     var model = Bind(source);
-    var routed = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(model) { Optimize = false};
 
     var image = routed.EmitExecutable();
 

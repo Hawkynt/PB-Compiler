@@ -59,7 +59,6 @@ public sealed class BackendSemanticFunctionMergingTests {
       var generator = new CodeGenerator(Bind(source)) {
         Optimize = true,
         OptimizeSize = true,
-        UseExperimentalBackend = routed,
       };
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
@@ -138,7 +137,6 @@ public sealed class BackendSemanticFunctionMergingTests {
       var generator = new CodeGenerator(Bind(source)) {
         Optimize = true,
         OptimizeSize = true,
-        UseExperimentalBackend = routed,
       };
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));

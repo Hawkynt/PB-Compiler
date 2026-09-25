@@ -360,7 +360,7 @@ public sealed class BackendRuntimeCallTests {
       PRINT WriteLog%(3)
       CLOSE #1
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var image = routed.EmitExecutable();
 
@@ -371,8 +371,8 @@ public sealed class BackendRuntimeCallTests {
 
   [Test]
   public void Emit_GivenARoutedPrintingFunction_ThenTheImageAssemblesAndDiffersFromTheDirectPath() {
-    var direct = new CodeGenerator(Bind(_printingFunction)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_printingFunction)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(_printingFunction)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(_printingFunction)) { Optimize = true};
 
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
@@ -408,7 +408,7 @@ public sealed class BackendRuntimeCallTests {
   public void Emit_GivenARoutedPrintingFunction_ThenTheRuntimeTrimmerStillKeepsThePrintSections() {
     // the trimmer seeds from the labels emitted code references, and a back-end CALL references the
     // very same named label - so a section only the routed function needs is not trimmed away
-    var routed = new CodeGenerator(Bind(_printingFunction)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(_printingFunction)) { Optimize = true};
 
     var image = routed.EmitExecutable();
 
@@ -515,11 +515,9 @@ public sealed class BackendRuntimeCallTests {
   public void Execute_GivenRemainingStringKernels_ThenRoutedBehaviorMatchesTheDirectEmitter(bool optimize) {
     var direct = new CodeGenerator(Bind(_remainingStringKernelsProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_remainingStringKernelsProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -583,11 +581,9 @@ public sealed class BackendRuntimeCallTests {
   public void Execute_GivenBinaryRecordAliases_ThenRoutedBehaviorMatchesTheDirectEmitter(bool optimize) {
     var direct = new CodeGenerator(Bind(_binaryRecordAliasProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_binaryRecordAliasProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -605,11 +601,9 @@ public sealed class BackendRuntimeCallTests {
   public void Execute_GivenBinaryRecordConversions_ThenRoutedBytesMatchTheDirectEmitter(bool optimize) {
     var direct = new CodeGenerator(Bind(_binaryRecordProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_binaryRecordProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -642,11 +636,9 @@ public sealed class BackendRuntimeCallTests {
   public void Execute_GivenRndRange_ThenTheRoutedPairResultMatchesTheDirectEmitter(bool optimize) {
     var direct = new CodeGenerator(Bind(_rndRangeProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_rndRangeProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -699,11 +691,9 @@ public sealed class BackendRuntimeCallTests {
   public void Execute_GivenWholeUdtComparison_ThenRoutedBytesMatchTheDirectEmitter(bool optimize) {
     var direct = new CodeGenerator(Bind(_udtCompareProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_udtCompareProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -732,11 +722,9 @@ public sealed class BackendRuntimeCallTests {
   public void Execute_GivenStackLocalUdtComparison_ThenRoutedBytesMatchTheDirectEmitter(bool optimize) {
     var direct = new CodeGenerator(Bind(_localUdtCompareProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_localUdtCompareProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -761,11 +749,9 @@ public sealed class BackendRuntimeCallTests {
   public void Execute_GivenOddSizedUdtCopy_ThenRoutedTailByteMatchesTheDirectEmitter(bool optimize) {
     var direct = new CodeGenerator(Bind(_udtCopyProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_udtCopyProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -780,8 +766,8 @@ public sealed class BackendRuntimeCallTests {
   [Test]
   public void Execute_GivenOddSizedUdtCopyUnderCpu386_ThenRoutedDwordAndTailMatchTheDirectEmitter() {
     var source = "$CPU 80386\n$OPTIMIZE SPEED\n" + _udtCopyProgram;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
@@ -803,9 +789,7 @@ public sealed class BackendRuntimeCallTests {
   [TestCase("$CPU 80386\n$OPTIMIZE OFF\n", false, TestName = "Copy_Given386OptimizeOff_ThenNoRepMovsd")]
   [TestCase("$CPU 80386\n$OPTIMIZE SPEED\n", true, TestName = "Copy_Given386Speed_ThenRepMovsd")]
   public void Emit_GivenUdtCopy_WhenTargetChanges_ThenDwordCopyIsGated(string directives, bool expected) {
-    var generator = new CodeGenerator(Bind(directives + _udtCopyProgram)) {
-      UseExperimentalBackend = true,
-    };
+    var generator = new CodeGenerator(Bind(directives + _udtCopyProgram));
 
     var image = generator.EmitExecutable();
 
@@ -836,11 +820,9 @@ public sealed class BackendRuntimeCallTests {
   public void Execute_GivenStaticArrayErase_ThenRoutedZeroFillMatchesTheDirectEmitter(bool optimize) {
     var direct = new CodeGenerator(Bind(_staticEraseProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_staticEraseProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());

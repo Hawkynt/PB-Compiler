@@ -41,7 +41,7 @@ public sealed class OptimizerTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
     var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+    var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.Multiple(() => {
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
@@ -229,7 +229,7 @@ public sealed class OptimizerTests {
     // proven to fit a word), and the comparison measures folding instead of the growth of inlining.
     static byte[] Compile(string source) {
       var model = BindModel(source);
-      var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+      var generator = new CodeGenerator(model);
       var exe = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
       return exe;
@@ -266,7 +266,7 @@ public sealed class OptimizerTests {
       var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
       var model = Binder.Bind(unit, Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-      var generator = new CodeGenerator(model) { UseExperimentalBackend = useBackend };
+      var generator = new CodeGenerator(model);
       if (optimize is { } enabled)
         generator.Optimize = enabled;
       var image = generator.EmitExecutable();
@@ -322,7 +322,7 @@ public sealed class OptimizerTests {
       PRINT d$; "|"; e$; "|"; f$
       """;
     var model = BindModel(source);
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     Assert.That(DosBoxRunner.Normalize(DosBoxRunner.Run(exe)), Is.EqualTo("aabbcc|aabbccaa|aabbcczz\n"));
@@ -335,7 +335,7 @@ public sealed class OptimizerTests {
     // arm (with its marker literal) never reaches the image
     static bool HasMarker(string source, bool optimize) {
       var model = BindModel(source);
-      var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = false };
+      var generator = new CodeGenerator(model) { Optimize = optimize};
       var exe = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
       var marker = System.Text.Encoding.ASCII.GetBytes("XDEADX");
@@ -555,7 +555,7 @@ public sealed class OptimizerTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+    var generator = new CodeGenerator(model);
     var image = generator.EmitExecutable();
 
     Assert.Multiple(() => {
@@ -632,22 +632,6 @@ public sealed class OptimizerTests {
   private static int CountMulBx(byte[] image) => CountPair(image, 0xF7, 0xE3);
 
   [Test]
-  public void Fuse_GivenAdjacentSameBoundForLoops_ThenMergedUnlessScalarCarry() {
-    // O0062 loop fusion: two adjacent FOR loops over the same counter and bounds, whose bodies are
-    // simple counter-indexed work, merge into one - even the b(i) = a(i)*2 same-index chain. A
-    // scalar carry (the second reads a scalar the first writes) blocks it.
-    static int Loops(SemanticModel m) => m.MainBody.Count(s => s is global::PowerBasic.Compiler.Syntax.Ast.ForStmt);
-    static SemanticModel Bound(string src) =>
-      Binder.Bind(Parser.Parse(Lexer.Tokenize(src, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    var fusible = Bound("DIM i AS INTEGER\nDIM a(0 TO 9) AS INTEGER, b(0 TO 9) AS INTEGER\nFOR i = 0 TO 9\na(i) = i\nNEXT i\nFOR i = 0 TO 9\nb(i) = a(i) * 2\nNEXT i\nEND");
-    var carry = Bound("DIM i AS INTEGER, s AS INTEGER\nDIM a(0 TO 9) AS INTEGER\nFOR i = 0 TO 9\ns = s + i\nNEXT i\nFOR i = 0 TO 9\na(i) = s + i\nNEXT i\nEND");
-    OptLoopFusion.Fuse(fusible);
-    OptLoopFusion.Fuse(carry);
-    Assert.That(Loops(fusible), Is.EqualTo(1), "two same-index-dependent FOR loops fuse into one");
-    Assert.That(Loops(carry), Is.EqualTo(2), "a scalar carry blocks fusion");
-  }
-
-  [Test]
   public void Emit_GivenAbsIntrinsic_WhenPb36_ThenBranchless() {
     // O0249: ABS on a 16-bit value is emitted branchless (cwd; xor ax,dx; sub ax,dx = 99 31 D0 29 D0)
     // under --optimize, bit-identical to the faithful test/JNS/NEG which the unoptimized build keeps.
@@ -660,8 +644,8 @@ public sealed class OptimizerTests {
     var src = "DIM x AS INTEGER, y AS INTEGER\nLINE INPUT z$\ny = VAL(z$)\nx = ABS(y)\nPRINT x\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(src, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var opt = new CodeGenerator(model) { UseExperimentalBackend = false }.EmitExecutable();
-    var noOpt = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false }.EmitExecutable();
+    var opt = new CodeGenerator(model).EmitExecutable();
+    var noOpt = new CodeGenerator(model) { Optimize = false}.EmitExecutable();
     Assert.That(HasBranchlessAbs(opt), Is.True, "optimized ABS is branchless cwd/xor/sub");
     Assert.That(HasBranchlessAbs(noOpt), Is.False, "the faithful build keeps the test/JNS/NEG form");
 
@@ -1075,8 +1059,8 @@ public sealed class OptimizerTests {
     const string src = "DIM n AS INTEGER, d AS INTEGER, q AS INTEGER, m AS INTEGER\nLINE INPUT a$\nn = VAL(a$)\nLINE INPUT b$\nd = VAL(b$)\nq = n \\ d\nm = n MOD d\nPRINT q; m\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(src, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var opt = new CodeGenerator(model) { UseExperimentalBackend = false }.EmitExecutable();
-    var noOpt = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false }.EmitExecutable();
+    var opt = new CodeGenerator(model).EmitExecutable();
+    var noOpt = new CodeGenerator(model) { Optimize = false}.EmitExecutable();
     static int Idivs(byte[] img) {
       var n = 0;
       for (var i = 0; i < img.Length - 1; ++i)
@@ -1134,8 +1118,8 @@ public sealed class OptimizerTests {
     const string three = "DIM s AS STRING, n AS LONG\nLINE INPUT s\nn = LEN(s) + LEN(s) + LEN(s)\nPRINT n\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(three, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var opt = new CodeGenerator(model) { UseExperimentalBackend = false }.EmitExecutable();
-    var noOpt = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false }.EmitExecutable();
+    var opt = new CodeGenerator(model).EmitExecutable();
+    var noOpt = new CodeGenerator(model) { Optimize = false}.EmitExecutable();
     Assert.That(opt.Length, Is.LessThan(noOpt.Length), "repeated LEN(s$) caches to one descriptor read");
   }
 
@@ -1178,8 +1162,8 @@ public sealed class OptimizerTests {
     const string source = "DIM a AS WORD, b AS WORD, f AS INTEGER\nINPUT a\nINPUT b\nf = (a < b)\nPRINT f\nEND";
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var optimized = new CodeGenerator(model) { UseExperimentalBackend = false }.EmitExecutable();
-    var plain = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false }.EmitExecutable();
+    var optimized = new CodeGenerator(model).EmitExecutable();
+    var plain = new CodeGenerator(model) { Optimize = false}.EmitExecutable();
     Assert.Multiple(() => {
       Assert.That(CountPair(optimized, 0x19, 0xC0), Is.GreaterThan(0), "SBB AX,AX materializes the unsigned-< truth value");
       Assert.That(CountPair(plain, 0x19, 0xC0), Is.Zero, "the unoptimized path keeps the MOV -1 / Jcc / MOV 0 branch");
@@ -1209,7 +1193,7 @@ public sealed class OptimizerTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model);
     generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return generator.DescribeImage().Procedures.Select(p => p.Name);
@@ -1224,7 +1208,7 @@ public sealed class OptimizerTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
     var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model);
     generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     return generator.DescribeImage().RuntimeLabels.Select(l => l.Name).ToList();
@@ -1336,7 +1320,7 @@ public sealed class OptimizerTests {
       var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
       var model = Binder.Bind(unit, Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-      var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+      var generator = new CodeGenerator(model);
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
       return (image, generator.BackendRoutedNames.ToList());
@@ -1369,7 +1353,7 @@ public sealed class OptimizerTests {
       var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
       var model = Binder.Bind(unit, Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-      var generator = new CodeGenerator(model) { UseExperimentalBackend = true };
+      var generator = new CodeGenerator(model);
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
       return (image, generator.BackendRoutedNames.ToList());
@@ -2419,13 +2403,15 @@ public sealed class OptimizerTests {
 
   [Test]
   public void Emit_GivenCompareWithParameterRightOperand_WhenPb36_ThenItIsNotStagedPerIteration() {
-    // i% > n% with n% a parameter: n% is either read straight into the compare (CMP r,[BP+4]) or loaded
-    // once and kept in a register (CMP r,r) - never staged into a register again on every iteration,
+    // i% > n% with n% a parameter: n% is read straight into the compare (CMP r,[BP+4]), loaded once
+    // and kept in a register, or passed in one - never staged into a register again on every iteration,
     // which is what an expression operand needs. Counted over the SUB, reads of the parameter cell.
     const string source = "$OPTIMIZE SPEED\nDECLARE SUB s(BYVAL n%)\ns 3\ns 5\nEND\nSUB s(BYVAL n%) NOINLINE\n  c% = 0\n  FOR i% = 1 TO 10\n    IF i% > n% THEN c% = c% + 1\n  NEXT i%\n  PRINT c%\nEND SUB";
     var code = ProcedureBytes(source, "s").ToArray();
-    int loads = 0, compares = 0;
+    int loads = 0, compares = 0, registerCompares = 0;
     for (var i = 0; i + 2 < code.Length; ++i) {
+      if (code[i] is 0x39 or 0x3B && code[i + 1] >= 0xC0)
+        ++registerCompares;                         // CMP r16,r16
       if (code[i + 2] != 0x04 || (code[i + 1] & 0xC7) != 0x46)
         continue;                                   // not [BP+4], the parameter's cell
       if (code[i] == 0x8B)
@@ -2433,7 +2419,10 @@ public sealed class OptimizerTests {
       else if (code[i] == 0x3B)
         ++compares;                                 // CMP r16,[BP+4]
     }
-    Assert.That(loads == 1 || (loads == 0 && compares > 0), Is.True,
+    // SPEED gives s the register convention (O0282), and then n% arrives in AX and never touches the
+    // frame at all - the compare is register against register
+    var arrivedInRegister = loads == 0 && compares == 0 && registerCompares > 0;
+    Assert.That(loads == 1 || (loads == 0 && compares > 0) || arrivedInRegister, Is.True,
       $"n% is kept in a register or read as a compare operand ({loads} loads, {compares} compares)");
   }
 
@@ -2960,7 +2949,7 @@ public sealed class OptimizerTests {
       """, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty);
     var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
@@ -2985,7 +2974,7 @@ public sealed class OptimizerTests {
       """;
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty);
     var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
@@ -3040,7 +3029,7 @@ public sealed class OptimizerTests {
       """, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = false };
+    var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty);
     var output = DosBoxRunner.Normalize(DosBoxRunner.Run(exe));
@@ -3294,34 +3283,6 @@ public sealed class OptimizerTests {
 
   #region O3 - common subexpression elimination
 
-  private static (int slots, System.Collections.Generic.Dictionary<PowerBasic.Compiler.Syntax.Ast.Expression, PowerBasic.Compiler.CodeGen.OptCommonSubexpr.CseMark> marks) AnalyzeCse(string source) {
-    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
-    Assert.That(model.Errors, Is.Empty);
-    var r = PowerBasic.Compiler.CodeGen.OptCommonSubexpr.Analyze(model.MainBody, model);
-    return (r.SlotCount, r.Marks);
-  }
-
-  [Test]
-  public void Cse_GivenRepeatedAddress_ThenOneSlotWithDefineAndUse() {
-    var (slots, marks) = AnalyzeCse("x% = 1\ny% = 2\na% = y% * 320 + x%\nb% = y% * 320 + x%\nEND");
-    Assert.That(slots, Is.EqualTo(1));
-    Assert.That(marks.Values.Count(m => m.IsDefine), Is.EqualTo(1));
-    Assert.That(marks.Values.Count(m => !m.IsDefine), Is.EqualTo(1));
-  }
-
-  [Test]
-  public void Cse_GivenWriteBetweenUses_ThenNotCached() {
-    var (slots, _) = AnalyzeCse("x% = 1\ny% = 2\na% = y% * 320\ny% = 9\nb% = y% * 320\nEND");
-    Assert.That(slots, Is.EqualTo(0), "the write to y% invalidates the subtree");
-  }
-
-  [Test]
-  public void Cse_GivenBarrierBetweenUses_ThenNotCached() {
-    var (slots, _) = AnalyzeCse("DECLARE SUB P\nx% = 1\na% = x% * 7\nP\nb% = x% * 7\nEND\nSUB P\nEND SUB");
-    Assert.That(slots, Is.EqualTo(0), "the CALL ends the straight-line run");
-  }
-
   [Test]
   public void Execute_GivenCseHeavyArithmetic_WhenPb36_ThenMatchesAndShrinks() {
     const string source = """
@@ -3347,45 +3308,6 @@ public sealed class OptimizerTests {
   #endregion
 
   #region O18 - interprocedural constant propagation
-
-  [Test]
-  public void Ipcp_GivenConstantArgEverywhere_ThenParamPropagated() {
-    const string source = """
-      DECLARE SUB P(BYVAL m%, BYVAL v%)
-      P 1, 10
-      P 1, 20
-      END
-      SUB P(BYVAL m%, BYVAL v%)
-        PRINT m%; v%
-      END SUB
-      """;
-    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
-    var ipcp = PowerBasic.Compiler.CodeGen.OptIpcp.Analyze(model);
-    var pSub = model.Procedures["P"];
-    Assert.Multiple(() => {
-      Assert.That(ipcp.ContainsKey(pSub.Parameters[0]), Is.True, "m% is always 1");
-      Assert.That(ipcp.ContainsKey(pSub.Parameters[1]), Is.False, "v% varies");
-    });
-  }
-
-  [Test]
-  public void Ipcp_GivenWrittenParam_ThenNotPropagated() {
-    const string source = """
-      DECLARE SUB P(BYVAL m%)
-      P 1
-      P 1
-      END
-      SUB P(BYVAL m%)
-        m% = m% + 1
-        PRINT m%
-      END SUB
-      """;
-    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
-    var ipcp = PowerBasic.Compiler.CodeGen.OptIpcp.Analyze(model);
-    Assert.That(ipcp, Is.Empty, "a written parameter is not constant-propagated");
-  }
 
   #endregion
 
@@ -3443,155 +3365,6 @@ public sealed class OptimizerTests {
   #endregion
 
   #region LICM - loop-invariant code motion ($OPTIMIZE SPEED)
-
-  /// <summary>
-  /// Parses and binds a source snippet, extracts the first FOR loop from the main
-  /// body, and runs AnalyzeLicm on its body with the given parameters.
-  /// </summary>
-  private static (int slots, int preheaderCount, int useMarks) RunLicmAnalysis(string source, bool checkedArithmetic = false) {
-    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
-    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
-    // find the first FOR loop
-    var loop = model.MainBody.OfType<PowerBasic.Compiler.Syntax.Ast.ForStmt>().FirstOrDefault();
-    Assert.That(loop, Is.Not.Null, "source must contain a FOR loop");
-    var name = (PowerBasic.Compiler.Syntax.Ast.NameExpr)loop!.Variable;
-    var counter = model.VariableBindings[name];
-    var r = PowerBasic.Compiler.CodeGen.OptCommonSubexpr.AnalyzeLicm(loop.Body, counter, 0, checkedArithmetic, model);
-    return (r.SlotCount, r.Preheader.Count, r.Marks.Values.Count(m => !m.IsDefine));
-  }
-
-  [Test]
-  public void Licm_GivenBodyWithIfBlock_WhenAnalyzed_ThenUnconditionalInvariantsStillHoist() {
-    // an IF in the body previously disabled LICM wholesale; the invariant k%*m% in the
-    // UNCONDITIONAL statement and in the IF condition must still hoist, while the write
-    // to a% inside the branch is honored by the write-set
-    const string source = """
-      k% = 7
-      m% = 13
-      FOR i% = 1 TO 10
-        b% = k% * m% + i%
-        IF k% * m% > i% THEN
-          a% = a% + 1
-        END IF
-      NEXT i%
-      END
-      """;
-    var (slots, preheader, uses) = RunLicmAnalysis(source);
-    Assert.Multiple(() => {
-      Assert.That(slots, Is.EqualTo(1), "k%*m% is invariant and unconditionally evaluated (statement + condition)");
-      Assert.That(preheader, Is.EqualTo(1));
-      Assert.That(uses, Is.EqualTo(1), "the IF-condition occurrence reloads the slot");
-    });
-  }
-
-  [Test]
-  public void Licm_GivenInvariantOnlyInsideBranch_WhenAnalyzed_ThenNotHoisted() {
-    // a value computed ONLY under the IF must not run unconditionally in the preheader
-    const string source = """
-      k% = 7
-      m% = 13
-      FOR i% = 1 TO 10
-        IF i% > 5 THEN
-          a% = k% * m% + a%
-        END IF
-      NEXT i%
-      END
-      """;
-    var (slots, _, _) = RunLicmAnalysis(source);
-    Assert.That(slots, Is.EqualTo(0), "branch-only expressions stay conditional");
-  }
-
-  [Test]
-  public void Licm_GivenBranchWritingOperand_WhenAnalyzed_ThenInvariantKilled() {
-    // k% is written inside the branch - k%*m% is NOT invariant even though the
-    // unconditional statement uses it
-    const string source = """
-      k% = 7
-      m% = 13
-      FOR i% = 1 TO 10
-        b% = k% * m% + i%
-        IF i% > 5 THEN
-          k% = k% + 1
-        END IF
-      NEXT i%
-      END
-      """;
-    var (slots, _, _) = RunLicmAnalysis(source);
-    Assert.That(slots, Is.EqualTo(0), "a conditional write to an operand kills the invariant");
-  }
-
-  [Test]
-  public void Licm_GivenInvariantMultiply_WhenAnalyzed_ThenOneSlotWithOnePreheaderAndOneUse() {
-    // k%*m% appears twice in the body; both k% and m% are not written in the body.
-    // Expected: 1 LICM slot, 1 preheader DEFINE (first occurrence), 1 USE (second).
-    // Use plain scalar targets (not array) to avoid array-CSE path interference.
-    const string source = """
-      k% = 7
-      m% = 13
-      FOR i% = 1 TO 10
-        a% = k% * m% + i%
-        b% = k% * m% - i%
-      NEXT i%
-      END
-      """;
-    var (slots, preheader, uses) = RunLicmAnalysis(source);
-    Assert.Multiple(() => {
-      Assert.That(slots, Is.EqualTo(1), "one invariant subexpression (k%*m%) should get one slot");
-      Assert.That(preheader, Is.EqualTo(1), "one preheader DEFINE (first body occurrence)");
-      Assert.That(uses, Is.EqualTo(1), "one USE mark (second body occurrence reloads the slot)");
-    });
-  }
-
-  [Test]
-  public void Licm_GivenVariantInput_WhenAnalyzed_ThenNoSlots() {
-    // k% IS written in the loop body (k% = k% + 1), so k%*m% is NOT invariant.
-    // AnalyzeLicm must find zero hoistable expressions.
-    const string source = """
-      k% = INP(&H60)
-      m% = INP(&H61)
-      DIM a%(1 TO 10)
-      FOR i% = 1 TO 10
-        k% = k% + 1
-        a%(i%) = k% * m% + i%
-      NEXT i%
-      END
-      """;
-    var (slots, _, _) = RunLicmAnalysis(source);
-    Assert.That(slots, Is.EqualTo(0), "k% is written in the body: k%*m% is NOT invariant, no LICM slot");
-  }
-
-  [Test]
-  public void Licm_GivenCounterInExpression_WhenAnalyzed_ThenNoSlots() {
-    // k%*i% reads the loop counter i%; the counter is always in the written set.
-    // The expression is NOT invariant and must not be hoisted.
-    const string source = """
-      k% = 7
-      FOR i% = 1 TO 10
-        a% = k% * i%
-      NEXT i%
-      END
-      """;
-    var (slots, _, _) = RunLicmAnalysis(source);
-    Assert.That(slots, Is.EqualTo(0), "k%*i% reads the loop counter: NOT invariant, no LICM slot");
-  }
-
-  [Test]
-  public void Licm_GivenCheckedArithmetic_WhenAnalyzed_ThenNoSlots() {
-    // under checked arithmetic ($ERROR NUMERIC ON) a multiply could trap;
-    // AnalyzeLicm must suppress LICM entirely (checkedArithmetic=true).
-    const string source = """
-      k% = 7
-      m% = 13
-      FOR i% = 1 TO 10
-        a% = k% * m% + i%
-        b% = k% * m% - i%
-      NEXT i%
-      END
-      """;
-    var (slots, _, _) = RunLicmAnalysis(source, checkedArithmetic: true);
-    Assert.That(slots, Is.EqualTo(0), "checkedArithmetic=true: LICM must be suppressed entirely");
-  }
 
   [Test]
   public void Emit_GivenSpeedOptimized_WhenInvariantMultiplyInLoop_ThenImageDiffersFromGeneric() {

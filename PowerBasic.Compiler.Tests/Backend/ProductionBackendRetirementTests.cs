@@ -15,23 +15,26 @@ public sealed class ProductionBackendRetirementTests {
       Dialect.Pb35);
 
     var generator = new CodeGenerator(model);
+    var image = generator.EmitExecutable();
 
     Assert.Multiple(() => {
-      Assert.That(generator.UseExperimentalBackend, Is.True);
-      Assert.That(generator.RequireBackend, Is.True);
+      Assert.That(image, Is.Not.Empty);
+      Assert.That(generator.Errors, Is.Empty);
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the IR back end compiled the program");
     });
   }
 
   [Test]
   public void CodeGenerator_PublicSurface_HasNoBackendRoutingSelector() {
     var properties = typeof(CodeGenerator).GetProperties(System.Reflection.BindingFlags.Public
-      | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static);
+      | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance
+      | System.Reflection.BindingFlags.Static);
 
     Assert.Multiple(() => {
       Assert.That(properties.Any(p => p.Name == "UseExperimentalBackend"), Is.False,
-        "production callers must not be able to reactivate the retired direct emitter");
+        "there is no second code generator to select");
       Assert.That(properties.Any(p => p.Name == "RequireBackend"), Is.False,
-        "mandatory IR routing is no longer a selectable production policy");
+        "IR routing is not a policy: a declined body is a compile error");
     });
   }
 

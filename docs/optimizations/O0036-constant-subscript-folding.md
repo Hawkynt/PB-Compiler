@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (static arrays, in-range compile-time subscripts, any rank) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Arrays.cs` — `TryFoldSubscripts` |
+| **Status** | ✅ Implemented (compile-time subscripts, any rank; a module-level array's element address is loaded as one `MOV reg, OFFSET`) |
+| **Stage** | IR middle end (folding) + x86 back end (instruction selection) |
+| **Source** | index arithmetic folded by `Ir/Passes/InstCombine.cs` / `Ir/Passes/Sccp.cs`; `Backend/InstructionSelector.cs` — `TryGepDisplacement`, `SelectGlobalGep`, `PointerMemory`; bounds checks decided by `Ir/Passes/RangeCheckElim.cs` |
 | **Gate** | `--optimize` |
 | **Related** | [O0004](O0004-strength-reduction.md), [O0016](O0016-value-fact-analysis.md), [O0030](O0030-induction-variable-strength-reduction.md) |
 
@@ -16,6 +16,14 @@ constant too. The access becomes a bare displacement inside the memory operand:
 the whole `MOV AX,k / SHL AX,1 / MOV BX,AX` scale-and-add sequence disappears,
 along with the `PUSH`/`POP` pair each extra dimension costs and the staging
 around a store.
+
+In the IR the subscript arithmetic is ordinary integer arithmetic, so constant
+folding leaves an element `gep` with a constant byte offset. Instruction
+selection turns that offset into a displacement (`TryGepDisplacement`): through
+a base register — a frame array, or a descriptor's data pointer — it becomes
+`[base+disp]` in the access itself (`PointerMemory`); for a module-level array
+`SelectGlobalGep` loads the whole address as one `MOV reg, OFFSET a+disp` and the
+access goes through that register.
 
 ## Sample
 
@@ -50,6 +58,10 @@ g%(2, 3) = a%(7)
     mov     [g+22], ax                ; (2,3) -> element 11 -> +22 bytes
 ```
 
+(For these module-level arrays the current back end forms each address as
+`MOV reg, OFFSET a+14` and accesses `[reg]`; the scale-and-add sequence is gone
+either way.)
+
 ## Equivalent BASIC
 
 ```basic
@@ -59,9 +71,9 @@ aFlat%(7) = 1      ' but with the index resolved at compile time
 
 ## Why it is safe
 
-The fold applies only to **static** arrays, whose base and bounds are fixed at
-compile time, and only when the constant index is **in range**: an out-of-range
-constant keeps the ordinary path, where `$ERROR BOUNDS` raises Error 9 and the
-unchecked 16-bit address arithmetic wraps exactly as before. (A constant index
-outside the declared bounds is in any case already a compile error in genuine
-PBC for the common shapes.)
+Only the address arithmetic is folded; the access itself is unchanged. Under
+`$ERROR BOUNDS` the check is an explicit compare and a branch to the raise in
+the IR: a constant index proven in range lets `RangeCheckElim`/SCCP remove it,
+and an out-of-range constant makes the raise unconditional, so Error 9 is still
+raised. (A constant index outside the declared bounds is in any case already a
+compile error in genuine PBC for the common shapes.)

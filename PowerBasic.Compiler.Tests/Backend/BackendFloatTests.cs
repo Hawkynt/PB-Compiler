@@ -112,8 +112,8 @@ public sealed class BackendFloatTests {
 
       PRINT Walk%
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -247,8 +247,8 @@ public sealed class BackendFloatTests {
         Echo! = value!
       END FUNCTION
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = false};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
@@ -295,7 +295,7 @@ public sealed class BackendFloatTests {
 
       PRINT Scaled%(4)
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var image = routed.EmitExecutable();
 
@@ -336,8 +336,8 @@ public sealed class BackendFloatTests {
     Assert.That(module!.Functions.SelectMany(f => f.AllInstructions).OfType<IrSelect>().Any(s => s.Type.IsFloat),
       "the program has to have produced a float select for this to be measuring one");
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 

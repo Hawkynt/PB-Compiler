@@ -36,8 +36,8 @@ public sealed class BackendOverflowTests {
       PRINT "missed"
       END
       """;
-    var direct = new CodeGenerator(Bind(source)) { UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source));
+    var routed = new CodeGenerator(Bind(source));
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());

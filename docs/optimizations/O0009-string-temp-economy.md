@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (closed — literal folding, self-append in place, chain dead-temp reuse) |
-| **Stage** | Emitter + string runtime |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` (`TryEmitFolded` string arm), `Runtime/DosRuntime` — `rt_strcatlit`, `rt_strcatvar` |
+| **Stage** | IR middle end + string runtime |
+| **Source** | `Ir/Passes/StringConstantFold.cs` — `FoldConcat`; `Ir/Passes/StringAppendInPlace.cs`; `Runtime/DosRuntime.Strings.cs` — `rt_strcatlit`, `rt_strcatvar` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF83.BAS`, `DIFF94.BAS`, `DIFF95.BAS`, `DIFF97.BAS` |
 | **Related** | [O0011](O0011-literal-overlap-pooling.md), [O0024](O0024-multi-concat.md) |
@@ -16,7 +16,12 @@ PB builds a fresh heap temp for every string expression node.
 
 **This page covers literal concat folding**: `+`/`&` over literals and string
 equates folds into one pooled literal at compile time, so no temp exists at run
-time at all. The `ConstantFolder` also folds `&` for string equates.
+time at all. In the IR a concatenation is a call to `rt_str_concat`;
+`StringConstantFold.FoldConcat` replaces a call whose two operands are both
+literal producers with one producer of the joined bytes and erases both
+originals, so neither literal is ever made. It repeats to a fixpoint per
+function, so a left-leaning chain `"<" + "html" + ">"` collapses one step per
+sweep. The semantic `ConstantFolder` also folds `&` for string equates.
 
 The in-place and handle-reuse forms each have their own entry (see *Split into*
 above).

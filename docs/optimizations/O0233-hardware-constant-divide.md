@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Expressions.cs` (32-bit divide path) |
+| **Status** | 🟡 Partial — the inline form is not implemented on the IR path; the 386 build of `rt_ldiv`/`rt_lmod` divides in hardware for every divisor |
+| **Stage** | x86 back end (instruction selection) + runtime |
+| **Source** | `Backend/InstructionSelector.cs` — `SelectWideDivide` (always calls `rt_ldiv`/`rt_lmod`); `Runtime/DosRuntime.Math.cs` — `EmitLongDivide` |
 | **Gate** | `--optimize` + `$CPU 80386`, constant divisor with \|d\| ≥ 2 |
 | **Verified by** | `tests/diff/DIFF71.BAS` |
 | **Split from** | [C0001](C0001-386-codegen.md) |
@@ -15,6 +15,14 @@ A `LONG` divide or modulo by a compile-time-constant divisor of magnitude ≥ 2
 uses the hardware `IDIV`/`DIV` instead of the `rt_ldiv`/`rt_lmod` runtime
 routines. The hardware truncates toward zero and takes the dividend's sign for
 the remainder — which is exactly PB's `\` and `MOD`.
+
+Not implemented inline on the IR path; the syntax-level version was retired with
+the direct emitter. The instruction selector lowers every 32-bit `SDiv`/`SRem` to
+a call to `rt_ldiv`/`rt_lmod`. On an optimized 386+ target those routines take a
+hardware path themselves: after the divide-by-zero check they load the operands
+into EAX/EBX and run `CDQ` + `IDIV EBX`, falling back to the word-at-a-time
+routine only for `MININT \ -1`. The call and the operand staging remain, so the
+"with" listing below describes the planned inline form.
 
 ## Sample
 

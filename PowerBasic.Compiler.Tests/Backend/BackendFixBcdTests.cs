@@ -23,7 +23,7 @@ public sealed class BackendFixBcdTests {
   private static (string Output, IEnumerable<string> Routed) Run(string source, bool routed) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
@@ -228,7 +228,7 @@ public sealed class BackendFixBcdTests {
       var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
         Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-      var cg = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = routed };
+      var cg = new CodeGenerator(model) { Optimize = false};
       var image = cg.EmitExecutable();
       Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
       return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
@@ -276,7 +276,7 @@ public sealed class BackendFixBcdTests {
       var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36),
         Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-      var cg = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+      var cg = new CodeGenerator(model) { Optimize = optimize};
       var image = cg.EmitExecutable();
       Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
       return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());

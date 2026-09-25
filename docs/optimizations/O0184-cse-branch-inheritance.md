@@ -3,16 +3,17 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Pre-emission analysis + emitter |
-| **Source** | `CodeGen/OptCommonSubexpr.cs` |
-| **Gate** | `--optimize`; barrier-free condition |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/Gvn.cs` — dominator-scoped value table; loads keyed by their Memory SSA version (`Ir/Analysis/IrMemorySsa.cs`) |
+| **Gate** | `--optimize` |
 | **Split from** | [O0003](O0003-common-subexpression-elimination.md) |
 
 ## What it is
 
-The live value cache from before an `IF`/`SELECT` is **inherited** into the
-arms, which the condition dominates. A value computed before the branch and
-recomputed inside it reloads the slot instead.
+A value computed before an `IF`/`SELECT` is reused in the arms, which the block
+before the branch dominates. `Gvn` walks the dominator tree with a scoped value
+table, so the recomputation inside the arm is replaced by the earlier SSA value
+instead of being evaluated again.
 
 The `y*320+x` "compute, then reuse inside a branch" pattern is the corpus's most
 common shape for this.
@@ -35,8 +36,13 @@ IF flag% THEN o% = y% * 320 + x% + 1
     inc     ax
 ```
 
+The listing shows the shape; where the reused value lives (a register or a
+frame slot) is now the register allocator's decision.
+
 ## Why it is safe
 
-The condition must be barrier-free, so nothing between the define and the arm
-can write the inputs. A reload only ever follows a define from identical inputs,
-so any `$ERROR` trap fires exactly where the un-CSE'd occurrence would have.
+Two instructions are congruent only when they apply the same operation to the
+same SSA operands, and a load only when Memory SSA shows both reads see the same
+memory version — so nothing between the two can have written the inputs. The
+leader dominates the replaced occurrence, so it has already run on every path
+that reaches the arm. Stores and calls with side effects are never numbered.

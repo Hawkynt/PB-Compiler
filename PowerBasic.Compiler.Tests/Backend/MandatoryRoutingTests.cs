@@ -52,8 +52,6 @@ public sealed class MandatoryRoutingTests {
       return [];   // rejected by the front end; it never reaches the routing and is nobody's coverage
     var generator = new CodeGenerator(model) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
-      RequireBackend = true,
     };
     generator.EmitExecutable();
     return [.. generator.Errors.Select(e => e.Message).Where(m => m.Contains("routing is mandatory", StringComparison.Ordinal))];

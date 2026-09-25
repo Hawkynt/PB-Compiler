@@ -90,72 +90,7 @@ public sealed class CallingConventionTests {
     Assert.That(Run(source), Is.EqualTo(" 36\n"));
   }
 
-  // ---- $OPTIMIZE SPEED internal register parameter passing (OptRegParm) -----
-
-  private static SemanticModel BindPb36(string source) {
-    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
-    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    return model;
-  }
-
-  [Test]
-  public void RegParm_GivenWordParamProcWeOwn_WhenApplied_ThenConvertedToRegisterConvention() {
-    var model = BindPb36("""
-      DECLARE FUNCTION addw(BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-      PRINT addw(2, 3)
-      FUNCTION addw(BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-        addw = a + b
-      END FUNCTION
-      """);
-    OptRegParm.Apply(model);
-    Assert.That(model.Procedures["addw"].CallConv, Is.EqualTo(CallConvention.Watcall),
-      "an in-module word-parameter procedure should be lifted to the register convention");
-  }
-
-  [Test]
-  public void RegParm_GivenLongParam_WhenApplied_ThenStaysStackConvention() {
-    var model = BindPb36("""
-      DECLARE FUNCTION f(BYVAL x AS LONG) AS LONG
-      PRINT f(1)
-      FUNCTION f(BYVAL x AS LONG) AS LONG
-        f = x
-      END FUNCTION
-      """);
-    OptRegParm.Apply(model);
-    Assert.That(model.Procedures["f"].CallConv, Is.EqualTo(CallConvention.Basic),
-      "a non-word parameter is outside the common-case register model - keep the stack convention");
-  }
-
-  [Test]
-  public void RegParm_GivenProcedureAddressTaken_WhenApplied_ThenDisabledWholesale() {
-    var model = BindPb36("""
-      DECLARE FUNCTION addw(BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-      DIM p AS INTEGER
-      p = CODEPTR(addw)
-      PRINT addw(2, 3)
-      FUNCTION addw(BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-        addw = a + b
-      END FUNCTION
-      """);
-    OptRegParm.Apply(model);
-    Assert.That(model.Procedures["addw"].CallConv, Is.EqualTo(CallConvention.Basic),
-      "a taken address means an opaque indirect call may exist - register passing must be disabled");
-  }
-
-  [Test]
-  public void RegParm_GivenExplicitConvention_WhenApplied_ThenLeftUntouched() {
-    var model = BindPb36("""
-      DECLARE FUNCTION g CDECL ALIAS "_g" (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-      PRINT g(2, 3)
-      FUNCTION g CDECL ALIAS "_g" (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-        g = a + b
-      END FUNCTION
-      """);
-    OptRegParm.Apply(model);
-    Assert.That(model.Procedures["g"].CallConv, Is.EqualTo(CallConvention.Cdecl),
-      "an explicitly declared convention must never be overridden");
-  }
+  // ---- $OPTIMIZE SPEED internal register parameter passing (O0282) --------
 
   private static string RunOptSpeed(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
@@ -204,7 +139,7 @@ public sealed class CallingConventionTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model);
     return (generator, generator.EmitExecutable());
   }
 

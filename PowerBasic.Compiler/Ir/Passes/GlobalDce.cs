@@ -46,14 +46,14 @@ public static class GlobalDce {
     return removed;
   }
 
-  private static bool IsEntry(IrFunction function) => function.Name.Equals("main", System.StringComparison.OrdinalIgnoreCase);
+  internal static bool IsEntry(IrFunction function) => function.Name.Equals("main", System.StringComparison.OrdinalIgnoreCase);
 
   /// <summary>
   /// The procedures a far entry thunk names. <see cref="IrFarEntry"/> carries its target as a property,
   /// not an operand, so the target has no recorded user - and a lambda reached only through a delegate
   /// looked unreferenced and was deleted, leaving the thunk jumping to a label nothing bound.
   /// </summary>
-  private static HashSet<IrFunction> FarEntryTargets(IrModule module)
+  internal static HashSet<IrFunction> FarEntryTargets(IrModule module)
     => module.Functions.Where(function => !function.IsDeclaration)
       .SelectMany(function => function.AllInstructions)
       .SelectMany(instruction => instruction.Operands)

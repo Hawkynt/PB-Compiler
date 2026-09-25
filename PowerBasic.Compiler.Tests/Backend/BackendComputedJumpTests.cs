@@ -36,7 +36,7 @@ public sealed class BackendComputedJumpTests {
   }
 
   private static (string Output, IEnumerable<string> Routed) Run(string source, bool optimize, bool routed) {
-    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), generator.BackendRoutedNames.ToList());

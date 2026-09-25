@@ -54,7 +54,7 @@ public sealed class BackendByteResultTests {
   private static (string Output, IEnumerable<string> Routed) Run(bool routed, bool optimize) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(_source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), generator.BackendRoutedNames.ToList());

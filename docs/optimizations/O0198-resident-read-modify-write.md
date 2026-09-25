@@ -3,17 +3,21 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `TryEmitResidentReadModifyWrite` |
+| **Stage** | x86 back end (peephole + register allocation) |
+| **Source** | `Backend/Peephole.cs` — `FoldMemorySources`; `Backend/CopyCoalescer.cs` (run by `Backend/LinearScanAllocator.cs`) |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
-| **Verified by** | scenario `AccumulateOverArrayIsHandQuality` |
+| **Verified by** | scenario `AccumulateOverArrayIsHandQuality`, `BackendResidencyTests` |
 | **Split from** | [O0005](O0005-register-residency.md) |
 
 ## What it is
 
-Even with an accumulator resident in DI, the naive emission of `acc = acc + a(i)`
-still routes through the accumulator register: load DI into AX, add, copy back.
-Targeting the resident register **directly** removes both moves.
+Even with an accumulator resident in a register, the naive selection of
+`acc = acc + a(i)` still stages through a fresh register: the two-address `ADD`
+starts with a copy of the accumulator, and the element is loaded into a register
+of its own. Two back-end steps remove both. `Peephole.FoldMemorySources` turns
+`MOV v,[n] / ADD d,v` into `ADD d,[n]`, and the copy coalescer merges the
+accumulator's copy with its loop-carried value, so the add targets the resident
+register **directly**.
 
 This is the last gap between the generated accumulate loop and hand-written
 assembly.
@@ -53,6 +57,7 @@ operand, the whole body is:
 
 ## Why it is safe
 
-The rewrite applies only when the target of the assignment *is* the resident
-register's variable and the right-hand side is that variable combined with one
-memory operand — the same value, computed in place.
+The memory fold applies only when the loaded value is defined and read by those
+two instructions alone and nothing between them can change the cell or its
+address. The coalescer merges a copy's two registers only when no definition of
+either lands where the other is still live — the same value, computed in place.

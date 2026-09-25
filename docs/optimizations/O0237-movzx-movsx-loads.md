@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (2026-07) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Places.cs` |
+| **Status** | ⬜ Not implemented on the IR path |
+| **Stage** | x86 back end (instruction selection, planned) |
+| **Source** | None. `Backend/InstructionSelector.cs` widens a byte with `XOR AH,AH` / `CBW` on every CPU; `MOVZX`/`MOVSX` are not in the back end's `MOpcode` set (`Backend/MachineIr.cs`) |
 | **Gate** | `--optimize` + `$CPU 80386` |
 | **Split from** | [C0001](C0001-386-codegen.md) |
 
@@ -12,6 +12,10 @@
 
 A `BYTE`/`SBYTE` cell read widens in **one** instruction instead of a load plus
 a separate extension.
+
+Not implemented on the IR path; the syntax-level version was retired with the
+direct emitter. The back end stages a byte through AL and extends it with
+`XOR AH,AH` or `CBW` regardless of `$CPU`.
 
 ## Sample
 

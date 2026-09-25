@@ -220,6 +220,10 @@ public static class IrMiddleEndPipeline {
     // to callers that are not here, and a linked object may call one by name.
     if (optimize && module.OwnsProcedureAbi)
       GlobalDce.Run(module, removeGlobals: false);
+
+    // O0282: with the call graph final, owned procedures may take their words in registers
+    if (optimizeForSpeed)
+      PrivateCallingConvention.Run(module);
   }
 
   /// <summary>

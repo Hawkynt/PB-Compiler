@@ -141,7 +141,7 @@ public sealed class BackendPortOutTests {
     static (string Output, IEnumerable<string> Routed) Compile(string text, bool optimize, bool routed) {
       var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(text, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-      var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+      var generator = new CodeGenerator(model) { Optimize = optimize};
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
       return (Cpu8086.Run(image).Output.Trim(), generator.BackendRoutedNames.ToList());

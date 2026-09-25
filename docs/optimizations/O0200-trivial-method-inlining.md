@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (`pb36` object model) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/OptInlining.cs` |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/Inliner.cs` — `Run`, `IsInlinable`; methods reach it as ordinary procedures with a BYREF `THIS` (`Semantics/Binder.cs`) |
 | **Gate** | `--optimize` |
 | **Split from** | [O0006](O0006-inlining.md) |
 
@@ -46,7 +46,9 @@ purged from the image once every call site is inlined
 
 ## Why it is safe
 
-The inline gate is the leaf gate of [O0006](O0006-inlining.md): BASIC
-convention, not `STATIC`, no `ON ERROR`, no capture, and a body of a few plain
-scalar assignments. `THIS` is passed BYREF like any other reference parameter, so
-mutation through it behaves identically.
+The inline gate is the IR inliner's gate from [O0006](O0006-inlining.md): a
+defined callee, not `NOINLINE`, no inline assembly, not a direct self-call, no
+armed error handler in either caller or callee, and a body within the
+instruction budget (smaller under `$OPTIMIZE SIZE`, larger under `SPEED`). `THIS`
+is passed BYREF like any other reference parameter, so mutation through it
+behaves identically.

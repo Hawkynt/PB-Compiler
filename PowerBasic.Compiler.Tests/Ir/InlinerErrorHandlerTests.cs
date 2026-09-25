@@ -53,7 +53,7 @@ public sealed class InlinerErrorHandlerTests {
   /// <summary>And the whole program still builds and runs - which is what the crash prevented.</summary>
   [Test]
   public void Emit_GivenACalleeWithAnArmedHandler_ThenTheProgramStillBuildsAndRuns() {
-    var cg = new CodeGenerator(Bind(_handlerInAProcedure)) { Optimize = true, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(Bind(_handlerInAProcedure)) { Optimize = true};
     var image = cg.EmitExecutable();
 
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));

@@ -80,7 +80,7 @@ public sealed partial class CodeGenerator {
       .ToList();
 
     var dataSlots = this._variableSlots
-      .Where(kv => kv.Value.IsBound && (this._deadGlobals is null || !this._deadGlobals.Contains(kv.Key)))
+      .Where(kv => kv.Value.IsBound)
       .Select(kv => new ListingSymbol(kv.Key.Name, kv.Value.Position, Math.Max(kv.Key.Type.Size, 1)))
       .OrderBy(s => s.Offset)
       .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)

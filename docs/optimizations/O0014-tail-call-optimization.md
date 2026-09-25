@@ -2,27 +2,33 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (self-call and general cross-procedure `SUB` tail calls) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.cs`, `CodeGen/CodeGenerator.Procs.cs` |
+| **Status** | 🟡 Partial — self tail calls are implemented; general cross-procedure tail calls ([O0213](O0213-cross-procedure-tail-call.md)) are not implemented on the IR path |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/TailRecursion.cs` — `Run`, `TailSelfCall`; registered as `tailrec` in `IrMiddleEndPipeline.Standard()` |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF29.BAS` (self-recursion + blocked twins), `DIFF87.BAS` (mutual recursion, differing argument counts, a deliberately non-tail call) |
-| **IR** | ✅ `Ir/Passes/TailRecursion.cs` — the self-call half, registered as `tailrec` in `IrPassManager.Standard()`. A new entry block is pushed in front of the old one, which becomes a loop header; each parameter turns into a phi taking the original argument on the way in and the call's argument on the way round, and the call plus its return become a branch back. Not a size or speed optimization: without it a deep recursion overflows, which is why the routed path had to earn this one rather than inherit it (`BackendTailRecursionTests`) |
+| **Verified by** | `tests/diff/DIFF29.BAS` (self-recursion + blocked twins), `DIFF87.BAS` (mutual recursion, differing argument counts, a deliberately non-tail call), `BackendTailRecursionTests` |
 | **Related** | [O0006](O0006-inlining.md), [O0070](O0070-leaf-frame-elision.md) |
 | **Split into** | [O0213](O0213-cross-procedure-tail-call.md) |
 
 ## What it is
 
-**This page covers the self-call.** A self-call in tail position — the last
-statement of the body, or of a trailing `IF`/`SELECT` arm chain — rewrites its
-parameter slots in place and jumps back to the frame entry, re-zeroing locals
-exactly as a fresh invocation would.
+**This page covers the self-call.** A self-call in tail position — nothing
+between it and the return, and the return passing on the call's own result —
+becomes a loop. `TailRecursion` pushes a new entry block in front of the old
+one, which becomes a loop header; each parameter turns into a phi taking the
+original argument on the way in and the call's argument on the way round, and
+the call plus its return become a branch back to the header. It is not a size
+or speed optimization: without it a deep recursion overflows the stack.
 
 Recursion then runs in **constant stack space**: a 60 000-deep tail recursion
 completes where the genuine compiler's default 2 KiB stack dies at about 170
 frames.
 
-The cross-procedure form is [O0213](O0213-cross-procedure-tail-call.md).
+The cross-procedure form is [O0213](O0213-cross-procedure-tail-call.md), and
+it is not implemented on the IR path; the syntax-level version was retired with
+the direct emitter. Mutual recursion still runs in constant stack when the
+inliner first turns `A calls B calls A` into a self-call, which `tailrec` then
+rewrites.
 
 ## Sample
 
@@ -80,11 +86,9 @@ END SUB
 
 ## Why it is safe
 
-Conservative gates on both shapes: every parameter a small (≤ 4-byte) `BYVAL`
-non-float scalar, numeric-only locals (no string/FLEX cleanup pending), no
-`ON ERROR`, no `GOSUB`, a stack callee-cleans convention (not `CDECL`, not a
-register convention), and no capturing-lambda environment. The general shape
-additionally requires B to be a defined in-module `SUB` — a known local jump
-target — and is **not** applied to `FUNCTION`s: a function's result-load
-epilogue, and a discarded result's `StrFree`/FPU pop, must still run, so those
-fall back to an ordinary `CALL`.
+The pass declines a call that is not in tail position — anything between it
+and the return, or a return of some other value, means the frame is still
+needed. It declines a whole function if any alloca's address escapes, because
+reusing one frame is only equivalent when no level can still hold a pointer
+into the one before it. A function with an armed error handler or inline
+assembly is never touched.

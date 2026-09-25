@@ -3,16 +3,19 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Expressions.cs` |
+| **Stage** | x86 back end (peephole) |
+| **Source** | `Backend/SuperoptimizedPeepholes.cs` (register `ADD`/`SUB` ±1); `Backend/Peephole.cs` — `FoldReadModifyWrites`, `UnitStep` (memory cell); `Backend/PostRegisterAllocationPeepholes.cs` — `TryStepInPlace` (`LEA r,[r±1]`) |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF46.BAS` |
 | **Split from** | [O0008](O0008-peephole-zero-idiom.md) |
 
 ## What it is
 
-An add or subtract of exactly 1 — modular or checked — becomes `INC` or `DEC`:
-one byte instead of three.
+An add or subtract of exactly 1 becomes `INC` or `DEC`: one byte instead of
+three. The register form comes from `SuperoptimizedPeepholes`, whose catalog is
+proved over all 65,536 word inputs at startup; `Peephole` does the same for a
+read-modify-write of a memory cell, and the post-allocation peephole for a
+pointer stepped by one with `LEA`.
 
 ## Sample
 
@@ -35,12 +38,12 @@ n% = n% + 1
 
 ## Why it is safe
 
-Two flag facts make the substitution exact:
-
-- `INC`/`DEC` **do** set OF, so the `$ERROR OVERFLOW` `JNO` guard is preserved —
-  this is the reason the rewrite is legal under checked arithmetic at all;
-- they leave **CF** alone, which the add/sub paths never read, so nothing
-  downstream can observe the difference.
+The value written is identical, and `INC`/`DEC` differ from `ADD`/`SUB` only in
+the flags (they leave **CF** alone). Every rewrite therefore requires the flags
+to be dead after the instruction (`MachineFlags.DeadAfter`), so nothing
+downstream can observe the difference. The `$ERROR OVERFLOW` trap does not read
+OF on this path — the IR lowering tests the operands' and result's signs
+explicitly — so checked arithmetic is covered by the same rule.
 
 ## See also
 

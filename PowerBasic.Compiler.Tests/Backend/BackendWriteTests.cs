@@ -54,7 +54,7 @@ public sealed class BackendWriteTests {
   }
 
   private static string Run(string source, bool routed, bool optimize) {
-    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     if (routed)
@@ -103,7 +103,7 @@ public sealed class BackendWriteTests {
       """;
 
     string Written(bool routed) {
-      var generator = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+      var generator = new CodeGenerator(Bind(source)) { Optimize = true};
       var image = generator.EmitExecutable();
       Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
       if (routed)

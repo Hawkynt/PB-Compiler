@@ -133,8 +133,8 @@ public sealed class BackendPhiSwapTests {
       DATA 3, 8
       """;
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 

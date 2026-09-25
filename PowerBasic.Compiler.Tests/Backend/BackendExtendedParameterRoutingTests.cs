@@ -33,7 +33,7 @@ public sealed class BackendExtendedParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Procedure_GivenTwoExtParametersAndExtResult_ThenRoutedDefinitionMatchesDirectExecution(bool optimize) {
-    var routed = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind()) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
     Assert.Multiple(() => {
@@ -41,7 +41,7 @@ public sealed class BackendExtendedParameterRoutingTests {
       Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the EXT caller did not route");
     });
 
-    var direct = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = false };
+    var direct = new CodeGenerator(Bind()) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
 

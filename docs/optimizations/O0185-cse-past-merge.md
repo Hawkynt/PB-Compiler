@@ -3,19 +3,20 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Pre-emission analysis |
-| **Source** | `CodeGen/OptCommonSubexpr.cs` — `RetainPastMerge`, `IsRetainableBranch`, `CollectWrites` |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/Gvn.cs` (after `Ir/Passes/Mem2Reg.cs` has put the scalars in SSA form) — no pass of its own |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF67.BAS` (IF), `DIFF68.BAS` (`SELECT CASE`) |
-| **IR** | ✅ Falls out of SSA + `Gvn` — no pass of its own. The direct tier needs `RetainPastMerge` and `CollectWrites` to PROVE that no arm of the branch overwrote an input; in SSA that proof is the representation, because an operand still being the same SSA value IS the absence of an intervening store. The block before the branch dominates the merge, so GVN's dominator-scoped table still holds the leader there. Verified by `CseShapeTests` |
+| **Verified by** | `tests/diff/DIFF67.BAS` (IF), `DIFF68.BAS` (`SELECT CASE`), `CseShapeTests` |
 | **Split from** | [O0003](O0003-common-subexpression-elimination.md) |
 
 ## What it is
 
-A cached value normally dies at a control-flow merge, because either arm might
-have written its inputs. `RetainPastMerge` keeps the entry alive **through** the
-join when no branch can have overwritten those inputs — so a value computed
-before an `IF` and reused *after* it reloads as well.
+A value computed before an `IF` and recomputed *after* it is reused across the
+join when no arm can have changed its inputs. There is no dedicated
+bookkeeping for this: in SSA an operand that is still the same SSA value after
+the merge *is* the proof that no arm overwrote it, and the block before the
+branch dominates the merge, so `Gvn`'s dominator-scoped table still holds the
+leader there.
 
 ## Sample
 
@@ -28,10 +29,11 @@ b% = y% * 320 + x%           ' still valid: neither arm wrote x% or y%
 
 ## Why it is safe
 
-Sound only when every arm is a flat, call-free straight line
-(`IsRetainableBranch`), so `CollectWrites` captures the exact write set. Nested
-control flow or a call falls back to the conservative clear of the whole cache.
+If an arm does write an input, the merge gets a phi for it and the later
+occurrence has a different operand, so it is not congruent. Loads are matched
+only when Memory SSA gives both the same memory version, so a store or call in
+an arm that may touch the cell keeps the second read.
 
-The same treatment covers `SELECT CASE` joins (barrier-free subject and
-selectors), where a value flows into the arms and past the merge exactly as for
-an `IF`.
+The same holds for `SELECT CASE` joins: the block before the dispatch dominates
+the arms and the merge, so a value flows into the arms and past the merge
+exactly as for an `IF`.

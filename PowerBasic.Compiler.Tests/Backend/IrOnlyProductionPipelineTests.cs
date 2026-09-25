@@ -30,7 +30,6 @@ public sealed class IrOnlyProductionPipelineTests {
       END FUNCTION
       """)) {
       Optimize = true,
-      UseExperimentalBackend = false,
     };
 
     var image = generator.EmitExecutable();
@@ -53,7 +52,6 @@ public sealed class IrOnlyProductionPipelineTests {
       END FUNCTION
       """, "UNIT.BAS")) {
       Optimize = true,
-      UseExperimentalBackend = false,
     };
 
     var unit = generator.EmitUnit("UNIT");

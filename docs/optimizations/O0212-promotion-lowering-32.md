@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (2026-08) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Expressions.cs` (32-bit promotion path), `StoreFoldedPromoted` |
-| **Gate** | `--optimize` |
+| **Stage** | IR middle end (runs in the legalization pipeline too) |
+| **Source** | `Ir/Passes/IntegerRecovery.cs` — `TryRecover`, `FitsSigned` (ranges from `Ir/Analysis/IrRangeAnalysis.cs`); scheduled by `Ir/Passes/IrMiddleEndPipeline.cs` in both `Legalize` and `Standard` |
+| **Gate** | none — the native build always enables `recoverIntegerArithmetic` |
 | **Verified by** | `tests/diff/DIFF113.BAS`, scenario `LongArithmeticStaysOffTheFpu` |
 | **Split from** | [O0013](O0013-promotion-lowering.md) (which is now the 16-bit form) |
 
@@ -15,13 +15,14 @@
 plus a memory staging cell at each end — eleven instructions and two round trips
 for what the integer ALU does in two.
 
-The 16-bit form is unconditionally legal because a 1- or 2-byte store **wraps**.
-A 4-byte store does **not**: an out-of-range value comes back as the x87's
-integer-indefinite pattern `8000_0000h`. So the 32-bit form fires when the value
-provably cannot leave the destination's range — plus one rescued shape, a single
-`+`/`-` over exactly-representable operands, guarded by three instructions,
-because the ALU's overflow flag says precisely when the true 33-bit result left
-the range.
+`IntegerRecovery` rewrites a float tree that is converted back into an integer
+(`fptosi`) into the same tree of integer `add`/`sub`/`mul` when every leaf is an
+integer of the destination's width, a narrower integer (widened first, so
+`L& = A% * B%` stays exact), a wider integer that `IrRangeAnalysis` proves fits
+the destination, or a float constant that is an exact integer. The result wraps
+modulo 2³², which is what genuine PBC 3.50 stores for a 4-byte `+`/`-`
+(`DIFF113.BAS`: `2147483000 + 1000` stores `-2147483296`, not the x87's
+`8000_0000h`).
 
 ## Sample
 
@@ -45,10 +46,15 @@ Ok:
     mov     [total+2], dx
 ```
 
+The `JNO`/sentinel guard above is the retired direct emitter's output; the IR
+path emits the plain `ADD`/`ADC` pair and stores the wrapped result.
+
 ## Why it is safe
 
-The tree walk checks the x87's **64-bit mantissa budget** explicitly — which
-also closed a latent hole where a deep enough product could exceed it — and the
-guard reproduces the sentinel bit for bit. `StoreFoldedPromoted` teaches the same
-store semantics to constant folding, so `--optimize` cannot print `-2` where the
-faithful build prints `-2147483648`.
+Modular arithmetic commutes with the intermediate wrapping, so an integer tree
+over the same leaves stores the same low 32 bits as the promoted computation
+would after wrapping. Only `+`, `-`, `*` and precision casts are walked; any other
+float operation, or a wider leaf without a range proof, leaves the tree on the
+FPU. Under `$ERROR OVERFLOW` the binder keeps 4-byte `+`/`-` integral, and the
+lowering adds its explicit overflow test instead. Functions with an armed error
+handler are not rewritten.

@@ -320,7 +320,7 @@ public sealed class OptimizationBatteryTests {
   private static Compiled Compile(string source, string path, bool optimize) => Compile(source, path, optimize, routed: false);
 
   private static Compiled Compile(string source, string path, bool optimize, bool routed) {
-    var generator = new CodeGenerator(Bind(source, path)) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(Bind(source, path)) { Optimize = optimize};
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     var listing = generator.DescribeImage();

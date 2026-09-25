@@ -19,7 +19,7 @@ public sealed class SharedDivideTests {
   private static (string Output, int Divides) Compile(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var codegen = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = false };
+    var codegen = new CodeGenerator(model) { Optimize = true};
     var image = codegen.EmitExecutable();
     Assert.That(codegen.Errors, Is.Empty, string.Join("; ", codegen.Errors));
     // F7 /7 is IDIV r/m16; the runtime has its own, so only the user-code area is counted by

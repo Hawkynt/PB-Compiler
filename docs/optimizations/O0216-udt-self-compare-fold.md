@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Expressions.cs` — `SameLValue` |
+| **Status** | ⬜ Not implemented on the IR path |
+| **Stage** | — |
+| **Source** | None. A whole-UDT compare lowers to `rt_mem_compare` (`Ir/IrLowering.cs` — `LowerUdtComparison`), which nothing folds when both addresses are the same |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF34.BAS` |
 | **Split from** | [O0015](O0015-udt-zero-cost.md) |
@@ -13,6 +13,11 @@
 
 `rec = rec` as an **expression** folds to its constant truth: `-1` for `=`, `0`
 for `<>`. A memory comparison of identical bytes is always equal.
+
+Not implemented on the IR path; the syntax-level version (`SameLValue`) was
+retired with the direct emitter, and `r = r` runs the runtime byte compare
+unless `Ir/Passes/AggregateBlockScalarization.cs` has first split it into
+per-field compares.
 
 ## Sample
 
