@@ -122,7 +122,7 @@ public sealed class O0308ArrayPreflightTests {
     var packed = Compile(Loop("MMX", 100, "+"));
     var scalar = Compile(Loop("MMX", 100, "+").Replace("$OPTIMIZE SPEED", "$OPTIMIZE OFF"));
     Assert.That(Count(packed, 0x0F, 0xFD), Is.GreaterThan(0), "the checked kernel must be in the optimized build");
-    Assert.That(DosBoxRunner.Normalize(DosBoxRunner.Run(packed)), Is.EqualTo(DosBoxRunner.Normalize(DosBoxRunner.Run(scalar))));
+    Assert.That(DosBoxRunner.Normalize(DosBoxRunner.RunMmx(packed)), Is.EqualTo(DosBoxRunner.Normalize(DosBoxRunner.RunMmx(scalar))));
   }
 
   /// <summary>An element overflows: nothing is computed packed, and the checked loop raises Error 6 as before.</summary>
