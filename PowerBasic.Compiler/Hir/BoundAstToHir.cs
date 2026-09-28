@@ -46,6 +46,29 @@ public static class BoundAstToHir {
   private static HirStatement ToHirStatement(SemanticModel model, Statement statement) => statement switch {
     EndStmt end => new HirEndStatement(end),
     AssignStmt assignment => new HirAssignmentStatement(assignment),
+    IfStmt conditional => new HirIfStatement(
+      conditional with {
+        Then = Array.Empty<Statement>(),
+        ElseIfs = conditional.ElseIfs
+          .Select(clause => (clause.Condition, (IReadOnlyList<Statement>)Array.Empty<Statement>())).ToArray(),
+        Else = conditional.Else is null ? null : Array.Empty<Statement>(),
+      },
+      SnapshotExecutableBody(model, conditional.Then),
+      conditional.ElseIfs.Select(clause =>
+        (clause.Condition, SnapshotExecutableBody(model, clause.Body))).ToArray(),
+      conditional.Else is { } elseBody ? SnapshotExecutableBody(model, elseBody) : null),
+    ForStmt loop => new HirForStatement(
+      loop with { Body = Array.Empty<Statement>() },
+      loop.Variable, loop.From, loop.To, loop.Step, SnapshotExecutableBody(model, loop.Body)),
+    DoLoopStmt loop => new HirDoLoopStatement(
+      loop with { Body = Array.Empty<Statement>() },
+      loop.PreTest, loop.PreCondition, loop.PostTest, loop.PostCondition,
+      SnapshotExecutableBody(model, loop.Body)),
+    SelectStmt selection => new HirSelectStatement(
+      selection with { Arms = selection.Arms.Select(arm => arm with { Body = Array.Empty<Statement>() }).ToArray() },
+      selection.Subject,
+      selection.Arms.Select(arm =>
+        new HirCaseArm(arm.Position, arm.Selectors, SnapshotExecutableBody(model, arm.Body))).ToArray()),
     CallStmt call when model.CallBindings.ContainsKey(call)
         && HirDirectCallBuilder.TryBuild(model, call, call.Arguments, out var operation, out _) =>
       new HirDirectCallStatement(call, operation),
@@ -55,4 +78,10 @@ public static class BoundAstToHir {
       new HirArrayEraseStatement(erase, eraseOperations),
     _ => new HirBoundStatement(statement),
   };
+
+  internal static HirStatement LowerStatement(SemanticModel model, Statement statement) {
+    ArgumentNullException.ThrowIfNull(model);
+    ArgumentNullException.ThrowIfNull(statement);
+    return ToHirStatement(model, statement);
+  }
 }

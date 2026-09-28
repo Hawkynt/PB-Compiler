@@ -146,6 +146,7 @@ public sealed class AutoVectorizeTests {
     var vectorized = Compile(Loop("$CPU 80586 MMX\n$OPTIMIZE SPEED", op, 103));
     var scalar = Compile(Loop("$CPU 80586 MMX\n$OPTIMIZE OFF", op, 103));
     Assert.That(Count(vectorized, 0x0F, 0x77), Is.GreaterThan(0), "the optimized build must actually use the MMX kernel");
-    Assert.That(DosBoxRunner.Normalize(DosBoxRunner.Run(vectorized)), Is.EqualTo(DosBoxRunner.Normalize(DosBoxRunner.Run(scalar))));
+    Assert.That(DosBoxRunner.Normalize(DosBoxRunner.RunMmx(vectorized)),
+      Is.EqualTo(DosBoxRunner.Normalize(DosBoxRunner.RunMmx(scalar))));
   }
 }

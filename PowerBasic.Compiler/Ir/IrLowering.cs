@@ -447,17 +447,16 @@ public sealed partial class IrLowering {
       this._b.Call(IrType.Void, this.RuntimeFn("rt_stack_probe", IrType.Void));
 
     // pre-create a block for every label so forward GOTOs have a target
-    var boundBody = body.Select(statement => statement.BoundSource).ToArray();
-    foreach (var label in CollectLabels(boundBody))
+    foreach (var label in CollectHirLabels(body))
       this._labels[label] = this._fn.CreateBlock("lbl." + label);
 
-    if (ContainsGosub(boundBody))
+    if (ContainsHirGosub(body))
       this.SetupGosub();
 
     // whether statements must publish their boundaries has to be known BEFORE the first one is
     // lowered: RESUME NEXT can name a statement that ran long before the handler was armed
-    this._resumeTracking = ContainsResume(boundBody);
-    this._errorHandling = ContainsErrorHandling(boundBody);
+    this._resumeTracking = ContainsHirResume(body);
+    this._errorHandling = ContainsHirErrorHandling(body);
 
     // ...and the other half of CHAIN: whatever the PREVIOUS image left in PBCHAIN.$$$ is absorbed
     // into the COMMON cells before the first statement runs. The direct emitter writes this at the
@@ -481,24 +480,10 @@ public sealed partial class IrLowering {
       if (this.Terminated && source is not LabelStmt)
         continue;
       if (this._resumeTracking && source is not (LabelStmt or DataStmt or MetaStmt)) {
-        this.LowerStatementWithResumeBoundary(source);
+        this.LowerHirStatementWithResumeBoundary(statement);
         continue;
       }
-
-      if (statement is HirEndStatement end)
-        this.LowerEnd(end.Source.ExitCode);
-      else if (statement is HirAssignmentStatement assignment)
-        this.LowerAssign(assignment.Source);
-      else if (statement is HirDirectCallStatement directCall)
-        this.LowerCallStatement(directCall.Call);
-      else if (statement is HirArrayResizeStatement resize)
-        foreach (var operation in resize.Operations)
-          this.LowerRedim(operation);
-      else if (statement is HirArrayEraseStatement erase)
-        foreach (var operation in erase.Operations)
-          this.LowerErase(operation);
-      else
-        this.LowerStatement(source);
+      this.LowerHirStatement(statement);
     }
   }
 
@@ -552,6 +537,39 @@ public sealed partial class IrLowering {
         case SelectStmt sel:
           foreach (var arm in sel.Arms)
             foreach (var n in CollectLabels(arm.Body)) yield return n;
+          break;
+      }
+  }
+
+  private static IEnumerable<string> CollectHirLabels(IReadOnlyList<HirStatement> statements) {
+    foreach (var statement in statements)
+      switch (statement) {
+        case HirBoundStatement bound:
+          foreach (var label in CollectLabels([bound.Source]))
+            yield return label;
+          break;
+        case HirIfStatement conditional:
+          foreach (var label in CollectHirLabels(conditional.ThenBody))
+            yield return label;
+          foreach (var clause in conditional.ElseIfs)
+            foreach (var label in CollectHirLabels(clause.Body))
+              yield return label;
+          if (conditional.ElseBody is { } elseBody)
+            foreach (var label in CollectHirLabels(elseBody))
+              yield return label;
+          break;
+        case HirForStatement loop:
+          foreach (var label in CollectHirLabels(loop.Body))
+            yield return label;
+          break;
+        case HirDoLoopStatement loop:
+          foreach (var label in CollectHirLabels(loop.Body))
+            yield return label;
+          break;
+        case HirSelectStatement selection:
+          foreach (var arm in selection.Arms)
+            foreach (var label in CollectHirLabels(arm.Body))
+              yield return label;
           break;
       }
   }
@@ -614,6 +632,39 @@ public sealed partial class IrLowering {
       }
     return false;
   }
+
+  private static bool ContainsHirResume(IReadOnlyList<HirStatement> statements) => statements.Any(statement => statement switch {
+    HirBoundStatement bound => ContainsResume([bound.Source]),
+    HirIfStatement conditional => ContainsHirResume(conditional.ThenBody)
+      || conditional.ElseIfs.Any(clause => ContainsHirResume(clause.Body))
+      || (conditional.ElseBody is { } elseBody && ContainsHirResume(elseBody)),
+    HirForStatement loop => ContainsHirResume(loop.Body),
+    HirDoLoopStatement loop => ContainsHirResume(loop.Body),
+    HirSelectStatement selection => selection.Arms.Any(arm => ContainsHirResume(arm.Body)),
+    _ => false,
+  });
+
+  private static bool ContainsHirErrorHandling(IReadOnlyList<HirStatement> statements) => statements.Any(statement => statement switch {
+    HirBoundStatement bound => ContainsErrorHandling([bound.Source]),
+    HirIfStatement conditional => ContainsHirErrorHandling(conditional.ThenBody)
+      || conditional.ElseIfs.Any(clause => ContainsHirErrorHandling(clause.Body))
+      || (conditional.ElseBody is { } elseBody && ContainsHirErrorHandling(elseBody)),
+    HirForStatement loop => ContainsHirErrorHandling(loop.Body),
+    HirDoLoopStatement loop => ContainsHirErrorHandling(loop.Body),
+    HirSelectStatement selection => selection.Arms.Any(arm => ContainsHirErrorHandling(arm.Body)),
+    _ => false,
+  });
+
+  private static bool ContainsHirGosub(IReadOnlyList<HirStatement> statements) => statements.Any(statement => statement switch {
+    HirBoundStatement bound => ContainsGosub([bound.Source]),
+    HirIfStatement conditional => ContainsHirGosub(conditional.ThenBody)
+      || conditional.ElseIfs.Any(clause => ContainsHirGosub(clause.Body))
+      || (conditional.ElseBody is { } elseBody && ContainsHirGosub(elseBody)),
+    HirForStatement loop => ContainsHirGosub(loop.Body),
+    HirDoLoopStatement loop => ContainsHirGosub(loop.Body),
+    HirSelectStatement selection => selection.Arms.Any(arm => ContainsHirGosub(arm.Body)),
+    _ => false,
+  });
 
   // ---- helpers -------------------------------------------------------------
 
@@ -1452,6 +1503,14 @@ public sealed partial class IrLowering {
   /// a function that gets here is already out of the optimizer's hands.
   /// </summary>
   private void LowerStatementWithResumeBoundary(Statement statement) {
+    this.LowerStatementWithResumeBoundary(() => this.LowerStatement(statement));
+  }
+
+  private void LowerHirStatementWithResumeBoundary(HirStatement statement) {
+    this.LowerStatementWithResumeBoundary(() => this.LowerHirStatement(statement));
+  }
+
+  private void LowerStatementWithResumeBoundary(Action lower) {
     var start = this.NewBlock("stmt");
     var after = this.NewBlock("stmt.next");
     this._b.Br(start);
@@ -1459,11 +1518,32 @@ public sealed partial class IrLowering {
     this._b.Call(IrType.Void, this.RuntimeFn("rt_resume_mark", IrType.Void, IrType.Ptr, IrType.Ptr),
       new IrBlockAddress(start), new IrBlockAddress(after));
 
-    this.LowerStatement(statement);
+    lower();
 
     if (!this.Terminated)
       this._b.Br(after);
     this._b.Position(after);
+  }
+
+  private void LowerHirStatement(HirStatement statement) {
+    switch (statement) {
+      case HirEndStatement end: this.LowerEnd(end.Source.ExitCode); break;
+      case HirAssignmentStatement assignment: this.LowerAssign(assignment.Source); break;
+      case HirDirectCallStatement call: this.LowerCallStatement(call.Call); break;
+      case HirArrayResizeStatement resize:
+        foreach (var operation in resize.Operations)
+          this.LowerRedim(operation);
+        break;
+      case HirArrayEraseStatement erase:
+        foreach (var operation in erase.Operations)
+          this.LowerErase(operation);
+        break;
+      case HirIfStatement conditional: this.LowerIf(conditional); break;
+      case HirForStatement loop: this.LowerFor(loop); break;
+      case HirDoLoopStatement loop: this.LowerDo(loop); break;
+      case HirSelectStatement selection: this.LowerSelect(selection); break;
+      default: this.LowerStatement(statement.BoundSource); break;
+    }
   }
 
   private void LowerStatement(Statement statement) {
@@ -4580,64 +4660,91 @@ public sealed partial class IrLowering {
     this._b.Store(this._b.Or(up, down), slot);
   }
 
-  private void LowerIf(IfStmt stmt) {
+  private void LowerIf(IfStmt stmt)
+    => this.LowerIf((HirIfStatement)BoundAstToHir.LowerStatement(this._model, stmt));
+
+  private void LowerIf(HirIfStatement conditional) {
+    var stmt = conditional.Source;
     // BASICA/GW-BASIC can retain text whose syntax is checked only if execution reaches it. This is
     // a correctness fold, not an optimization: eliminate a constant arm before lowering so a dead
     // DeferredSourceStmt never forces the IR/x86-16 route to decline. If any tested condition is not
     // constant, ordinary lowering reaches the deferred node and safely declines.
-    if (ContainsDeferredSource(stmt) && this._folder.TryFold(stmt.Condition) is { Integer: { } c }) {
+    if ((ContainsDeferredSource(conditional.ThenBody)
+        || conditional.ElseIfs.Any(clause => ContainsDeferredSource(clause.Body))
+        || (conditional.ElseBody is { } deferredElse && ContainsDeferredSource(deferredElse)))
+        && this._folder.TryFold(stmt.Condition) is { Integer: { } c }) {
       if (c != 0) {
-        this.LowerStatements(stmt.Then);
+        this.LowerHirStatements(conditional.ThenBody);
         return;
       }
       if (stmt.ElseIfs.Count > 0) {
         var (firstCondition, firstBody) = stmt.ElseIfs[0];
-        this.LowerIf(stmt with {
-          Condition = firstCondition,
-          Then = firstBody,
-          ElseIfs = stmt.ElseIfs.Skip(1).ToList(),
-        });
+        this.LowerIf(new HirIfStatement(
+          stmt with {
+            Condition = firstCondition,
+            Then = firstBody,
+            ElseIfs = stmt.ElseIfs.Skip(1).ToList(),
+          },
+          conditional.ElseIfs[0].Body,
+          conditional.ElseIfs.Skip(1).ToArray(),
+          conditional.ElseBody));
         return;
       }
-      if (stmt.Else is { } selectedElse)
-        this.LowerStatements(selectedElse);
+      if (conditional.ElseBody is { } selectedElse)
+        this.LowerHirStatements(selectedElse);
       return;
     }
 
     var endif = this.NewBlock("if.end");
-    var clauses = new List<(Expression Cond, IReadOnlyList<Statement> Body)> { (stmt.Condition, stmt.Then) };
-    clauses.AddRange(stmt.ElseIfs);
+    var clauses = new List<(Expression Cond, IReadOnlyList<HirStatement> Body)> {
+      (stmt.Condition, conditional.ThenBody),
+    };
+    clauses.AddRange(conditional.ElseIfs);
 
     foreach (var (cond, body) in clauses) {
       var then = this.NewBlock("if.then");
       var next = this.NewBlock("if.next");
       this._b.CondBr(this.LowerCondition(cond), then, next);
       this._b.Position(then);
-      this.LowerStatements(body);
+      this.LowerHirStatements(body);
       if (!this.Terminated)
         this._b.Br(endif);
       this._b.Position(next);
     }
 
-    if (stmt.Else is { } elseBody)
-      this.LowerStatements(elseBody);
+    if (conditional.ElseBody is { } elseBody)
+      this.LowerHirStatements(elseBody);
     if (!this.Terminated)
       this._b.Br(endif);
     this._b.Position(endif);
   }
 
-  private static bool ContainsDeferredSource(IfStmt statement) =>
-    statement.Then.Any(ContainsDeferredSource)
-    || statement.ElseIfs.Any(e => e.Body.Any(ContainsDeferredSource))
-    || statement.Else?.Any(ContainsDeferredSource) == true;
+  private static bool ContainsDeferredSource(IEnumerable<HirStatement> statements) => statements.Any(statement => statement switch {
+    HirBoundStatement bound => ContainsDeferredSource(bound.Source),
+    HirIfStatement conditional => ContainsDeferredSource(conditional.ThenBody)
+      || conditional.ElseIfs.Any(clause => ContainsDeferredSource(clause.Body))
+      || (conditional.ElseBody is { } elseBody && ContainsDeferredSource(elseBody)),
+    HirForStatement loop => ContainsDeferredSource(loop.Body),
+    HirDoLoopStatement loop => ContainsDeferredSource(loop.Body),
+    HirSelectStatement selection => selection.Arms.Any(arm => ContainsDeferredSource(arm.Body)),
+    _ => false,
+  });
 
   private static bool ContainsDeferredSource(Statement statement) => statement switch {
     DeferredSourceStmt => true,
-    IfStmt nested => ContainsDeferredSource(nested),
+    IfStmt nested => nested.Then.Any(ContainsDeferredSource)
+      || nested.ElseIfs.Any(clause => clause.Body.Any(ContainsDeferredSource))
+      || nested.Else?.Any(ContainsDeferredSource) == true,
+    ForStmt loop => loop.Body.Any(ContainsDeferredSource),
+    DoLoopStmt loop => loop.Body.Any(ContainsDeferredSource),
+    SelectStmt selection => selection.Arms.Any(arm => arm.Body.Any(ContainsDeferredSource)),
     _ => false,
   };
 
-  private void LowerFor(ForStmt f) {
+  private void LowerFor(ForStmt f)
+    => this.LowerFor((HirForStatement)BoundAstToHir.LowerStatement(this._model, f));
+
+  private void LowerFor(HirForStatement f) {
     var symbol = this.SymbolOf(f.Variable);
     var ty = MapType(symbol.Type);
     if (ty.IsIeeeFloat) {
@@ -4690,7 +4797,7 @@ public sealed partial class IrLowering {
 
     this._b.Position(body);
     this._loops.Push(new LoopContext(ExitKind.For, exit, inc));
-    this.LowerStatements(f.Body);
+    this.LowerHirStatements(f.Body);
     this._loops.Pop();
     if (!this.Terminated)
       this._b.Br(inc);
@@ -4720,7 +4827,7 @@ public sealed partial class IrLowering {
   /// is the point. And the ordered predicates mean a NaN bound exits the loop rather than looping
   /// forever, which is what comparing on the x87 does.
   /// </summary>
-  private void LowerFloatFor(ForStmt f, VariableSymbol symbol, IrType ty) {
+  private void LowerFloatFor(HirForStatement f, VariableSymbol symbol, IrType ty) {
     var slot = this.SlotFor(symbol);
     var limitSlot = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(ty) { Name = symbol.Name + ".limit" });
 
@@ -4762,7 +4869,7 @@ public sealed partial class IrLowering {
 
     this._b.Position(body);
     this._loops.Push(new LoopContext(ExitKind.For, exit, inc));
-    this.LowerStatements(f.Body);
+    this.LowerHirStatements(f.Body);
     this._loops.Pop();
     if (!this.Terminated)
       this._b.Br(inc);
@@ -4775,7 +4882,10 @@ public sealed partial class IrLowering {
     this._b.Position(exit);
   }
 
-  private void LowerDo(DoLoopStmt d) {
+  private void LowerDo(DoLoopStmt d)
+    => this.LowerDo((HirDoLoopStatement)BoundAstToHir.LowerStatement(this._model, d));
+
+  private void LowerDo(HirDoLoopStatement d) {
     var header = this.NewBlock("do.head");
     var body = this.NewBlock("do.body");
     var latch = this.NewBlock("do.latch");
@@ -4795,7 +4905,7 @@ public sealed partial class IrLowering {
 
     this._b.Position(body);
     this._loops.Push(new LoopContext(ExitKind.Do, exit, latch));
-    this.LowerStatements(d.Body);
+    this.LowerHirStatements(d.Body);
     this._loops.Pop();
     if (!this.Terminated)
       this._b.Br(latch);
@@ -4905,15 +5015,18 @@ public sealed partial class IrLowering {
       this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), result);
   }
 
-  private void LowerSelect(SelectStmt s) {
+  private void LowerSelect(SelectStmt s)
+    => this.LowerSelect((HirSelectStatement)BoundAstToHir.LowerStatement(this._model, s));
+
+  private void LowerSelect(HirSelectStatement s) {
     var subjectPb = this._model.TypeOf(s.Subject);
     if (subjectPb is not (ScalarType or StringType))
       throw new IrLoweringException("SELECT CASE on a non-scalar subject");
     var subject = subjectPb is StringType ? this.LowerStringExpr(s.Subject) : this.LowerExpr(s.Subject);
 
     var endsel = this.NewBlock("sel.end");
-    CaseArm? elseArm = null;
-    var arms = new List<CaseArm>();
+    HirCaseArm? elseArm = null;
+    var arms = new List<HirCaseArm>();
     foreach (var arm in s.Arms) {
       if (arm.Selectors.Count == 0)
         elseArm = arm;                               // CASE ELSE
@@ -4935,14 +5048,14 @@ public sealed partial class IrLowering {
       }
       this._b.CondBr(cond!, body, next);
       this._b.Position(body);
-      this.LowerStatements(arm.Body);
+      this.LowerHirStatements(arm.Body);
       if (!this.Terminated)
         this._b.Br(endsel);
       this._b.Position(next);
     }
 
     if (elseArm is not null)
-      this.LowerStatements(elseArm.Body);
+      this.LowerHirStatements(elseArm.Body);
     this._loops.Pop();
     if (!this.Terminated)
       this._b.Br(endsel);

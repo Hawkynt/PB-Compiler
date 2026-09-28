@@ -45,6 +45,8 @@ public sealed class PlatformTests {
   public void DeleteWorkDirectory() => Directory.Delete(_work, recursive: true);
 
   private string Build(string platform, HostedPlatform hosted, params string[] extra) {
+    Assume.That(OperatingSystem.IsLinux(),
+      "this fixture asserts ELF output; native Windows/macOS toolchains emit other formats");
     Assume.That(HostToolchain.Supports(hosted), $"this host's C toolchain cannot build for {platform}");
     var source = Path.Combine(_work, "PROG.BAS");
     File.WriteAllText(source, Program);

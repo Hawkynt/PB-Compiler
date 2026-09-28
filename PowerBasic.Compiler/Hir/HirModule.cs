@@ -67,6 +67,55 @@ public sealed record HirArrayEraseStatement(EraseStmt Source, IReadOnlyList<HirA
   internal override Statement BoundSource => this.Source;
 }
 
+/// <summary>An IF with each arm represented by recursively lowered HIR statements.</summary>
+public sealed record HirIfStatement(
+    IfStmt Source,
+    IReadOnlyList<HirStatement> ThenBody,
+    IReadOnlyList<(Expression Condition, IReadOnlyList<HirStatement> Body)> ElseIfs,
+    IReadOnlyList<HirStatement>? ElseBody) : HirStatement {
+  public override SourcePosition Position => this.Source.Position;
+  internal override Statement BoundSource => this.Source;
+}
+
+/// <summary>A counted loop whose executable body has been recursively lowered to HIR.</summary>
+public sealed record HirForStatement(
+    ForStmt Source,
+    Expression Variable,
+    Expression From,
+    Expression To,
+    Expression? Step,
+    IReadOnlyList<HirStatement> Body) : HirStatement {
+  public override SourcePosition Position => this.Source.Position;
+  internal override Statement BoundSource => this.Source;
+}
+
+/// <summary>A pre-test/post-test loop whose executable body has been recursively lowered to HIR.</summary>
+public sealed record HirDoLoopStatement(
+    DoLoopStmt Source,
+    LoopTestKind PreTest,
+    Expression? PreCondition,
+    LoopTestKind PostTest,
+    Expression? PostCondition,
+    IReadOnlyList<HirStatement> Body) : HirStatement {
+  public override SourcePosition Position => this.Source.Position;
+  internal override Statement BoundSource => this.Source;
+}
+
+/// <summary>One SELECT CASE arm with resolved selectors and a recursively lowered body.</summary>
+public sealed record HirCaseArm(
+    SourcePosition Position,
+    IReadOnlyList<CaseSelector> Selectors,
+    IReadOnlyList<HirStatement> Body);
+
+/// <summary>A SELECT CASE whose arms have been recursively lowered to HIR.</summary>
+public sealed record HirSelectStatement(
+    SelectStmt Source,
+    Expression Subject,
+    IReadOnlyList<HirCaseArm> Arms) : HirStatement {
+  public override SourcePosition Position => this.Source.Position;
+  internal override Statement BoundSource => this.Source;
+}
+
 /// <summary>
 /// High-level executable units produced from a bound program. This first HIR boundary keeps the
 /// bound statement nodes and semantic side tables intact while giving lowering a canonical function
