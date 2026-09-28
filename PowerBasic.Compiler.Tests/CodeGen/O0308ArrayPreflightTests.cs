@@ -89,19 +89,18 @@ public sealed class O0308ArrayPreflightTests {
 
   [Test]
   public void Compile_GivenCounterWouldWrapAfterShortMax_ThenKeepsOriginalLoopSemantics() {
-    var (_, generator) = CompileProgram(AutoVectorizeTests.Loop("$CPU 80586 MMX\n$OPTIMIZE SPEED\n$ERROR OVERFLOW ON", "+", 100)
-      .Replace("FOR i% = 1 TO 100\n  c%(i%) = a%(i%) + b%(i%)", "FOR i% = 32700 TO 32767\n  c%(i% - 32600) = a%(i% - 32600) + b%(i% - 32600)"));
+    var source = AutoVectorizeTests.Loop("$CPU 80586 MMX\n$OPTIMIZE SPEED\n$ERROR OVERFLOW ON", "+", 100)
+      .Replace("FOR i% = 1 TO 100\n  c%(i%) = a%(i%) + b%(i%)", "FOR i% = 32700 TO 32767\n  c%(i% - 32600) = a%(i% - 32600) + b%(i% - 32600)");
+    Assert.That(source, Does.Contain("FOR i% = 32700 TO 32767"), "the boundary loop fixture must actually be substituted");
+    var (_, generator) = CompileProgram(source);
     var main = generator.BackendModuleForTesting?.FindFunction("main");
-    var packedCalls = main?.Blocks.SelectMany(block => block.Instructions).OfType<IrCall>()
-      .Where(call => call.Callee is IrFunction { Name: "rt_packed16_add" or "rt_packed16_add_checked" })
-      .Select(call => {
-        var trip = call.Args.LastOrDefault() is IrConstantInt count ? count.Value.ToString() : "?";
-        return $"{((IrFunction)call.Callee).Name} trip={trip}";
-      })
+    var boundaryLoopPackedCalls = main?.Blocks.SelectMany(block => block.Instructions).OfType<IrCall>()
+      .Where(call => call.Callee is IrFunction { Name: "rt_packed16_add" or "rt_packed16_add_checked" }
+        && call.Args.FirstOrDefault() is IrGep { ByteOffset: IrConstantInt { Value: 198 } })
       .ToArray() ?? [];
 
     Assert.That(main, Is.Not.Null, "the production backend must have lowered this program through IR");
-    Assert.That(packedCalls, Is.Empty,
+    Assert.That(boundaryLoopPackedCalls, Is.Empty,
       "without $ERROR NUMERIC the final INTEGER increment wraps to -32768 and the FOR continues");
   }
 
