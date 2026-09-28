@@ -1,16 +1,20 @@
 namespace PowerBasic.Compiler.Ir;
 
 /// <summary>
-/// The semantic contract currently carried by an <see cref="IrModule"/>. The repository deliberately
-/// does not manufacture separate object models for every conceptual layer, but consumers can still
-/// state which boundary they require while the lowering split proceeds incrementally.
+/// The strongest semantic contract established for an <see cref="IrModule"/>. HIR has its own
+/// operation model; MIR and later forms currently share the module container while their contracts
+/// are enforced at explicit verified boundaries.
 /// </summary>
 public enum IrRepresentationStage {
-  Lowered,
+  Mir,
+  Ssa,
   OptimizedSsa,
   LowIr,
   MachineSsa,
   MachineIr,
+
+  /// <summary>Compatibility name for modules returned directly by <see cref="PowerBasic.Compiler.Hir.HirToMir"/>.</summary>
+  Lowered = Mir,
 }
 
 /// <summary>
@@ -52,5 +56,29 @@ internal static class IrRepresentationTransitions {
     module.TrySetRepresentationStage(next);
     error = null;
     return true;
+  }
+}
+
+/// <summary>Completes SSA construction after the middle-end's mem2reg formation passes have run.</summary>
+internal static class IrSsaFormationBoundary {
+
+  public static bool TryComplete(IrModule module, out IReadOnlyList<string> errors) {
+    ArgumentNullException.ThrowIfNull(module);
+    if (module.RepresentationStage > IrRepresentationStage.Mir) {
+      errors = [];
+      return true;
+    }
+    if (module.RepresentationStage != IrRepresentationStage.Mir) {
+      errors = [$"SSA formation requires Mir stage, got {module.RepresentationStage}"];
+      return false;
+    }
+
+    errors = IrVerifier.Verify(module);
+    if (errors.Count != 0)
+      return false;
+    if (module.TryAdvanceRepresentationStage(IrRepresentationStage.Ssa, out var error))
+      return true;
+    errors = [error ?? "unable to advance MIR to SSA"];
+    return false;
   }
 }

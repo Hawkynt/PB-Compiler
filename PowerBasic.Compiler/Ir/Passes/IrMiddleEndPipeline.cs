@@ -174,6 +174,7 @@ public static class IrMiddleEndPipeline {
       : () => Legalize(recoverIntegerArithmetic);
 
     pipeline().RunOnModule(module);
+    CompleteSsaBoundary(module);
     pipeline().RunOnModule(module);
 
     if (optimize && Inliner.Run(module, optimizeForSize: optimizeForSize) > 0) {
@@ -253,6 +254,7 @@ public static class IrMiddleEndPipeline {
     }
 
     pipeline.RunOnModule(module);
+    CompleteSsaBoundary(module);
     if (!optimize)
       return;
 
@@ -261,6 +263,12 @@ public static class IrMiddleEndPipeline {
     pipeline.RunOnModule(module);
     pipeline.RunOnModule(module);
     GlobalDce.Run(module);
+  }
+
+  private static void CompleteSsaBoundary(IrModule module) {
+    if (IrSsaFormationBoundary.TryComplete(module, out var errors))
+      return;
+    throw new InvalidOperationException("MIR to SSA boundary failed: " + string.Join("; ", errors));
   }
 
   /// <summary>

@@ -4,7 +4,7 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Ir;
 
 /// <summary>
-/// A translation unit: the globals and functions produced from one bound program.
+/// A translation unit: the globals and functions produced from one HIR program.
 /// This is the root the middle-end optimizes and the backends consume.
 /// </summary>
 public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialect? compatDialect = null) {
@@ -37,7 +37,7 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   public bool AsciiOnly { get; set; }
 
   /// <summary>The strongest representation contract established for this module so far.</summary>
-  public IrRepresentationStage RepresentationStage { get; private set; } = IrRepresentationStage.Lowered;
+  public IrRepresentationStage RepresentationStage { get; private set; } = IrRepresentationStage.Mir;
 
   internal void TrySetRepresentationStage(IrRepresentationStage next) => this.RepresentationStage = next;
 

@@ -83,7 +83,8 @@ public sealed class HirDirectCallTests {
       END
       """);
 
-    var module = IrLowering.TryLowerModule(model, out var reason);
+    var hir = BoundAstToHir.Lower(model);
+    var module = HirToMir.Lower(hir, out var reason);
 
     Assert.That(module, Is.Not.Null, reason);
     var target = module!.Functions.Single(function => function.Name.Equals("Box", StringComparison.OrdinalIgnoreCase));
@@ -96,6 +97,28 @@ public sealed class HirDirectCallTests {
       Assert.That(call.Args.Select(ConstantBehindWidening), Is.EqualTo(new long[] { 2, 3, 5 }));
       Assert.That(IrVerifier.Verify(module), Is.Empty);
     });
+  }
+
+  [Test]
+  public void BoundAstToHir_GivenDirectCallStatement_ThenCapturesResolvedTargetAndArguments() {
+    var model = Bind("""
+      SUB Work(BYVAL x AS INTEGER)
+      END SUB
+      CALL Work(7)
+      END
+      """);
+
+    var hir = BoundAstToHir.Lower(model);
+    var call = hir.EntryPoint.Body.OfType<HirDirectCallStatement>().Single();
+
+    Assert.Multiple(() => {
+      Assert.That(call.Call.Target, Is.SameAs(model.CallBindings[call.Source]));
+      Assert.That(call.Call.Arguments, Has.Count.EqualTo(1));
+      Assert.That(((IntegerLiteralExpr)call.Call.Arguments[0].Value).Value, Is.EqualTo(7));
+    });
+    var module = HirToMir.Lower(hir, out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    Assert.That(IrVerifier.Verify(module!), Is.Empty);
   }
 
   /// <summary>

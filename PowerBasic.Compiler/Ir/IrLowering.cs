@@ -6,7 +6,7 @@ using PowerBasic.Compiler.Syntax.Ast;
 namespace PowerBasic.Compiler.Ir;
 
 /// <summary>
-/// Lowers a bound program into the IR in clang-style alloca/load/store form: every
+/// Lowers high-level functions into the IR in clang-style alloca/load/store form: every
 /// scalar variable gets an entry-block alloca, reads/writes become load/store, control
 /// flow becomes explicit blocks and branches. A later mem2reg pass promotes the
 /// allocas to SSA. <see cref="TryLowerModule"/> lowers the whole program - the main
@@ -91,9 +91,10 @@ public sealed partial class IrLowering {
   /// <summary>Lowers just the main body into an <c>@main</c> function (no procedures), or null if unsupported.</summary>
   public static IrFunction? TryLowerMainBody(SemanticModel model) {
     try {
+      var hir = BoundAstToHir.Lower(model);
       var lowering = new IrLowering(model, null, null);
       var fn = new IrFunction("main", IrType.Void);
-      lowering.LowerBodyInto(fn, model.MainBody, null);
+      lowering.LowerBodyInto(fn, hir.EntryPoint.Body, null);
       return fn;
     } catch (IrLoweringException) {
       return null;
@@ -119,7 +120,22 @@ public sealed partial class IrLowering {
   /// </summary>
   public static IrModule? TryLowerModule(SemanticModel model,
       IReadOnlySet<DeferredSourceStmt>? unreachableDeferred, out string? declinedBecause) {
+    ArgumentNullException.ThrowIfNull(model);
+    return HirToMir.Lower(BoundAstToHir.Lower(model), unreachableDeferred, out declinedBecause);
+  }
+
+  /// <summary>Builds MIR from an already formed HIR module.</summary>
+  internal static IrModule? LowerHirToMir(HirModule hir,
+      IReadOnlySet<DeferredSourceStmt>? unreachableDeferred, out string? declinedBecause) {
+    ArgumentNullException.ThrowIfNull(hir);
     declinedBecause = null;
+    var hirErrors = HirVerifier.Verify(hir);
+    if (hirErrors.Count != 0) {
+      declinedBecause = string.Join("; ", hirErrors);
+      return null;
+    }
+    var model = hir.BoundModel;
+    var hirProcedures = hir.Functions.Where(function => !function.IsEntryPoint).ToArray();
     var module = new IrModule(model.FileName, model.Dialect, model.CompatDialect);
     var procMap = new Dictionary<ProcedureSymbol, IrFunction>(ReferenceEqualityComparer.Instance);
 
@@ -133,11 +149,13 @@ public sealed partial class IrLowering {
     // first shares its name with the one that got there first. The direct emitter emits from
     // ProcedureList, so a body it emits and this map lacks is a body nothing routed can call - which
     // is what left "$lambda$1 has no lowered function" and every second overload behind.
-    foreach (var proc in model.Procedures.Values.Concat(model.LambdaProcs.Values).Concat(model.ProcedureList))
-      if (!procMap.ContainsKey(proc) && TrySignature(model, proc, out var irfn)) {
-        procMap[proc] = irfn!;
-        module.AddFunction(irfn!);
-      }
+    foreach (var function in hirProcedures) {
+      var proc = function.Procedure!;
+      if (!TrySignature(model, proc, out var irfn))
+        continue;
+      procMap.Add(proc, irfn!);
+      module.AddFunction(irfn!);
+    }
 
     var shared = new Dictionary<VariableSymbol, IrGlobalVariable>(ReferenceEqualityComparer.Instance);
     var escapes = ModuleVariablesUsedByProcedures(model);
@@ -164,17 +182,21 @@ public sealed partial class IrLowering {
     var main = new IrFunction("main", IrType.Void);
     module.AddFunction(main);
     try {
-      new IrLowering(model, procMap, module, shared, escapes, unreachableDeferred).LowerBodyInto(main, model.MainBody, null);
+      new IrLowering(model, procMap, module, shared, escapes, unreachableDeferred)
+        .LowerBodyInto(main, hir.EntryPoint.Body, null);
     } catch (IrLoweringException e) {
       declinedBecause = e.Message;
       return null;
     }
 
-    foreach (var (proc, irfn) in procMap) {
+    foreach (var hirFunction in hirProcedures) {
+      var proc = hirFunction.Procedure!;
+      if (!procMap.TryGetValue(proc, out var irfn))
+        continue;
       if (proc.IsExternal)
         continue;                                      // no body to lower, and that is the point
       try {
-        new IrLowering(model, procMap, module, shared, escapes).LowerProcedure(proc, irfn);
+        new IrLowering(model, procMap, module, shared, escapes).LowerProcedure(hirFunction, irfn);
       } catch (IrLoweringException e) {
         irfn.ClearBody();                              // leave it a declaration; callers can still call it
         // ...and SAY SO. A cleared body leaves no trace in Functions' defined half, so a census over
@@ -374,17 +396,18 @@ public sealed partial class IrLowering {
     return true;
   }
 
-  private void LowerProcedure(ProcedureSymbol proc, IrFunction fn) {
+  private void LowerProcedure(HirFunction hirFunction, IrFunction fn) {
+    var proc = hirFunction.Procedure!;
     this._resultVar = proc.IsFunction ? proc.Variables.GetValueOrDefault(proc.Name) : null;
     // The module body's $ERROR directives reach here and nowhere else - a procedure gets its own
     // IrLowering, so without this seeding every trap the program armed was silently absent from every
     // procedure. A directive INSIDE the body still toggles it from here as the statements go by.
     (this._checkBounds, this._checkOverflow, this._checkNumeric)
       = (this._armed.Bounds, this._armed.Overflow, this._armed.Numeric);
-    this.LowerBodyInto(fn, proc.Body!, proc);
+    this.LowerBodyInto(fn, hirFunction.Body, proc);
   }
 
-  private void LowerBodyInto(IrFunction fn, IReadOnlyList<Statement> body, ProcedureSymbol? proc) {
+  private void LowerBodyInto(IrFunction fn, IReadOnlyList<HirStatement> body, ProcedureSymbol? proc) {
     this._fn = fn;
     this._proc = proc;
     this._isMain = proc is null;
@@ -424,16 +447,17 @@ public sealed partial class IrLowering {
       this._b.Call(IrType.Void, this.RuntimeFn("rt_stack_probe", IrType.Void));
 
     // pre-create a block for every label so forward GOTOs have a target
-    foreach (var label in CollectLabels(body))
+    var boundBody = body.Select(statement => statement.BoundSource).ToArray();
+    foreach (var label in CollectLabels(boundBody))
       this._labels[label] = this._fn.CreateBlock("lbl." + label);
 
-    if (ContainsGosub(body))
+    if (ContainsGosub(boundBody))
       this.SetupGosub();
 
     // whether statements must publish their boundaries has to be known BEFORE the first one is
     // lowered: RESUME NEXT can name a statement that ran long before the handler was armed
-    this._resumeTracking = ContainsResume(body);
-    this._errorHandling = ContainsErrorHandling(body);
+    this._resumeTracking = ContainsResume(boundBody);
+    this._errorHandling = ContainsErrorHandling(boundBody);
 
     // ...and the other half of CHAIN: whatever the PREVIOUS image left in PBCHAIN.$$$ is absorbed
     // into the COMMON cells before the first statement runs. The direct emitter writes this at the
@@ -441,7 +465,7 @@ public sealed partial class IrLowering {
     // that did not carry it would start every chained-to pass with the values it was handed missing.
     this.LowerChainCommonLoad();
 
-    this.LowerStatements(body);
+    this.LowerHirStatements(body);
 
     if (this._gosubSwitch is not null)              // wire each GOSUB's continuation into the shared dispatch
       foreach (var (id, cont) in this._gosubConts)
@@ -449,6 +473,33 @@ public sealed partial class IrLowering {
 
     if (!this.Terminated)
       this.ReturnFromFunction();
+  }
+
+  private void LowerHirStatements(IReadOnlyList<HirStatement> statements) {
+    foreach (var statement in statements) {
+      var source = statement.BoundSource;
+      if (this.Terminated && source is not LabelStmt)
+        continue;
+      if (this._resumeTracking && source is not (LabelStmt or DataStmt or MetaStmt)) {
+        this.LowerStatementWithResumeBoundary(source);
+        continue;
+      }
+
+      if (statement is HirEndStatement end)
+        this.LowerEnd(end.Source.ExitCode);
+      else if (statement is HirAssignmentStatement assignment)
+        this.LowerAssign(assignment.Source);
+      else if (statement is HirDirectCallStatement directCall)
+        this.LowerCallStatement(directCall.Call);
+      else if (statement is HirArrayResizeStatement resize)
+        foreach (var operation in resize.Operations)
+          this.LowerRedim(operation);
+      else if (statement is HirArrayEraseStatement erase)
+        foreach (var operation in erase.Operations)
+          this.LowerErase(operation);
+      else
+        this.LowerStatement(source);
+    }
   }
 
   /// <summary>Allocates the return-id stack used by GOSUB to record its call sites.</summary>
@@ -4843,10 +4894,14 @@ public sealed partial class IrLowering {
     }
     if (!HirDirectCallBuilder.TryBuild(this._model, c, c.Arguments, out var directCall, out var directError))
       throw new IrLoweringException(directError ?? $"call to unsupported procedure {c.Name}");
-    if (this._procMap is null || !this._procMap.TryGetValue(directCall.Target, out var callee))
-      throw new IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset");
-    var result = this.EmitCall(callee, directCall);
-    if (directCall is { IsFunction: true, ReturnType: StringType })
+    this.LowerCallStatement(directCall);
+  }
+
+  private void LowerCallStatement(HirDirectCall call) {
+    if (this._procMap is null || !this._procMap.TryGetValue(call.Target, out var callee))
+      throw new IrLoweringException($"call to {call.Target.Name} outside the modelled subset");
+    var result = this.EmitCall(callee, call);
+    if (call is { IsFunction: true, ReturnType: StringType })
       this._b.Call(IrType.Void, this.RuntimeFn("rt_str_free", IrType.Void, IrType.Ptr), result);
   }
 

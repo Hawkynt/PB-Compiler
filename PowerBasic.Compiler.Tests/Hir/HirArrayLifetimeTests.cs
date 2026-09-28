@@ -79,7 +79,16 @@ public sealed class HirArrayLifetimeTests {
       END
       """);
 
-    var module = IrLowering.TryLowerModule(model, out var reason);
+    var hir = BoundAstToHir.Lower(model);
+    var resize = hir.EntryPoint.Body.OfType<HirArrayResizeStatement>().Single();
+    var erase = hir.EntryPoint.Body.OfType<HirArrayEraseStatement>().Single();
+    Assert.Multiple(() => {
+      Assert.That(resize.Operations, Has.Count.EqualTo(1));
+      Assert.That(resize.Operations[0].Preserve, Is.True);
+      Assert.That(erase.Operations, Has.Count.EqualTo(1));
+    });
+
+    var module = HirToMir.Lower(hir, out var reason);
 
     Assert.That(module, Is.Not.Null, reason);
     var printed = IrPrinter.Print(module!);

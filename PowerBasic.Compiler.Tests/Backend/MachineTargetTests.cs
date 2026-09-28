@@ -12,6 +12,13 @@ public sealed class MachineTargetTests {
     public UnclassifiedLowIrInstruction() : base(IrType.Void) { }
   }
 
+  private static void AdvanceToOptimizedSsa(IrModule module) {
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.Ssa, out var ssaError),
+      Is.True, ssaError);
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out var optimizedError),
+      Is.True, optimizedError);
+  }
+
   [Test]
   public void ProductionTargetsConsumeLowIr() {
     Assert.That(IrBackendTargetContract.RequiredInputStage(IrBackendTarget.C),
@@ -25,7 +32,7 @@ public sealed class MachineTargetTests {
   [Test]
   public void LowIrBoundaryRequiresIndependentVerification() {
     var module = new IrModule("test");
-    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
+    AdvanceToOptimizedSsa(module);
     Assert.That(IrLowIrLegalization.TryLegalize(module, out var errors), Is.True);
     Assert.That(errors, Is.Empty);
     Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.LowIr));
@@ -36,6 +43,7 @@ public sealed class MachineTargetTests {
     var module = new IrModule("test");
     Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.LowIr, out var skipped), Is.False);
     Assert.That(skipped, Does.Contain("skip"));
+    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.Ssa, out _), Is.True);
     Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
     Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.LowIr, out _), Is.True);
     Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out var backwards), Is.False);
@@ -45,7 +53,7 @@ public sealed class MachineTargetTests {
   [Test]
   public void MachinePipelineProducesMachineIrWithoutRelabelingItsLowIrSource() {
     var module = new IrModule("empty");
-    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
+    AdvanceToOptimizedSsa(module);
     Assert.That(IrLowIrLegalization.TryLegalize(module, out _), Is.True);
 
     Assert.That(IrMachinePipeline.TryLower(module, SelectionTarget.Baseline,
@@ -61,7 +69,7 @@ public sealed class MachineTargetTests {
   }
 
   [Test]
-  public void OptimizedSsaBoundaryRejectsMalformedSsaInsteadOfMerelyRelabelingIt() {
+  public void SsaBoundaryRejectsMalformedCfgInsteadOfMerelyRelabelingIt() {
     var module = new IrModule("malformed");
     var function = module.AddFunction(new IrFunction("f", IrType.Void));
     function.CreateBlock("entry").Append(new IrBinary(
@@ -70,11 +78,11 @@ public sealed class MachineTargetTests {
       new IrConstantInt(IrType.I16, 2)));
 
     Assert.That(module.TryAdvanceRepresentationStage(
-      IrRepresentationStage.OptimizedSsa, out var error), Is.False);
+      IrRepresentationStage.Ssa, out var error), Is.False);
 
     Assert.Multiple(() => {
       Assert.That(error, Does.Contain("does not end in a terminator"));
-      Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.Lowered));
+      Assert.That(module.RepresentationStage, Is.EqualTo(IrRepresentationStage.Mir));
     });
   }
 
@@ -86,8 +94,7 @@ public sealed class MachineTargetTests {
     block.Append(new UnclassifiedLowIrInstruction());
     block.Append(new IrRet());
 
-    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out var ssaError),
-      Is.True, ssaError);
+    AdvanceToOptimizedSsa(module);
     Assert.That(IrLowIrLegalization.TryLegalize(module, out var errors), Is.False);
 
     Assert.Multiple(() => {
@@ -100,7 +107,7 @@ public sealed class MachineTargetTests {
   [Test]
   public void SourceModuleCannotBeRelabeledAsMachineSsa() {
     var module = new IrModule("source");
-    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
+    AdvanceToOptimizedSsa(module);
     Assert.That(IrLowIrLegalization.TryLegalize(module, out _), Is.True);
 
     Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.MachineSsa, out var error), Is.False);
@@ -120,7 +127,7 @@ public sealed class MachineTargetTests {
       builder.Ret();
       module.AddFunction(function);
     }
-    Assert.That(module.TryAdvanceRepresentationStage(IrRepresentationStage.OptimizedSsa, out _), Is.True);
+    AdvanceToOptimizedSsa(module);
     Assert.That(IrLowIrLegalization.TryLegalize(module, out _), Is.True);
 
     Assert.That(IrMachinePipeline.TryLower(module, SelectionTarget.Baseline,

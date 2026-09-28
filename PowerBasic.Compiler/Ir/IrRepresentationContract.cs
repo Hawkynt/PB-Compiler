@@ -17,7 +17,7 @@ public static class IrRepresentationContract {
       return [$"{stage} is a machine-product stage; an IrModule remains LowIr after machine lowering"];
 
     var errors = new List<string>();
-    if (stage >= IrRepresentationStage.OptimizedSsa)
+    if (stage >= IrRepresentationStage.Ssa)
       errors.AddRange(IrVerifier.Verify(module));
 
     if (stage >= IrRepresentationStage.LowIr)

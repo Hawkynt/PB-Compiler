@@ -72,11 +72,11 @@ public static class HirArrayLifetimeBuilder {
         symbol,
         array,
         symbol.ArrayClass,
-        [.. bounds.Select(bound => new HirArrayBound(bound.Lower, bound.Upper))],
+        Array.AsReadOnly(bounds.Select(bound => new HirArrayBound(bound.Lower, bound.Upper)).ToArray()),
         statement.Preserve));
     }
 
-    operations = result;
+    operations = result.AsReadOnly();
     error = null;
     return true;
   }
@@ -100,7 +100,7 @@ public static class HirArrayLifetimeBuilder {
       result.Add(new(symbol, array, symbol.ArrayClass));
     }
 
-    operations = result;
+    operations = result.AsReadOnly();
     error = null;
     return true;
   }

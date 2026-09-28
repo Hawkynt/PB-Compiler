@@ -68,7 +68,7 @@ public static class HirDirectCallBuilder {
 
     call = new(
       target,
-      arguments,
+      Array.AsReadOnly(arguments),
       target.IsFunction,
       target.ReturnType,
       target.CallConv);
