@@ -52,6 +52,8 @@ public sealed partial class CodeGenerator {
   // IR's global (".str0"), and the bytes behind it are what map it onto this codegen's literal pool
   private IrModule? _backendModule;
 
+  internal IrModule? BackendModuleForTesting => this._backendModule;
+
   /// <summary>
   /// How a type reads in a decline message. The census ranks the remaining work by these names, so
   /// they are the SOURCE spellings rather than the class names of the type model.

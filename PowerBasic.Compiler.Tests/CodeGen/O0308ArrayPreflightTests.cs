@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 
@@ -14,13 +15,17 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 public sealed class O0308ArrayPreflightTests {
 
   private static byte[] Compile(string source) {
+    return CompileProgram(source).Image;
+  }
+
+  private static (byte[] Image, CodeGenerator Generator) CompileProgram(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
-    return exe;
+    return (exe, generator);
   }
 
   private static int Count(byte[] image, params byte[] pattern) {
@@ -84,11 +89,14 @@ public sealed class O0308ArrayPreflightTests {
 
   [Test]
   public void Compile_GivenCounterWouldWrapAfterShortMax_ThenKeepsOriginalLoopSemantics() {
-    var image = Compile(AutoVectorizeTests.Loop("$CPU 80586 MMX\n$OPTIMIZE SPEED\n$ERROR OVERFLOW ON", "+", 100)
+    var (_, generator) = CompileProgram(AutoVectorizeTests.Loop("$CPU 80586 MMX\n$OPTIMIZE SPEED\n$ERROR OVERFLOW ON", "+", 100)
       .Replace("FOR i% = 1 TO 100\n  c%(i%) = a%(i%) + b%(i%)", "FOR i% = 32700 TO 32767\n  c%(i% - 32600) = a%(i% - 32600) + b%(i% - 32600)"));
+    var main = generator.BackendModuleForTesting?.FindFunction("main");
 
-    Assert.That(Count(image, 0x0F, 0xFD), Is.EqualTo(0),
-      "without $ERROR NUMERIC the final INTEGER increment wraps to -32768 and the FOR continues");
+    Assert.That(main, Is.Not.Null, "the production backend must have lowered this program through IR");
+    Assert.That(main!.Blocks.SelectMany(block => block.Instructions).OfType<IrCall>()
+        .Any(call => call.Callee is IrFunction { Name: "rt_packed16_add" or "rt_packed16_add_checked" }),
+      Is.False, "without $ERROR NUMERIC the final INTEGER increment wraps to -32768 and the FOR continues");
   }
 
   [Test]
