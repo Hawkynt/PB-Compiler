@@ -94,7 +94,11 @@ public sealed class O0308ArrayPreflightTests {
     var main = generator.BackendModuleForTesting?.FindFunction("main");
     var packedCalls = main?.Blocks.SelectMany(block => block.Instructions).OfType<IrCall>()
       .Where(call => call.Callee is IrFunction { Name: "rt_packed16_add" or "rt_packed16_add_checked" })
-      .Select(call => $"{((IrFunction)call.Callee).Name} in {call.Parent?.Name}").ToArray() ?? [];
+      .Select(call => {
+        var trip = call.Args.LastOrDefault() is IrConstantInt count ? count.Value.ToString() : "?";
+        return $"{((IrFunction)call.Callee).Name} trip={trip}";
+      })
+      .ToArray() ?? [];
 
     Assert.That(main, Is.Not.Null, "the production backend must have lowered this program through IR");
     Assert.That(packedCalls, Is.Empty,
