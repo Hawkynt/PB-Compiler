@@ -92,11 +92,13 @@ public sealed class O0308ArrayPreflightTests {
     var (_, generator) = CompileProgram(AutoVectorizeTests.Loop("$CPU 80586 MMX\n$OPTIMIZE SPEED\n$ERROR OVERFLOW ON", "+", 100)
       .Replace("FOR i% = 1 TO 100\n  c%(i%) = a%(i%) + b%(i%)", "FOR i% = 32700 TO 32767\n  c%(i% - 32600) = a%(i% - 32600) + b%(i% - 32600)"));
     var main = generator.BackendModuleForTesting?.FindFunction("main");
+    var packedCalls = main?.Blocks.SelectMany(block => block.Instructions).OfType<IrCall>()
+      .Where(call => call.Callee is IrFunction { Name: "rt_packed16_add" or "rt_packed16_add_checked" })
+      .Select(call => $"{((IrFunction)call.Callee).Name} in {call.Parent?.Name}").ToArray() ?? [];
 
     Assert.That(main, Is.Not.Null, "the production backend must have lowered this program through IR");
-    Assert.That(main!.Blocks.SelectMany(block => block.Instructions).OfType<IrCall>()
-        .Any(call => call.Callee is IrFunction { Name: "rt_packed16_add" or "rt_packed16_add_checked" }),
-      Is.False, "without $ERROR NUMERIC the final INTEGER increment wraps to -32768 and the FOR continues");
+    Assert.That(packedCalls, Is.Empty,
+      "without $ERROR NUMERIC the final INTEGER increment wraps to -32768 and the FOR continues");
   }
 
   [Test]
