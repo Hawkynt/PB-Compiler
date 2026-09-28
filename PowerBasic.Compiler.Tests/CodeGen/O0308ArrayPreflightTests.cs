@@ -90,6 +90,7 @@ public sealed class O0308ArrayPreflightTests {
   [Test]
   public void Compile_GivenCounterWouldWrapAfterShortMax_ThenKeepsOriginalLoopSemantics() {
     var source = AutoVectorizeTests.Loop("$CPU 80586 MMX\n$OPTIMIZE SPEED\n$ERROR OVERFLOW ON", "+", 100)
+      .Replace("\r\n", "\n", StringComparison.Ordinal)
       .Replace("FOR i% = 1 TO 100\n  c%(i%) = a%(i%) + b%(i%)", "FOR i% = 32700 TO 32767\n  c%(i% - 32600) = a%(i% - 32600) + b%(i% - 32600)");
     Assert.That(source, Does.Contain("FOR i% = 32700 TO 32767"), "the boundary loop fixture must actually be substituted");
     var (_, generator) = CompileProgram(source);
