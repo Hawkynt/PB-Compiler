@@ -82,7 +82,7 @@ public sealed class SimplifyCfgTests {
     var fn = IrLowering.TryLowerMainBody(Binder.Bind(unit, Dialect.Pb35))!;
     var before = fn.Blocks.Count;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     Assert.That(fn.Blocks.Count, Is.LessThan(before));   // dead arm + trivial blocks gone

@@ -46,47 +46,73 @@ public static class ArgumentStructureReduction {
   /// <summary>Scalarizes eligible aggregate parameters in <paramref name="module"/>.</summary>
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
+    return Run(module, new IrModuleAnalysisManager(module)).Changes;
+  }
+
+  /// <summary>Analysis-aware module entry using the shared call graph and function summaries.</summary>
+  public static IrModulePassResult Run(IrModule module, IrModuleAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(module, analyses.Module))
+      throw new ArgumentException("Module analysis manager belongs to a different module.", nameof(analyses));
+
     // The reduction is an ABI change: the callee stops taking a pointer and starts taking the fields
     // behind it, and only the direct calls in THIS module are rewritten to match. A consumer that can
     // still build a call from the source declaration therefore has to be able to turn it off.
     if (!module.OwnsProcedureAbi)
-      return 0;
+      return IrModulePassResult.Unchanged;
 
     var changed = 0;
     for (var progress = true; progress;) {
       progress = false;
-      var summaries = FunctionSummaries.Compute(module);
+      var callGraph = analyses.Get(IrModuleAnalyses.CallGraph);
+      var summaries = analyses.Get(IrModuleAnalyses.FunctionSummaries);
       foreach (var function in module.Functions.ToList()) {
-        if (BuildPlan(module, function, summaries) is not { } plan)
+        if (BuildPlan(module, function, callGraph, summaries) is not { } plan)
           continue;
+
         Rewrite(plan);
         changed += plan.Parameters.Count;
         progress = true;
+
+        // Signature and call-site rewrites invalidate both summaries and graph shape. Restart from
+        // freshly computed module facts before considering another candidate in this same pass run.
+        analyses.Invalidate(IrModulePreservedAnalyses.None);
+        break;
       }
     }
-    return changed;
+    return changed == 0 ? IrModulePassResult.Unchanged : IrModulePassResult.Changed(changed);
   }
 
-  private static FunctionPlan? BuildPlan(IrModule module, IrFunction function, FunctionSummaries summaries) {
+  private static FunctionPlan? BuildPlan(
+      IrModule module,
+      IrFunction function,
+      IrCallGraph callGraph,
+      FunctionSummaries summaries) {
     if (function.IsDeclaration || function.IsVarArgs || function.HasErrorHandler || function.HasInlineAsm
         || function.Name.Equals("main", StringComparison.OrdinalIgnoreCase)
-        || !IsFullyVisible(module, function))
+        || !callGraph.IsFullyVisible(function))
       return null;
 
-    var calls = CallsTo(function).ToList();
+    var calls = callGraph.DirectCallsTo(function).ToList();
     if (calls.Count == 0)
       return null;
 
     var parameters = new List<ParameterPlan>();
     for (var i = 0; i < function.Parameters.Count; ++i)
-      if (TryPlanParameter(module, function, function.Parameters[i], calls, summaries) is { } parameter)
+      if (TryPlanParameter(module, function, function.Parameters[i], calls, callGraph, summaries) is { } parameter)
         parameters.Add(parameter);
 
     return parameters.Count == 0 ? null : new(function, calls, parameters);
   }
 
-  private static ParameterPlan? TryPlanParameter(IrModule module, IrFunction function, IrArgument parameter,
-      IReadOnlyList<IrCall> calls, FunctionSummaries summaries) {
+  private static ParameterPlan? TryPlanParameter(
+      IrModule module,
+      IrFunction function,
+      IrArgument parameter,
+      IReadOnlyList<IrCall> calls,
+      IrCallGraph callGraph,
+      FunctionSummaries summaries) {
     if (!parameter.Type.IsPointer)
       return null;
 
@@ -108,12 +134,13 @@ public static class ArgumentStructureReduction {
     regions.Sort((left, right) => left.Offset.CompareTo(right.Offset));
     requiredBytes = Math.Max(requiredBytes, regions[^1].End);
     foreach (var call in calls)
-      if (!CanReadAtCallSite(module, call, parameter.Index, requiredBytes))
+      if (!CanReadAtCallSite(module, callGraph, call, parameter.Index, requiredBytes))
         return null;
 
     // A BYVAL entry copy is already the snapshot this transformation materializes at the caller.
     // BYREF has no such snapshot: prove every selected concrete field remains unchanged for the call.
-    if (copyIn is null && !FieldsStayUnmodified(module, function, parameter, regions, calls, summaries))
+    if (copyIn is null
+        && !FieldsStayUnmodified(module, function, parameter, regions, calls, callGraph, summaries))
       return null;
 
     return new(parameter.Index, parameter, regions, copyIn, copyStorage);
@@ -196,24 +223,35 @@ public static class ArgumentStructureReduction {
     return true;
   }
 
-  private static bool CanReadAtCallSite(IrModule module, IrCall call, int parameterIndex, long requiredBytes) {
+  private static bool CanReadAtCallSite(
+      IrModule module,
+      IrCallGraph callGraph,
+      IrCall call,
+      int parameterIndex,
+      long requiredBytes) {
     if (requiredBytes <= 0 || parameterIndex >= call.ArgCount
         || call.Parent?.Parent is not { } caller
         || caller.HasErrorHandler || caller.HasInlineAsm)
       return false;
 
-    return TryResolveProvenance(module, caller, call.GetOperand(parameterIndex + 1), [], out var locations)
+    return TryResolveProvenance(module, callGraph, caller, call.GetOperand(parameterIndex + 1), [], out var locations)
       && locations.Count > 0
       && locations.All(location => IsValidAggregateLocation(location, requiredBytes));
   }
 
-  private static bool FieldsStayUnmodified(IrModule module, IrFunction function, IrArgument parameter,
-      IReadOnlyList<FieldRegion> regions, IReadOnlyList<IrCall> calls, FunctionSummaries summaries) {
+  private static bool FieldsStayUnmodified(
+      IrModule module,
+      IrFunction function,
+      IrArgument parameter,
+      IReadOnlyList<FieldRegion> regions,
+      IReadOnlyList<IrCall> calls,
+      IrCallGraph callGraph,
+      FunctionSummaries summaries) {
     foreach (var call in calls) {
       if (call.Parent?.Parent is not { } caller)
         return false;
 
-      var bindings = BuildBindings(module, function, call, caller);
+      var bindings = BuildBindings(module, callGraph, function, call, caller);
       if (!bindings.TryGetValue(parameter, out var bases))
         return false;
 
@@ -229,13 +267,17 @@ public static class ArgumentStructureReduction {
   }
 
   private static Dictionary<IrArgument, IReadOnlyList<ConcreteLocation>> BuildBindings(
-      IrModule module, IrFunction callee, IrCall call, IrFunction caller) {
+      IrModule module,
+      IrCallGraph callGraph,
+      IrFunction callee,
+      IrCall call,
+      IrFunction caller) {
     var result = new Dictionary<IrArgument, IReadOnlyList<ConcreteLocation>>(ReferenceEqualityComparer.Instance);
     for (var i = 0; i < callee.Parameters.Count && i < call.ArgCount; ++i) {
       var parameter = callee.Parameters[i];
       if (!parameter.Type.IsPointer)
         continue;
-      if (TryResolveProvenance(module, caller, call.GetOperand(i + 1), [], out var locations))
+      if (TryResolveProvenance(module, callGraph, caller, call.GetOperand(i + 1), [], out var locations))
         result[parameter] = locations;
     }
     return result;
@@ -321,8 +363,13 @@ public static class ArgumentStructureReduction {
   /// Resolves a pointer to concrete local/global roots. A forwarded argument is valid only when every
   /// direct caller is visible and recursively resolves; a cycle without a concrete base is not proof.
   /// </summary>
-  private static bool TryResolveProvenance(IrModule module, IrFunction function, IrValue value,
-      HashSet<IrArgument> active, out List<ConcreteLocation> locations) {
+  private static bool TryResolveProvenance(
+      IrModule module,
+      IrCallGraph callGraph,
+      IrFunction function,
+      IrValue value,
+      HashSet<IrArgument> active,
+      out List<ConcreteLocation> locations) {
     locations = [];
     if (!TryDecomposePointer(value, out var root, out var offset))
       return false;
@@ -336,15 +383,16 @@ public static class ArgumentStructureReduction {
         return true;
       case IrArgument argument:
         if (!ReferenceEquals(argument.Parent, function) || !active.Add(argument)
-            || !IsFullyVisible(module, function))
+            || !callGraph.IsFullyVisible(function))
           return false;
         try {
-          var callers = CallsTo(function).ToList();
+          var callers = callGraph.DirectCallsTo(function);
           if (callers.Count == 0)
             return false;
           foreach (var call in callers) {
             if (argument.Index >= call.ArgCount || call.Parent?.Parent is not { } caller
-                || !TryResolveProvenance(module, caller, call.GetOperand(argument.Index + 1), active, out var incoming)
+                || !TryResolveProvenance(
+                  module, callGraph, caller, call.GetOperand(argument.Index + 1), active, out var incoming)
                 || !TryOffsetLocations(incoming, offset, out var shifted))
               return false;
             locations.AddRange(shifted);
@@ -446,21 +494,6 @@ public static class ArgumentStructureReduction {
       return false;
     }
   }
-
-  private static bool IsFullyVisible(IrModule module, IrFunction function) {
-    foreach (var user in function.Users) {
-      if (user is not IrCall call || !ReferenceEquals(call.Callee, function)
-          || call.Args.Any(argument => ReferenceEquals(argument, function)))
-        return false;
-      var owner = call.Parent?.Parent;
-      if (owner is null || !module.Functions.Contains(owner))
-        return false;
-    }
-    return true;
-  }
-
-  private static IEnumerable<IrCall> CallsTo(IrFunction function)
-    => function.Users.OfType<IrCall>().Where(call => ReferenceEquals(call.Callee, function));
 
   private static int SizeOf(IrType type) => type.Kind switch {
     IrTypeKind.Int or IrTypeKind.Float => Math.Max(1, (type.Bits + 7) / 8),

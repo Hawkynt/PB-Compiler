@@ -142,7 +142,7 @@ public sealed class FpClassificationSimplificationTests {
     var comparison = block.Append(new IrCmp(IrCmpPred.Foge, square, new IrConstantFloat(IrType.F64, 0)));
     var ret = block.Append(new IrRet(comparison));
 
-    IrPassManager.Standard(optimizeForSpeed: true, includeModulePasses: false).RunToFixpoint(function);
+    IrMiddleEndPipeline.Standard(optimizeForSpeed: true, includeModulePasses: false).RunToFixpoint(function);
 
     Assert.That(ret.Value, Is.TypeOf<IrConstantInt>());
     Assert.That(((IrConstantInt)ret.Value!).Value, Is.EqualTo(1));

@@ -28,8 +28,8 @@ public sealed class BackendArrayUdtDifferentialTests {
   }
 
   private static (string Direct, string Routed, IEnumerable<string> RoutedNames) RunBothWays(string source, bool optimize = true) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
@@ -78,7 +78,7 @@ public sealed class BackendArrayUdtDifferentialTests {
       CALL Neg(q(Op%(1)).A)
       PRINT r.A; q(1).A; q(2).A
 
-      SUB Neg(v AS INTEGER)
+      SUB Neg(v AS INTEGER) NOINLINE
         v = -v
       END SUB
       """ + _OPAQUE);
@@ -340,7 +340,7 @@ public sealed class BackendArrayUdtDifferentialTests {
       CLOSE #1
       PRINT f.A; f.B
 
-      SUB ReadEntry(BYVAL fh AS INTEGER, e AS Ent)
+      SUB ReadEntry(BYVAL fh AS INTEGER, e AS Ent) NOINLINE
         GET fh, , e.A
         GET fh, , e.B
       END SUB
@@ -389,7 +389,7 @@ public sealed class BackendArrayUdtDifferentialTests {
       CLOSE #1
       PRINT Store(0); Store(1); Store(2)
 
-      SUB ReadAll(BYVAL fh AS INTEGER, BYVAL n AS WORD)
+      SUB ReadAll(BYVAL fh AS INTEGER, BYVAL n AS WORD) NOINLINE
         DIM i AS WORD
         FOR i = 0 TO n - 1
           GET fh, , Store(i)

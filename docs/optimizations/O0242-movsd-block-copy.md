@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `#region C1/R3 block-move widening` |
+| **Status** | 🟡 Partial — whole-`TYPE` copies run DWORD-wide on an optimized 386+ target; the 8086 word-wide form is not implemented |
+| **Stage** | IR middle end + runtime |
+| **Source** | `Ir/IrLowering.cs` (record copies as `llvm.memcpy`); `Ir/Passes/MemoryRoutineSpecialization.cs` (small constant sizes inline); `Runtime/DosRuntime.Memory.cs` — `rt_memcpy`; `Runtime/DosRuntime.Core.cs` — `EmitRepMovsbWidened` |
 | **Gate** | `--optimize` (word-wide, 8086-safe) + `$CPU 80386` (dword-wide) |
 | **Verified by** | `tests/diff/DIFF23.BAS` |
 | **Split from** | [R0003](R0003-string-engine.md) / [O0015](O0015-udt-zero-cost.md) |
@@ -14,6 +14,14 @@
 Whole-`TYPE` copies, `LSET` and BCD block moves run **word-wide** (`REP MOVSW`,
 8086-safe) under the optimizer and **DWORD-wide** (`REP MOVSD`) under
 `$CPU 80386`, with odd tails byte-copied.
+
+On the IR path a whole-record assignment lowers to `llvm.memcpy`.
+`MemoryRoutineSpecialization` expands a small constant-size copy into scalar
+loads and stores at the target's width; anything larger becomes a call to
+`rt_memcpy`, whose `EmitRepMovsbWidened` body runs `REP MOVSD` plus a `REP MOVSB`
+tail when the optimizer is on and the target has 32-bit registers, and plain
+`REP MOVSB` otherwise. The 8086 `REP MOVSW` form described here is not
+implemented.
 
 ## Sample
 

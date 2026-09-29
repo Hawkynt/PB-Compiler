@@ -95,6 +95,13 @@ public readonly record struct RuntimeTarget(int CpuLevel, RuntimeCpuFeatures Fea
   public int MaxRuntimeBulkVectorWidthBytes => this.HasAvx512 ? 64 : this.HasAvx ? 32 : this.HasSse ? 16 : 0;
 
   /// <summary>
+  /// Widest vector the packed 16-bit integer kernels (<c>rt_packed16_*</c>) can use: ZMM under AVX-512,
+  /// YMM under AVX2 (packed INTEGER ops need AVX2, not AVX), XMM under SSE2, MMX's 64 bits - or 0, and
+  /// then the kernels are scalar loops and the vectoriser does not call them.
+  /// </summary>
+  public int PackedIntegerWidthBytes => this.HasAvx512 ? 64 : this.HasAvx2 ? 32 : this.HasSse2 ? 16 : this.HasMmx ? 8 : 0;
+
+  /// <summary>
   /// Builds a target from an optional generation token followed by feature requirements. If the first
   /// token is itself a feature (<c>$CPU SSE2</c>), there is no explicit generation floor; the lowest
   /// core capable of satisfying the requested ISA is inferred.

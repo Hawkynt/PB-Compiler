@@ -124,8 +124,8 @@ public sealed class BackendCorpusDifferentialTests {
         var bound = Bind();
         if (bound.Errors.Count > 0)
           return;                                     // a program the front end rejects is not this test's business
-        var direct = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = false };
-        var routed = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = true };
+        var direct = new CodeGenerator(Bind()) { Optimize = optimize};
+        var routed = new CodeGenerator(Bind()) { Optimize = optimize};
         directImage = direct.EmitExecutable();
         routedImage = routed.EmitExecutable();
         routedNames = routed.BackendRoutedNames.ToList();

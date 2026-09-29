@@ -39,7 +39,7 @@ public sealed class BackendLoopStepTests {
 
   /// <summary>The program's output, with whatever stopped the machine appended rather than thrown.</summary>
   private static string Run(string source, bool routed, bool optimize, out IReadOnlyList<string> routedNames) {
-    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     routedNames = [.. generator.BackendRoutedNames];

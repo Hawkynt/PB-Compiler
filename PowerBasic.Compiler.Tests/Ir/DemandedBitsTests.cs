@@ -77,7 +77,7 @@ public sealed class DemandedBitsTests {
     var operation = builder.Or(x, new IrConstantInt(IrType.I32, 0x7FFF0000));
     builder.Ret(builder.Trunc(operation, IrType.I8));
 
-    IrPassManager.Standard(optimizeForSpeed: true, includeModulePasses: false).RunToFixpoint(function);
+    IrMiddleEndPipeline.Standard(optimizeForSpeed: true, includeModulePasses: false).RunToFixpoint(function);
 
     Assert.That(function.AllInstructions.OfType<IrBinary>(), Is.Empty);
     Assert.That(IrVerifier.Verify(function), Is.Empty);

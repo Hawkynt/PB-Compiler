@@ -33,8 +33,8 @@ public sealed class BackendConsoleTests {
 
   /// <summary>Compiles both ways, runs both, asserts the routed build really took the named procedures, and returns what the direct one did.</summary>
   private static Both RunBothWays(string source, bool optimize, string routedName = "main", Dialect dialect = Dialect.Pb36) {
-    var direct = new CodeGenerator(Bind(source, dialect)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source, dialect)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source, dialect)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source, dialect)) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));

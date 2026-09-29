@@ -16,13 +16,13 @@ public sealed class BackendIdiomTests {
 
   private static readonly SelectionTarget _optimized = new(Optimize: true);
 
-  private static MFunction Select(IrFunction fn, SelectionTarget? target = null) {
+  private static X86MachineFunction Select(IrFunction fn, SelectionTarget? target = null) {
     var machine = InstructionSelector.TrySelect(fn, out var reason, target ?? _optimized);
     Assert.That(machine, Is.Not.Null, $"declined: {reason}");
     return machine!;
   }
 
-  private static List<MOpcode> Opcodes(MFunction fn) => [.. fn.AllInstructions.Select(i => i.Opcode)];
+  private static List<MOpcode> Opcodes(X86MachineFunction fn) => [.. fn.AllInstructions.Select(i => i.Opcode)];
 
   /// <summary>A one-block function over one INTEGER argument, ending in a return of <paramref name="build"/>.</summary>
   private static IrFunction OneArg(Func<IrBasicBlock, IrArgument, IrValue> build) {
@@ -60,8 +60,10 @@ public sealed class BackendIdiomTests {
     var abs = entry.Append(new IrBinary(IrBinaryOp.Sub, flipped, mask));
     entry.Append(new IrRet(entry.Append(new IrBinary(IrBinaryOp.Or, abs, mask))));
 
+    // the mask is computed on its own - SAR r,15 or, optimized, its four-byte ADD r,r / SBB r,r form
     var opcodes = Opcodes(Select(fn));
-    Assert.That(opcodes, Does.Contain(MOpcode.Sar), "the shift stays because the mask has a reader of its own");
+    Assert.That(opcodes.Contains(MOpcode.Sar) || (opcodes.Contains(MOpcode.Add) && opcodes.Contains(MOpcode.Sbb)), Is.True,
+      "the sign mask stays because it has a reader of its own");
     Assert.That(opcodes, Does.Not.Contain(MOpcode.Cwd));
   }
 
@@ -137,7 +139,7 @@ public sealed class BackendIdiomTests {
     return fn;
   }
 
-  private static string Shape(MFunction fn) => string.Join(" | ",
+  private static string Shape(X86MachineFunction fn) => string.Join(" | ",
     fn.Blocks.SelectMany(b => b.Instructions).Select(i =>
       $"{i.Opcode}{(i.Condition is { } c ? ":" + c : "")} {string.Join(",", i.Operands)}"));
 

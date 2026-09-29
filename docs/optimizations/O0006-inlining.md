@@ -2,10 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (small leaf procedures; trivial TYPE methods and properties) |
-| **Stage** | Pre-emission analysis + emitter |
-| **IR** | ✅ `Ir/Passes/Inliner.cs`, run by `CodeGenerator.BackendProcs` after the pass sweep and followed by another - the point of inlining is not the call overhead but that the callee body becomes visible to the caller's optimizer, and nothing sees it until the passes run again |
-| **Source** | `CodeGen/OptInlining.cs`, `CodeGen/CodeGenerator.Procs.cs` |
+| **Status** | ✅ Implemented (non-recursive procedures within a size budget) |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/Inliner.cs` — `Run`, `IsInlinable`, `InlineCall`; run by `Ir/Passes/IrMiddleEndPipeline.cs` — `RunNativeModule` after the pass sweep and followed by another; `Ir/Passes/GlobalDce.cs` removes the callee once nothing calls it |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF30.BAS` (mixed eligible/ineligible callees, side-effecting and nested arguments) |
 | **Related** | [O0018](O0018-interprocedural-constant-propagation.md), [O0021](O0021-register-parameters.md), [O0022](O0022-dead-procedure-elimination.md), [O0053](O0053-ir-inliner.md) |
@@ -13,28 +12,30 @@
 
 ## What it is
 
-A small **leaf** `SUB`/`FUNCTION` is emitted as its body at every call site: the
-frame setup, the `CALL`, the `RET` and the argument push/pop traffic all
-disappear.
+A small `SUB`/`FUNCTION` is replaced by its body at the call site: the frame
+setup, the `CALL`, the `RET` and the argument push/pop traffic all disappear.
+The larger point is that the callee body becomes visible to the caller's
+optimizer, which is why `RunNativeModule` runs the whole pass sweep again after
+inlining.
 
-**This page covers the leaf-procedure inline itself**; inlining trivial TYPE
+**This page covers the procedure inline itself**; inlining trivial TYPE
 methods ([O0200](O0200-trivial-method-inlining.md)) and purging a
 fully-inlined procedure ([O0201](O0201-inlined-procedure-purge.md)) are separate
 entries.
 
-Mechanics:
+Mechanics (`InlineCall`):
 
-- `BYVAL` scalar arguments evaluate **once** into fresh per-inline frame temps,
-  preserving evaluation order and side effects;
-- every read and write of a parameter, body local or the result variable is
-  remapped onto those temps, so two inlinings — or a self-mutating `BYVAL`
-  parameter at two call sites — never collide;
-- body locals start zeroed exactly like a real frame;
-- a `FUNCTION`'s result is the value left in the result temp; the trivial
-  single-result-assignment `FUNCTION` is a fast path that emits the expression
-  straight into the registers with no result temp at all.
+- the call site's block is split, and everything after the call becomes a
+  continuation block;
+- the callee's blocks are cloned into the caller (`IrCloner`) with each
+  parameter mapped to the call's argument value — the arguments were already
+  evaluated **once**, in order, at the call site;
+- the callee's own allocas are cloned too, so two inlinings of the same
+  procedure never share a local;
+- each cloned `ret` becomes a branch to the continuation, and the call's result
+  is the single returned value or a phi over the returns.
 
-The same machinery inlines **trivial TYPE methods and properties** in `pb36`:
+The same inliner handles **trivial TYPE methods and properties** in `pb36`:
 the `THIS` receiver is the ordinary BYREF argument it is, so `o.Count` on an
 anonymous property is as cheap as a field access, and a hand-written
 `FUNCTION Sum() = THIS.x + THIS.y` inlines the same way.
@@ -98,19 +99,19 @@ PRINT r%
 
 ## Why it is safe
 
-The gate is deliberately conservative: BASIC calling convention only, not
-`STATIC`, no `ON ERROR`, no closure/capture, `BYVAL` scalar parameters only, and
-a body of at most a few plain scalar assignments and `LOCAL` declarations — no
-calls, loops, labels, `GOTO`/`GOSUB`/`RETURN`, `EXIT`, `SELECT` or nested
-procedures. The reachability purge additionally requires a self-contained main
-and bails the moment a procedure's address is taken (`CODEPTR`) or the program
-uses any error handling. Anything uncertain falls back to the genuine call, so
-the output stays byte-identical.
+`IsInlinable` refuses a declaration, a direct self-call, and a callee of more
+than 64 IR instructions (8 under `$OPTIMIZE SIZE`, 256 in the extra
+`$OPTIMIZE SPEED` rounds). A caller or callee with an armed error handler, and
+one containing inline assembly, is never inlined into or out of: the handler's
+block address and the asm block's references to its own frame cannot be
+cloned. The callee is removed afterwards only by `GlobalDce`, when it has no
+remaining caller and its address is not taken.
 
 A procedure can opt out explicitly with the `pb36` **`NOINLINE`** modifier, which
 keeps it as its own inspectable code.
 
 ## Limits
 
-Recursive and non-leaf callees, and inlining above a size budget, live in the IR
-mid-end's inliner ([O0053](O0053-ir-inliner.md)) for the C/LLVM back ends.
+Directly recursive callees and bodies above the size budget stay calls; the
+budget and profile-weighted variants are described in
+[O0053](O0053-ir-inliner.md).

@@ -21,7 +21,7 @@ public sealed class CEmitterQualityTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var module = IrLowering.TryLowerModule(Binder.Bind(unit, Dialect.Pb35));
     Assert.That(module, Is.Not.Null, "outside the IR lowering subset");
-    var pipeline = IrPassManager.Standard();
+    var pipeline = IrMiddleEndPipeline.Standard();
     pipeline.RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)

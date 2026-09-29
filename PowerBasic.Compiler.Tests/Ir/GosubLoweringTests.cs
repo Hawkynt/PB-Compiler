@@ -23,7 +23,7 @@ public sealed class GosubLoweringTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var module = IrLowering.TryLowerModule(Binder.Bind(unit, Dialect.Pb35));
     if (module is not null)
-      IrPassManager.Standard().RunOnModule(module);
+      IrMiddleEndPipeline.Standard().RunOnModule(module);
     return module;
   }
 
@@ -42,7 +42,7 @@ public sealed class GosubLoweringTests {
   public void SingleGosub_VerifiesAfterOptimization() {
     var fn = Lower("x% = 1\nGOSUB add_ten\ny% = x%\nEND\nadd_ten:\nx% = x% + 10\nRETURN")!;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
@@ -56,7 +56,7 @@ public sealed class GosubLoweringTests {
     var sw = dispatch.Instructions.OfType<IrSwitch>().Single();
     Assert.That(sw.Cases.Count, Is.EqualTo(2));   // two distinct GOSUB sites share the one dispatch
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
@@ -65,7 +65,7 @@ public sealed class GosubLoweringTests {
     var fn = Lower("x% = 0\nGOSUB body\nfin:\ny% = x%\nEND\nbody:\nx% = 5\nRETURN fin")!;
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 

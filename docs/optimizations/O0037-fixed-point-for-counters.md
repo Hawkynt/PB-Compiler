@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (constant bounds/step on a power-of-two-fraction grid, 16-bit scaled counter) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `#region O13`, `TryEmitFixedPointFor` |
+| **Status** | ⬜ Not implemented on the IR path |
+| **Stage** | IR middle end (planned) |
+| **Source** | None today. `Ir/IrLowering.cs` — `LowerFloatFor` lowers a float counter as an x87 loop; `Ir/Passes/FloatDemotion.cs` ([O0012](O0012-float-demotion.md)) demotes only integral init/step/limit, not a power-of-two-fraction grid |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
 | **Related** | [O0012](O0012-float-demotion.md), [O0075](O0075-silent-fixed-point.md) |
 
@@ -19,6 +19,9 @@ by the exact power-of-two `2⁻ᵏ`).
 The smallest `k ≤ 16` putting `from`, `to` and `step` exactly on the grid is
 chosen; if no such `k` exists, or any scaled value would leave 16 bits, the pass
 declines.
+
+Not implemented on the IR path; the syntax-level version was retired with the
+direct emitter. The sections below describe the retired transform.
 
 ## Sample
 

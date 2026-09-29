@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
@@ -47,6 +48,36 @@ public sealed class ContextSensitiveCloningTests {
       Assert.That(((IrConstantInt)((IrRet)clone.Entry!.Terminator!).Value!).Value, Is.EqualTo(7));
       Assert.That(IrVerifier.Verify(callee), Is.Empty);
       Assert.That(IrVerifier.Verify(clone), Is.Empty);
+    });
+  }
+
+
+  [Test]
+  public void AnalysisAwareRun_RebuildsAndPreservesTheFinalCallGraph() {
+    var module = new IrModule("t");
+    var (callee, _) = Identity(module, "f");
+    var (hot, specializedCall) = Caller(module, "hot", callee, Const(7));
+    var outside = new IrArgument(IrType.I16, 0, "outside");
+    var cold = module.AddFunction(new IrFunction("cold", IrType.Void, [outside]));
+    var coldEntry = cold.CreateBlock("entry");
+    coldEntry.Append(new IrCall(IrType.I16, callee, [outside]));
+    coldEntry.Append(new IrRet());
+
+    var analyses = new IrModuleAnalysisManager(module);
+    var before = analyses.Get(IrModuleAnalyses.CallGraph);
+    Assert.That(before.DirectCalleesOf(hot), Is.EqualTo(new[] { callee }));
+
+    var result = ContextSensitiveCloning.Run(module, analyses);
+    var clone = (IrFunction)specializedCall.Callee;
+    var after = analyses.Get(IrModuleAnalyses.CallGraph);
+
+    Assert.Multiple(() => {
+      Assert.That(result.Changes, Is.EqualTo(1));
+      Assert.That(result.PreservedAnalyses.IsPreserved(IrModuleAnalyses.CallGraph), Is.True);
+      Assert.That(after.DirectCalleesOf(hot), Is.EqualTo(new[] { clone }));
+      Assert.That(after.DirectCallsTo(callee).Any(call => ReferenceEquals(call.Parent?.Parent, hot)), Is.False);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.CallGraph), Is.True);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
     });
   }
 

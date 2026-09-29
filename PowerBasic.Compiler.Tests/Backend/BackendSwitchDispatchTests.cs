@@ -35,7 +35,7 @@ public sealed class BackendSwitchDispatchTests {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model) {
-      Optimize = true, OptimizeSpeed = !size, OptimizeSize = size, UseExperimentalBackend = true,
+      Optimize = true, OptimizeSpeed = !size, OptimizeSize = size,
     };
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
@@ -375,7 +375,7 @@ public sealed class BackendSwitchDispatchTests {
   public void Dispatch_GivenOptimizationOff_WhenRouted_ThenNoDispatchShapeIsChosen() {
     // every shape here is an optimization, and none may appear with the optimizer off
     var unit = Parser.Parse(Lexer.Tokenize(_table.Replace("{v}", "5"), "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
-    var generator = new CodeGenerator(Binder.Bind(unit, Dialect.Pb36)) { Optimize = false, UseExperimentalBackend = true };
+    var generator = new CodeGenerator(Binder.Bind(unit, Dialect.Pb36)) { Optimize = false};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     Assert.Multiple(() => {

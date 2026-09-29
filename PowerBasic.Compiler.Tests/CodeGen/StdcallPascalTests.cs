@@ -85,7 +85,6 @@ public sealed class StdcallPascalTests {
     var (model, _) = Compile(source);
     var generator = new CodeGenerator(model) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var exe = generator.EmitExecutable([AddOneStdUnit()], []);

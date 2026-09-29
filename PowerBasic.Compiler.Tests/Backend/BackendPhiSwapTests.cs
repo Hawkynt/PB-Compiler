@@ -69,7 +69,7 @@ public sealed class BackendPhiSwapTests {
   }
 
   /// <summary>Every register-to-register MOV the loop block ends with - the edge's copies.</summary>
-  private static List<MInstr> EdgeCopies(MFunction machine)
+  private static List<MInstr> EdgeCopies(X86MachineFunction machine)
     => [.. machine.Blocks.First(b => b.Label == "loop").Instructions
       .Where(i => i.Opcode == MOpcode.Mov
         && i.Operands is [MOperand.Register, MOperand.Register])];
@@ -133,8 +133,8 @@ public sealed class BackendPhiSwapTests {
       DATA 3, 8
       """;
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 

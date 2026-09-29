@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.cs` (the armed comparison node), `CodeGen/CodeGenerator.Expressions.cs` |
+| **Stage** | x86 back end (instruction selection) |
+| **Source** | `Backend/InstructionSelector.cs` — `FoldedCompare`, `EmitCompareForFlags`, `SelectTerminator`; `Backend/Peephole.cs` (branch layout) |
 | **Gate** | `--optimize` |
 | **Verified by** | scenario `ComparisonBranchesOnItsOwnFlags` |
 | **Related** | [O0032](O0032-short-circuit-conditions.md), [O0008](O0008-peephole-zero-idiom.md) |
@@ -59,12 +59,15 @@ Unchanged — only the intermediate truth value disappears.
 
 ## Why it is safe
 
-The fusion is **armed for one node and matched by identity**, so a comparison
-nested inside a larger expression, or emitted from an inlined callee body, is
-never mistaken for the condition itself. The arming site falls back to the value
-path whenever the fusion did not fire — for example when the comparison was
-folded ([O0016](O0016-value-fact-analysis.md)) or strength-reduced first — so
-the two paths can never both apply or both be skipped.
+`FoldedCompare` fuses a compare into the branch only when the block's
+conditional branch is its **single user** and its predicate maps to a condition
+code; a compare whose value is also used elsewhere, or a 32-bit compare, is
+materialized and the branch tests that value against zero instead. A compare the
+middle end has already folded to a constant never reaches selection
+([O0017](O0017-sccp.md)). An IEEE float compare branches the same way, on the x87
+status moved into the flags.
 
-The branch sense is chosen so the fall-through is the `THEN` body, which is also
+Selection emits `Jcc then` followed by `JMP else`; the peephole pass turns a
+`Jcc next / JMP away` pair into a single inverted `Jcc away` when the `THEN`
+body is laid out next, so the fall-through is the `THEN` body, which is also
 what the 8086's static prediction prefers ([O0041](O0041-branch-layout.md)).

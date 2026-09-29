@@ -11,7 +11,7 @@ public sealed partial class CodeGenerator {
 
   private sealed record PostLinkFunctionRange(
     ProcedureSymbol Procedure,
-    MFunction Machine,
+    X86MachineFunction Machine,
     int Start,
     int End);
 
@@ -23,7 +23,7 @@ public sealed partial class CodeGenerator {
   /// procedures deliberately do not participate: without machine-block boundaries their bytes are
   /// opaque and O0276 must not pretend otherwise.
   /// </summary>
-  private void TrackPostLinkFunction(ProcedureSymbol procedure, MFunction machine, Label start, Label end) {
+  private void TrackPostLinkFunction(ProcedureSymbol procedure, X86MachineFunction machine, Label start, Label end) {
     if (!start.IsBound || !end.IsBound)
       throw new InvalidOperationException("post-link function ranges must be recorded after both labels are bound");
     this._postLinkFunctionRanges.Add(new(procedure, machine, start.Position, end.Position));
@@ -46,16 +46,16 @@ public sealed partial class CodeGenerator {
       ReferenceEqualityComparer.Instance);
 
     // MAIN does not wrap each routed function with a synthetic end label. Recover that one missing
-    // boundary from the complete bound-label map: MachineEmitter binds exactly one label per block,
+    // boundary from the complete bound-label map: hosted target machine emission binds exactly one label per block,
     // and the first later label is therefore the next procedure/thunk/data region. The final block's
     // epilogue lies before it and remains part of the block as required.
     foreach (var (procedure, backend) in this.BackendProcs()) {
       if (tracked.Contains(procedure)
           || !this._procLabels.TryGetValue(procedure, out var procedureLabel)
           || !procedureLabel.IsBound
-          || backend.Fn.Blocks.Count == 0)
+          || backend.Machine.Function.Blocks.Count == 0)
         continue;
-      if (this.TryInferPostLinkRange(image, procedure, backend.Fn, procedureLabel.Position, codeLength) is { } inferred)
+      if (this.TryInferPostLinkRange(image, procedure, backend.Machine.Function, procedureLabel.Position, codeLength) is { } inferred)
         ranges.Add(inferred);
     }
 
@@ -83,7 +83,7 @@ public sealed partial class CodeGenerator {
   }
 
   private PostLinkFunctionRange? TryInferPostLinkRange(RelocatableImage image,
-      ProcedureSymbol procedure, MFunction machine, int functionStart, int codeLength) {
+      ProcedureSymbol procedure, X86MachineFunction machine, int functionStart, int codeLength) {
     if (functionStart < 0 || functionStart >= codeLength)
       return null;
 
@@ -98,7 +98,7 @@ public sealed partial class CodeGenerator {
       if (matches.Length == 0)
         return null;
       // Two equally named labels after the current cursor are possible across different procedures.
-      // The first is the current machine block because MachineEmitter binds blocks in list order; the
+      // The first is the current machine block because hosted target machine emission binds blocks in list order; the
       // monotonic cursor prevents a later function's same-spelled "entry" from being chosen early.
       var match = matches[0];
       lastBlockStart = match.Offset;

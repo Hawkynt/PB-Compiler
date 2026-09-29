@@ -2,25 +2,26 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (scalar parameters, unchanged ABI) |
-| **Stage** | Whole-program pre-emission analysis |
-| **Source** | `CodeGen/OptIpcp.cs` |
-| **Gate** | `--optimize`; disabled wholesale when any procedure address is taken |
-| **Verified by** | `tests/diff/DIFF38.BAS` |
-| **IR** | ✅ `Ir/Passes/IpConstantProp.cs` — `PropagateArguments`: when every visible call passes the same constant for a parameter, the parameter becomes that constant. Registered with `IrPassManager.AddModulePass`, so `RunOnModule` runs the function pipeline, then this, then the function pipeline again for what it exposed. Soundness rests on `IsFullyVisible`, which declines `main` and any function whose address appears anywhere but a callee operand; verified by `IpConstantPropTests` and `IrPassObservableEquivalenceTests` |
+| **Status** | ✅ Implemented (scalar parameters) |
+| **Stage** | IR middle end (interprocedural module pass) |
+| **Source** | `Ir/Passes/IpConstantProp.cs` — `PropagateArguments`; visibility from `Ir/Analysis/IrCallGraph.cs` — `IsFullyVisible` |
+| **Gate** | `--optimize`; declined per procedure for `main`, a procedure with an error handler, and any procedure whose address is used other than as a direct callee |
+| **Verified by** | `tests/diff/DIFF38.BAS`, `IpConstantPropTests`, `IrPassObservableEquivalenceTests` |
 | **Related** | [O0017](O0017-sccp.md), [O0025](O0025-pure-function-folding.md), [O0069](O0069-dead-parameter-elimination.md) |
 
 ## What it is
 
 A scalar parameter that receives the **same compile-time constant at every call
-site** and is never written — neither directly nor by being passed BYREF to
-another procedure — reads as that literal inside the callee. That feeds constant
+site** reads as that literal inside the callee. That feeds constant
 folding, dead-code elimination and branch folding *inside the procedure body*,
 which is where the payoff is.
 
-The calling convention is untouched: the argument is still pushed and the frame
-slot still exists. Only the body specializes, so the call sites are
-byte-identical.
+`PropagateArguments` replaces every use of such a parameter with the constant;
+the pass runs in the interprocedural phase of the standard pipeline, so the
+function pipeline that follows folds what it exposed. The same pass also
+propagates a constant *result* the other way (O0159). It leaves the signature
+alone itself; the parameter it leaves unused is handed to
+[O0069](O0069-dead-parameter-elimination.md) at the end of the pass.
 
 ## Sample
 
@@ -83,14 +84,16 @@ END SUB
 
 ## Why it is safe
 
-- Every call site must be visible and must pass the same constant; a parameter
-  written anywhere in the callee (in a statement or an expression, directly or
-  through a BYREF hand-off) disqualifies it.
-- The pass is disabled wholesale when any procedure's address is taken
-  (`CODEPTR` / `CALL DWORD`), because an indirect call could pass an argument
-  the analysis never saw.
-- Because the ABI is unchanged, no caller has to agree with the callee about the
-  specialization.
+- Every call site must be visible and must pass the same constant, of the
+  parameter's own type. What is replaced is the value the parameter *arrives*
+  with; a later write to the parameter inside the body defines a new value and
+  is unaffected.
+- `IsFullyVisible` declines `main` and any procedure whose address is used
+  anywhere but as the callee of a direct call (`CODEPTR` / `CALL DWORD`, a
+  delegate, an argument), because an indirect call could pass an argument the
+  analysis never saw. The decision is per procedure.
+- Replacing the parameter's uses does not change the ABI, so no caller has to
+  agree with the callee about the specialization.
 
 ## Limits
 

@@ -40,7 +40,7 @@ public sealed partial class CodeGenerator {
   /// entry the direct emitter uses, so the two reach the same decision about the same instruction.
   ///
   /// <para>
-  /// <see cref="Backend.MachineEmitter"/> takes this as a callback rather than calling the policy
+  /// hosted target machine emitter takes this as a callback rather than calling the policy
   /// itself, for the reason it takes callee labels and data cells that way: what a target can execute
   /// is knowledge the CODE GENERATOR holds, and the machine emitter should not have to grow a second
   /// copy of it. Returning false leaves the emitter to assemble the text verbatim, which is the right

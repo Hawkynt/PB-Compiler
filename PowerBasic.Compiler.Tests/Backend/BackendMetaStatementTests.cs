@@ -100,8 +100,8 @@ public sealed class BackendMetaStatementTests {
   [TestCaseSource(nameof(_programs))]
   public void Compile_GivenAMetastatementProgram_WhenRoutingIsEnabled_ThenTheModuleBodyRoutesAndAgrees(Program program) {
     foreach (var optimize in new[] { true, false }) {
-      var direct = new CodeGenerator(Bind(program.Source)) { Optimize = optimize, UseExperimentalBackend = false };
-      var routed = new CodeGenerator(Bind(program.Source)) { Optimize = optimize, UseExperimentalBackend = true };
+      var direct = new CodeGenerator(Bind(program.Source)) { Optimize = optimize};
+      var routed = new CodeGenerator(Bind(program.Source)) { Optimize = optimize};
       var directImage = direct.EmitExecutable();
       var routedImage = routed.EmitExecutable();
       Assert.Multiple(() => {

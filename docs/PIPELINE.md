@@ -10,15 +10,22 @@ flowchart TD
   SRC[".BAS source"] --> LEX["Lexer<br/>(tokens, dialect-aware)"]
   LEX --> PARSE["Parser<br/>(AST: Statements + Expressions)"]
   PARSE --> BIND["Binder to SemanticModel<br/>(symbols, types, CallBindings,<br/>VariableBindings, LambdaProcs)"]
-  BIND --> CG["CodeGenerator<br/>(optimize + emit 8086)"]
-  CG --> LINK["Linker<br/>(our units/libs + foreign OMF .OBJ/.LIB)"]
+  BIND --> LOWER["IrLowering<br/>(bound model to typed SSA IR)"]
+  LOWER --> MID["IR middle end<br/>(IrMiddleEndPipeline)"]
+  MID --> BE["x86-16 back end<br/>(select, schedule, allocate, emit)"]
+  BE --> ASM["Assembler + CodeGenerator<br/>(runtime, data layout)"]
+  ASM --> LINK["Linker<br/>(our units/libs + foreign OMF .OBJ/.LIB)"]
   LINK --> MZ["MzExeWriter<br/>(DOS MZ image)"]
   MZ --> EXE([".EXE"])
 ```
 
 The front end (Lexer, Parser, Binder) is **dialect-driven** (`Dialect.Pb35`,
 `Pb36`, `qb45`, `gw`, ...) but does **no optimization** — it produces a faithful
-`SemanticModel`. All optimization lives in the **CodeGenerator** and the **Linker**.
+`SemanticModel`. There is one code generator: every procedure body is lowered to
+the IR, optimized there, and compiled by the x86-16 back end. Routing is mandatory —
+a body the back end declines is a compile error ("routing is mandatory and 'X' was
+not taken by the x86-16 back end: …"), never a silent fallback. All optimization
+lives in the IR middle end, the back end, the image layout and the **Linker**.
 
 ## 2. The golden rule that gates everything
 
@@ -28,33 +35,34 @@ flowchart LR
   Q -- yes --> OPT["optimized image<br/>(pb36 / any dialect with -O)"]
 ```
 
-- **`Optimize` off** → output must match the genuine vintage compiler byte-for-byte
-  (validated by `scripts/run-diff-tests.sh`). Every optimization pass is gated on
-  `Optimize`, so the golden gate is never touched.
+- **`Optimize` off** → the program must behave exactly like the genuine vintage
+  compiler's (validated by `scripts/run-diff-tests.sh`, which compares each
+  program's observable output, `RESULT.TXT`, byte for byte). Unoptimized, the middle
+  end runs only `IrMiddleEndPipeline.Legalize`, so no optimization touches the gate.
 - **`OptimizeSpeed`** (`$OPTIMIZE SPEED` / `-OZF`) enables the more aggressive,
   size-trading passes on top of `Optimize`.
 - pb36 is "pb35 + optimization": with `Optimize` off, pb36 output equals pb35.
 
-## 3. The three optimization tiers inside CodeGenerator
+## 3. The three optimization tiers
 
 ```mermaid
 flowchart TD
-  subgraph T1["TIER 1 — model-level pre-passes (whole-AST, before any bytes)"]
+  subgraph T1["TIER 1 — IR middle end (IrMiddleEndPipeline.RunNativeModule)"]
     direction TB
-    P1["OptPruner — O2 dead/unreachable stmts, O10 redundant DEF SEG"]
-    P2["OptFloatDemotion — O12 float to fixed/int"]
-    P3["OptIpcp — O18 interprocedural constant propagation"]
-    P4["OptRegParm — O21 register params (SPEED only)"]
-    P5["OptReachability — O22 dead-code tree-shake from main"]
-    P1 --> P2 --> P3 --> P4 --> P5
+    M1["Standard x2 — LoopPreparation, ScalarSimplification (InstCombine, Sccp),<br/>MemoryAndObjects, ArithmeticSimplification (FloatDemotion, Gvn),<br/>MemoryOptimization (DeadStoreElim), LoopOptimization (Licm, Dce),<br/>LateScalarCleanup, Interprocedural (IpConstantProp, PureCallEvaluation)"]
+    M2["Inliner — then Standard x2 again when it inlined something"]
+    M3["native-only: ConstantNumericPrint, ConstantInstrSpecialization,<br/>PackedLoopVectorization (SPEED+SIMD), AddressInduction,<br/>StringStackPromotion, MemoryRoutineSpecialization, SwitchFormation sweep"]
+    M4["GlobalDce (module owns its callers), PrivateCallingConvention (SPEED)"]
+    M1 --> M2 --> M3 --> M4
   end
-  subgraph T2["TIER 2 — per-statement emission (as 8086 is generated)"]
+  subgraph T2["TIER 2 — x86-16 back end (Backend/)"]
     direction TB
-    E1["O1 const fold, O3 CSE, O4 strength-reduce, O5 reg counter/accum"]
-    E2["O6 inline, O7 unroll(SPEED), O8 peephole, O9 string fold"]
-    E3["O13 fixed-point, O14 tail-call, O16 range/check elim"]
-    E4["O17 SCCP/branch fold, O19 zero-elision, O20 idiom replace, copy-prop"]
-    E1 --> E2 --> E3 --> E4
+    B1["InstructionSelector — idioms, reciprocal division"]
+    B2["Peephole — dead arithmetic, copy recomputation"]
+    B3["MachineScheduler + MachineCombiner, SuperoptimizedPeepholes"]
+    B4["LinearScanAllocator — CopyCoalescer, Spiller"]
+    B5["MachineEmitter — PostRegisterAllocationPeepholes,<br/>LateLoadStoreOptimization, prologue/epilogue"]
+    B1 --> B2 --> B3 --> B4 --> B5
   end
   subgraph T3["TIER 3 — layout / runtime / output"]
     direction TB
@@ -66,77 +74,83 @@ flowchart TD
   T1 --> T2 --> T3
 ```
 
-**Tier 1 — model-level pre-passes.** Run once over the whole `SemanticModel`
-*before* emission (`EmitExecutable`, the `if (Optimize && !isUnit)` block), in this
-exact order: `OptPruner` then `OptFloatDemotion` then `OptIpcp` then `OptRegParm`
-(SPEED), and the live-set from `OptReachability` is consumed at the emission loop.
-They reshape the AST/model so the later tiers see less, simpler code.
+**Tier 1 — the IR middle end.** `Ir/IrLowering.cs` turns the bound model into typed
+SSA IR; `Ir/Passes/IrMiddleEndPipeline.cs` then optimizes the whole module.
+`RunNativeModule` runs `Standard(...)` twice (unoptimized: `Legalize(...)` twice), then
+the `Inliner`, and `Standard` twice more when it inlined something. `Standard` is
+organized in named phases — LoopPreparation, ScalarSimplification, MemoryAndObjects,
+ArithmeticSimplification, MemoryOptimization, LoopOptimization, LateScalarCleanup and
+the module-level Interprocedural phase (read `IrMiddleEndPipeline.cs` for the exact
+pass list). After it come the passes that are only right for the DOS target:
+`ConstantNumericPrint`, `ConstantInstrSpecialization`, `PackedLoopVectorization`
+(SPEED with SIMD), `AddressInduction` (steps array addresses; runs
+`AddressOffsetNarrowing` first), `StringStackPromotion`, `MemoryRoutineSpecialization`,
+a `SwitchFormation` sweep, `GlobalDce` when the module owns its callers, and
+`PrivateCallingConvention` under SPEED. Value ranges and known bits come from
+`Ir/Analysis/IrRangeAnalysis.cs` and `Ir/Analysis/IrKnownBitsAnalysis.cs`.
 
-**Tier 2 — per-statement emission.** As each statement/expression is lowered to
-8086, the emitter applies local optimizations inline (peephole, strength reduction,
-CSE, copy-prop, branch folding, the trivial-function inliner, etc.), most gated on
-`Optimize`, the aggressive ones additionally on `OptimizeSpeed`. There is also an
-SSA mid-end (CFG / dominators / SSA / SCCP) feeding O17 and O2 dead-store elimination.
+**Tier 2 — the x86-16 back end.** `Backend/InstructionSelector` turns each IR function
+into machine instructions over virtual registers; `Peephole` (including dead-arithmetic
+removal and copy recomputation), `MachineScheduler` (with `MachineCombiner` and
+`SuperoptimizedPeepholes`), `LinearScanAllocator` (`CopyCoalescer`, `Spiller`) and
+`MachineEmitter` (`PostRegisterAllocationPeepholes`, `LateLoadStoreOptimization`,
+prologue/epilogue) follow, and `Asm/Assembler` encodes the result. Optimizing rewrites
+are gated on `Optimize`, the aggressive ones additionally on `OptimizeSpeed`.
 
-**Tier 3 — layout/output.** After the body is emitted: the runtime is appended and
+**Tier 3 — layout/output.** After the bodies are emitted: the runtime is appended and
 **trimmed to only the sections the program reaches**, data is laid out on demand,
 BSS is reserved, the image is right-sized, and trivial programs collapse to a tiny
 COM-style image.
 
 ## 4. Who may be optimized — the ownership model
 
-Some Tier-1 passes change the calling ABI or *remove* code, so they may only touch
-procedures the compiler **fully owns** (sees every caller, nothing external can reach):
+Some interprocedural passes change the calling ABI or *remove* procedures, so they
+may only run when the compiler **owns** every procedure (sees every caller, nothing
+external can reach one):
 
 ```mermaid
 flowchart TD
-  P{"procedure"} --> N{"nested?<br/>(private to its container)"}
-  N -- yes --> OWN["FULLY OWNED<br/>inlinable, ABI-changeable, purgeable"]
-  N -- no --> U{"compiling a UNIT?"}
-  U -- yes --> EXP["EXPORTED entry point<br/>optimize body only;<br/>keep ABI, never remove"]
-  U -- no --> EC{"linked with<br/>foreign objects?"}
-  EC -- yes --> FOR["foreign-callable by name<br/>keep ABI, never remove"]
-  EC -- no --> OWN
+  M{"module"} --> U{"compiling a UNIT?"}
+  U -- yes --> EXP["EXPORTED entry points<br/>optimize bodies only;<br/>keep ABI, never remove"]
+  U -- no --> EC{"linked with units,<br/>libraries or .OBJ/.LIB?"}
+  EC -- yes --> FOR["callable by name from outside<br/>keep ABI, never remove"]
+  EC -- no --> L{"every body<br/>lowered to IR?"}
+  L -- no --> FOR
+  L -- yes --> OWN["OWNS PROCEDURE ABI<br/>inlinable, ABI-changeable, purgeable"]
 ```
 
-`IsFullyOwned(proc) = proc.IsNested || (!isUnit && !allowExternalCalls)`.
+`IrModule.OwnsProcedureAbi` (set in `CodeGen/CodeGenerator.Backend.cs`) is true only for
+a self-contained main program linked with no unit, library or object file, whose every procedure body is in
+the module.
 
 - **Whole self-contained main**: everything is owned, full freedom.
-- **`$COMPILE UNIT/LIB`**: its top-level procedures are **exported** — their *bodies*
-  are still optimized (Pruner + FloatDemotion run in `EmitUnit`, and inlining
-  applies), but their calling convention is preserved and they are never removed.
-  **Nested** procedures inside a unit are private, so they remain fully owned
-  (inlinable / purgeable / ABI-changeable).
-- IPCP, register-param passing (O21) and dead-procedure elimination (O22) consume
-  this predicate; the body-local passes (Tier 2, Pruner, FloatDemotion) apply to
-  any procedure.
+- **`$COMPILE UNIT/LIB`**: its procedures are **exported** — their *bodies* are still
+  optimized, but their calling convention is preserved and they are never removed.
+- `GlobalDce` (O22), `PrivateCallingConvention` (O0282/O21), dead-parameter elimination
+  and argument-structure reduction consume this flag; the function passes apply to any
+  procedure.
 
 ## 5. O22 reachability — the tree-shaker (and the data dimension)
 
 ```mermaid
 flowchart TD
-  ROOT["roots = top-level 'main' code"] --> WALK["DescendantNodes(body)<br/>reflective, complete walker"]
-  WALK --> REF{"node is a reference?"}
-  REF -- "call / CODEPTR (CallBindings)" --> MARKP["mark target proc reachable<br/>enqueue its body"]
-  REF -- "lambda (LambdaProcs)" --> MARKL["mark lifted lambda reachable"]
-  REF -- "reads a global" --> MARKG["mark global live (DATA dimension)"]
-  MARKP --> WALK
-  MARKL --> WALK
-  WALK --> SWEEP["when queue empty:<br/>drop everything NOT reached<br/>(procs + dead globals), per IsFullyOwned"]
+  ROOT["entry = @main"] --> SWEEP["GlobalDce: remove every function<br/>with no users (no call, no taken address)"]
+  SWEEP --> CLEAR["clearing its body drops the uses<br/>it held on callees"]
+  CLEAR --> SWEEP
+  SWEEP --> DONE["fixpoint: only reachable procedures remain"]
 ```
 
-- **Transitive**: a procedure reached only from other dead procedures is dead; a
-  nested function inside a dead-end procedure is purged with it.
-- **Sound by construction**: `OptReachability.DescendantNodes` visits *every*
-  statement and expression (reflection over the AST, flattening lists/tuples), so no
-  reference is ever missed — a missed reference would wrongly drop live code.
-- **Data dimension** (O23, `OptDeadGlobals`): a global that is never *read* is dead → its
-  data slot and its pure-write assignments are removed; and the **CODEPTR cascade** —
-  `g = CODEPTR(P)` where `g` is never read → the store is dead → `P` loses its only
-  reference → `P` is purged too. Dead globals, dead stores and live procedures are solved
-  together to a fixpoint. Conservative guards keep any `VARPTR`-aliased / `COMMON` /
-  `SHARED` / array / UDT / `AT` global, or any store whose RHS could trap (a call, a deref,
-  or arithmetic under `$ERROR NUMERIC/OVERFLOW/BOUNDS`).
+- **Transitive**: a procedure reached only from other dead procedures is dead — its
+  last caller's removal leaves it without users, and the next sweep takes it. A
+  procedure inlined into every caller goes the same way.
+- **Runs last**: `RunNativeModule` runs `GlobalDce` after inlining and the native-only
+  passes, and only when `IrModule.OwnsProcedureAbi` holds.
+- **Data dimension** (O23): on the native build a global gets a data slot only once
+  emitted code references it, and `LocalizeGlobals` turns a write-first global used by
+  one procedure into a local that `Mem2Reg`/`Dce` then remove. `GlobalDce`'s own sweep of
+  unreferenced globals runs only on the C/LLVM path (`removeGlobals: false` natively),
+  because the DOS build resolves IR globals by name. See
+  `docs/optimizations/O0023-dead-global-elimination.md`.
 
 ## 6. The Linker stage (foreign code)
 
@@ -242,7 +256,7 @@ that runs the same.
 | Stage | Runs | Gated by | Examples |
 |-------|------|----------|----------|
 | Front end | always | dialect | lex / parse / bind (no opt) |
-| Tier 1 pre-passes | once, pre-emission | `Optimize` (+ ownership, SPEED, pb36) | Pruner, FloatDemotion, IPCP, RegParm, Reachability |
-| Tier 2 emission | per statement | `Optimize` / `OptimizeSpeed` | fold, CSE, peephole, inline, tail-call, SCCP |
+| Tier 1 IR middle end | per module | `Optimize` (+ ownership, SPEED) | InstCombine, SCCP, GVN, LICM, FloatDemotion, IpConstantProp, Inliner, GlobalDce, PrivateCallingConvention |
+| Tier 2 x86-16 back end | per procedure | `Optimize` / `OptimizeSpeed` | selection idioms, peephole, scheduling, linear-scan allocation |
 | Tier 3 layout | post-emission | `Optimize` (+ self-contained) | runtime trim, BSS, .COM, trivial-I/O |
 | Linker | always (foreign when `$LINK`) | — | OMF read, convention, selective extraction |

@@ -16,7 +16,6 @@ namespace PowerBasic.Compiler.CodeGen;
 public static class InlineAsmScheduler {
 
   // the eight general-purpose word "slots"; a byte half or 32-bit name maps to its word slot
-  private const int FlagsBit = 8;
 
   private readonly record struct Instr(
     int Original, ushort Reads, ushort Writes, bool ReadsFlags, bool WritesFlags,

@@ -52,9 +52,14 @@ doc opens with:
   `IIrArithmeticCostModel`; exact power-of-two reciprocal rewrites do not need a
   profitability permission because they preserve strict semantics and replace
   FDIV by the cheaper FMUL on every modelled tier.
+- `PreferIndirectCallPromotion(targetCount, totalCount)` — O0271's guarded-call
+  code-growth decision. Legality remains in O0271, while the historical 30% policy
+  is owned by `IIrCallCostModel`/`TargetCost`. Targetless callers use
+  `IrDefaultCallCostModel`, which deliberately preserves that same threshold.
 
-As of 2026-09-08, live consumers include `AlignHotLoops`, `MaxFullUnrollTrips`,
-`PreferShiftAddMultiply`, and `PreferReciprocalReuse`. The x87 cycle properties
+Live consumers now include `AlignHotLoops`, `MaxFullUnrollTrips`,
+`PreferShiftAddMultiply`, `PreferReciprocalReuse`, and guarded indirect-call
+promotion through `IIrCallCostModel`. The x87 cycle properties
 feed the reciprocal query internally rather than being second pass-level policy
 entry points. Other answers below remain ready for their planned consumers.
 

@@ -40,12 +40,10 @@ public sealed class BackendDivRemTests {
     var direct = new CodeGenerator(Bind()) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind()) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());

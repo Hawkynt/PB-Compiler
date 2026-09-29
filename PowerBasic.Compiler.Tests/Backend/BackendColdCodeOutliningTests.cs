@@ -26,7 +26,6 @@ public sealed class BackendColdCodeOutliningTests {
   private static (byte[] Image, CodeGenerator Generator) Compile(string source, bool routed) {
     var generator = new CodeGenerator(Bind(source)) {
       Optimize = true,
-      UseExperimentalBackend = routed,
     };
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));

@@ -10,10 +10,10 @@ namespace PowerBasic.Compiler.Backend;
 public static class MachineCombiner {
 
   /// <summary>Combines selected x86 instruction windows for the conservative baseline target.</summary>
-  public static int Run(MFunction function) => Run(function, SelectionTarget.Baseline);
+  public static int Run(X86MachineFunction function) => Run(function, SelectionTarget.Baseline);
 
   /// <summary>Combines selected x86 instruction windows without increasing virtual-register pressure.</summary>
-  public static int Run(MFunction function, SelectionTarget target) {
+  public static int Run(X86MachineFunction function, SelectionTarget target) {
     ArgumentNullException.ThrowIfNull(function);
     var addressValues = AddressConstrainedValues(function);
     var blocksByLabel = function.Blocks.ToDictionary(block => block.Label, StringComparer.Ordinal);
@@ -37,7 +37,7 @@ public static class MachineCombiner {
   /// or definitions anywhere in the function, so this cannot silently widen an ordinary LONG value
   /// that the rest of the backend still represents as a pair.
   /// </summary>
-  private static int CombineDwordCopies(MFunction function, MBlock block,
+  private static int CombineDwordCopies(X86MachineFunction function, MBlock block,
       IReadOnlyDictionary<int, int> reads, IReadOnlyDictionary<int, int> writes) {
     var changed = 0;
     for (var i = 0; i + 3 < block.Instructions.Count; ++i) {
@@ -137,7 +137,7 @@ public static class MachineCombiner {
     }
   }
 
-  private static (Dictionary<int, int> Reads, Dictionary<int, int> Writes) RegisterCensus(MFunction function) {
+  private static (Dictionary<int, int> Reads, Dictionary<int, int> Writes) RegisterCensus(X86MachineFunction function) {
     var reads = new Dictionary<int, int>();
     var writes = new Dictionary<int, int>();
     foreach (var instruction in function.AllInstructions) {
@@ -180,7 +180,7 @@ public static class MachineCombiner {
           || arithmetic.Opcode is not (MOpcode.Add or MOpcode.Sub)
           || arithmetic.Condition is not null || arithmetic.Clobbers.Count != 0
           || arithmetic.Operands is not [MOperand.Register { Reg: var written }, MOperand.Immediate displacement]
-          || !written.Equals(destination) || !FlagsDeadAfter(block, i + 1)
+          || !written.Equals(destination) || !MachineFlags.DeadAfter(block, i + 1)
           || !CanAddress(source, addressValues))
         continue;
 
@@ -199,7 +199,7 @@ public static class MachineCombiner {
     return changed;
   }
 
-  private static HashSet<int> AddressConstrainedValues(MFunction function) {
+  private static HashSet<int> AddressConstrainedValues(X86MachineFunction function) {
     var values = new HashSet<int>();
     foreach (var instruction in function.AllInstructions)
       foreach (var memory in instruction.Operands.OfType<MOperand.Memory>()) {
@@ -258,16 +258,4 @@ public static class MachineCombiner {
     => instruction.Opcode is MOpcode.Add or MOpcode.Adc or MOpcode.Sub or MOpcode.Sbb or MOpcode.Cmp
       or MOpcode.Neg or MOpcode.Inc or MOpcode.Dec or MOpcode.Sahf;
 
-  private static bool FlagsDeadAfter(MBlock block, int index) {
-    for (var i = index + 1; i < block.Instructions.Count; ++i) {
-      var effect = block.Instructions[i].Effect;
-      if (effect.ReadsFlags)
-        return false;
-      if (effect.WritesFlags)
-        return true;
-    }
-    // A successor may consume the flags. The machine IR has no flag liveness across blocks, so the
-    // same conservative rule as Peephole applies: falling out of the block proves nothing.
-    return false;
-  }
 }

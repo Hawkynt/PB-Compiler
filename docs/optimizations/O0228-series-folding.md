@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (constant bounds) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `TryEmitForIdiom` |
+| **Status** | ⬜ Not implemented on the IR path |
+| **Stage** | — |
+| **Source** | None. `Ir/Passes/RecurrenceClosedForm.cs` (O0134) closes only accumulators that add a **constant** each iteration, not the counter |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
 | **Split from** | [O0020](O0020-idiom-replacement.md) |
 
@@ -12,6 +12,11 @@
 
 A constant-trip loop whose body accumulates the counter (`s = s + i`) computes a
 closed-form total. The loop is replaced by a single add of the folded sum.
+
+Not implemented on the IR path; the syntax-level version (`TryEmitForIdiom`) was
+retired with the direct emitter. `RecurrenceClosedForm` requires the phi's
+increment to be a constant (`start + step * trips`), so `s = s + i` stays a
+loop.
 
 ## Sample
 

@@ -56,7 +56,7 @@ public sealed class PipelineSoundnessTests {
   public void MainBody_ThroughVerifiedPipeline_StaysWellFormed(string source) {
     var fn = IrLowering.TryLowerMainBody(Bind(source));
     Assert.That(fn, Is.Not.Null, "expected this program to lower");
-    var pm = IrPassManager.Standard();
+    var pm = IrMiddleEndPipeline.Standard();
     pm.VerifyEachPass = true;
     pm.RunToFixpoint(fn!);
     Assert.That(IrVerifier.Verify(fn!), Is.Empty);
@@ -66,7 +66,7 @@ public sealed class PipelineSoundnessTests {
   public void Module_ThroughVerifiedPipelineAndInliner_StaysWellFormed(string source) {
     var module = IrLowering.TryLowerModule(Bind(source));
     Assert.That(module, Is.Not.Null, "expected this program to lower");
-    var pm = IrPassManager.Standard();
+    var pm = IrMiddleEndPipeline.Standard();
     pm.VerifyEachPass = true;
     pm.RunOnModule(module!);
     Inliner.Run(module!);

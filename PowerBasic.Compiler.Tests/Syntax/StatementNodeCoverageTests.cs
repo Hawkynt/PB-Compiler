@@ -45,7 +45,7 @@ public sealed class StatementNodeCoverageTests {
   /// <summary>
   /// Every statement in <paramref name="body"/>, procedure bodies included.
   ///
-  /// <see cref="OptReachability.DescendantNodes"/> walks a statement's own tree by reflection and is
+  /// <see cref="AstWalker.DescendantNodes"/> walks a statement's own tree by reflection and is
   /// complete for it, but it deliberately stops at a nested SUB or FUNCTION - those are separate
   /// procedures, reached on their own when the optimizer needs them. A census that stopped there too
   /// would report EXIT FAR and REQUIRE as having no form while forms for both sat in the table,
@@ -54,7 +54,7 @@ public sealed class StatementNodeCoverageTests {
   private static IEnumerable<Type> Walk(IEnumerable<Statement> body) {
     foreach (var statement in body) {
       yield return statement.GetType();
-      foreach (var node in OptReachability.DescendantNodes(statement))
+      foreach (var node in AstWalker.DescendantNodes(statement))
         if (node is Statement nested)
           yield return nested.GetType();
 

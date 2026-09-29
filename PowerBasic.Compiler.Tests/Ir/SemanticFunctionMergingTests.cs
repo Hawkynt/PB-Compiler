@@ -103,7 +103,7 @@ public sealed class SemanticFunctionMergingTests {
     var second = AddArithmeticVariant(module, "Second", 7);
     AddCaller(module, first, second);
 
-    IrPassManager.Standard(optimizeForSize: true).RunOnModule(module);
+    IrMiddleEndPipeline.Standard(optimizeForSize: true).RunOnModule(module);
 
     Assert.Multiple(() => {
       Assert.That(module.Functions, Does.Contain(first));
@@ -120,7 +120,7 @@ public sealed class SemanticFunctionMergingTests {
     var second = AddArithmeticVariant(module, "Second", 7);
     AddCaller(module, first, second);
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.Multiple(() => {
       Assert.That(module.Functions, Does.Contain(first));

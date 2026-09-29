@@ -39,7 +39,7 @@ public sealed class MachineIrTests {
 
   [Test]
   public void MFunction_EnumeratesInstructionsAcrossBlocksInOrder() {
-    var fn = new MFunction("main");
+    var fn = new X86MachineFunction("main");
     var entry = new MBlock("entry");
     entry.Instructions.Add(new MInstr(MOpcode.Mov, [new MOperand.Register(MReg.Virtual(0)), new MOperand.Immediate(7)], MInstrEffect.None));
     var tail = new MBlock("tail");

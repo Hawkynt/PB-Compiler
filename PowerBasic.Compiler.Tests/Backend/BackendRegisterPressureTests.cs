@@ -50,7 +50,7 @@ public sealed class BackendRegisterPressureTests {
   /// constant propagation cannot fold the array away and leave a test of nothing.
   /// </summary>
   private const string _fourSimultaneousLongAccumulators = """
-    SUB Accumulate(BYVAL seed%)
+    SUB Accumulate(BYVAL seed%) NOINLINE
       DIM a%(1 TO 8)
       FOR i% = 1 TO 8
         a%(i%) = i% * seed%
@@ -72,7 +72,7 @@ public sealed class BackendRegisterPressureTests {
   /// stays an argument.
   /// </summary>
   private const string _longLiveAcrossACall = """
-    FUNCTION Scaled&(BYVAL base%)
+    FUNCTION Scaled&(BYVAL base%) NOINLINE
       value& = base%
       value& = value& * 1000
       PRINT "step"
@@ -90,14 +90,14 @@ public sealed class BackendRegisterPressureTests {
     return model;
   }
 
-  private static MFunction Select(string source, string function) {
+  private static X86MachineFunction Select(string source, string function) {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset: " + why);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     var fn = module.Functions.First(f => f.Name.Equals(function, StringComparison.OrdinalIgnoreCase));
     var machine = InstructionSelector.TrySelect(fn, out var reason);
     Assert.That(machine, Is.Not.Null, $"{function} declined at selection: {reason}");
@@ -105,8 +105,8 @@ public sealed class BackendRegisterPressureTests {
   }
 
   private static (Cpu8086 Direct, Cpu8086 Routed, CodeGenerator Generator) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));

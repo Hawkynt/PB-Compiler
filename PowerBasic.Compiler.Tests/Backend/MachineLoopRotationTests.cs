@@ -18,8 +18,8 @@ public sealed class MachineLoopRotationTests {
 
   private static MInstr Jump(string target) => new(MOpcode.Jmp, [new MOperand.LabelRef(target)], MInstrEffect.None);
 
-  private static MFunction PreTestedLoop() {
-    var function = new MFunction("main") { VirtualRegisterCount = 1 };
+  private static X86MachineFunction PreTestedLoop() {
+    var function = new X86MachineFunction("main") { VirtualRegisterCount = 1 };
     var entry = new MBlock("entry");
     var header = new MBlock("header");
     var body = new MBlock("body");

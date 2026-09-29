@@ -39,8 +39,8 @@ public sealed class BackendDialectDifferentialTests {
   /// </summary>
   [TestCaseSource(nameof(_allDialects))]
   public void Run_GivenAnyAdvertisedDialect_ThenTheBackEndProducesAnEquivalentExecutable(Dialect dialect) {
-    var direct = new CodeGenerator(Bind(dialect)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(dialect)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(dialect)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(dialect)) { Optimize = true};
 
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();

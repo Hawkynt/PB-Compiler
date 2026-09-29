@@ -16,7 +16,7 @@ public sealed class InterpreterSanityTests {
   private static string Run(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var codegen = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = false };
+    var codegen = new CodeGenerator(model) { Optimize = true};
     var image = codegen.EmitExecutable();
     Assert.That(codegen.Errors, Is.Empty, string.Join("; ", codegen.Errors));
     return Cpu8086.Run(image).Output;
@@ -24,7 +24,7 @@ public sealed class InterpreterSanityTests {
 
   private static string RunUnoptimized(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    var codegen = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false };
+    var codegen = new CodeGenerator(model) { Optimize = false};
     return Cpu8086.Run(codegen.EmitExecutable()).Output;
   }
 

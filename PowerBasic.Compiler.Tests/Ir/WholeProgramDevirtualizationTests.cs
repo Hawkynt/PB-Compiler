@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
@@ -160,6 +161,37 @@ public sealed class WholeProgramDevirtualizationTests {
     Assert.That(indirect.Callee, Is.SameAs(original));
   }
 
+
+  [Test]
+  public void AnalysisAwareRun_GivenSingletonCallback_ThenRebuildsAndPreservesTheFinalCallGraph() {
+    var module = new IrModule("t");
+    var target = Unary(module, "Target");
+    var (invoke, indirect) = Invoker(module);
+    var entry = Main(module);
+    entry.Append(new IrCall(IrType.I16, invoke, [target, Const(1)]));
+    entry.Append(new IrCall(IrType.I16, invoke, [target, Const(2)]));
+    entry.Append(new IrRet());
+
+    var analyses = new IrModuleAnalysisManager(module);
+    var before = analyses.Get(IrModuleAnalyses.CallGraph);
+    Assert.That(before.DirectCalleesOf(invoke), Is.Empty);
+
+    var result = WholeProgramDevirtualization.Run(module, analyses);
+    var after = analyses.Get(IrModuleAnalyses.CallGraph);
+
+    Assert.Multiple(() => {
+      Assert.That(result.Changes, Is.EqualTo(1));
+      Assert.That(result.PreservedAnalyses.IsPreserved(IrModuleAnalyses.CallGraph), Is.True);
+      Assert.That(result.PreservedAnalyses.IsPreserved(IrModuleAnalyses.FunctionTargets), Is.True);
+      Assert.That(indirect.Callee, Is.SameAs(target));
+      Assert.That(after.DirectCalleesOf(invoke), Is.EqualTo(new[] { target }),
+        "the cache retained after the pass must describe the rewritten direct edge");
+      Assert.That(analyses.IsCached(IrModuleAnalyses.CallGraph), Is.True);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.FunctionTargets), Is.True);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
   [Test]
   public void Pipeline_GivenSingletonCallback_WhenStandardRuns_ThenO0279RunsBeforeIpcp() {
     var module = new IrModule("t");
@@ -170,7 +202,7 @@ public sealed class WholeProgramDevirtualizationTests {
     entry.Append(new IrCall(IrType.I16, invoke, [target, Const(2)]));
     entry.Append(new IrRet());
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.That(indirect.Callee, Is.SameAs(target));
     Assert.That(IrVerifier.Verify(module), Is.Empty);

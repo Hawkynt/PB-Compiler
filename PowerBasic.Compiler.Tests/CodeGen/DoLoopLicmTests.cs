@@ -22,44 +22,6 @@ public sealed class DoLoopLicmTests {
   }
 
   [Test]
-  public void AnalyzeLicm_GivenDoWhileWithInvariant_ThenHoistsWithNullCounter() {
-    // a*b is loop-invariant in the flat DO body (a,b never written there); the DO path
-    // passes a null counter, and the invariant must still be found.
-    var model = Bind("""
-      DIM a AS INTEGER, b AS INTEGER, i AS INTEGER, s AS INTEGER, t AS INTEGER
-      a = 3 : b = 4
-      DO WHILE i < 5
-        s = s + a * b
-        t = t - a * b
-        i = i + 1
-      LOOP
-      PRINT s
-      PRINT t
-      """);
-    var doBody = model.MainBody.OfType<DoLoopStmt>().First().Body;
-    var licm = OptCommonSubexpr.AnalyzeLicm(doBody, counter: null, firstSlot: 0, checkedArithmetic: false, model);
-    Assert.That(licm.SlotCount, Is.GreaterThan(0), "the loop-invariant a*b should be hoisted out of the DO body");
-  }
-
-  [Test]
-  public void AnalyzeLicm_GivenDoWhileWritingTheOperand_ThenNotInvariant() {
-    // b is written in the body, so a*b is NOT loop-invariant - nothing to hoist.
-    var model = Bind("""
-      DIM a AS INTEGER, b AS INTEGER, i AS INTEGER, s AS INTEGER
-      a = 3 : b = 4
-      DO WHILE i < 5
-        s = s + a * b
-        b = b + 1
-        i = i + 1
-      LOOP
-      PRINT s
-      """);
-    var doBody = model.MainBody.OfType<DoLoopStmt>().First().Body;
-    var licm = OptCommonSubexpr.AnalyzeLicm(doBody, counter: null, firstSlot: 0, checkedArithmetic: false, model);
-    Assert.That(licm.SlotCount, Is.EqualTo(0), "a*b is not invariant when b is written in the loop");
-  }
-
-  [Test]
   public void Execute_GivenDoWhileWithInvariant_WhenSpeed_ThenResultsUnchanged() {
     const string source = """
       $OPTIMIZE SPEED

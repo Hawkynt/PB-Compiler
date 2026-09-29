@@ -127,7 +127,7 @@ public sealed class InterpreterDialectTests {
     Assert.That(model.Errors, Is.Empty);
     Assert.That(model.Warnings, Has.Some.Matches<Diagnostic>(w => w.Message.Contains("deferred", StringComparison.OrdinalIgnoreCase)));
 
-    var generator = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+    var generator = new CodeGenerator(model) { Optimize = false};
     _ = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty,
       "constant-false interpreter text is unreachable and must not reach emission");

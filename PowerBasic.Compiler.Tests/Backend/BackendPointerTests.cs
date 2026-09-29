@@ -26,8 +26,8 @@ public sealed class BackendPointerTests {
   }
 
   private static (string Direct, string Routed, IEnumerable<string> RoutedNames) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
@@ -233,7 +233,7 @@ public sealed class BackendPointerTests {
       PRINT g
       END
 
-      FUNCTION Poked% ()
+      FUNCTION Poked% () NOINLINE
         SHARED g AS WORD
         DEF SEG = VARSEG(g)
         POKE VARPTR(g), 77

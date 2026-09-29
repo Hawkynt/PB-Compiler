@@ -45,7 +45,7 @@ public sealed class InlinerErrorHandlerTests {
   public void Inline_GivenACalleeWithAnArmedHandler_ThenItIsNotInlined() {
     var module = IrLowering.TryLowerModule(Bind(_handlerInAProcedure), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     Assert.That(Inliner.Run(module!), Is.Zero, "a function whose blocks a fault can jump to cannot be copied");
   }
@@ -53,7 +53,7 @@ public sealed class InlinerErrorHandlerTests {
   /// <summary>And the whole program still builds and runs - which is what the crash prevented.</summary>
   [Test]
   public void Emit_GivenACalleeWithAnArmedHandler_ThenTheProgramStillBuildsAndRuns() {
-    var cg = new CodeGenerator(Bind(_handlerInAProcedure)) { Optimize = true, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(Bind(_handlerInAProcedure)) { Optimize = true};
     var image = cg.EmitExecutable();
 
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));

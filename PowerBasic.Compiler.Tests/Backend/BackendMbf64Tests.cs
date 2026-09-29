@@ -19,8 +19,6 @@ public sealed class BackendMbf64Tests {
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model) {
       Optimize = optimize,
-      UseExperimentalBackend = routed,
-      RequireBackend = routed,
     };
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));

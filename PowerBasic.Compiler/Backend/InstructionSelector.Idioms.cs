@@ -42,6 +42,12 @@ public sealed partial class InstructionSelector {
   private readonly HashSet<IrSelect> _swappedArms = new(ReferenceEqualityComparer.Instance);
 
   /// <summary>
+  /// The selects that branch on their compare's own flags, each with that compare - which the block
+  /// loop passes by, because the select emits it where the jump needs it.
+  /// </summary>
+  private readonly Dictionary<IrSelect, IrCmp> _flagSelects = new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>
   /// Finds the multi-instruction patterns before selection walks the blocks, because a pattern is
   /// owned by its LAST instruction and the ones in front of it have to be recognised as absorbed when
   /// the loop reaches them - which is earlier.
@@ -95,6 +101,10 @@ public sealed partial class InstructionSelector {
             this._integerOperands[cast] = null;
             break;
         }
+        if (instr is IrSelect flagged && FlagSelectCompare(flagged) is { } compare) {
+          this._flagSelects[flagged] = compare;
+          this._consumed.Add(compare);
+        }
       }
     }
   }
@@ -130,6 +140,26 @@ public sealed partial class InstructionSelector {
         break;
       }
     }
+  }
+
+  /// <summary>
+  /// The compare a word <c>select</c> can branch on directly: its only user is the select, it is a
+  /// 16-bit integer ordering or equality the flags can answer, and nothing between the two in the
+  /// block can change what its operands read - the CMP is emitted at the select, not where the compare
+  /// stood. PB's -1/0 truth value then never exists: <c>IF a(i) &gt; m THEN m = a(i)</c> is CMP, MOV,
+  /// Jcc, MOV instead of CMP, MOV -1, Jcc, XOR, TEST, Jcc, MOV.
+  /// </summary>
+  private static IrCmp? FlagSelectCompare(IrSelect select) {
+    if (select.Type is not { IsInteger: true, Bits: 16 }
+        || select.Condition is not IrCmp { Users.Count: 1 } compare
+        || !ReferenceEquals(compare.Parent, select.Parent)
+        || compare.Lhs.Type is not { IsInteger: true, Bits: 16 }
+        || MapPredicate(compare.Pred) is null)
+      return null;
+    var between = select.Parent!.Instructions
+      .SkipWhile(instruction => !ReferenceEquals(instruction, compare)).Skip(1)
+      .TakeWhile(instruction => !ReferenceEquals(instruction, select));
+    return between.All(instruction => instruction is IrBinary or IrCast or IrCmp or IrGep or IrSelect) ? compare : null;
   }
 
   /// <summary>The predicate to emit for a comparison - its own, unless the min/max rule relabelled it.</summary>
@@ -328,39 +358,49 @@ public sealed partial class InstructionSelector {
                && staged is not null) {
       cell = staged;
       opcode = forms.Integer;
+    } else if (this.NarrowFloatCell(bin.Rhs) is { } narrow) {
+      cell = narrow;                   // a SINGLE/DOUBLE-wide value is read where it lives: FADD m32
+      opcode = forms.Real;
     } else {
       return false;
     }
 
     this.EmitX87(MOpcode.Fld, lhs, reads: true);
     this.EmitX87(opcode, cell, reads: true);
-    this.PopRounded(bin.Type, this.FloatCell(bin));    // the same width rule the staged form obeys
+    this.PopRoundedInto(bin);    // the same width rule the staged form obeys
     return true;
   }
 
   /// <summary>
-  /// A float comparison against a literal, read out of the constant pool instead of pushed:
+  /// The cell of a value that lives at SINGLE or DOUBLE width - the only float cells an x87 arithmetic
+  /// or compare instruction can take as its memory operand - or null.
+  /// </summary>
+  private MOperand.StackSlot? NarrowFloatCell(IrValue value)
+    => this._fslots.TryGetValue(value, out var cell) && cell.Size is MRegSize.Dword or MRegSize.Qword
+      ? new MOperand.StackSlot(cell.Slot, cell.Size)
+      : null;
+
+  /// <summary>
+  /// A float comparison against a literal or a SINGLE/DOUBLE-wide value, read where it lives instead
+  /// of pushed:
   /// <c>FLD a; FCOMP [k]</c>. <c>FCOMP</c> pops the one value it compared, so the stack is empty
   /// afterwards exactly as it is after the <c>FLD/FLD/FXCH/FCOMPP</c> sequence it replaces, and the
   /// status word it leaves is the same comparison of the same two values in the same order.
   /// </summary>
-  private bool TrySelectFloatMemoryCompare(IrCmp cmp, Condition cc) {
-    if (!this._target.Optimize || cmp.Rhs is not IrConstantFloat constant)
+  private bool TryEmitFloatMemoryCompare(IrCmp cmp) {
+    if (!this._target.Optimize)
       return false;
-    if (!this.TryFloatOperand(cmp.Lhs, out var lhs))
+    // the right operand where it lives: a literal in the qword pool, or a SINGLE/DOUBLE-wide cell
+    MOperand? right = cmp.Rhs is IrConstantFloat constant
+      ? new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword)
+      : this.NarrowFloatCell(cmp.Rhs);
+    if (right is null || !this.TryFloatOperand(cmp.Lhs, out var lhs))
       return false;
 
-    var ax = new MOperand.Register(MReg.Physical_(Reg.AX));
     this.EmitX87(MOpcode.Fld, lhs, reads: true);
-    this.EmitX87(MOpcode.Fcomp,
-      new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword), reads: true);
-    this._current.Instructions.Add(new MInstr(MOpcode.FstswAx, [ax],
-      new MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: false,
-        ReadsMemory: false, WritesMemory: false), clobbers: [Reg.AX]));
-    this._current.Instructions.Add(new MInstr(MOpcode.Sahf, [ax],
-      new MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
-        ReadsMemory: false, WritesMemory: false)));
-    return this.MaterializeCondition(cmp, cc);
+    this.EmitX87(MOpcode.Fcomp, right, reads: true);
+    this.EmitStatusToFlags();
+    return true;
   }
 
   /// <summary>

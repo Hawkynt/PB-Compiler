@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented via [P0007](P0007-trivial-io-lowering.md) — `$COMPILE COM` as an explicit switch is ⬜ planned |
+| **Status** | ✅ Implemented — `$COMPILE COM` and `--emit-com` emit a relocation-checked PSP:0100h flat image |
 | **Stage** | Image writer |
 | **Source** | `CodeGen/CodeGenerator.Trivial.cs`, `Emit/MzExeWriter.cs` |
 | **Gate** | `--optimize` |
@@ -15,10 +15,16 @@ relocations. DOS and DOSBox load a **signature-less** file as a `.COM` image
 regardless of its extension, so a program with no relocations needs no header at
 all.
 
-Today this is reached through [P0007](P0007-trivial-io-lowering.md): a program
-whose whole observable behavior is compile-time output lowers to a raw
-COM-style image. The general form — a `$COMPILE COM` metastatement that puts an
-*arbitrary* single-segment program into the tiny model — is still planned.
+The general form is now first-class: `$COMPILE COM` (or `--emit-com`) runs the
+same mandatory Bound AST → IR → SSA middle-end → Low IR → x86-16 machine pipeline
+as EXE output. The assembler is given a synthetic 0100h origin prefix, so labels,
+jump tables, virtual BSS addresses and every ordinary fixup are resolved at the
+actual DOS COM addresses from the start; the writer then strips that prefix.
+PC-relative branches/calls remain naturally position-independent.
+
+COM deliberately has no fallback representation. A load-time segment relocation,
+unresolved external symbol, linked unit/library, or image/BSS footprint that would
+cross `FFFFh` is diagnosed and the user must emit EXE instead.
 
 ## Sample
 
@@ -60,10 +66,13 @@ The tiny model is only chosen when the image genuinely needs **no relocations**
 (nothing references a segment that the loader must fix up) and fits one
 segment. Anything else keeps the MZ path.
 
-## What the explicit switch still needs
+## Explicit-switch contract
 
-- `$COMPILE COM` parsing and a diagnostic when the program cannot fit the model
-  (multiple segments, far pointers, > 64 KiB, relocations);
-- stack setup inside the single segment and a `$STACK` interaction;
-- the runtime's segment assumptions (string/array heaps) reduced to the tiny
-  model, which is really [P0004](P0004-right-sized-memory.md)'s job.
+- DOS loads the file at PSP:0100h with CS=DS=ES=SS; the existing startup saves
+  the PSP segment and initializes the runtime from CS exactly as on EXE.
+- The assembler resolves internal absolute offsets against an origin of 0100h;
+  relative transfers need no special patch.
+- Segment and unresolved-external relocations are rejected because COM has no
+  relocation table.
+- The file image plus virtual BSS must fit in the remaining 0xFF00 bytes of the
+  segment. `$STACK` continues to use the same top-of-segment stack contract.

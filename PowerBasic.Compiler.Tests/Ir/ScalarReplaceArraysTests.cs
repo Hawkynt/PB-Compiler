@@ -38,7 +38,7 @@ public sealed class ScalarReplaceArraysTests {
   private static IrModule Lowered(string source) {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     return module!;
   }
 
@@ -93,7 +93,7 @@ public sealed class ScalarReplaceArraysTests {
   public void Split_GivenConstantSubscripts_ThenThePipelineCanSeeThroughTheArray() {
     var module = Lowered(_constantSubscripts);
     Split(module);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var main = module.FindFunction("main")!;
     Assert.That(main.Blocks.SelectMany(b => b.Instructions).OfType<IrBinary>(), Is.Empty,

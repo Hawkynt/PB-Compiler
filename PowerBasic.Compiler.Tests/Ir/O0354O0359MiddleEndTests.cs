@@ -118,7 +118,7 @@ public sealed class O0354O0359MiddleEndTests {
     var multiply = entry.Append(new IrBinary(IrBinaryOp.Mul, x, new IrConstantInt(IrType.I16, 7)));
     entry.Append(new IrRet(multiply));
 
-    Assert.That(VerifiedArithmeticLowering.Run(fn), Is.EqualTo(1));
+    Assert.That(VerifiedArithmeticLowering.Run(fn, optimizeForSpeed: true), Is.EqualTo(1));
 
     Assert.That(multiply.Parent, Is.Null);
     Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(i => i.Op == IrBinaryOp.Mul), Is.False);
@@ -135,7 +135,7 @@ public sealed class O0354O0359MiddleEndTests {
     var multiply = entry.Append(new IrBinary(IrBinaryOp.Mul, x, new IrConstantInt(IrType.I16, 10)));
     entry.Append(new IrRet(multiply));
 
-    Assert.That(VerifiedArithmeticLowering.Run(fn), Is.EqualTo(1));
+    Assert.That(VerifiedArithmeticLowering.Run(fn, optimizeForSpeed: true), Is.EqualTo(1));
 
     Assert.That(multiply.Parent, Is.Null);
     Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(i => i.Op == IrBinaryOp.Mul), Is.False);
@@ -152,13 +152,29 @@ public sealed class O0354O0359MiddleEndTests {
     var multiply = entry.Append(new IrBinary(IrBinaryOp.Mul, x, new IrConstantInt(IrType.I16, -8)));
     entry.Append(new IrRet(multiply));
 
-    Assert.That(VerifiedArithmeticLowering.Run(fn), Is.EqualTo(1));
+    Assert.That(VerifiedArithmeticLowering.Run(fn, optimizeForSpeed: true), Is.EqualTo(1));
 
     Assert.That(multiply.Parent, Is.Null);
     Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(i => i.Op == IrBinaryOp.Mul), Is.False);
     Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(i => i.Op == IrBinaryOp.Shl), Is.EqualTo(1));
     Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(i => i.Op == IrBinaryOp.Sub), Is.EqualTo(1));
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  /// <summary>
+  /// The shift chains are bigger than the multiply and buy only cycles, so outside SPEED it stays.
+  /// </summary>
+  [TestCase(7)]
+  [TestCase(10)]
+  [TestCase(-8)]
+  public void VerifiedArithmetic_GivenAConstantMultiply_WhenNotSpeed_ThenTheMultiplyStays(int factor) {
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var fn = new IrFunction("f", IrType.I16, [x]);
+    var entry = fn.CreateBlock("entry");
+    entry.Append(new IrRet(entry.Append(new IrBinary(IrBinaryOp.Mul, x, new IrConstantInt(IrType.I16, factor)))));
+
+    Assert.That(VerifiedArithmeticLowering.Run(fn), Is.Zero);
+    Assert.That(fn.AllInstructions.OfType<IrBinary>().Any(i => i.Op == IrBinaryOp.Mul), Is.True);
   }
 
   [Test]

@@ -462,7 +462,7 @@ public sealed class Binder {
           break;
 
         case SubDecl s:
-          this.DefineProcedure(s.Name, isFunction: false, TypeSuffix.None, null, s.Parameters, s.IsStatic, s.Body, s.Position, s.Convention, s.NoInline);
+          this.DefineProcedure(s.Name, isFunction: false, TypeSuffix.None, null, s.Parameters, s.IsStatic, s.Body, s.Position, s.Convention, s.NoInline, s.Alias);
           break;
 
         case FunctionDecl { TypeParameters.Count: > 0 } gf:
@@ -473,7 +473,7 @@ public sealed class Binder {
           if (ContainsYield(f.Body))
             this.SynthesizeGenerator(f);   // pb36 coroutine: lower to an enumerator TYPE, not a callable function
           else
-            this.DefineProcedure(f.Name, isFunction: true, f.Suffix, f.ReturnType, f.Parameters, f.IsStatic, f.Body, f.Position, f.Convention, f.NoInline);
+            this.DefineProcedure(f.Name, isFunction: true, f.Suffix, f.ReturnType, f.Parameters, f.IsStatic, f.Body, f.Position, f.Convention, f.NoInline, f.Alias);
           break;
 
         case DefFnDecl fn: {
@@ -690,8 +690,17 @@ public sealed class Binder {
     this.RegisterProcedure(proc);
   }
 
-  private ProcedureSymbol DefineProcedure(string name, bool isFunction, TypeSuffix suffix, TypeName? returnType, IReadOnlyList<Parameter> parameters, bool isStatic, IReadOnlyList<Statement> body, SourcePosition position, CallConvention convention = CallConvention.Basic, bool noInline = false) {
-    var proc = new ProcedureSymbol(name, isFunction) { IsStatic = isStatic, NoInline = noInline, Body = body, Position = position, CallConv = convention, IsGenerator = ContainsYield(body) };
+  /// <summary>
+  /// Binds a SUB/FUNCTION DEFINITION. <paramref name="alias"/> is its <c>ALIAS "name"</c>: the public
+  /// link symbol a unit exports it under - what a C caller, genuine LINK.EXE or another unit resolves.
+  /// It used to be recorded only for a bodiless <c>DECLARE</c>, where it names an external's link
+  /// symbol; a definition's own ALIAS parsed and was then dropped, so
+  /// <c>FUNCTION addone CDECL ALIAS "_addone"</c> exported as <c>addone</c>. A definition keeps its
+  /// <c>p_name</c> label either way - only an EXTERNAL is called through its alias - so ordinary
+  /// programs' bytes do not move.
+  /// </summary>
+  private ProcedureSymbol DefineProcedure(string name, bool isFunction, TypeSuffix suffix, TypeName? returnType, IReadOnlyList<Parameter> parameters, bool isStatic, IReadOnlyList<Statement> body, SourcePosition position, CallConvention convention = CallConvention.Basic, bool noInline = false, string? alias = null) {
+    var proc = new ProcedureSymbol(name, isFunction) { IsStatic = isStatic, NoInline = noInline, Body = body, Position = position, CallConv = convention, IsGenerator = ContainsYield(body), Alias = alias };
     if (isFunction)
       proc.ReturnType = this.ResolveReturnType(name, suffix, returnType);
     foreach (var p in parameters)
@@ -711,7 +720,10 @@ public sealed class Binder {
         return sameSig;
       }
       if (sameSig is { IsExternal: true }) {
-        this.ReplaceProcedure(sameSig, proc); // a DECLARE prototype: the definition supplies its body
+        // a DECLARE prototype: the definition supplies its body - and keeps the prototype's ALIAS when
+        // it states none of its own, since `DECLARE ... ALIAS "_f"` then `FUNCTION f` is one procedure
+        proc.Alias ??= sameSig.Alias;
+        this.ReplaceProcedure(sameSig, proc);
         return proc;
       }
       // a new signature for an existing name = overloading (PB 3.6 only)

@@ -12,8 +12,16 @@ public enum X86StackCleanup { Caller, Callee }
 /// <summary>The return-address width used by a 16-bit x86 call.</summary>
 public enum X86CallDistance { Near, Far }
 
-/// <summary>The BP-relative incoming-parameter layout of a stack-only x86-16 function definition.</summary>
-public readonly record struct X86DefinitionStackLayout(int[] ParameterOffsets, int ParameterBytes);
+/// <summary>The BP-relative incoming-parameter layout of an x86-16 function definition.</summary>
+public readonly record struct X86DefinitionStackLayout(int[] ParameterOffsets, int ParameterBytes,
+    IReadOnlyList<Reg>? RegisterSpills = null) {
+
+  /// <summary>
+  /// The argument registers a register convention's prologue pushes, in parameter order, to give the
+  /// leading parameters the negative offsets in <see cref="ParameterOffsets"/>. Empty for a stack ABI.
+  /// </summary>
+  public IReadOnlyList<Reg> Spills => this.RegisterSpills ?? [];
+}
 
 /// <summary>One register-carried argument and its little-endian word registers (low word first).</summary>
 public readonly record struct X86RegisterArgumentPlacement(int ArgumentIndex, IReadOnlyList<Reg> WordRegisters);
@@ -113,9 +121,9 @@ public sealed record X86CallAbi(
   /// <summary>
   /// Derives the complete incoming stack layout of an IR function definition. This is deliberately
   /// definition-side: generated functions have no <c>ProcedureSymbol</c>, but their IR signature and
-  /// <see cref="IrFunction.Convention"/> are sufficient for every stack-only ABI the routed backend
-  /// supports. Register conventions still decline until the prologue has an explicit register spill
-  /// plan rather than pretending their arguments live at positive BP offsets.
+  /// <see cref="IrFunction.Convention"/> are sufficient for every ABI the routed backend supports. A
+  /// register convention's leading word parameters get the negative offsets of the cells its prologue
+  /// pushes them into (<see cref="X86DefinitionStackLayout.Spills"/>).
   /// </summary>
   public static bool TryDefinitionStackLayout(IrFunction function,
       out X86DefinitionStackLayout layout, out string? declineReason) {
@@ -128,11 +136,6 @@ public sealed record X86CallAbi(
       declineReason = $"far definition ABI is not supported ({function.Convention})";
       return false;
     }
-    if (abi.ArgumentRegisters.Count > 0) {
-      declineReason = $"register definition ABI is not supported ({function.Convention})";
-      return false;
-    }
-
     var sizes = new int[function.Parameters.Count];
     for (var i = 0; i < sizes.Length; ++i)
       if (StackSlotSize(function.Parameters[i].Type) is not { } size) {
@@ -141,19 +144,57 @@ public sealed record X86CallAbi(
       } else
         sizes[i] = size;
 
+    X86RegisterArgumentLayout registerLayout;
+    if (function.Convention == IrCallConvention.Watcall) {
+      registerLayout = PlanWatcallArguments(function.Parameters
+        .Select(parameter => WatcallWordCount(parameter.Type)).ToArray());
+      if (registerLayout.UnsupportedRegisterArgumentIndex is { } unsupported) {
+        declineReason = $"register parameter {unsupported} is not a word or LONG "
+          + $"({function.Parameters[unsupported].Type})";
+        return false;
+      }
+    } else {
+      var registerCount = Math.Min(abi.ArgumentRegisters.Count, sizes.Length);
+      var placements = Enumerable.Range(0, registerCount)
+        .Select(index => new X86RegisterArgumentPlacement(index, new[] { abi.ArgumentRegisters[index] }))
+        .ToArray();
+      registerLayout = new(placements, registerCount);
+    }
+
+    // Register parameters are spilled below BP. Within a multiword value the high register is pushed
+    // first, leaving its low word at the parameter's base offset in ordinary little-endian order.
     var offsets = new int[sizes.Length];
+    var spillBytes = 0;
+    var spills = new List<Reg>();
+    foreach (var placement in registerLayout.RegisterArguments) {
+      var index = placement.ArgumentIndex;
+      if (sizes[index] != placement.WordRegisters.Count * 2) {
+        declineReason = $"register parameter {index} is not one word ({function.Parameters[index].Type})";
+        return false;
+      }
+      spillBytes += sizes[index];
+      offsets[index] = -spillBytes;
+      spills.AddRange(placement.WordRegisters.Reverse());
+    }
+
     var offset = 4;
-    IEnumerable<int> order = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
-      ? Enumerable.Range(0, sizes.Length)
-      : Enumerable.Range(0, sizes.Length).Reverse();
+    var stack = Enumerable.Range(registerLayout.FirstStackArgument, sizes.Length - registerLayout.FirstStackArgument);
+    IEnumerable<int> order = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft ? stack : stack.Reverse();
     foreach (var index in order) {
       offsets[index] = offset;
       offset += sizes[index];
     }
 
-    layout = new X86DefinitionStackLayout(offsets, offset - 4);
+    layout = new X86DefinitionStackLayout(offsets, offset - 4, spills);
     return true;
   }
+
+  private static int? WatcallWordCount(IrType type) => type switch {
+    { IsInteger: true, Bits: 8 or 16 } => 1,
+    { IsPointer: true, IsFarPointer: false } => 1,
+    { IsInteger: true, Bits: 32 } => 2,
+    _ => null,
+  };
 
   /// <summary>Bytes one IR argument occupies in the routed 16-bit stack ABI, or null when unsupported.</summary>
   private static int? StackSlotSize(IrType type) => type switch {

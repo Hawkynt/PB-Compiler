@@ -29,8 +29,8 @@ public sealed class BackendArraySortTests {
 
   /// <summary>Runs the program both ways, insisting the back end really took the code under test.</summary>
   private static (string Direct, string Routed) RunBothWays(string source, string[] mustRoute, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
@@ -258,11 +258,11 @@ public sealed class BackendArraySortTests {
       FOR i% = 1 TO 8 : PRINT a(i%) : NEXT i%
       END
 
-      SUB Ascending()
+      SUB Ascending() NOINLINE
         ARRAY SORT a(1) FOR 8
       END SUB
 
-      SUB Descending()
+      SUB Descending() NOINLINE
         ARRAY SORT a(1) FOR 8, DESCEND
       END SUB
       """,
@@ -294,11 +294,11 @@ public sealed class BackendArraySortTests {
       PRINT f
       END
 
-      SUB Ascending()
+      SUB Ascending() NOINLINE
         ARRAY SORT a(1) FOR 8
       END SUB
 
-      SUB Scans()
+      SUB Scans() NOINLINE
         ARRAY SCAN a(1) FOR 8, = "fig", TO f
         PRINT f
         ARRAY SCAN a(1) FOR 8, = "zzz", TO f
@@ -307,7 +307,7 @@ public sealed class BackendArraySortTests {
         PRINT f
       END SUB
 
-      SUB Windowed()
+      SUB Windowed() NOINLINE
         ARRAY SCAN p(1) FOR 3, FROM 4 TO 5, = "YY", TO f
       END SUB
       """,
@@ -333,7 +333,7 @@ public sealed class BackendArraySortTests {
       Repeatedly
       END
 
-      SUB Repeatedly()
+      SUB Repeatedly() NOINLINE
         LOCAL i AS INTEGER
         LOCAL f AS INTEGER
         LOCAL t AS LONG

@@ -8,7 +8,7 @@ namespace PowerBasic.Compiler.Backend;
 public static class MachineLoopRotation {
 
   /// <summary>Rotates every conservative single-latch match and returns the number changed.</summary>
-  public static int Run(MFunction function) {
+  public static int Run(X86MachineFunction function) {
     ArgumentNullException.ThrowIfNull(function);
     if (function.AllInstructions.Any(instruction => instruction.Opcode == MOpcode.InlineAsm))
       return 0;
@@ -60,7 +60,7 @@ public static class MachineLoopRotation {
        && label.Name == target;
 
   /// <summary>Whether <paramref name="target"/> is reachable without passing through the loop header.</summary>
-  private static bool Reaches(MFunction function, string start, string target, string header) {
+  private static bool Reaches(X86MachineFunction function, string start, string target, string header) {
     var blocks = function.Blocks.ToDictionary(block => block.Label, StringComparer.Ordinal);
     var seen = new HashSet<string>(StringComparer.Ordinal);
     var pending = new Queue<string>([start]);

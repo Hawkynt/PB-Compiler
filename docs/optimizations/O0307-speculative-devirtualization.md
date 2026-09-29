@@ -41,8 +41,15 @@ in the module. O0307 then chooses:
 
 Ambiguity is a hard decline. This covers the useful unprofiled cases — notably a
 procedure address assigned in the same procedure — without pretending that the
-set is complete. The pass recognizes its own guard/fallback shape, so running the
-module pipeline again does not recursively version the fallback.
+set is complete.
+
+Before applying the heuristic, O0307 queries the shared cached
+`IrFunctionTargetAnalysis`. If the complete target set is already exactly one
+non-null function, O0307 deliberately does nothing: O0279 can replace that call
+directly without a compare, branch or fallback. The speculative heuristic is
+therefore used only when proof is unavailable. The pass also recognizes its own
+guard/fallback shape, so running the module pipeline again does not recursively
+version the fallback.
 
 The transform is gated to `$OPTIMIZE SPEED`: it deliberately buys a likely direct
 call with an extra compare, branch and duplicated call site. The direct path is
@@ -70,6 +77,8 @@ if f = CODEPTR32(Double&) then  <direct Double&>  else  call [f]
 - Successor phi predecessor labels are repaired when the original terminator moves.
 - Functions with PB error-handler edges or inline assembly are skipped, matching
   the middle-end's existing opaque-function rule.
+- Complete target-set facts come from the module analysis manager; O0307 does not
+  rebuild caller visibility or exact devirtualization proofs privately.
 - No profile metadata or third-party dependency is introduced.
 
 ## References

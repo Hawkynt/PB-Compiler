@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented for stack frames; array/heap zero-fill elision is [O0068](O0068-array-zero-fill-elision.md) |
-| **Stage** | Emitter (frame prologue) |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `#region O19`, `CanElideFrameZeroing` |
+| **Stage** | IR analysis + x86 back end (frame prologue) |
+| **Source** | `Ir/Analysis/IrSlotInitialization.cs` — `NeedingZeroStart`; `Backend/InstructionSelector.cs` — `SelectAlloca` (records `ZeroStartSlots`); `Backend/MachineEmitter.cs` — `ZeroStartRange`, `EmitFunction` |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF22.BAS` (locals must read `0`/`""` before assignment on every call, with and without elision) |
 | **Related** | [O0002](O0002-dead-code-elimination.md), [O0070](O0070-leaf-frame-elision.md) |
@@ -12,16 +12,18 @@
 ## What it is
 
 PowerBASIC guarantees that `LOCAL`s start at 0 / `""` on **every** invocation,
-so the prologue zero-fills the whole frame with a `REP STOSW`. When a
-straight-line proof shows that no local is ever read before it is assigned, that
-fill is unobservable and disappears.
+so the prologue zero-fills the whole frame with a `REP STOSW`. A slot that is
+always written before anything reads it cannot show that zero, so filling it is
+pure cost.
 
-The proof walks a leading prefix of the body accepting whole-variable
-assignments and `FOR` headers, and aborts at the first call, branch, label or
-read of a still-unassigned local. Dynamic-string handle slots keep their
-individual zeroing regardless — their first assignment frees the previous
-handle. Main-program frames (temps only) always qualify when no error handler
-exists.
+`IrSlotInitialization.NeedingZeroStart` is a forward must-analysis over the
+function's control-flow graph: a slot is safe when, on every path from the
+entry, a store of its whole type reaches it before any load of it or any other
+use of its address (a GEP into it, a call it is passed to, a store of the
+address), which counts as a read. Optimized selection records the slots that
+are *not* safe, and the prologue fills only the smallest contiguous run of the
+frame covering them — usually nothing, since spill and scratch slots are always
+written first. Unoptimized, the whole frame is filled.
 
 ## Sample
 
@@ -73,13 +75,12 @@ END SUB
 
 ## Why it is safe
 
-- The proof is a **prefix** proof: it aborts at the first construct it cannot
-  reason about, so anything with a jump into the middle of the body keeps the
-  fill.
-- An `ON ERROR` handler can re-enter the frame and observe unassigned locals, so
-  a body with error handling never qualifies.
-- String and FLEX handle slots keep their zeroing: a non-zero handle would be
-  freed as if it were a live allocation.
+- The analysis is a must-analysis over every path: a slot one path reads
+  before writing keeps its zero, and so does a slot written only partially.
+- An `ON ERROR` handler or inline assembly adds control or memory edges the
+  graph does not show, so every slot of such a function keeps its zero.
+- Assigning a dynamic string loads the old handle to free it, which is a read,
+  so a handle slot that could be freed before it was written keeps its zero.
 
 ## Limits
 

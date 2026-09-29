@@ -17,6 +17,9 @@ namespace PowerBasic.Compiler.Backend;
 /// </summary>
 public enum MRegSize { Byte, Word, Dword, Qword, Tbyte }
 
+/// <summary>The concrete machine family a selected function is allowed to use.</summary>
+public enum MachineTargetFamily { X86_16 }
+
 /// <summary>A register operand: a virtual id until allocation binds it to a physical register.</summary>
 public readonly record struct MReg(int VirtualId, Reg Physical, MRegSize Size, bool IsVirtual) {
 
@@ -395,8 +398,11 @@ public sealed class MBlock(string label) {
 }
 
 /// <summary>A machine function: its blocks, the number of virtual registers selection minted, and the stack-slot table.</summary>
-public sealed class MFunction(string name) {
+public sealed class X86MachineFunction(string name) {
   public string Name { get; } = name;
+  public MachineTargetFamily TargetFamily { get; set; } = MachineTargetFamily.X86_16;
+  /// <summary>Target-owned allocation/frame facts for non-x86 machine families.</summary>
+  public object? TargetAllocation { get; set; }
   public List<MBlock> Blocks { get; } = [];
   public int VirtualRegisterCount { get; set; }
 
@@ -412,12 +418,22 @@ public sealed class MFunction(string name) {
   public (int Offset, int Segment)? ClosureEnvSlots { get; set; }
 
   /// <summary>
+  /// The slots whose zero start the program can observe (see <see cref="Ir.Analysis.IrSlotInitialization"/>),
+  /// or null to zero the whole frame. Null is the unoptimized answer and the safe one; a set - possibly
+  /// empty - is what optimized selection proved, and spill and scratch slots never appear in it.
+  /// </summary>
+  public HashSet<int>? ZeroStartSlots { get; set; }
+
+  /// <summary>
   /// How the prologue loads the incoming arguments: which virtual register takes which word of which
   /// argument. A 16-bit argument contributes one entry, a 32-bit one contributes two (its low word at
   /// the parameter's own offset and its high word at +2) - which is why this is a table rather than
   /// the positional "argument i is virtual register i" the emitter used to assume.
   /// </summary>
   public List<(int VirtualId, int ArgumentIndex, int ByteDelta)> ArgumentLoads { get; } = [];
+
+  /// <summary>Target-frame displacements for incoming stack parameters, populated by hosted ABI lowering.</summary>
+  public Dictionary<int, int> IncomingParameterOffsets { get; } = [];
 
   /// <summary>
   /// Whether <see cref="ArgumentLoads"/> is the authoritative plan. Selection always builds one, so an
@@ -451,13 +467,17 @@ public sealed class MFunction(string name) {
   /// objective's coalescing may cost an allocation the un-coalesced function had, and a decline is not
   /// an acceptable price for a code-quality transform.
   /// </summary>
-  public MFunction Clone() {
-    var copy = new MFunction(this.Name) {
+  public X86MachineFunction Clone() {
+    var copy = new X86MachineFunction(this.Name) {
       VirtualRegisterCount = this.VirtualRegisterCount,
       HasArgumentPlan = this.HasArgumentPlan,
+      TargetFamily = this.TargetFamily,
+      ZeroStartSlots = this.ZeroStartSlots is null ? null : [.. this.ZeroStartSlots],
     };
     copy.StackSlots.AddRange(this.StackSlots);
     copy.ArgumentLoads.AddRange(this.ArgumentLoads);
+    foreach (var (argument, offset) in this.IncomingParameterOffsets)
+      copy.IncomingParameterOffsets.Add(argument, offset);
     copy.MovedValues.UnionWith(this.MovedValues);
     foreach (var block in this.Blocks) {
       var cloned = new MBlock(block.Label) { ExecutionCount = block.ExecutionCount };
@@ -469,14 +489,19 @@ public sealed class MFunction(string name) {
   }
 
   /// <summary>Takes over another function's blocks and frame - how a discarded-or-kept transform commits.</summary>
-  public void Adopt(MFunction other) {
+  public void Adopt(X86MachineFunction other) {
     ArgumentNullException.ThrowIfNull(other);
     this.VirtualRegisterCount = other.VirtualRegisterCount;
     this.HasArgumentPlan = other.HasArgumentPlan;
+    this.TargetFamily = other.TargetFamily;
+    this.ZeroStartSlots = other.ZeroStartSlots is null ? null : [.. other.ZeroStartSlots];
     this.StackSlots.Clear();
     this.StackSlots.AddRange(other.StackSlots);
     this.ArgumentLoads.Clear();
     this.ArgumentLoads.AddRange(other.ArgumentLoads);
+    this.IncomingParameterOffsets.Clear();
+    foreach (var (argument, offset) in other.IncomingParameterOffsets)
+      this.IncomingParameterOffsets.Add(argument, offset);
     this.MovedValues.Clear();
     this.MovedValues.UnionWith(other.MovedValues);
     this.Blocks.Clear();

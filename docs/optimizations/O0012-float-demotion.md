@@ -2,22 +2,24 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (FOR counters and integral constant resets) |
-| **Stage** | Pre-emission analysis (whole body) |
-| **Source** | `CodeGen/OptFloatDemotion.cs` |
+| **Status** | 🟡 Partial — FOR counters with integral constant start, step and limit; integral constant resets and accumulators are not demoted on the IR path |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/FloatDemotion.cs` — `Run`, `Demote`, `IsRewritableUse`, `Rewrite`; runs after `Mem2Reg` has made the counter a phi |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF28.BAS` (demoted and blocked twins side by side) |
-| **IR** | ✅ `Ir/Passes/FloatDemotion.cs` — the FOR-counter case, after `Mem2Reg` has made the counter a phi. Demotion is only SOUND where the counter is bounded, because integer arithmetic wraps where float arithmetic saturates: the init, the step and the limit must all be integral constants inside 16 bits, and the step must move toward the limit. A conversion back to an integer then becomes the identity, which is the whole saving. Note that the lowering writes a FOR bound as `sitofp i16 10 to f32` rather than as a float literal, so `Integral` accepts both spellings - a version that took only `IrConstantFloat` declined every counter it exists for. Verified by `FloatDemotionTests` and `IrPassObservableEquivalenceTests` |
+| **Verified by** | `tests/diff/DIFF28.BAS` (demoted and blocked twins side by side), `FloatDemotionTests`, `IrPassObservableEquivalenceTests` |
 | **Related** | [O0013](O0013-promotion-lowering.md), [O0037](O0037-fixed-point-for-counters.md), [O0057](O0057-storage-narrowing.md) |
 
 ## What it is
 
 PB defaults a bare variable name to **SINGLE**, so most DOS-era loop counters
-and flags are floating-point by accident, not by intent. When the analysis
-proves a SINGLE/DOUBLE variable only ever holds integral values inside
-INTEGER/LONG range, and every read sits in a value-exact context, the variable
-is silently re-typed to INTEGER or LONG — and the whole x87 round trip
-disappears.
+and flags are floating-point by accident, not by intent. After `Mem2Reg` a
+float `FOR` counter is a phi. `FloatDemotion` accepts a float phi whose entry
+value is an integral constant, whose value round the latch is itself plus or
+minus an integral constant, and which is compared against an integral
+constant; all three must lie within ±32767. Such a counter is replaced by an
+`i32` phi, and the x87 round trip disappears. The lowering writes a `FOR`
+bound as `sitofp i16 10 to f32` rather than as a float literal, so `Integral`
+accepts both spellings.
 
 ## Sample
 
@@ -32,8 +34,12 @@ PRINT total
 ```
 
 The declaration is not a promise about representation, only about observable
-values: an explicit `AS SINGLE` is re-typed exactly like the implicit one, as
-long as every value and every use is provably integral.
+values: an explicitly declared SINGLE counter is demoted exactly like an
+implicit one. On the IR path only the counter shape qualifies, and only when
+every use of it can be rewritten: in this sample `i` feeds `total + i`, whose
+other operand is not a constant, so the counter is not demoted, and `total` is
+not a counter at all. The listing below shows the shape once both are
+integral.
 
 ## Without the optimizer
 
@@ -95,22 +101,28 @@ program's output is identical.
 
 ## Why it is safe
 
-The demotion is blocked or killed by anything that could observe the float
-representation:
+Demotion is only sound where the counter is bounded, because integer
+arithmetic wraps where float arithmetic saturates. With start, step and limit
+all inside 16 bits, and the step required to move toward the limit
+(`Bounded`), the `i32` counter cannot leave its range whatever the trip count.
+The increment may feed nothing but the phi, and every other use must be one of:
 
-- a `/` or `^` operator, a fractional literal, or an intrinsic over the value;
-- `PRINT USING` or `WRITE #` of the variable;
-- a call argument (BYREF), `INPUT`/`READ`/`SWAP` target, or `INCR` (unbounded);
-- a non-integral `CASE` comparison;
-- inline asm or indirect control flow anywhere in the body.
+- a conversion back to an integer, which becomes the identity (or a
+  truncation) — the whole saving;
+- `+`, `-` or `*` against an integral constant, rewritten as integer
+  arithmetic followed by a conversion back to float for its users;
+- a comparison against an integral constant.
 
-Range proofs respect SINGLE's 2²⁴ exact-integer bound, so a value that a SINGLE
-could not have represented exactly is never demoted.
+Anything else — a call, a store, a return, arithmetic with a non-constant
+value — declines the whole counter. A function with an armed error handler or
+inline assembly is never touched. Values within ±32767 are exact in SINGLE, so
+the demoted counter holds the same values the float one did.
 
 ## Limits
 
-Only FOR-header writes plus integral constant resets are proven today. General
-whole-program value tracking — a SINGLE assigned from arbitrary integral
-expressions — waits on the value-fact lattice
+Only the counter phi shape is demoted. Integral constant resets, accumulators
+and a SINGLE assigned from arbitrary integral expressions are not; the
+syntax-level analysis that covered resets was retired with the direct emitter.
+General value tracking belongs to the value-fact analyses
 ([O0016](O0016-value-fact-analysis.md)) and storage narrowing
 ([O0057](O0057-storage-narrowing.md)).

@@ -44,7 +44,7 @@ public sealed class BackendFarThunkOwnershipTests {
     var model = Binder.Bind(
       Parser.Parse(Lexer.Tokenize(_source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = true };
+    var generator = new CodeGenerator(model) { Optimize = optimize };
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return (image, generator.BackendRoutedNames.ToList());

@@ -5,7 +5,7 @@ namespace PowerBasic.Compiler.Backend;
 /// <summary>Local machine-IR simplifications that require the final virtual-to-physical allocation.</summary>
 public static class PostRegisterAllocationPeepholes {
 
-  public static int Run(MFunction function, IReadOnlyDictionary<int, Reg> allocation) {
+  public static int Run(X86MachineFunction function, IReadOnlyDictionary<int, Reg> allocation) {
     ArgumentNullException.ThrowIfNull(function);
     ArgumentNullException.ThrowIfNull(allocation);
     if (!MachineOptimizationState.IsMarked(function))
@@ -20,6 +20,11 @@ public static class PostRegisterAllocationPeepholes {
       changed += FuseLeaArithmetic(block, allocation);
 
       for (var i = 0; i < block.Instructions.Count;) {
+        if (TryStepInPlace(function, block, i, allocation)) {
+          ++changed;
+          ++i;
+          continue;
+        }
         if (IsSelfCopy(block.Instructions[i], allocation)) {
           block.Instructions.RemoveAt(i);
           ++changed;
@@ -40,6 +45,8 @@ public static class PostRegisterAllocationPeepholes {
         ++i;
       }
     }
+    // coalescing can leave a block that held only a phi copy holding only its JMP
+    changed += MachineBranchCleanup.Run(function);
     return changed;
   }
 
@@ -100,7 +107,7 @@ public static class PostRegisterAllocationPeepholes {
         || add.Opcode != MOpcode.Add
         || add.Operands is not [MOperand.Register { Reg: var written }, MOperand.Register { Reg: var baseSource }]
         || !written.Equals(destination) || baseSource.Size != MRegSize.Dword
-        || !FlagsDeadAfter(block, index + 2))
+        || !MachineFlags.DeadAfter(block, index + 2))
       return false;
 
     var destinationPhysical = Resolve(destination, allocation);
@@ -130,7 +137,7 @@ public static class PostRegisterAllocationPeepholes {
         || arithmetic.Opcode is not (MOpcode.Add or MOpcode.Sub)
         || arithmetic.Operands.Count != 2
         || arithmetic.Operands[0] is not MOperand.Register { Reg: var written }
-        || !written.Equals(destination) || !FlagsDeadAfter(block, index + 1))
+        || !written.Equals(destination) || !MachineFlags.DeadAfter(block, index + 1))
       return false;
 
     if (Resolve(destination, allocation)?.IsDword() != true || Resolve(source, allocation)?.IsDword() != true)
@@ -178,18 +185,6 @@ public static class PostRegisterAllocationPeepholes {
 
   private static bool Plain(MInstr instruction)
     => instruction.Condition is null && instruction.Clobbers.Count == 0;
-
-  private static bool FlagsDeadAfter(MBlock block, int index) {
-    for (var i = index + 1; i < block.Instructions.Count; ++i) {
-      var effect = block.Instructions[i].Effect;
-      if (effect.ReadsFlags)
-        return false;
-      if (effect.WritesFlags)
-        return true;
-    }
-    // Flags may flow into a successor block, and machine IR has no cross-block flag liveness fact.
-    return false;
-  }
 
   private static bool TryPair(MInstr first, MInstr second, IReadOnlyDictionary<int, Reg> allocation,
       out bool removeFirst, out bool removeSecond) {
@@ -241,8 +236,40 @@ public static class PostRegisterAllocationPeepholes {
     return false;
   }
 
+  /// <summary>
+  /// A MOV whose source and destination are the same physical register. Its clobbers - a staging move
+  /// claims its whole destination set - do not keep it: they told the ALLOCATOR what not to park where,
+  /// allocation is over, and the move changes no register, so any fact held across it stays true.
+  /// </summary>
+  /// <summary>
+  /// <c>LEA r,[r+d]</c> - a pointer stepped by a constant, once the allocator has given the step and
+  /// the pointer one register - is <c>ADD r,d</c>, or <c>INC</c>/<c>DEC</c> for one. The same three
+  /// bytes (one for INC/DEC) at a fraction of an 8086 LEA's effective-address cycles; LEA's only merit
+  /// is leaving the flags alone, so the rewrite needs them dead.
+  /// </summary>
+  private static bool TryStepInPlace(X86MachineFunction function, MBlock block, int index,
+      IReadOnlyDictionary<int, Reg> allocation) {
+    if (block.Instructions[index] is not {
+          Opcode: MOpcode.Lea, Condition: null, Clobbers.Count: 0,
+          Operands: [MOperand.Register { Reg: { Size: MRegSize.Word } destination },
+                     MOperand.Memory { Base: { } pointer, Index: null, Segment: null, SegmentCell: null, Disp: var step }]
+        }
+        || step == 0 || !SamePhysical(destination, pointer, allocation)
+        || !MachineFlags.DeadAfter(function, block, index))
+      return false;
+    var register = new MOperand.Register(destination);
+    block.Instructions[index] = step is 1 or -1
+      ? new MInstr(step == 1 ? MOpcode.Inc : MOpcode.Dec, [register],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+            ReadsMemory: false, WritesMemory: false))
+      : new MInstr(MOpcode.Add, [register, new MOperand.Immediate(step)],
+          new MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: true,
+            ReadsMemory: false, WritesMemory: false));
+    return true;
+  }
+
   private static bool IsSelfCopy(MInstr instruction, IReadOnlyDictionary<int, Reg> allocation)
-    => instruction.Opcode == MOpcode.Mov && instruction.Condition is null && instruction.Clobbers.Count == 0
+    => instruction.Opcode == MOpcode.Mov && instruction.Condition is null
       && instruction.Operands is [MOperand.Register { Reg: var destination }, MOperand.Register { Reg: var source }]
       && SamePhysical(destination, source, allocation);
 
@@ -257,7 +284,7 @@ public static class PostRegisterAllocationPeepholes {
     => Resolve(left, allocation) is { } a && Resolve(right, allocation) is { } b && a == b && left.Size == right.Size;
 
   /// <summary>
-  /// Resolves the register exactly as <see cref="MachineEmitter"/> will emit it. The allocator stores a
+  /// Resolves the register exactly as the hosted target machine emitter will emit it. The allocator stores a
   /// byte virtual as its containing word register (AX/CX/DX/BX), but emission names the addressable low
   /// byte. Comparing the container here would miss self-copies such as <c>v:byte(AX) &lt;- AL</c> and,
   /// worse, could let the overwritten-copy rule delete the definition feeding that apparent copy.

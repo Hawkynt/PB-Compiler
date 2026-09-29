@@ -2,7 +2,7 @@ namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
 /// Stage 3 of the x86-16 back end (docs/X86-BACKEND.md): live-interval analysis over a
-/// <see cref="MFunction"/>. Each virtual register's interval runs from its first definition to its
+/// <see cref="X86MachineFunction"/>. Each virtual register's interval runs from its first definition to its
 /// last use across the linearized instruction stream; the linear-scan allocator (stage 4) assigns
 /// physical registers by sweeping these intervals. Reads are the top-level read operands PLUS every
 /// register nested in a memory operand (base/index form the effective address), so an address
@@ -77,10 +77,10 @@ public sealed class LivenessAnalysis {
   /// index where the value is live, so any two values live at the same point overlap (hence get
   /// distinct registers) - conservatively correct for the linear-scan allocator.
   /// </summary>
-  public static IReadOnlyList<LiveInterval> Compute(MFunction function) => Analyze(function).Intervals;
+  public static IReadOnlyList<LiveInterval> Compute(X86MachineFunction function) => Analyze(function).Intervals;
 
   /// <summary>The same walk, keeping the per-instruction marks the intervals are the hull of.</summary>
-  public static Liveness Analyze(MFunction function) {
+  public static Liveness Analyze(X86MachineFunction function) {
     var blocks = function.Blocks;
     var n = blocks.Count;
 
@@ -199,7 +199,7 @@ public sealed class LivenessAnalysis {
   /// too many costs a different register; naming one too few costs the residency.
   /// </para>
   /// </summary>
-  public static HashSet<int> LoopCarried(MFunction function) {
+  public static HashSet<int> LoopCarried(X86MachineFunction function) {
     var blocks = function.Blocks;
     var index = new Dictionary<string, int>(blocks.Count);
     for (var b = 0; b < blocks.Count; ++b)
@@ -231,7 +231,7 @@ public sealed class LivenessAnalysis {
     return carried;
   }
 
-  private static int CountInstructions(MFunction function) {
+  private static int CountInstructions(X86MachineFunction function) {
     var total = 0;
     foreach (var block in function.Blocks)
       total += block.Instructions.Count;

@@ -73,7 +73,6 @@ public sealed class BackendCoverageTests {
         continue;
       var generator = new CodeGenerator(unitModel) {
         Optimize = optimize,
-        UseExperimentalBackend = true,
       };
       var unit = generator.EmitUnit(unitName.ToUpperInvariant());
       if (generator.Errors.Count == 0)
@@ -190,12 +189,14 @@ public sealed class BackendCoverageTests {
         proceduresNotLowered.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')}::{procName}: {procWhy}");
 
       List<string> routedNames;
+      List<string> eliminatedNames;
       List<(string Name, string Reason)> routingDeclineList;
       try {
         var linkedUnits = CompileLinkedUnits(model, dir, optimize: true);
-        var generator = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+        var generator = new CodeGenerator(model) { Optimize = true};
         generator.EmitExecutable(linkedUnits, []);
         routedNames = generator.BackendRoutedNames.ToList();
+        eliminatedNames = generator.BackendEliminatedNames.ToList();
         routingDeclineList = generator.BackendDeclines.ToList();
       } catch (Exception e) {
         // The fourth outcome. A throw is no executable at all, so it is neither a routed function
@@ -203,7 +204,9 @@ public sealed class BackendCoverageTests {
         threw.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')}: {e.GetType().Name}: {e.Message}");
         continue;
       }
-      routed += routedNames.Count;
+      // A procedure the optimized pipeline removed as unreachable needs no code at all, so it is
+      // covered rather than declined; the unoptimized half below compiles every one of them anyway.
+      routed += routedNames.Count + eliminatedNames.Count;
       if (!routedNames.Contains("main", StringComparer.OrdinalIgnoreCase))
         mainBodiesNotRouted.Add(name);
       foreach (var (declinedName, declinedBecause) in routingDeclineList) {
@@ -225,7 +228,7 @@ public sealed class BackendCoverageTests {
       // loan from the inliner.
       try {
         var linkedUnits = CompileLinkedUnits(model, dir, optimize: false);
-        var unoptimized = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+        var unoptimized = new CodeGenerator(model) { Optimize = false};
         unoptimized.EmitExecutable(linkedUnits, []);
         var unoptimizedRoutedNames = unoptimized.BackendRoutedNames.ToList();
         routedNoOptimize += unoptimizedRoutedNames.Count;
@@ -242,11 +245,11 @@ public sealed class BackendCoverageTests {
       }
 
       try {
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
         foreach (var f in module.Functions)
           if (!f.IsDeclaration)
             IntegerRecovery.Run(f);
-        IrPassManager.Standard().RunOnModule(module);
+        IrMiddleEndPipeline.Standard().RunOnModule(module);
       } catch (Exception) {
         continue;
       }
@@ -727,6 +730,12 @@ public sealed class BackendCoverageTests {
     "DIFF96.BAS",
     "DIFF97.BAS",
     "DIFF99.BAS",
+    "FLTRET.BAS",   // a SINGLE / DOUBLE result is rounded to its width on the way out
+    "HIBYTE.BAS",   // string literals keep their bytes above 127
+    "INCRLV.BAS",   // INCR / DECR of an array element, a record field and a float
+    "INSTRC.BAS",   // INSTR of compile-time needles, short and Horspool
+    "NARROW.BAS",   // LONG divide / MOD / compare over values proven to fit sixteen bits
+    "ZEROLOC.BAS",  // a local read before it is written still starts at zero
     "DIFF01.BAS",
     "DIFF01.BAS",
     "DIFF02.BAS",
@@ -911,6 +920,12 @@ public sealed class BackendCoverageTests {
     "DIFF96.BAS",
     "DIFF97.BAS",
     "DIFF99.BAS",
+    "FLTRET.BAS",
+    "HIBYTE.BAS",
+    "INCRLV.BAS",
+    "INSTRC.BAS",
+    "NARROW.BAS",
+    "ZEROLOC.BAS",
     "DIFF01.BAS",
     "DIFF01.BAS",
     "DIFF02.BAS",

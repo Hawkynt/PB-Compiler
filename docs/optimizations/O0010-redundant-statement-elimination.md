@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (`DEF SEG` windows, console setters) |
-| **Stage** | Pre-emission pruner |
-| **Source** | `CodeGen/OptPruner.cs` |
+| **Status** | 🟡 Partial — adjacent `DEF SEG`s coalesce; a window containing a runtime call does not |
+| **Stage** | IR memory optimization (`DeadStoreElim`) |
+| **Source** | `Ir/IrLowering.cs` (`DEF SEG` is a store to the runtime's `rt_defseg` cell); `Ir/Passes/DeadStoreElim.cs` |
 | **Gate** | `--optimize` |
 | **Related** | [O0002](O0002-dead-code-elimination.md), [O0016](O0016-value-fact-analysis.md), [O0020](O0020-idiom-replacement.md) |
 | **Split into** | [O0211](O0211-console-setter-elimination.md) |
@@ -21,6 +21,14 @@ drops.
 
 Redundant console-state setters collapse by the same argument and are the
 separate entry [O0211](O0211-console-setter-elimination.md).
+
+On the IR, `DEF SEG = n` is a store to the runtime's `rt_defseg` cell, so the
+coalescing is dead-store elimination: a `DEF SEG` overwritten by the next one
+with nothing between them is removed. A runtime call in the window ends it -
+`DeadStoreElim` assumes a call may read any memory it can see, and no effect
+summary yet says which runtime routines leave `rt_defseg` alone - so the sample
+below keeps both stores. (The syntax-level pass that also saw through `PRINT`
+and `LOCATE` was retired with the direct emitter.)
 
 ## Sample
 

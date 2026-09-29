@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Done |
-| **Stage** | IR middle-end + legacy direct emitter |
-| **IR** | ✅ `Ir/Passes/LoopUnroll.cs` — each fully-unrolled copy is seeded with the exact induction-variable literal before cloning |
+| **Stage** | IR middle-end |
+| **Source** | `Ir/Passes/LoopUnroll.cs` — `Match`, `TryUnroll`; each fully-unrolled copy is seeded with the exact induction-variable literal before cloning |
 | **Related** | [O0007](O0007-loop-unrolling.md), [O0036](O0036-constant-subscript-folding.md), [O0016](O0016-value-fact-analysis.md) |
 
 ## The idea
@@ -63,9 +63,8 @@ With O0066 in the unroller, every copy immediately contains the literal counter.
 can then simplify the derived expressions without first rediscovering the induction
 progression.
 
-The direct emitter keeps its existing `ResolveUnrollCounter`/`_unrollCounter` hook
-for the legacy native path. The middle-end implementation is target-neutral and is
-the one used by IR back ends.
+The implementation is target-neutral: it runs in the IR middle end, ahead of any
+back end.
 
 ## Safety
 

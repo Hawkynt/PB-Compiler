@@ -62,7 +62,7 @@ public sealed class ArrayZeroFillElisionTests {
       END
       """);
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var calls = module.FindFunction("main")!.AllInstructions.OfType<IrCall>().Select(RuntimeName).ToList();
     Assert.That(calls, Does.Contain("rt_arr_alloc_nz"));

@@ -100,8 +100,8 @@ public sealed class Wave3SweepHarness {
         try {
           var bound = Bind();
           if (bound.Errors.Count > 0) { report.AppendLine($"BIND-ERROR {tag}: {string.Join("; ", bound.Errors)}"); continue; }
-          var direct = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = false };
-          var routed = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = true };
+          var direct = new CodeGenerator(Bind()) { Optimize = optimize};
+          var routed = new CodeGenerator(Bind()) { Optimize = optimize};
           directImage = direct.EmitExecutable();
           routedImage = routed.EmitExecutable();
           routedNames = routed.BackendRoutedNames.ToList();

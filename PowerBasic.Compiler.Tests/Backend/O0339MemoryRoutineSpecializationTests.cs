@@ -72,7 +72,7 @@ public sealed class O0339MemoryRoutineSpecializationTests {
     var low = MReg.Virtual(0);
     var high = MReg.Virtual(1);
     var extra = MReg.Virtual(2);
-    var function = new MFunction("shared") { VirtualRegisterCount = 3 };
+    var function = new X86MachineFunction("shared") { VirtualRegisterCount = 3 };
     var block = new MBlock("entry");
     var sourceLow = new MOperand.DataCell("source", 0, MRegSize.Word);
     var sourceHigh = new MOperand.DataCell("source", 2, MRegSize.Word);
@@ -90,7 +90,7 @@ public sealed class O0339MemoryRoutineSpecializationTests {
       "the widening is only valid for the private load-to-store transfer value");
   }
 
-  private static MFunction SelectAndSchedule(IrFunction fn, SelectionTarget target) {
+  private static X86MachineFunction SelectAndSchedule(IrFunction fn, SelectionTarget target) {
     var machine = InstructionSelector.TrySelect(fn, out var reason, target);
     Assert.That(machine, Is.Not.Null, $"selection declined: {reason}");
     MachineScheduler.Schedule(machine!, target);

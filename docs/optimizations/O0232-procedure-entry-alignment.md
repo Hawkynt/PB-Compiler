@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Procs.cs` |
+| **Stage** | x86 back end (emission) |
+| **Source** | `CodeGen/CodeGenerator.Backend.cs` — `EmitBackendFunction`; `CodeGen/CodeGenerator.BackendGenerated.cs` — `EmitBackendGeneratedFunctions`; `CodeGen/CodeGenerator.SemanticMerge.cs` |
 | **Gate** | `--optimize` + `$CPU 80486`/`80586` |
 | **Split from** | [O0041](O0041-branch-layout.md) |
 
@@ -13,6 +13,10 @@
 Procedure entry points are aligned to a 16-byte boundary. Because an entry is
 reached only by `CALL`, the pad in front of it **never executes** — it is pure
 layout, with no run-time cost at all.
+
+Each routed source procedure, middle-end generated helper and O0284 merge helper
+is preceded by `AlignCode(16)` when the optimizer is on and the CPU level is 486
+or higher.
 
 ## Sample
 

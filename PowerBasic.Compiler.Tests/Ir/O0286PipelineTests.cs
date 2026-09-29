@@ -19,7 +19,7 @@ public sealed class O0286PipelineTests {
     var slice = builder.Call(IrType.Ptr, leftFn, source, count);
     builder.Ret(builder.Call(IrType.I32, lengthFn, slice));
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.That(function.AllInstructions.OfType<IrCall>()
       .Any(call => call.Callee is IrFunction { Name: "rt_str_left" }), Is.False);

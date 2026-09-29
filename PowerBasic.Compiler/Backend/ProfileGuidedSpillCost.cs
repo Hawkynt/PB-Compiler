@@ -12,7 +12,7 @@ internal static class ProfileGuidedSpillCost {
   /// incomplete. Missing data must not mean zero: that would make an unknown block look colder than a
   /// block measured to execute once and bias allocation from a stale/partial profile.
   /// </summary>
-  public static IReadOnlyDictionary<int, ulong>? Compute(MFunction function) {
+  public static IReadOnlyDictionary<int, ulong>? Compute(X86MachineFunction function) {
     if (function.Blocks.Count == 0 || function.Blocks.Any(block => block.ExecutionCount is null))
       return null;
 

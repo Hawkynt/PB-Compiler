@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Done — `-(-x)`, `0 - x` and `x * -1` all fold to a negate in the integer paths (a float-typed-position residue rides the FPU, folded by the IR tier for C/LLVM) |
-| **Stage** | Emitter |
+| **Status** | 🟡 Partial — integer `-(-x)` folds to `x` and `x * -1` to `0 - x` in the IR; the x86-16 selector spells `0 - x` as a zero load plus `SUB`, not `NEG`; float negations are not folded |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/InstCombine.cs` (`Sub`/`Mul` identities); `Ir/IrLowering.cs` lowers unary minus to `sub 0, x` / `fsub 0.0, x` |
 | **Related** | [O0076](O0076-algebraic-identities.md), [O0004](O0004-strength-reduction.md), [O0033](O0033-constant-store.md) |
 
 ## The idea
@@ -39,29 +40,15 @@ negation emits two negations.
     mov     [c], ax
 ```
 
-`EmitUnary` collapses `-(-x)` to the inner value: two sign flips cancel exactly
-(`FCHS` then `FCHS` for the float-promoted forms, `NEG` then `NEG` for the
-integral `LONG`), guarded on both negations producing the **same** type so no
-rounding step sits between them. This is bit-exact even at `-32768`
-(`NEG(NEG(8000h)) = 8000h`) and the whole `LONG` `80000000h` case — verified
-byte-identical against the genuine oracle (`-(-x%)`, `-(-y&)`, `-(-(-32768))`).
+The lowering spells integer unary minus as `sub 0, x`. `InstCombine` rewrites
+`0 - (0 - x)` to `x`: two modular sign flips cancel exactly, including at `-32768`
+(`NEG(NEG(8000h)) = 8000h`) and `LONG` `80000000h`. The float spelling
+(`fsub 0.0, x`) has no matching rule, so `-(-x!)` still negates twice on the FPU.
 
-## Now — `0 - x` and `x * -1` fold too
+## Now — `x * -1` becomes `0 - x`
 
-```asm
-    ; a% = 0 - x%    ->   mov ax,[x] : neg ax
-    ; b% = x% * -1   ->   mov ax,[x] : neg ax
-```
-
-Assigned to an integer target, both lower through the modular-int path: the
-`c - v` shape of the subtract negates then adds `c` (here `c = 0`, adding
-nothing — `TryEmitModularConstAddSub`), and `* -1` becomes `neg ax`
-unconditionally under `--optimize` (`TryEmitModularConstMul`). Bit-exact even at
-`-32768` (`NEG(8000h) = 8000h`, matching PB's own modular store), verified
-byte-identical against the genuine oracle over `0 - x`, `-1 * x` and
-`x% * -1` at `MININT`.
-
-The only unfolded residue is a negation consumed in a **float-typed
-subexpression position**, which stays on the FPU; the IR tier folds it for the
-C/LLVM back ends. Native-only, in `CodeGenerator.EmitUnary` /
-`CodeGenerator.Optimize` (the modular lowering).
+`InstCombine` rewrites an integer multiply by all-ones (either operand order) to
+`0 - x`, so no multiply is emitted. `0 - x` itself is already the IR's negate. The
+x86-16 selector has no `NEG` rule for it: the generic two-address path loads the
+zero into the destination and subtracts `x`, a few bytes more than
+`mov ax,[x] : neg ax`. Selecting `sub 0, x` as `NEG` is the remaining step.

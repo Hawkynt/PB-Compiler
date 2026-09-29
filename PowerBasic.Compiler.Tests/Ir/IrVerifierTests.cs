@@ -79,6 +79,53 @@ public sealed class IrVerifierTests {
     Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("does not dominate use"));
   }
 
+  /// <summary>
+  /// A block entered only by a NON-LOCAL jump - an error handler armed with its block address - uses an
+  /// entry <c>alloca</c>. No CFG path reaches it, yet the entry has run before any block can: this is
+  /// what <c>ON ERROR GOTO T ... T: x% = ERR</c> lowers to, and it is well-formed.
+  /// </summary>
+  [Test]
+  public void Verify_GivenNonLocallyEnteredBlockUsingAnEntryValue_ReportsNoErrors() {
+    var (fn, handler, entryValue, _) = NonLocalHandlerShape();
+    var hb = new IrBuilder(handler);
+    hb.Store(IrBuilder.ConstInt(IrType.I16, 5), entryValue);
+    hb.Ret();
+
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  /// <summary>
+  /// The other half, and the reason the rule is confined to the entry. A value defined in an ordinary
+  /// block and used in the non-locally entered one has no path establishing what it holds when the
+  /// jump lands - the stale-value bug the dominance check exists for - so it still fails.
+  /// </summary>
+  [Test]
+  public void Verify_GivenNonLocallyEnteredBlockUsingANonEntryValue_ReportsDominanceError() {
+    var (fn, handler, _, bodyValue) = NonLocalHandlerShape();
+    var hb = new IrBuilder(handler);
+    hb.Add(bodyValue, bodyValue);
+    hb.Ret();
+
+    Assert.That(IrVerifier.Verify(fn), Has.Some.Contains("does not dominate use"));
+  }
+
+  /// <summary>entry defines an alloca and falls into body, which arms the handler by address and computes a value.</summary>
+  private static (IrFunction Fn, IrBasicBlock Handler, IrValue EntryValue, IrValue BodyValue) NonLocalHandlerShape() {
+    var fn = new IrFunction("f", IrType.Void);
+    var entry = fn.CreateBlock("entry");
+    var body = fn.CreateBlock("body");
+    var handler = fn.CreateBlock("handler");
+    var eb = new IrBuilder(entry);
+    var local = eb.Alloca(IrType.I16);
+    eb.Br(body);
+    var bb = new IrBuilder(body);
+    var arm = new IrFunction("rt_onerr_arm", IrType.Void, [new IrArgument(IrType.Ptr, 0, "h")]);
+    bb.Call(IrType.Void, arm, new IrBlockAddress(handler));
+    var computed = bb.Add(IrBuilder.ConstI32(1), IrBuilder.ConstI32(2));
+    bb.Ret();
+    return (fn, handler, local, computed);
+  }
+
   [Test]
   public void Verify_GivenTypeMismatchedBinary_ReportsTypeError() {
     var fn = new IrFunction("f", IrType.Void);

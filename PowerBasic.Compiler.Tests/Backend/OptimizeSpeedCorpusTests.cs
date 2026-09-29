@@ -72,8 +72,8 @@ public sealed class OptimizeSpeedCorpusTests {
       try {
         if (Bind().Errors.Count > 0)
           continue;                                 // a program the front end rejects is not this test's business
-        var a = new CodeGenerator(Bind()) { Optimize = true, UseExperimentalBackend = true };
-        var b = new CodeGenerator(Bind()) { Optimize = true, UseExperimentalBackend = true, OptimizeSpeed = true };
+        var a = new CodeGenerator(Bind()) { Optimize = true};
+        var b = new CodeGenerator(Bind()) { Optimize = true, OptimizeSpeed = true };
         plain = a.EmitExecutable();
         fast = b.EmitExecutable();
         if (a.Errors.Count > 0 || b.Errors.Count > 0)
@@ -151,8 +151,8 @@ public sealed class OptimizeSpeedCorpusTests {
       try {
         if (Bind().Errors.Count > 0)
           continue;
-        var a = new CodeGenerator(Bind()) { Optimize = false, UseExperimentalBackend = true };
-        var b = new CodeGenerator(Bind()) { Optimize = true, UseExperimentalBackend = true };
+        var a = new CodeGenerator(Bind()) { Optimize = false};
+        var b = new CodeGenerator(Bind()) { Optimize = true};
         off = a.EmitExecutable();
         on = b.EmitExecutable();
         if (a.Errors.Count > 0 || b.Errors.Count > 0)

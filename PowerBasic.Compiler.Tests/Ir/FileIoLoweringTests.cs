@@ -13,7 +13,7 @@ public sealed class FileIoLoweringTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var module = IrLowering.TryLowerModule(Binder.Bind(unit, Dialect.Pb35));
     if (module is not null)
-      IrPassManager.Standard().RunOnModule(module);
+      IrMiddleEndPipeline.Standard().RunOnModule(module);
     return module;
   }
 

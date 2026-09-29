@@ -24,20 +24,23 @@ public enum IrAliasResult {
 /// </para>
 ///
 /// <para>
-/// The deliberately small provenance model recognizes only facts the IR itself guarantees:
-/// independently allocated stack objects and distinct globals are different objects; constant GEPs
-/// preserve their root and contribute a byte displacement; everything else is unknown. In
-/// particular BYREF arguments, loaded pointers, casts, explicit far pointers and dynamic offsets all
-/// conservatively remain <see cref="IrAliasResult.MayAlias"/> unless their identity/range proves more.
+/// The compatibility query has a deliberately small built-in provenance model. Analysis-owned callers
+/// may additionally supply <see cref="IrPointerIdentityAnalysis"/>, which centralizes pointer roots
+/// across GEPs and pointer-preserving bitcasts while keeping BYREF arguments non-unique. Loaded
+/// pointers, integer-to-pointer casts, explicit far pointers and other opaque roots remain conservative.
 /// </para>
 /// </summary>
 public static class IrAliasAnalysis {
 
-  private readonly record struct Address(IrValue Root, long? Offset);
+  private readonly record struct Address(IrValue Root, long? Offset, bool IsUniqueObject);
 
   /// <summary>Classifies whether two typed memory accesses overlap.</summary>
-  public static IrAliasResult Alias(IrValue firstPointer, IrType firstAccessType,
-      IrValue secondPointer, IrType secondAccessType) {
+  public static IrAliasResult Alias(
+      IrValue firstPointer,
+      IrType firstAccessType,
+      IrValue secondPointer,
+      IrType secondAccessType,
+      IrPointerIdentityAnalysis? identities = null) {
     ArgumentNullException.ThrowIfNull(firstPointer);
     ArgumentNullException.ThrowIfNull(firstAccessType);
     ArgumentNullException.ThrowIfNull(secondPointer);
@@ -46,10 +49,10 @@ public static class IrAliasAnalysis {
     if (ReferenceEquals(firstPointer, secondPointer))
       return IrAliasResult.MustAlias;
 
-    var first = Decompose(firstPointer);
-    var second = Decompose(secondPointer);
+    var first = Decompose(firstPointer, identities);
+    var second = Decompose(secondPointer, identities);
     if (!ReferenceEquals(first.Root, second.Root))
-      return IsUniqueObject(first.Root) && IsUniqueObject(second.Root)
+      return first.IsUniqueObject && second.IsUniqueObject
         ? IrAliasResult.NoAlias
         : IrAliasResult.MayAlias;
 
@@ -71,20 +74,28 @@ public static class IrAliasAnalysis {
   }
 
   /// <summary>True unless the two typed accesses are proven disjoint.</summary>
-  public static bool MayAlias(IrValue firstPointer, IrType firstAccessType,
-      IrValue secondPointer, IrType secondAccessType)
-    => Alias(firstPointer, firstAccessType, secondPointer, secondAccessType) != IrAliasResult.NoAlias;
+  public static bool MayAlias(
+      IrValue firstPointer,
+      IrType firstAccessType,
+      IrValue secondPointer,
+      IrType secondAccessType,
+      IrPointerIdentityAnalysis? identities = null)
+    => Alias(firstPointer, firstAccessType, secondPointer, secondAccessType, identities)
+       != IrAliasResult.NoAlias;
 
   /// <summary>
   /// Whether <paramref name="later"/> completely covers every byte written by
   /// <paramref name="earlier"/>. Unknown offsets/widths deliberately answer false.
   /// </summary>
-  public static bool CompletelyOverwrites(IrStore later, IrStore earlier) {
+  public static bool CompletelyOverwrites(
+      IrStore later,
+      IrStore earlier,
+      IrPointerIdentityAnalysis? identities = null) {
     ArgumentNullException.ThrowIfNull(later);
     ArgumentNullException.ThrowIfNull(earlier);
 
-    var laterAddress = Decompose(later.Pointer);
-    var earlierAddress = Decompose(earlier.Pointer);
+    var laterAddress = Decompose(later.Pointer, identities);
+    var earlierAddress = Decompose(earlier.Pointer, identities);
     if (!ReferenceEquals(laterAddress.Root, earlierAddress.Root)
         || laterAddress.Offset is not { } laterOffset
         || earlierAddress.Offset is not { } earlierOffset
@@ -112,7 +123,10 @@ public static class IrAliasAnalysis {
     }
   }
 
-  private static Address Decompose(IrValue pointer) {
+  private static Address Decompose(IrValue pointer, IrPointerIdentityAnalysis? identities) {
+    if (identities?.TryResolve(pointer) is { } identity)
+      return new(identity.Root, identity.ByteOffset, identity.IsUniqueObject);
+
     var root = pointer;
     long offset = 0;
     var known = true;
@@ -123,7 +137,7 @@ public static class IrAliasAnalysis {
         known = false;
       root = gep.BasePtr;
     }
-    return new(root, known ? offset : null);
+    return new(root, known ? offset : null, IsUniqueObject(root));
   }
 
   private static bool TryGepOffset(IrGep gep, out long offset) {

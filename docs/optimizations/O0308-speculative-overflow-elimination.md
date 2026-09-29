@@ -3,9 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented for counted signed add/sub loops, including profitable checked-array preflight for O0026 vectorization |
-| **Stage** | IR mid-end + direct emitter consumer |
-| **IR** | `Ir/Passes/SpeculativeOverflowElimination.cs` |
-| **Emitter** | `CodeGen/CodeGenerator.OverflowVectorization.cs` + the O0026 hook in `CodeGenerator.cs` |
+| **Stage** | IR middle end + runtime |
+| **Source** | `Ir/Passes/SpeculativeOverflowElimination.cs` (O(1) guard); `Ir/Passes/PackedLoopVectorization.cs` — `MatchChecked` / `RewriteChecked` (array preflight); `Runtime/DosRuntime.Packed.cs` — `EmitCheckedKernel` (`rt_packed16_add_checked` / `rt_packed16_sub_checked`) |
 | **Related** | [O0026](O0026-auto-vectorization.md), [O0219](O0219-overflow-check-elimination.md), [O0306](O0306-loop-versioning.md), [O0350](O0350-overflow-check-coalescing.md) |
 
 ## The idea
@@ -19,9 +18,9 @@ O0308 now has two consumers of that idea:
 
 1. the IR middle-end uses an O(1) runtime range guard when one signed `ADD`/`SUB`
    operand is loop-invariant and the other already has a finite SSA interval;
-2. the direct emitter may use one read-only O(n) array preflight when the payoff is
-   concrete: the successful path immediately enters O0026's packed-integer
-   vectorizer.
+2. O0026's packed-loop vectorizer (`PackedLoopVectorization`) may use one
+   read-only O(n) array preflight when the payoff is concrete: the successful path
+   immediately computes the elements packed.
 
 The second form is intentionally not a generic "scan to delete checks" transform.
 Without a consumer that substantially changes the loop, paying another memory
@@ -67,14 +66,17 @@ NEXT
 
 packed `PADDW`/`PSUBW` cannot reproduce PB's Error 6 contract by themselves: they
 produce the wrapped 16-bit lane result, while ordinary scalar `ADD`/`SUB` exposes
-signed overflow through OF. O0308 therefore emits a read-only scalar scan first:
+signed overflow through OF. `PackedLoopVectorization` therefore matches the
+checked loop whole (header, body with its signed-overflow test, the Error 6 trap
+block and the latch) and puts it behind a call to a checked kernel,
+`rt_packed16_add_checked` or `rt_packed16_sub_checked`, which scans first:
 
 1. walk `a(i)` and `b(i)` without storing anything;
 2. perform the same signed 16-bit `ADD` or `SUB` and branch on OF;
-3. if every pair is safe, enter the existing O0026 vector body with overflow
-   checking disabled for that proven-safe clone;
-4. if any pair overflows, restart the original checked scalar FOR from its
-   beginning.
+3. if every pair is safe, compute the elements with the packed kernel and
+   answer AX = 0, so the loop is skipped;
+4. if any pair overflows, answer AX = 1 having written nothing, and the original
+   checked scalar loop runs from its beginning.
 
 The slow edge deliberately does **not** raise Error 6 from the preflight. Because
 no destination element has been stored yet, rerunning the checked loop preserves
@@ -86,21 +88,20 @@ This path is profitability-gated. It currently requires at least 32 elements and
 at least two complete vectors at the selected width, so AVX-512 requires 64
 16-bit elements while MMX/SSE2/AVX2 reach the 32-element floor. It also requires:
 
-- `$OPTIMIZE SPEED` and an enabled O0026 SIMD feature (MMX/SSE2/AVX2/AVX-512);
-- a constant step of `1` and a finite constant trip count whose bounds survive
-  signed-INTEGER coercion unchanged and whose final `hi + 1` counter value does
-  not wrap; in particular `FOR i% = ... TO 32767 STEP 1` is rejected because,
-  without `$ERROR NUMERIC`, that counter wraps to `-32768` and the original loop
-  continues;
-- static rank-1 signed INTEGER source/destination arrays indexed exactly by the
-  FOR counter;
-- `$ERROR OVERFLOW ON`, but no bounds checking, numeric counter-wrap checking,
-  or active resumable-error scope;
-- an `ADD` or `SUB` body. Checked multiplication remains scalar.
+- `$OPTIMIZE SPEED` and a target SIMD width the native back end hands to the
+  pass (MMX/SSE2/AVX2/AVX-512);
+- a 16-bit counter with a constant start, a step of `1` and a constant limit whose
+  last value is below 32767; in particular `FOR i% = ... TO 32767 STEP 1` is
+  rejected because, without `$ERROR NUMERIC`, that counter wraps to `-32768` and
+  the original loop continues;
+- 16-bit source/destination elements in near memory (an alloca or a global)
+  stepping by exactly two bytes per iteration from the counter;
+- no other loads, calls or values used after the loop, and a counter that dies
+  at the exit; a function with an error handler or inline assembly is skipped;
+- an `ADD` or `SUB` body carrying exactly the lowering's signed-overflow test.
+  Checked multiplication remains scalar.
 
-If O0026's eligibility changes in the future and declines after a successful
-preflight, O0308 falls back to the ordinary checked scalar loop rather than
-turning an optimization miss into a compiler failure.
+Any loop the matcher declines stays the ordinary checked scalar loop.
 
 ## IR legality and profitability
 
@@ -146,5 +147,5 @@ LLVM.
 
 LLVM is Apache-2.0 WITH LLVM-exception and was used as architectural/behavioral
 reference only. The PB-Compiler implementation is independently written against
-its own IR, lowering contract, range lattice, and existing O0026 emitter; no LLVM
+its own IR, lowering contract, range lattice, and O0026's packed kernels; no LLVM
 implementation code is copied or translated.

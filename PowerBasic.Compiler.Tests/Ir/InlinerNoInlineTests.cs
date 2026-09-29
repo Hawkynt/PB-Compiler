@@ -74,7 +74,7 @@ public sealed class InlinerNoInlineTests {
   /// </summary>
   [Test]
   public void Emit_GivenANoInlineBarrier_WhenRoutedThroughTheBackend_ThenTheProcedureSurvivesAndTheProgramRuns() {
-    var cg = new CodeGenerator(Bind(_barrier.Replace("__", " NOINLINE"))) { Optimize = true, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(Bind(_barrier.Replace("__", " NOINLINE"))) { Optimize = true};
     var image = cg.EmitExecutable();
 
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
@@ -122,7 +122,7 @@ public sealed class InlinerNoInlineTests {
       SUB Poke8(BYVAL v%)
         ! mov ax, 1
       END SUB
-      """)) { UseExperimentalBackend = true, Optimize = true };
+      """)) { Optimize = true };
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("done"));

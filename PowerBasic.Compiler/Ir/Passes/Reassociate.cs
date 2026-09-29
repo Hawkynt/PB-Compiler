@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -30,6 +32,24 @@ public static class Reassociate {
 
   /// <summary>Rewrites what it can in <paramref name="fn"/>; returns how many chains it rebuilt.</summary>
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return RunCore(fn);
+  }
+
+  /// <summary>
+  /// Analysis-aware production entry. Reassociation rewrites only value instructions, so CFG-derived
+  /// analyses remain valid while value-derived analyses are invalidated after a successful rebuild.
+  /// </summary>
+  internal static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    var rewritten = RunCore(fn);
+    return rewritten == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(rewritten, IrAnalysisSets.Cfg);
+  }
+
+  private static int RunCore(IrFunction fn) {
     if (fn.HasErrorHandler)
       return 0;                                    // a fault can enter anywhere - see IrFunction
 

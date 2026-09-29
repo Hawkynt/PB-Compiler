@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Status** | 🟡 Partial — per-procedure selection includes words, BYREF near pointers and Watcom LONG pairs; other wider shapes remain planned |
-| **Stage** | Whole-program + emitter |
-| **Source** | `CodeGen/OptRegParm.cs`, `CodeGen/CodeGenerator.Procs.cs` |
-| **Verified by** | `PowerBasic.Compiler.Tests/CodeGen/InternalCallingConventionSpecializationTests.cs`, `CallingConventionTests.cs` |
+| **Stage** | Whole-module IR + x86 back end (emission) |
+| **Source** | `Ir/Passes/PrivateCallingConvention.cs`; `Backend/X86CallAbi.cs`; `Backend/MachineEmitter.cs` |
+| **Verified by** | `PowerBasic.Compiler.Tests/Ir/PrivateCallingConventionTests.cs`, `CallingConventionTests.cs` |
 | **Gate** | Optimizer + `$OPTIMIZE SPEED`; self-contained program only |
 | **Related** | [O0021](O0021-register-parameters.md), [O0069](O0069-dead-parameter-elimination.md), [O0169](O0169-returned-condition-propagation.md), [O0070](O0070-leaf-frame-elision.md), [O0279](O0279-whole-program-devirtualization.md) |
 
@@ -32,28 +32,32 @@ removes. O0282 is the private-ABI **policy**, not a second public convention.
 
 ## Implemented ownership policy
 
-`OptRegParm` now decides independently for each BASIC procedure rather than
-turning register specialization off for the whole module when one procedure
-escapes:
+`PrivateCallingConvention` runs on the IR once the call graph is final (after
+whole-program dead-code removal, under `$OPTIMIZE SPEED`) and decides independently
+for each procedure:
 
-- only in-module BASIC definitions are candidates;
-- explicit source conventions are never replaced;
-- capturing closures are excluded because BX:CX carries their environment;
-- a procedure must have at least one real direct call site, otherwise changing
-  its ABI cannot remove call traffic;
-- `CODEPTR`/`CODESEG`/`CODEPTR32` fences the **referenced procedure**, while an
-  unrelated fully-owned procedure may still specialize;
-- a typed procedure-pointer invocation remains a conservative module-wide fence
-  because `SemanticModel` currently records its signature, not a complete target
-  set. O0279 can eventually discharge that fence when it proves the target set;
-- separately compiled/linkable programs retain the public stack ABI because
-  outside callers are not visible.
+- only in-module definitions with the BASIC convention are candidates; explicit
+  source conventions are never replaced, and the module entry keeps its ABI;
+- every parameter must be a 16-bit integer, a near pointer (BYREF), or a LONG;
+- a procedure must have at least one direct call site, otherwise changing its
+  ABI cannot remove call traffic;
+- a procedure whose address is taken (a far entry for a delegate, or any use that
+  is not the callee of a direct call) keeps the stack ABI, while an unrelated
+  fully-owned procedure may still specialize;
+- any indirect call in the module is a module-wide fence, because its target set
+  is not known. O0279 can eventually discharge that fence when it proves the
+  target set;
+- inline assembly anywhere is also a module-wide fence, since a text `CALL` is a
+  caller the IR cannot see;
+- units and separately linked programs retain the public stack ABI because
+  outside callers are not visible (`IrModule.OwnsProcedureAbi`).
 
-Caller and callee still change together through the same `ProcedureSymbol`:
-`EmitCall` stages the WATCALL arguments and `LayoutFrame`/`BeginFrame` consumes that
-convention at the definition. Direct and routed x86 definitions share the placement and
-spill plan; routed tests explicitly assert that no direct-emitter fallback hid the result.
-No source-visible declaration is rewritten.
+The definition and every call site are respecified to `IrCallConvention.Watcall`
+together, and the back end reads both from the IR. At the definition,
+`MachineEmitter.EmitFunction` moves the register arguments straight into their
+allocated registers when nothing needs them in the frame, and otherwise spills
+them below BP and reads them back like stack parameters. No source-visible
+declaration is rewritten.
 
 ## Applies to the implemented slice
 
@@ -72,8 +76,8 @@ PRINT n
 
 `value` is BYREF, so the ABI value is its one-word near pointer. For a fully-owned
 `Bump`, that pointer can travel in AX instead of being pushed as a stack word;
-the define-side WATCALL prologue spills AX into the parameter slot before the
-body dereferences it. Reference semantics are unchanged.
+the definition either keeps it in its allocated register or spills AX into a
+frame slot before the body dereferences it. Reference semantics are unchanged.
 
 LONG inputs now use register pairs, but the wider intended return shape remains, for example:
 
@@ -93,8 +97,8 @@ q&, r& = DivMod(x&, y&)
 - Multi-register / tuple returns coordinated with O0281.
 - Returned-condition / flags conventions coordinated with O0169.
 - Call-shape shrinking and dead parameters coordinated with O0069.
-- Removing the typed-procedure-pointer global fence once O0279 can prove a
-  complete indirect target set.
+- Removing the indirect-call global fence once O0279 can prove a complete
+  indirect target set.
 
 ## References and licensing
 

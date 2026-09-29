@@ -75,8 +75,8 @@ public sealed class BackendMemoryOrderingTests {
   }
 
   private static (string Direct, string Routed, IEnumerable<string> Names) RunBothWays(string source, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
@@ -117,7 +117,7 @@ public sealed class BackendMemoryOrderingTests {
   public void Select_GivenAWideGlobalAccess_ThenEveryMemoryOperandIsDeclaredAsOne() {
     var module = IrLowering.TryLowerModule(Bind(_staticLongProgram));
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset");
-    IrPassManager.Legalize().RunOnModule(module!);
+    IrMiddleEndPipeline.Legalize().RunOnModule(module!);
     var fn = module!.Functions.First(f => f.Name.Equals("Bump", StringComparison.OrdinalIgnoreCase));
 
     var machine = InstructionSelector.TrySelect(fn, out var reason);

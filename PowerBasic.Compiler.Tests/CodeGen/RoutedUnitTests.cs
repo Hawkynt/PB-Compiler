@@ -11,10 +11,9 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 ///
 /// Units were excluded from routing outright, alongside <c>_allowExternalCalls</c>. The reason did
 /// not hold for procedures: a unit exports its procedures with the STACK convention - they are
-/// called from outside, so <c>OptRegParm</c> never converts them - and that is exactly the ABI this
-/// back end emits. An imported callee is already handled by the routing fixpoint, which routes a
-/// function only if every callee is routed, so a call to something the unit does not define excludes
-/// it by construction rather than by a flag.
+  /// called from outside, so <c>IrModule.OwnsProcedureAbi</c> keeps
+  /// <c>PrivateCallingConvention</c> from respecifying them - and that is exactly the ABI this back end
+  /// emits. An imported callee retains its declared convention in the IR and at every call site.
 ///
 /// The thing that matters is the artefact: a <c>.PBU</c> built through the IR path has to link
 /// against a main module built the ordinary way and produce the same output. Compiling is not the
@@ -74,7 +73,7 @@ public sealed class RoutedUnitTests {
   }
 
   private static PbuFile CompileUnit(bool routed, out IEnumerable<string> routedNames) {
-    var generator = new CodeGenerator(Bind(_unit, "U.BAS")) { Optimize = true, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(Bind(_unit, "U.BAS")) { Optimize = true};
     var unit = generator.EmitUnit("MATHU");
     Assert.That(generator.Errors, Is.Empty, "unit codegen: " + string.Join("; ", generator.Errors));
     routedNames = generator.BackendRoutedNames.ToList();
@@ -89,7 +88,6 @@ public sealed class RoutedUnitTests {
       bool routed, bool optimize, out IReadOnlyList<string> routedNames) {
     var generator = new CodeGenerator(Bind(_main, "MAIN.BAS")) {
       Optimize = optimize,
-      UseExperimentalBackend = routed,
     };
     var exe = generator.EmitExecutable(units, libraries);
     Assert.That(generator.Errors, Is.Empty, "link: " + string.Join("; ", generator.Errors));

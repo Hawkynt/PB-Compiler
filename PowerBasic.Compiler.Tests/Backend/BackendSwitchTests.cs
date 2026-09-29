@@ -158,6 +158,45 @@ public sealed class BackendSwitchTests {
   }
 
   [Test]
+  public void Select_GivenDenseWordTable_ThenIndexedJumpUsesAn8086AddressRegister() {
+    var selector = new IrArgument(IrType.I16, 0, "selector");
+    var fn = new IrFunction("DispatchTable", IrType.Void, [selector]);
+    var entry = fn.CreateBlock("entry");
+    var @default = fn.CreateBlock("default");
+    new IrBuilder(@default).Ret();
+    var sw = new IrSwitch(selector, @default);
+    for (var value = 0; value < 8; ++value) {
+      var target = fn.CreateBlock($"case{value}");
+      new IrBuilder(target).Ret();
+      sw.AddCase(value, target);
+    }
+    entry.Append(sw);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+
+    var machine = InstructionSelector.TrySelect(fn, out var reason,
+      new SelectionTarget(Optimize: true, OptimizeSpeed: true));
+
+    Assert.That(machine, Is.Not.Null, $"table switch declined: {reason}");
+    var block = machine!.Blocks.Single(candidate =>
+      candidate.Instructions.Any(instruction => instruction.Opcode == MOpcode.JmpIndexed));
+    var at = block.Instructions.FindIndex(instruction => instruction.Opcode == MOpcode.JmpIndexed);
+    var indexed = block.Instructions[at];
+    Assert.Multiple(() => {
+      Assert.That(indexed.Operands[0],
+        Is.EqualTo(new MOperand.Register(MReg.Physical_(Reg.BX))),
+        "JmpIndexed becomes a memory-indirect JMP on x86-16, so its table base must be BX");
+      Assert.That(at, Is.GreaterThan(0));
+      Assert.That(block.Instructions[at - 1].Opcode, Is.EqualTo(MOpcode.Mov));
+      Assert.That(block.Instructions[at - 1].Operands,
+        Is.EqualTo(new MOperand[] {
+          new MOperand.Register(MReg.Physical_(Reg.BX)),
+          new MOperand.Register(MReg.Physical_(Reg.AX)),
+        }),
+        "the normalized AX index must cross explicitly into the address-capable BX register");
+    });
+  }
+
+  [Test]
   public void Select_GivenEightSparseWordCasesForSpeed_ThenBuildsABalancedDecisionTree() {
     var selector = new IrArgument(IrType.I16, 0, "selector");
     var fn = new IrFunction("DispatchTree", IrType.Void, [selector]);
@@ -226,11 +265,9 @@ public sealed class BackendSwitchTests {
   public void Execute_GivenOnGotoBoundaries_ThenTheRoutedEmitterMatchesFallthroughAndEveryArm(bool optimize) {
     var direct = new CodeGenerator(Bind(_onGotoProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_onGotoProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());

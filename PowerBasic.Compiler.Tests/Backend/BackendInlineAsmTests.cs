@@ -24,7 +24,7 @@ public sealed class BackendInlineAsmTests {
   private static string Run(string source, bool routed, out bool ownsMain) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     ownsMain = cg.BackendRoutedNames.Contains("main", StringComparer.OrdinalIgnoreCase);
@@ -46,7 +46,7 @@ public sealed class BackendInlineAsmTests {
       """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     var m = InstructionSelector.TrySelect(main, out var reason);
@@ -64,6 +64,70 @@ public sealed class BackendInlineAsmTests {
     Assert.That(writesN.Operands, Has.Count.EqualTo(2), "the descriptor plus n's own cell");
 
     Assert.That(LinearScanAllocator.Allocate(m), Is.Not.Null, "and it allocates, so the function routes");
+  }
+
+  [Test]
+  public void InlineAsm_GivenATrailingAssemblerComment_ThenCommentIsNotAnOperand() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("""
+      ! NOP ; assembler comment
+      PRINT "ok"
+      END
+      """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+
+    var generator = new CodeGenerator(model) { Optimize = true };
+    var image = generator.EmitExecutable();
+
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+      Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("ok"));
+    });
+  }
+
+  /// <summary>
+  /// An instruction the back end cannot produce must fail the compilation, never become a silent no-op.
+  ///
+  /// <para>
+  /// <c>DAA</c> is a real 8086 instruction that this assembler has register metadata for but no
+  /// encoding, so there is nothing that could emit it. What is pinned is the REFUSAL, not the stage
+  /// that refuses: this used to require the hosted machine builder's "has no semantic lowering"
+  /// message, but the text is rejected at selection first, so that message was never produced and the
+  /// test never passed. The hosted builder is also no longer a gate for x86-16, which is emitted from
+  /// the allocated MFunction rather than from the hosted function.
+  /// </para>
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAnUnloweredMnemonic_ThenMandatoryRoutingReportsTheMissingSemantics() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("! DAA\nEND\n", "T.BAS", Dialect.Pb36),
+      "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+
+    var generator = new CodeGenerator(model) { Optimize = false };
+    _ = generator.EmitExecutable();
+
+    Assert.That(generator.Errors.Any(error => error.Message.Contains("routing is mandatory", StringComparison.Ordinal)
+        && error.Message.Contains("inline asm", StringComparison.OrdinalIgnoreCase)), Is.True,
+      "an unsupported instruction must fail routing instead of becoming a no-op runtime call");
+  }
+
+  /// <summary>
+  /// A known mnemonic with an operand it does not take is malformed and must be refused, not assembled
+  /// as though the operand were absent. Pinned as a refusal for the reason given on the test above: the
+  /// message it used to require belongs to a stage this program never reaches.
+  /// </summary>
+  [Test]
+  public void InlineAsm_GivenAnUnmodeledOperandOnAMappedMnemonic_ThenMandatoryRoutingReportsIt() {
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("! NOP AX\nEND\n", "T.BAS", Dialect.Pb36),
+      "T.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+
+    var generator = new CodeGenerator(model) { Optimize = false };
+    _ = generator.EmitExecutable();
+
+    Assert.That(generator.Errors.Any(error => error.Message.Contains("routing is mandatory", StringComparison.Ordinal)
+        && error.Message.Contains("inline asm", StringComparison.OrdinalIgnoreCase)), Is.True,
+      "a malformed operand must fail routing instead of being assembled as if it were absent");
   }
 
   /// <summary>The asm writes a BASIC local, and BASIC reads what it wrote - through the routed path.</summary>
@@ -223,7 +287,7 @@ public sealed class BackendInlineAsmTests {
       """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     var m = InstructionSelector.TrySelect(main, out var selectionReason);
@@ -512,7 +576,7 @@ public sealed class BackendInlineAsmTests {
 
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(model) { Optimize = true};
     cg.EmitExecutable();
 
     Assert.That(cg.BackendRoutedNames, Does.Contain("GetPix").IgnoreCase,
@@ -591,7 +655,7 @@ public sealed class BackendInlineAsmTests {
   private static (string Output, bool Routed) RunProcedure(string source, string procedure, bool routed) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = false};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"),

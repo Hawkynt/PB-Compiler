@@ -21,7 +21,7 @@ public sealed class GotoLoweringTests {
     Assert.That(fn, Is.Not.Null);
     Assert.That(IrVerifier.Verify(fn!), Is.Empty);
     // optimized: x is 1 at 'skip' (the x=2 store is unreachable), so y = 1
-    IrPassManager.Standard().RunToFixpoint(fn!);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn!);
     Assert.That(IrVerifier.Verify(fn!), Is.Empty);
   }
 
@@ -29,7 +29,7 @@ public sealed class GotoLoweringTests {
   public void BackwardGoto_FormsALoopWithAPhi() {
     var fn = Lower("i% = 0\ntop:\ni% = i% + 1\nIF i% < 5 THEN GOTO top\nx% = i%\nEND")!;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     Assert.That(fn.AllInstructions.OfType<IrPhi>().Count(), Is.GreaterThanOrEqualTo(1));  // the GOTO loop's counter
@@ -40,7 +40,7 @@ public sealed class GotoLoweringTests {
   public void GotoOutOfAStructuredBlock_Verifies() {
     var fn = Lower("s% = 0\nFOR i% = 1 TO 100\n  s% = s% + i%\n  IF s% > 50 THEN GOTO done\nNEXT i%\ndone:\nx% = s%\nEND")!;
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);   // an early exit out of the loop via GOTO stays well-formed
   }

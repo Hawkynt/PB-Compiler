@@ -74,7 +74,7 @@ public sealed class OnErrorLoweringTests {
     Assert.That(main.HasErrorHandler, Is.True, "arming a handler has to mark the function");
 
     var before = main.Blocks.Select(b => (b.Label, Count: b.Instructions.Count)).ToList();
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.That(MainOf(module).Blocks.Select(b => (b.Label, Count: b.Instructions.Count)), Is.EqualTo(before),
       "the optimizer changed a function whose control flow it cannot see");
@@ -91,7 +91,7 @@ public sealed class OnErrorLoweringTests {
       PRINT "trapped"
       END
       """);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var arm = Calls(MainOf(module)).First(c => (c.Callee as IrFunction)?.Name == "rt_onerr_arm");
     var handler = ((IrBlockAddress)arm.Args.Single()).Block;
@@ -206,6 +206,6 @@ public sealed class OnErrorLoweringTests {
 
     Assert.That(main.HasErrorHandler, Is.False);
     Assert.That(CallsRuntime(main, "rt_resume_mark"), Is.False);
-    Assert.That(IrPassManager.Standard().Run(main), Is.GreaterThan(0), "an ordinary function is still optimized");
+    Assert.That(IrMiddleEndPipeline.Standard().Run(main), Is.GreaterThan(0), "an ordinary function is still optimized");
   }
 }

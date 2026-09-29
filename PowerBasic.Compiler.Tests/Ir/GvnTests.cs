@@ -84,6 +84,56 @@ public sealed class GvnTests {
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
   }
 
+  /// <summary>Two LENs of one string's descriptor over the same memory are one read.</summary>
+  [Test]
+  public void Run_MergesTwoBorrowedLengthsOfOneHandle() {
+    var s = new IrArgument(IrType.Ptr, 0, "s");
+    var fn = new IrFunction("f", IrType.I32, [s]);
+    var borrow = new IrFunction("rt_str_len_borrow", IrType.I32, [new IrArgument(IrType.Ptr, 0)]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var first = b.Call(IrType.I32, borrow, s);
+    var second = b.Call(IrType.I32, borrow, s);
+    b.Ret(b.Add(first, second));
+
+    Assert.That(Gvn.Run(fn), Is.EqualTo(1));
+    Assert.That(Count<IrCall>(fn), Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+  }
+
+  /// <summary>...but not across a release, which is a new memory version: the second read stands.</summary>
+  [Test]
+  public void Run_DoesNotMergeBorrowedLengthsAcrossARelease() {
+    var s = new IrArgument(IrType.Ptr, 0, "s");
+    var t = new IrArgument(IrType.Ptr, 1, "t");
+    var fn = new IrFunction("f", IrType.I32, [s, t]);
+    var borrow = new IrFunction("rt_str_len_borrow", IrType.I32, [new IrArgument(IrType.Ptr, 0)]);
+    var free = new IrFunction("rt_str_free", IrType.Void, [new IrArgument(IrType.Ptr, 0)]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var first = b.Call(IrType.I32, borrow, s);
+    b.Call(IrType.Void, free, t);
+    var second = b.Call(IrType.I32, borrow, s);
+    b.Ret(b.Add(first, second));
+
+    Gvn.Run(fn);
+    Assert.That(fn.AllInstructions.OfType<IrCall>().Count(call => ReferenceEquals(call.Callee, borrow)), Is.EqualTo(2));
+  }
+
+  [Test]
+  public void Run_DoesNotMergeCallsToDefinitionNamedLikeIntrinsic() {
+    var input = new IrArgument(IrType.F64, 0, "input");
+    var intrinsicNamedDefinition = new IrFunction("llvm.sin.f64", IrType.F64, [input]);
+    new IrBuilder(intrinsicNamedDefinition.CreateBlock("entry")).Ret(input);
+    var x = new IrArgument(IrType.F64, 0, "x");
+    var fn = new IrFunction("f", IrType.F64, [x]);
+    var b = new IrBuilder(fn.CreateBlock("entry"));
+    var first = b.Call(IrType.F64, intrinsicNamedDefinition, x);
+    var second = b.Call(IrType.F64, intrinsicNamedDefinition, x);
+    b.Ret(b.Binary(IrBinaryOp.FAdd, first, second));
+
+    Assert.That(Gvn.Run(fn), Is.EqualTo(0));
+    Assert.That(Count<IrCall>(fn), Is.EqualTo(2));
+  }
+
   [Test]
   public void Run_DoesNotMergeTwoCallsToAStringRuntimeEntry() {
     // the boundary that keeps the purity list honest: rt_str_len looks like a pure read and is not

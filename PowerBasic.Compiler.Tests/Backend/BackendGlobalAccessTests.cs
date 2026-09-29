@@ -27,7 +27,7 @@ public sealed class BackendGlobalAccessTests {
   private const string _sharedGlobalProgram = """
     DIM g AS SHARED INTEGER
 
-    FUNCTION AddG%(BYVAL v%)
+    FUNCTION AddG%(BYVAL v%) NOINLINE
       AddG% = v% + g
     END FUNCTION
 
@@ -38,18 +38,18 @@ public sealed class BackendGlobalAccessTests {
   private const string _sharedArrayAndStaticsProgram = """
     DIM tally(3) AS SHARED INTEGER
 
-    FUNCTION Touch%(BYVAL index%)
+    FUNCTION Touch%(BYVAL index%) NOINLINE
       tally(index%) = tally(index%) + 10
       Touch% = tally(index%)
     END FUNCTION
 
-    FUNCTION First%()
+    FUNCTION First%() NOINLINE
       STATIC count AS INTEGER
       count = count + 1
       First% = count
     END FUNCTION
 
-    FUNCTION Second%()
+    FUNCTION Second%() NOINLINE
       STATIC count AS INTEGER
       count = count + 10
       Second% = count
@@ -100,11 +100,11 @@ public sealed class BackendGlobalAccessTests {
   private static IrModule Optimized(SemanticModel model) {
     var module = IrLowering.TryLowerModule(model);
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     return module;
   }
 
@@ -153,7 +153,7 @@ public sealed class BackendGlobalAccessTests {
     Assert.That(DataCells(firstMachine!), Is.Not.EquivalentTo(DataCells(secondMachine!)),
       "same-named STATIC locals in different procedures must not alias");
 
-    static IReadOnlyList<string> DataCells(MFunction fn) => fn.AllInstructions
+    static IReadOnlyList<string> DataCells(X86MachineFunction fn) => fn.AllInstructions
       .SelectMany(i => i.Operands)
       .OfType<MOperand.DataCell>()
       .Select(cell => cell.Name)
@@ -229,13 +229,13 @@ public sealed class BackendGlobalAccessTests {
       Grab
       END
 
-      SUB Grab
+      SUB Grab NOINLINE
         DIM t AS STRING
         READ t
         PRINT t
       END SUB
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     _ = routed.EmitExecutable();
 
@@ -248,8 +248,8 @@ public sealed class BackendGlobalAccessTests {
 
   [Test]
   public void Emit_GivenRoutedGlobalAccess_ThenTheImageAssemblesAndTheBackEndTookTheFunction() {
-    var direct = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true, UseExperimentalBackend = true };
+    var direct = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true};
+    var routed = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true};
 
     var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
@@ -268,11 +268,9 @@ public sealed class BackendGlobalAccessTests {
   public void Execute_GivenSharedArrayAndPersistentStatics_ThenBothEmittersAgreeWithoutFallback(bool optimize) {
     var direct = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());
@@ -292,12 +290,10 @@ public sealed class BackendGlobalAccessTests {
     var direct = new CodeGenerator(Bind(_sharedSwapProgram)) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = false,
     };
     var routed = new CodeGenerator(Bind(_sharedSwapProgram)) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = true,
     };
 
     var directCpu = Cpu8086.Run(direct.EmitExecutable());

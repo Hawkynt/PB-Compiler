@@ -88,7 +88,7 @@ public sealed class BoundsCheckLoweringTests {
   public void Run_GivenBoundsOn_ThenTheCheckedProgramStillBehavesTheSame() {
     // the guard must not change a program that stays in range - and both paths must agree on it
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(_checked, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    var direct = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = false };
+    var direct = new CodeGenerator(model) { Optimize = true};
     var image = direct.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
 

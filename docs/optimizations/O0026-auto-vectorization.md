@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (elementwise loops over 2-byte arrays; MMX execution-verified, wider widths encoding-verified) |
-| **Stage** | Emitter (loop recognizer) |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` (loop recognizer), `Asm/Assembler.Simd.cs` |
+| **Stage** | IR (native pipeline, after the standard middle end) + runtime kernels |
+| **Source** | `Ir/Passes/PackedLoopVectorization.cs` (run from `IrMiddleEndPipeline.RunNativeModule`); `Runtime/DosRuntime.Packed.cs` — `EmitPackedKernel`; `Asm/Assembler.Simd.cs` |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` + `$CPU 80586 MMX` (or `SSE`, `AVX`, `AVX512`) |
 | **Related** | [R0004](R0004-asm-intrinsics.md), [O0074](O0074-wider-vectorization.md) |
 
@@ -16,8 +16,9 @@ A constant-trip loop of the shape
 FOR i = lo TO hi : c(i) = a(i) OP b(i) : NEXT      ' OP is + - AND OR XOR *
 ```
 
-over rank-1 static **2-byte-element** arrays is rewritten to process as many
-lanes per iteration as the widest available vector register allows:
+over near **2-byte-element** arrays is replaced by one call to a packed runtime
+kernel (`rt_packed16_add`, `_sub`, `_and`, `_or`, `_xor`, `_mul`), which the
+DOS runtime emits for the widest available vector register:
 
 | `$CPU` feature | register | width | lanes | encoding |
 |---|---|---|---|---|
@@ -26,11 +27,16 @@ lanes per iteration as the widest available vector register allows:
 | `AVX2` | `YMM0` | 256-bit | 16 | 2-byte VEX `C5` |
 | `AVX512` | `ZMM0` | 512-bit | 32 | 4-byte EVEX `62` |
 
-The body becomes `load a[i..]` · `vec = a OP b[i..]` · `store c[i..]`, stepping
-three pointers by the vector width. MMX/SSE2 use the two-operand `Pxxx` form
-(dest = dest OP src); AVX/AVX-512 the three-operand `VPxxx`. A fully-unrolled
-scalar tail handles the last `n MOD lanes` elements, and the counter is left at
-its `FOR` end value.
+`PackedLoopVectorization` recognizes the loop in SSA, after inlining and
+propagation have exposed it: a header holding only the counter and its compare
+against a constant limit, a constant start, and a one-block body that stores
+once, loads at most twice, calls nothing, and addresses near memory stepping by
+two bytes. It puts the call in the preheader with the three start addresses and
+the trip count, and leaves the counter at its `FOR` end value for any later
+reader. The kernel's body is `load a[i..]` · `vec = a OP b[i..]` ·
+`store c[i..]`, stepping three pointers by the vector width. MMX/SSE2 use the
+two-operand `Pxxx` form (dest = dest OP src); AVX/AVX-512 the three-operand
+`VPxxx`. A scalar loop handles the last `n MOD lanes` elements.
 
 ## Sample
 
@@ -65,23 +71,23 @@ Done:
 
 ## With the optimizer
 
-16 iterations of four lanes each:
+One call; the kernel runs 16 iterations of four lanes each:
 
 ```asm
-    lea     si, [a]
-    lea     di, [b]
-    lea     bx, [c]
-    mov     cx, 0010h
+    ...                      ; DI -> c, BX -> a, SI -> b, CX = 64
+    call    rt_packed16_add
+    ...
+rt_packed16_add:             ; MMX build, shown for whole vectors
 Top:
-    movq    mm0, [si]
-    paddw   mm0, [di]        ; four 16-bit lanes at once
-    movq    [bx], mm0
+    movq    mm0, [bx]
+    paddw   mm0, [si]        ; four 16-bit lanes at once
+    movq    [di], mm0
+    add     bx, 8
     add     si, 8
     add     di, 8
-    add     bx, 8
     loop    Top
     emms
-    mov     word ptr [i], 0040h
+    ...                      ; scalar tail, then ret
 ```
 
 ## Equivalent BASIC
@@ -99,10 +105,15 @@ NEXT
 Every operation is **wrap-correct per 16-bit lane**: `PADDW`, `PSUBW`, `PAND`,
 `POR`, `PXOR` and `PMULLW` all wrap mod 2¹⁶ exactly as the scalar `INTEGER`/
 `WORD` ALU would, so the vectorized result is byte-identical to the scalar loop.
-The pass is gated off when `$ERROR` checking is active (a per-element trap must
-still fire in element order) or when SI/DI are register-resident, and loops with
-fewer than 8 trips stay scalar. `EMMS` is emitted before any float use can
-follow.
+A loop carrying a bounds check, or any other branch in its body, is not
+matched, so a per-element trap still fires in element order. Under
+`$ERROR OVERFLOW` an add or subtract loop of at least 32 elements is put behind a
+checked kernel instead ([O0308](O0308-speculative-overflow-elimination.md)):
+it scans for an overflow first and computes packed only if there is none,
+otherwise the original loop runs and raises where it always did. Loops with
+fewer than 8 trips (or fewer than one vector) stay scalar. The MMX kernel
+executes `EMMS` before it returns, so no float code can follow a live MMX
+state.
 
 ## Limits
 

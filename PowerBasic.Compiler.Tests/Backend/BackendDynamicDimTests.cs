@@ -101,8 +101,8 @@ public sealed class BackendDynamicDimTests {
   public void Execute_GivenADimWithARuntimeBoundAndNoRedim_WhenRouted_ThenMainRoutesAndAgrees(
       string source, string expected) {
     foreach (var optimize in new[] { false, true }) {
-      var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-      var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+      var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+      var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
       var directOutput = Cpu8086.Run(direct.EmitExecutable()).Output;
       var routedOutput = Cpu8086.Run(routed.EmitExecutable()).Output;
 
@@ -125,7 +125,7 @@ public sealed class BackendDynamicDimTests {
   [Test]
   public void Lower_GivenADimWithARuntimeBound_ThenItAllocatesRatherThanIndexingNull() {
     var module = IrLowering.TryLowerModule(Bind(_dimWithARuntimeBound))!;
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     var llvm = LlvmEmitter.Emit(module);
 
     Assert.Multiple(() => {

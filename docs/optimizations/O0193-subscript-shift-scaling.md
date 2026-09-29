@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Arrays.cs` |
+| **Stage** | IR middle end + x86 back end (instruction selection) |
+| **Source** | `Ir/IrLowering.cs` (subscript scaled by a multiply by the element size); `Ir/Passes/InstCombine.cs` (`x * 2^k` → `x << k`); `Backend/InstructionSelector.cs` — `SelectConstantShift` |
 | **Gate** | `--optimize` |
 | **Verified by** | scenario `AccumulateOverArrayIsHandQuality` |
 | **Split from** | [O0004](O0004-strength-reduction.md) |
@@ -15,6 +15,11 @@ A subscript is scaled by the element size before it is added to the base. For a
 power-of-two element size that scaling is a shift — and using a multiply there
 is not merely slower but **wrong for the declared target**: `IMUL r,r,imm` is an
 80186 instruction, which an 8086 does not have.
+
+The lowering writes the scaling as a multiply by the element size; `InstCombine`
+turns a multiply by a power of two into a left shift, and the selector spells it
+as repeated `SHL r,1` on an 8086 (up to four, `CL` beyond that; the immediate
+form only on an 80186 or later).
 
 ## Sample
 

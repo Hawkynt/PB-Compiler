@@ -20,7 +20,7 @@ public sealed class AggregateDeadFieldScalarizationTests {
 
   private static IrModule Optimize(string source) {
     var module = Lower(source);
-    var pipeline = IrPassManager.Standard();
+    var pipeline = IrMiddleEndPipeline.Standard();
     pipeline.VerifyEachPass = true;
     pipeline.RunOnModule(module);
     Assert.That(IrVerifier.Verify(module), Is.Empty);

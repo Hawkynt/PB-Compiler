@@ -113,7 +113,7 @@ public sealed class AggregateRawBitFloatingEqualityTests {
         IF a = b THEN EqualBits% = 1 ELSE EqualBits% = 0
       END FUNCTION
       """);
-    var pipeline = IrPassManager.Standard();
+    var pipeline = IrMiddleEndPipeline.Standard();
     pipeline.VerifyEachPass = true;
     pipeline.RunOnModule(module);
     var function = module.Functions.Single(f => f.Name.Equals("EqualBits", StringComparison.OrdinalIgnoreCase));

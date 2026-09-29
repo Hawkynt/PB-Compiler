@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -12,13 +14,10 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// latch. A body such as <c>j = 2*i + 3</c> loses the multiply and add on every iteration.
 /// </para>
 /// <para>
-/// This is deliberately not a general Scalar-Evolution implementation. The accepted expression tree
-/// contains only the loop counter, same-width integer constants, add/sub, multiplication where one
-/// side is constant, and a constant left shift (the canonical form InstCombine and verified arithmetic
-/// lowering use for power-of-two scaling). Values from other phis, casts, division/right shifts,
-/// calls and memory are rejected. A candidate that directly feeds a phi is also rejected because phi
-/// operands are evaluated on predecessor edges; rewriting such an edge needs a separate LCSSA/dominance
-/// transform.
+/// The accepted expression tree contains only the loop counter, same-width integer constants, add/sub,
+/// multiplication where one side is constant, and a constant left shift. Shared scalar evolution supplies
+/// the counted-loop recurrence/trip proof; this pass keeps its own profitability-oriented affine expression
+/// matcher because it also measures the arithmetic tree that will actually be rewritten.
 /// </para>
 /// <para>
 /// Profitability is equally conservative: a one-add offset such as <c>i + 3</c> is left alone because
@@ -41,14 +40,25 @@ public static class InductionVariableSimplification {
   /// <summary>Simplifies profitable affine derived induction values in <paramref name="fn"/>.</summary>
   public static int Run(IrFunction fn) {
     ArgumentNullException.ThrowIfNull(fn);
-    if (fn.Entry is null || fn.HasErrorHandler || fn.HasInlineAsm)
-      return 0;
+    return IrFunctionPassPipeline.RunStandalone(fn, "ivsimplify", Run);
+  }
 
+  /// <summary>Simplifies derived induction values using cached loop/scalar-evolution facts.</summary>
+  internal static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
+    if (fn.Entry is null || fn.HasErrorHandler || fn.HasInlineAsm)
+      return IrPassResult.Unchanged;
+
+    var loops = analyses.Get(IrAnalyses.Loops);
+    var scalarEvolution = analyses.Get(IrAnalyses.ScalarEvolution);
     var changed = 0;
     foreach (var header in fn.Blocks.ToList()) {
       if (header.Parent is null
-          || CountedLoop.Match(fn, header) is not { } loop
-          || !TryCounter(loop, out var start, out var step))
+          || CountedLoop.Match(fn, header, loops, scalarEvolution) is not { } loop
+          || !loop.TryConstantProgression(out var start, out var step))
         continue;
 
       var candidates = loop.Region
@@ -78,25 +88,9 @@ public static class InductionVariableSimplification {
       }
     }
 
-    return changed;
-  }
-
-  private static bool TryCounter(CountedLoop loop, out IrConstantInt start, out IrConstantInt step) {
-    start = null!;
-    step = null!;
-    if (!loop.Counter.Type.IsInteger
-        || loop.Counter.IncomingFrom(loop.Preheader) is not IrConstantInt initial
-        || loop.Counter.IncomingFrom(loop.Latch) is not IrBinary { Op: IrBinaryOp.Add } next
-        || !ReferenceEquals(next.Lhs, loop.Counter)
-        || next.Rhs is not IrConstantInt increment
-        || !Equals(initial.Type, loop.Counter.Type)
-        || !Equals(increment.Type, loop.Counter.Type)
-        || increment.IsZero)
-      return false;
-
-    start = initial;
-    step = increment;
-    return true;
+    return changed == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(changed, IrAnalysisSets.Cfg);
   }
 
   private static bool TryAffine(IrValue value, IrPhi counter, IrType type, int depth, out Affine affine) {

@@ -6,8 +6,7 @@ namespace PowerBasic.Compiler.CodeGen;
 
 public sealed partial class CodeGenerator {
   private sealed record VirtualIsaState(Label Vector, Label Mmx, Label GpHigh, Label Scratch);
-  private VirtualIsaState? _mainVirtualIsaState;
-  private readonly Dictionary<ProcedureSymbol, VirtualIsaState> _procVirtualIsaStates = new(ReferenceEqualityComparer.Instance);
+  private VirtualIsaState? _virtualIsaState;
 
   private readonly record struct VirtualOperand(Reg? Register, Mem? Memory) {
     public static VirtualOperand Of(Reg register) => new(register, null);
@@ -16,7 +15,8 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// Lowers the packed-integer inline-assembler surface onto plain 8086 instructions. Architectural
-  /// vector state is represented by compiler-owned static cells scoped to the generated procedure:
+  /// vector state is represented by one bank of compiler-owned static cells for the whole program -
+  /// the registers it stands for are the machine's, not a procedure's:
   /// XMM/YMM/ZMM n alias the low 16/32/64 bytes of the same 64-byte slot, MMX has its own 8-byte
   /// slots, and pre-386 EAX..EDI use the real 16-bit low half plus a virtual high-word bank.
   /// Integer flags and all scalar temporaries used by the lowering are restored around SIMD ops.
@@ -49,10 +49,8 @@ public sealed partial class CodeGenerator {
   }
 
   private VirtualIsaState EnsureVirtualIsaState() {
-    if (this._currentProc is { } proc && this._procVirtualIsaStates.TryGetValue(proc, out var existingProc))
-      return existingProc;
-    if (this._currentProc is null && this._mainVirtualIsaState is { } existingMain)
-      return existingMain;
+    if (this._virtualIsaState is { } existing)
+      return existing;
 
     var state = new VirtualIsaState(this._asm.DefineLabel(), this._asm.DefineLabel(), this._asm.DefineLabel(), this._asm.DefineLabel());
     var over = this._asm.DefineLabel();
@@ -68,10 +66,7 @@ public sealed partial class CodeGenerator {
     this._asm.Db(new byte[RuntimeIsaState.ScratchBytes]);
     this._asm.MarkLabel(over);
 
-    if (this._currentProc is { } owner)
-      this._procVirtualIsaStates[owner] = state;
-    else
-      this._mainVirtualIsaState = state;
+    this._virtualIsaState = state;
     return state;
   }
 

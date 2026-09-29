@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Expressions.cs` (comparison materialization) |
+| **Status** | ⬜ Not implemented on the IR path |
+| **Stage** | x86 back end (instruction selection, planned) |
+| **Source** | None. `Backend/InstructionSelector.cs` materializes a comparison's value with `MOV dest,-1` / `Jcc` / `MOV dest,0` on every CPU; `SETcc` is not in the back end's `MOpcode` set (`Backend/MachineIr.cs`) |
 | **Gate** | `--optimize` + `$CPU 80386` |
 | **Split from** | [C0001](C0001-386-codegen.md) |
 
@@ -12,6 +12,9 @@
 
 When a comparison's −1/0 value is genuinely needed, `SETcc` produces it
 **branchlessly** on a 386+, instead of the branch-and-load pair.
+
+Not implemented on the IR path; the syntax-level version was retired with the
+direct emitter. The instruction selector always uses the branch form.
 
 ## Sample
 

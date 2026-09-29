@@ -24,7 +24,7 @@ public sealed class BackendWideCompareTests {
   private static string Run(string source, bool routed, bool optimize = true) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = optimize};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
@@ -38,7 +38,7 @@ public sealed class BackendWideCompareTests {
   private static string RunRouted(string source, bool optimize) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(model) { Optimize = optimize};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     Assert.That(cg.BackendRoutedNames, Does.Contain("main"),
@@ -62,11 +62,11 @@ public sealed class BackendWideCompareTests {
       """, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var main = module.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     var m = InstructionSelector.TrySelect(main, out var reason);

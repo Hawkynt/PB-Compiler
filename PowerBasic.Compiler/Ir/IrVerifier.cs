@@ -91,6 +91,30 @@ public sealed class IrVerifier {
         this.Error($"phi in block '{block.Label}' incoming value #{i} has type {phi.GetOperand(i).Type}, expected {phi.Type}");
   }
 
+  /// <summary>
+  /// Whether <paramref name="defBlock"/> is the entry and <paramref name="useBlock"/> is a block no CFG
+  /// path reaches - the one case where "does not dominate" is a fact about the graph and not about the
+  /// program.
+  ///
+  /// <para>
+  /// An error handler's label and a <c>RESUME</c> target are entered by a NON-LOCAL jump:
+  /// <c>rt_onerr_arm(blockaddress(%lbl.T))</c> records the block, and <c>rt_raise</c> restores BP/SP
+  /// and jumps there. No branch in the function names it, so the dominator tree calls it unreachable
+  /// and dominated by nothing - and a handler that stores into a local, whose <c>alloca</c> lives in
+  /// the entry, was rejected. The raw lowering of <c>ON ERROR GOTO T : ... T: x% = ERR</c> tripped it
+  /// before any optimization ran.
+  /// </para>
+  /// <para>
+  /// Every execution of a function begins at its entry - <see cref="Run"/> refuses an entry with
+  /// predecessors - so whatever the entry defines exists by the time ANY block runs, a non-locally
+  /// entered one included. That is what makes this sound, and why it is confined to the entry: a value
+  /// defined anywhere else and used in such a block has no path establishing what it holds when the
+  /// jump lands, which is exactly the stale-value bug the check exists to catch, and it still fails.
+  /// </para>
+  /// </summary>
+  private bool EntryPrecedes(IrBasicBlock defBlock, IrBasicBlock useBlock)
+    => ReferenceEqualities(defBlock, this._fn.Entry!) && !this._dom.IsReachable(useBlock);
+
   private void VerifyOperandDominance(IrInstruction inst) {
     if (inst is IrPhi phi) {
       for (var i = 0; i < phi.IncomingBlocks.Count; ++i) {
@@ -114,7 +138,7 @@ public sealed class IrVerifier {
       if (ReferenceEqualities(defBlock, useBlock)) {
         if (this._order[def] >= this._order[inst])
           this.Error($"operand defined after its use in block '{useBlock.Label}'");
-      } else if (!this._dom.Dominates(defBlock, useBlock)) {
+      } else if (!this._dom.Dominates(defBlock, useBlock) && !this.EntryPrecedes(defBlock, useBlock)) {
         this.Error($"operand defined in '{defBlock.Label}' does not dominate use in '{useBlock.Label}'");
       }
     }

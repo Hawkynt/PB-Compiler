@@ -84,6 +84,56 @@ public sealed class AliasAnalysisTests {
     Assert.That(result, Is.EqualTo(IrAliasResult.MayAlias));
   }
 
+
+  [Test]
+  public void SharedPointerIdentity_PreservesRootAndOffsetAcrossBitcastsAndGeps() {
+    var storage = new IrAlloca(IrType.I16) { Count = 4 };
+    var plusTwo = new IrGep(storage, IrBuilder.ConstI32(2));
+    var cast = new IrCast(IrCastOp.BitCast, plusTwo, IrType.Ptr);
+    var direct = new IrGep(storage, IrBuilder.ConstI32(2));
+    var identities = new IrPointerIdentityAnalysis();
+
+    var identity = identities.TryResolve(cast);
+    var alias = IrAliasAnalysis.Alias(cast, IrType.I16, direct, IrType.I16, identities);
+
+    Assert.Multiple(() => {
+      Assert.That(identity, Is.Not.Null);
+      Assert.That(identity!.Value.Root, Is.SameAs(storage));
+      Assert.That(identity.Value.ByteOffset, Is.EqualTo(2));
+      Assert.That(identity.Value.IsUniqueObject, Is.True);
+      Assert.That(alias, Is.EqualTo(IrAliasResult.MustAlias));
+    });
+  }
+
+  [Test]
+  public void SharedPointerIdentity_DistinctUniqueRootsStayNoAliasThroughBitcasts() {
+    var first = new IrAlloca(IrType.I16);
+    var second = new IrAlloca(IrType.I16);
+    var firstCast = new IrCast(IrCastOp.BitCast, first, IrType.Ptr);
+    var secondCast = new IrCast(IrCastOp.BitCast, second, IrType.Ptr);
+    var identities = new IrPointerIdentityAnalysis();
+
+    Assert.That(
+      IrAliasAnalysis.Alias(firstCast, IrType.I16, secondCast, IrType.I16, identities),
+      Is.EqualTo(IrAliasResult.NoAlias));
+  }
+
+  [Test]
+  public void SharedPointerIdentity_DistinctByRefArgumentsRemainMayAlias() {
+    var first = new IrArgument(IrType.Ptr, 0, "a");
+    var second = new IrArgument(IrType.Ptr, 1, "b");
+    var identities = new IrPointerIdentityAnalysis();
+
+    Assert.Multiple(() => {
+      Assert.That(identities.TryResolve(first)!.Value.IsUniqueObject, Is.False);
+      Assert.That(identities.TryResolve(second)!.Value.IsUniqueObject, Is.False);
+      Assert.That(
+        IrAliasAnalysis.Alias(first, IrType.I16, second, IrType.I16, identities),
+        Is.EqualTo(IrAliasResult.MayAlias),
+        "separate pointer formals are not a noalias promise in PowerBASIC");
+    });
+  }
+
   [Test]
   public void WiderLaterStore_CanCompletelyOverwriteEarlierSubrange() {
     var storage = new IrAlloca(IrType.I16);

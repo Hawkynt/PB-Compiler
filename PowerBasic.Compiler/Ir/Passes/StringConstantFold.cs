@@ -68,6 +68,8 @@ public static class StringConstantFold {
   private const string _DUP = "rt_str_dup";
   private const string _FREE = "rt_str_free";
   private const string _VAL = "rt_str_val";
+  private const string _LEN = "rt_str_len";
+  private const string _LEN_BORROW = "rt_str_len_borrow";
 
   /// <summary>Folds what it can across the module; the number of calls folded away or specialized.</summary>
   public static int Run(IrModule module) {
@@ -122,6 +124,16 @@ public static class StringConstantFold {
           continue;
         case "rt_str_mid" when call.ArgCount == 3:
           folded += FoldEmptySubstring(module, call, call.GetOperand(3)) ? 1 : 0;
+          continue;
+        case _LEN when call.ArgCount == 1:
+          folded += FoldLength(module, call) ? 1 : 0;
+          continue;
+        case _LEN_BORROW when call.ArgCount == 1:
+          folded += FoldBorrowedLength(call) ? 1 : 0;
+          continue;
+        case _FREE when call.ArgCount == 1 && call.GetOperand(1) is IrNullPtr:
+          call.EraseFromParent();      // releasing the empty string releases nothing
+          ++folded;
           continue;
       }
     }
@@ -270,6 +282,45 @@ public static class StringConstantFold {
     call.EraseFromParent();
     return true;
   }
+
+  /// <summary>
+  /// LEN of a literal is its byte count, and the literal made only to be measured goes with it. LEN of
+  /// a variable's copy - <c>rt_str_dup</c> read for LEN alone - asks the variable itself through the
+  /// non-consuming <c>rt_str_len_borrow</c>: the copy was allocated only for LEN to free it again. The
+  /// borrowed query is a pure read, so repeated LENs of one unchanged string also become one value
+  /// for GVN and hoist out of a loop that does not write it.
+  /// </summary>
+  private static bool FoldLength(IrModule module, IrCall call) {
+    if (LiteralOperand(call, 1) is { } literal) {
+      call.ReplaceAllUsesWith(new IrConstantInt(call.Type, literal.Bytes.Length));
+      call.EraseFromParent();
+      literal.Call.EraseFromParent();
+      return true;
+    }
+    if (call.GetOperand(1) is not IrCall { Callee: IrFunction { Name: _DUP }, ArgCount: 1, Users.Count: 1 } copy)
+      return false;
+    var borrowed = new IrCall(call.Type, LenBorrowEntry(module), [copy.GetOperand(1)]);
+    call.Parent!.InsertBefore(borrowed, call);
+    call.ReplaceAllUsesWith(borrowed);
+    call.EraseFromParent();
+    copy.EraseFromParent();
+    return true;
+  }
+
+  /// <summary>The borrowed LEN of a literal handle is the literal's length, and the handle stays.</summary>
+  private static bool FoldBorrowedLength(IrCall call) {
+    if (call.GetOperand(1) is not IrCall { Callee: IrFunction { Name: _CONST }, ArgCount: 2 } producer
+        || producer.GetOperand(2) is not IrConstantInt count
+        || producer.GetOperand(1) is IrGlobalVariable { Bytes: { } bytes } && bytes.Length != count.Value)
+      return false;
+    call.ReplaceAllUsesWith(new IrConstantInt(call.Type, count.Value));
+    call.EraseFromParent();
+    return true;
+  }
+
+  private static IrFunction LenBorrowEntry(IrModule module)
+    => module.FindFunction(_LEN_BORROW)
+       ?? module.AddFunction(new IrFunction(_LEN_BORROW, IrType.I32, [new IrArgument(IrType.Ptr, 0)]));
 
   /// <summary>
   /// Gives up the handle a folded-away call was going to consume: by cancelling the borrow that made

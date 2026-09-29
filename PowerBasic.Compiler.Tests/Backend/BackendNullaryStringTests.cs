@@ -43,7 +43,7 @@ public sealed class BackendNullaryStringTests {
   private static (string Output, bool Routed) Run(bool routed) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(_source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model) { Optimize = false};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"),
@@ -115,14 +115,13 @@ public sealed class BackendNullaryStringTests {
 
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var routedGen = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+    var routedGen = new CodeGenerator(model) { Optimize = false};
     var routedImage = routedGen.EmitExecutable();
     Assert.That(routedGen.Errors, Is.Empty, string.Join("; ", routedGen.Errors));
     Assert.That(routedGen.BackendRoutedNames, Does.Contain("main"), "the body must route");
 
     var directGen = new CodeGenerator(Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36)) {
       Optimize = false,
-      UseExperimentalBackend = false,
     };
     var directImage = directGen.EmitExecutable();
     Assert.That(directGen.Errors, Is.Empty, string.Join("; ", directGen.Errors));
@@ -162,14 +161,13 @@ public sealed class BackendNullaryStringTests {
 
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var routedGen = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+    var routedGen = new CodeGenerator(model) { Optimize = false};
     var routedImage = routedGen.EmitExecutable();
     Assert.That(routedGen.Errors, Is.Empty, string.Join("; ", routedGen.Errors));
     Assert.That(routedGen.BackendRoutedNames, Does.Contain("main"), "the body must route");
 
     var directGen = new CodeGenerator(Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36)) {
       Optimize = false,
-      UseExperimentalBackend = false,
     };
     var directImage = directGen.EmitExecutable();
     Assert.That(directGen.Errors, Is.Empty, string.Join("; ", directGen.Errors));

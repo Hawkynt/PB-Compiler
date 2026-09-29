@@ -40,7 +40,7 @@ public sealed class IrBasicWriterWholeProgramTests {
 
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     var rendered = IrBasicWriter.Write(module!);
 
     var after = Run(rendered);

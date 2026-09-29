@@ -68,7 +68,7 @@ public sealed class SelectLoweringTests {
       "CASE ELSE\n  r% = 99\n" +
       "END SELECT");
 
-    IrPassManager.Standard().RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard().RunToFixpoint(fn);
 
     Assert.That(IrVerifier.Verify(fn), Is.Empty);
     // subject is constant 2: every comparison is proven and the chain collapses

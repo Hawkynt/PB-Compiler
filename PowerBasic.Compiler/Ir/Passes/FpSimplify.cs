@@ -23,13 +23,24 @@ public static class FpSimplify {
   public static int Run(IrFunction function) => Run(function, IrFastMathFlags.None);
 
   internal static int Run(IrFunction function, IrFastMathFlags assumptions) {
+    ArgumentNullException.ThrowIfNull(function);
+    return IrFunctionPassPipeline.RunStandalone(function, "fpsimplify",
+      (fn, analyses) => Run(fn, assumptions, analyses));
+  }
+
+  internal static IrPassResult Run(IrFunction function, IrFastMathFlags assumptions, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(function);
+    ArgumentNullException.ThrowIfNull(analyses);
     if (function.HasErrorHandler || function.HasInlineAsm)
-      return 0;
-    var ranges = IrRangeAnalysis.Build(function);
-    var domains = FpDomainAnalysis.Build(function);
+      return IrPassResult.Unchanged;
+
+    var ranges = analyses.Get(IrAnalyses.Ranges);
+    var domains = analyses.Get(IrAnalyses.FpDomains);
     var changes = SimplifyClassifications(function, assumptions, ranges, domains);
     changes += NarrowDemandedPrecision(function, assumptions);
-    return changes;
+    return changes == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreserving(changes, IrAnalyses.Dominators, IrAnalyses.Loops);
   }
 
   private static int SimplifyClassifications(IrFunction function, IrFastMathFlags assumptions,

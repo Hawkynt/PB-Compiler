@@ -59,7 +59,7 @@ public sealed class BackendChainTests {
   }
 
   private static (byte[] Image, IEnumerable<string> Routed) Compile(string source, bool backend) {
-    var codegen = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = backend };
+    var codegen = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = codegen.EmitExecutable();
     Assert.That(codegen.Errors, Is.Empty, string.Join("; ", codegen.Errors));
     return (image, codegen.BackendRoutedNames.ToList());
@@ -200,7 +200,7 @@ public sealed class BackendChainTests {
   [Test]
   public void Select_GivenAChainWrite_ThenTheBufferOffsetIsInDxAndTheCountInCx() {
     var module = IrLowering.TryLowerModule(Bind(_chainToSelf));
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     var main = module!.Functions.First(f => f.Name == "main");
     var m = InstructionSelector.TrySelect(main, out var reason);
     Assert.That(m, Is.Not.Null, $"main declined: {reason}");

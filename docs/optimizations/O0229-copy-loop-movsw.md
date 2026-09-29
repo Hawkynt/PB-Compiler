@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (distinct 16-bit arrays) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `TryEmitForIdiom` |
+| **Status** | ⬜ Not implemented on the IR path |
+| **Stage** | IR middle end (planned) |
+| **Source** | None. The nearest current code is `Ir/Passes/LibraryCallRecognition.cs` ([O0330](O0330-library-call-recognition.md)), which handles byte-element copy loops only |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
 | **Split from** | [O0020](O0020-idiom-replacement.md) |
 
@@ -13,6 +13,12 @@
 `FOR i = lo TO hi : dst(i) = src(i) : NEXT` over two **distinct** 16-bit arrays
 is a block move, including the near/far segment dance, with the counter's end
 value preserved.
+
+Not implemented on the IR path; the syntax-level version was retired with the
+direct emitter. `LibraryCallRecognition` turns a counted copy loop into an
+`llvm.memcpy` (`rt_memcpy`, which runs `REP MOVSB`, or `REP MOVSD` plus a byte
+tail on an optimized 386+ target) only when each element is one byte and the
+index steps the byte offset by one, so a 16-bit array copy stays a loop.
 
 ## Sample
 

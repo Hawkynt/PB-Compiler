@@ -45,13 +45,13 @@ public sealed class BackendRecordParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Procedure_GivenByrefRecordParameter_ThenRoutedAndDirectExecutionAgree(bool optimize) {
-    var routed = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("Sum"), "the record-taking function did not route");
     Assert.That(routed.BackendRoutedNames, Does.Contain("Bump"), "the record-mutating sub did not route");
 
-    var direct = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize, UseExperimentalBackend = false };
+    var direct = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize};
     var directImage = direct.EmitExecutable();
     Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
 

@@ -30,14 +30,14 @@ public sealed class BackendInputRoutingTests {
   }
 
   private static string Run(string source, bool routed) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output;
   }
 
   private static IEnumerable<string> RoutedNames(string source) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     cg.EmitExecutable();
     return cg.BackendRoutedNames.ToList();
   }
@@ -205,8 +205,8 @@ public sealed class BackendInputRoutingTests {
   private static void AssertRoutedMatchesDirect((string Name, string Source, string Expected)[] programs) {
     foreach (var (name, source, expected) in programs)
       foreach (var optimize in new[] { false, true }) {
-        var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-        var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+        var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+        var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
         var directOutput = Cpu8086.Run(direct.EmitExecutable()).Output;
         var routedOutput = Cpu8086.Run(routed.EmitExecutable()).Output;
 
