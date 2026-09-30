@@ -227,10 +227,10 @@ static Linux ELF files; the 6502 compiles integer programs to a C64 `.PRG`. `Nat
 floor under how many they accept - they are this section's to-do list.
 
 ### Must
-- **Strings, once, in the portable runtime.** The `rt_str_*` ABI - a heap, descriptors, temporaries
-  and their release, the contract `runtime/pbc_rt.c` documents - written as IR in
-  `Runtime/Portable`, where x86-32 and x64 get it at once. It is what most declined battery programs
-  wait for (`rt_str_const`).
+- **Files, `INPUT`, `ON ERROR` for x86-32/x64.** Strings are in the portable runtime; what the
+  declined battery programs wait for now is `rt_file_*` and `rt_kill` (system calls beside
+  `sys_write`), `INPUT` (`sys_read`), and error trapping, which needs a non-local return to the
+  handler.
 - **The 6502 onto the portable runtime.** Its runtime is hand-written 6502 today. Compiling the
   portable runtime instead shares every string and formatting routine; what the 6502 then needs of
   its own is soft floating point for the IR's float operations. Half of that is written - unpacking

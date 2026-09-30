@@ -168,9 +168,15 @@ the `rt_*` functions the module calls into it, and `Backend/X86Native` compiles 
   the x87's own instructions. Division by zero and BASIC's domain errors raise through `rt_error`
   instead of faulting.
 - **`PortableRuntime`** is the runtime written once, as IR built with a small structured writer
-  (`IrWriter`: locals, `If`, `While`): `PRINT` with BASIC's sign slot, zones, `TAB` and `SPC`, the
-  `%G`-shaped float formatting at 7, 15 or 18 digits (scaled by correctly rounded powers of ten
-  kept as EXT constants), `rt_error`, `rt_end`. Its whole contact with the operating system is two
+  (`IrWriter`: locals, `If`, `While`), split by concern: `PRINT` with BASIC's sign slot, zones,
+  `TAB` and `SPC`; numbers as text both ways - the `%G`-shaped float formatting at 7, 15 or 18
+  digits (scaled by correctly rounded powers of ten kept as EXT constants) shared by `PRINT` and
+  `STR$`, `HEX$`/`OCT$`/`BIN$` with the DOS 16-bit fold, and a BASIC-shaped `VAL`; strings - a
+  power-of-two size-class heap (error 14 when it runs out), handles pointing at `[length][bytes]`,
+  a null handle as `""`, and every `rt_str_*` routine the battery uses, leaving its arguments to
+  the caller exactly as `runtime/pbc_rt.c` does; `rt_error`, `rt_end`. A varargs
+  `rt_str_concat_n` is rewritten into the pairwise chain it stands for, since IR cannot read C
+  varargs. Its whole contact with the operating system is two
   primitives each back end emits: `sys_write` and `sys_exit`, here Linux system calls
   (`syscall` on x64, `int 0x80` on i386 - which is why an i386 program runs on an x64 kernel with
   no 32-bit library installed).

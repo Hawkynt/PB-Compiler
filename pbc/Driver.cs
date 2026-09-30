@@ -423,7 +423,7 @@ public static class Driver {
     }, out var declined);
     X86NativeCompiler.Program? program = null;
     if (compiled is not null) {
-      PortableRuntime.Define(compiled.Module);
+      PortableRuntime.Define(compiled.Module, heapBytes: NativeHeapBytes);
       program = X86NativeCompiler.TryCompile(compiled.Module, machine, out declined);
     }
     if (program is null) {
@@ -443,6 +443,9 @@ public static class Driver {
     stdout.WriteLine($"{Path.GetFileName(output)}: {bytes.Length} bytes ({name})");
     return 0;
   }
+
+  /// <summary>The string heap of a native Linux program: uninitialised storage, so it costs no file space.</summary>
+  private const int NativeHeapBytes = 16 << 20;
 
   /// <summary>The machines <c>--platform</c> selects.</summary>
   private enum Platform { X86_16, X86_32, X64, Mos6502 }
