@@ -102,23 +102,8 @@ pbc --emit-c PROG.BAS -O prog.c
 cc -std=c99 -O2 -I runtime -o prog prog.c runtime/pbc_rt.c -lm
 ```
 
-`--platform x86-32|x64` does both steps itself: it writes the translation unit and the
-embedded runtime to a temporary directory and drives the host compiler (`$CC`, else `cc`,
-`gcc` or `clang`) with `-m32`/`-m64`. What comes out depends on the emit option:
-
-| Option | x86-16 (DOS, default) | x86-32 / x64 | 6502 |
-|---|---|---|---|
-| *(none)* | MZ `.EXE` | ELF executable | C64 `.PRG` |
-| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a DOS container | refused |
-| `$COMPILE UNIT` | `.PBU` | refused: use `--emit-obj` or `--emit-lib` | refused |
-| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o` (the program only) | refused |
-| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `.a` archive: the program and the runtime | refused |
-
-Before any build, `HostToolchain` asks the compiler to link a one-line program for the
-requested machine. A 64-bit Linux host usually has a compiler that accepts `-m32` but no
-32-bit C library behind it; that is reported as such, not as the compiler's
-`gnu/stubs-32.h` complaint. `PlatformTests` builds, links and runs all three artifacts per
-platform, and skips a platform the host cannot target.
+The C back end is a rendering, for reading or for a C toolchain someone else runs; no `pbc`
+build goes through it. Native Linux programs come from the native x86 back end below.
 
 C99, no compiler extensions. Two details are load-bearing:
 
@@ -157,6 +142,52 @@ output still runs):
 this path with the host C compiler and diffs the result against that golden — the
 same file the DOSBox battery checks the 16-bit executable against. A program outside
 the lowering's subset is reported and skipped, never quietly passed.
+
+## The native x86-32 / x64 back end (`--platform x86-32|x64`)
+
+```bash
+pbc --platform x64 PROG.BAS           # -> PROG, a static Linux executable
+pbc --platform x86-32 --emit-obj P.BAS  # -> P.o, exporting pb_main and pb_start
+```
+
+Nothing but `pbc` is involved: no C compiler, assembler or linker. The IR goes through the hosted
+middle end (`RunHostedModule`, the one `--emit-c` uses), `Runtime/Portable/PortableRuntime` defines
+the `rt_*` functions the module calls into it, and `Backend/X86Native` compiles the lot.
+
+- **`X86Assembler`** is the instruction set as types, for both modes: `X86Reg`, `X86Width`,
+  `X86Mem`, the ALU/shift/x87 groups as enums, immediates under their own method names (a literal `0`
+  converts silently to a register enum, so `Mov(w, reg, 0)` would be ambiguous). It keeps text, data
+  and bss sections; a label reference is a fixup - RIP-relative on x64, absolute on i386 - resolved
+  at layout for an executable and turned into a relocation for an object.
+- **`X86NativeCompiler`** gives every SSA value and local a slot below the frame pointer, passes
+  arguments in a caller-reserved stack area above it and returns through one static area, so
+  recursion needs nothing special. Integers are worked in `eax`/`rax`; on i386 a 64-bit value is
+  worked in halves, with multiply, divide and shifts written out (`WideMultiply`, `WideDivide`,
+  `WideShift`). Floats are x87 in their IEEE memory formats - SINGLE, DOUBLE and the 80-bit EXT -
+  so they get the same 80-bit arithmetic the DOS programs do; SQR, SIN, LOG, `^` and the rest are
+  the x87's own instructions. Division by zero and BASIC's domain errors raise through `rt_error`
+  instead of faulting.
+- **`PortableRuntime`** is the runtime written once, as IR built with a small structured writer
+  (`IrWriter`: locals, `If`, `While`): `PRINT` with BASIC's sign slot, zones, `TAB` and `SPC`, the
+  `%G`-shaped float formatting at 7, 15 or 18 digits (scaled by correctly rounded powers of ten
+  kept as EXT constants), `rt_error`, `rt_end`. Its whole contact with the operating system is two
+  primitives each back end emits: `sys_write` and `sys_exit`, here Linux system calls
+  (`syscall` on x64, `int 0x80` on i386 - which is why an i386 program runs on an x64 kernel with
+  no 32-bit library installed).
+- **`Emit/Elf/ElfWriter`** writes the three containers:
+
+| Option | x86-16 (DOS, default) | x86-32 / x64 | 6502 |
+|---|---|---|---|
+| *(none)* | MZ `.EXE` | static ELF executable | C64 `.PRG` |
+| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a DOS container | refused |
+| `$COMPILE UNIT` | `.PBU` | refused: use `--emit-obj` or `--emit-lib` | refused |
+| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o`: `pb_main` for a C caller, `pb_start` to link alone | refused |
+| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `ar` archive of that object, with the GNU symbol index | refused |
+
+`PlatformTests` builds, runs and links all three artifacts for both machines - the host C compiler,
+or the bare `ld` where there is no 32-bit C library, is the oracle that the objects link, never part
+of the build. `NativeBatteryTests` run every DOS battery program the back end accepts against its
+DOS golden output, per machine, with a floor under how many that is.
 
 ## The 6502 back end (`--platform 6502`)
 

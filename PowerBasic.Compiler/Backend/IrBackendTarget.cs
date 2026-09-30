@@ -7,6 +7,10 @@ namespace PowerBasic.Compiler.Backend;
 public enum IrBackendTarget {
   Mos6502,
   X86_16,
+  /// <summary>Native i386 Linux, emitted by <see cref="X86Native.X86NativeCompiler"/>.</summary>
+  X86_32,
+  /// <summary>Native x64 Linux, emitted by <see cref="X86Native.X86NativeCompiler"/>.</summary>
+  X64,
   C,
   Llvm,
   PowerBasic35,
@@ -21,7 +25,7 @@ public static class IrBackendTargetContract {
 
   public static IrRepresentationStage RequiredInputStage(IrBackendTarget target) => target switch {
     IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35 or IrBackendTarget.X86_16
-      or IrBackendTarget.Mos6502
+      or IrBackendTarget.X86_32 or IrBackendTarget.X64 or IrBackendTarget.Mos6502
       => IrRepresentationStage.LowIr,
     _ => throw new ArgumentOutOfRangeException(nameof(target), target, null),
   };

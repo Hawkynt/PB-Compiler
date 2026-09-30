@@ -33,9 +33,9 @@ binaries you can run on actual DOS or in DOSBox:
 - **`.PBU`** — documented PB-Compiler compiled units (`$COMPILE UNIT`),
 - **`.PBL`** — PB-Compiler unit libraries (linkable via `$LINK`),
 - **`.OBJ` / `.LIB`** — DOS Intel OMF objects/libraries for period-compatible linkers,
-- **native x86-32 / x64** — ELF executables, `.o` objects and `.a` archives
-  (`--platform x86-32|x64`), built from the same optimized IR through the C back end
-  and the host's C compiler.
+- **native x86-32 / x64** — static Linux ELF executables, `.o` objects and `.a` archives
+  (`--platform x86-32|x64`), compiled from the same optimized IR by pbc's own x86 back end
+  and portable runtime — no C compiler, assembler or linker.
 - **6502** — Commodore 64 `.PRG` programs (`--platform 6502`), compiled from the same
   optimized IR by a native 6502 back end (integer programs for now).
 

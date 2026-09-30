@@ -40,7 +40,8 @@ public sealed class IrBackendModule {
       return null;
 
     module.AsciiOnly = model.AsciiOnly;
-    if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35)
+    if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35
+        or IrBackendTarget.X86_32 or IrBackendTarget.X64)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
         options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops);
     else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.Mos6502)

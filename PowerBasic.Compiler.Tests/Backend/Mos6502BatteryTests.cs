@@ -89,20 +89,22 @@ public sealed partial class Mos6502BatteryTests {
       var log = Path.Combine(work.FullName, "monitor.log");
       File.WriteAllBytes(path, prg!);
       File.WriteAllText(commands, "trace exec $ffd2\n");
+      string viceOutput;
       using (var vice = Process.Start(new ProcessStartInfo("xvfb-run", [
-          "-a", "x64sc", "-default", "-warp", "-sounddev", "dummy", "-autostart", path,
-          "-moncommands", commands, "-monlog", "-monlogname", log, "-limitcycles", "40000000"]) {
+          "-a", "-n", Random.Shared.Next(200, 900).ToString(System.Globalization.CultureInfo.InvariantCulture), "x64sc", "-default", "-warp", "-sounddev", "dummy", "-autostart", path,
+          "-moncommands", commands, "-monlog", "-monlogname", log, "-autostartprgmode", "1", "-limitcycles", "150000000"]) {
           RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
         })!) {
-        vice.StandardOutput.ReadToEndAsync();
-        vice.StandardError.ReadToEndAsync();
+        var stdout = vice.StandardOutput.ReadToEndAsync();
+        var stderr = vice.StandardError.ReadToEndAsync();
         Assert.That(vice.WaitForExit(TimeSpan.FromMinutes(2)), Is.True, "VICE did not stop at its cycle limit");
+        viceOutput = stdout.Result + stderr.Result;
       }
 
       // after the program, BASIC prints its own READY. prompt; the program's output is what precedes it
       var printed = PetsciiAfterCharsetSwitch(File.ReadAllText(log));
       var prompt = printed.LastIndexOf("ready.", StringComparison.Ordinal);
-      Assert.That(prompt, Is.GreaterThanOrEqualTo(0), "the program never returned to BASIC");
+      Assert.That(prompt, Is.GreaterThanOrEqualTo(0), $"the program never returned to BASIC; VICE printed: {printed}\n{viceOutput}");
       Assert.That(Normalize(printed[..prompt]), Is.EqualTo(Normalize(Cpu6502.RunC64Program(prg!).Output)));
     } finally {
       work.Delete(recursive: true);
