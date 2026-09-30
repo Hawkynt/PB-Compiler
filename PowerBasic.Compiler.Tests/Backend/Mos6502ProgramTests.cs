@@ -36,10 +36,12 @@ public sealed class Mos6502ProgramTests {
     return (code, stderr.ToString(), File.Exists(prg) ? File.ReadAllBytes(prg) : []);
   }
 
-  private string Run(string source, params string[] options) {
+  private string Run(string source, params string[] options) => this.Run(source, [], options);
+
+  private string Run(string source, Dictionary<string, List<byte>> disk, params string[] options) {
     var (code, error, prg) = this.Build(source, options);
     Assert.That(code, Is.Zero, error);
-    var result = Cpu6502.RunC64Program(prg);
+    var result = Cpu6502.RunC64Program(prg, disk: disk);
     Assert.Multiple(() => {
       Assert.That(result.Returned, Is.True, "the program returns to BASIC");
       Assert.That(result.StackPointer, Is.EqualTo(0xFF), "and leaves the hardware stack as it found it");
@@ -259,6 +261,54 @@ public sealed class Mos6502ProgramTests {
       """);
 
     Assert.That(output, Is.EqualTo("QRSTUVWXYZABCDEFGHIJKLMNOPQRS 29 "));
+  }
+
+  [Test]
+  public void Run_GivenAFileLeftOpenAtEnd_ThenTheReturnToBasicClosesItOntoTheDisk() {
+    var disk = new Dictionary<string, List<byte>>();
+    this.Run("""
+      OPEN "notes.txt" FOR OUTPUT AS #1
+      PRINT #1, "kept"
+      END
+      """, disk);
+
+    // a lower-case name reaches the drive in PETSCII capitals, as DOS names are case-blind
+    Assert.That(disk.Keys, Is.EquivalentTo(new[] { "NOTES.TXT" }));
+    Assert.That(disk["NOTES.TXT"], Is.EqualTo("kept\n"u8.ToArray()));
+  }
+
+  [Test]
+  public void Run_GivenAppendToAMissingFile_ThenItIsCreatedAsDosWould() {
+    var disk = new Dictionary<string, List<byte>>();
+    var output = this.Run("""
+      OPEN "LOG.TXT" FOR APPEND AS #1
+      PRINT #1, "one"
+      CLOSE #1
+      OPEN "log.txt" FOR APPEND AS #1
+      PRINT #1, "two"
+      CLOSE #1
+      OPEN "LOG.TXT" FOR INPUT AS #1
+      DIM s AS STRING
+      DO UNTIL EOF(1)
+        LINE INPUT #1, s
+        PRINT s
+      LOOP
+      CLOSE #1
+      """, disk);
+
+    Assert.That(output, Is.EqualTo("one\ntwo"));
+    Assert.That(disk["LOG.TXT"], Is.EqualTo("one\ntwo\n"u8.ToArray()));
+  }
+
+  [Test]
+  public void Build_GivenARandomFile_ThenThe6502DeclinesItBecauseA1541CannotSeek() {
+    var (code, error, _) = this.Build("""
+      OPEN "R.DAT" FOR RANDOM AS #1 LEN = 4
+      PRINT LOF(1)
+      """);
+
+    Assert.That(code, Is.Not.Zero);
+    Assert.That(error, Does.Contain("cannot seek"));
   }
 
   [Test]

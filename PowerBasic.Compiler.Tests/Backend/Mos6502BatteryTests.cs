@@ -19,7 +19,7 @@ public sealed partial class Mos6502BatteryTests {
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   /// <summary>How many battery programs the 6502 compiled when this floor was last raised.</summary>
-  private const int CompiledFloor = 15;
+  private const int CompiledFloor = 17;
 
   public static IEnumerable<string> Programs() {
     var dir = Path.Combine(_repoRoot, "tests");
@@ -70,16 +70,19 @@ public sealed partial class Mos6502BatteryTests {
   }
 
   /// <summary>
-  /// The same program on VICE, the reference C64 emulator, with the real KERNAL behind
-  /// <c>CHROUT</c>: a tracepoint on <c>$FFD2</c> logs the accumulator at every call, which is the
-  /// program's output one PETSCII byte at a time. It proves the start-up, the page-zero save and the
-  /// return to BASIC on the machine they were written for, and that <see cref="Cpu6502"/> agrees
-  /// with it. Skipped unless <c>x64sc</c> and <c>xvfb-run</c> are installed.
+  /// The same program on VICE, the reference C64 emulator, with the real KERNAL and a drive 8 that
+  /// is a host directory: a tracepoint on the screen editor's output (<c>$E716</c>) logs the
+  /// accumulator at every character that reaches the screen, which is the program's output one
+  /// PETSCII byte at a time - bytes written to a file go to the drive instead and are not in it. It
+  /// proves the start-up, the page-zero save, the return to BASIC and the file routines on the
+  /// machine they were written for, and that <see cref="Cpu6502"/>'s KERNAL and 1541 agree with it.
+  /// Skipped unless <c>x64sc</c> and <c>xvfb-run</c> are installed.
   /// </summary>
-  [Test]
-  public void Run_GivenAProgramOnVice_ThenTheRealKernalPrintsWhatTheInterpreterPrints() {
+  [TestCase("CTRL.BAS")]
+  [TestCase("FILEIO1.BAS")]
+  [TestCase("ONERR.BAS")]
+  public void Run_GivenAProgramOnVice_ThenTheRealKernalPrintsWhatTheInterpreterPrints(string program) {
     Assume.That(OnPath("x64sc") && OnPath("xvfb-run"), "VICE or Xvfb is not installed");
-    const string program = "CTRL.BAS";
     var prg = Compile(program, out var declined);
     Assert.That(prg, Is.Not.Null, declined);
 
@@ -89,11 +92,15 @@ public sealed partial class Mos6502BatteryTests {
       var commands = Path.Combine(work.FullName, "trace.mon");
       var log = Path.Combine(work.FullName, "monitor.log");
       File.WriteAllBytes(path, prg!);
-      File.WriteAllText(commands, "trace exec $ffd2\n");
+      // the screen editor's output, which CHROUT reaches only for the screen - not for a file
+      File.WriteAllText(commands, "trace exec $e716\n");
+      var disk = work.CreateSubdirectory("disk");
       string viceOutput;
       using (var vice = Process.Start(new ProcessStartInfo("xvfb-run", [
           "-a", "-n", Random.Shared.Next(200, 900).ToString(System.Globalization.CultureInfo.InvariantCulture), "x64sc", "-default", "-warp", "-sounddev", "dummy", "-autostart", path,
-          "-moncommands", commands, "-monlog", "-monlogname", log, "-autostartprgmode", "1", "-limitcycles", "150000000"]) {
+          "-moncommands", commands, "-monlog", "-monlogname", log, "-autostartprgmode", "1", "-limitcycles", "150000000",
+          // drive 8 is the host directory, answering on the serial bus as a 1541 would
+          "-drive8type", "0", "-busdevice8", "-fs8", disk.FullName]) {
           RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
         })!) {
         var stdout = vice.StandardOutput.ReadToEndAsync();
@@ -113,7 +120,7 @@ public sealed partial class Mos6502BatteryTests {
   }
 
   /// <summary>
-  /// The accumulator at every traced <c>CHROUT</c>, decoded, from the program's switch to the
+  /// The accumulator at every traced screen output, decoded, from the program's switch to the
   /// lower-case character set on: what came before it is the autostart's own <c>LOAD</c> and <c>RUN</c>.
   /// </summary>
   private static string PetsciiAfterCharsetSwitch(string log) {
@@ -127,7 +134,7 @@ public sealed partial class Mos6502BatteryTests {
     }));
   }
 
-  [GeneratedRegex(@"\.C:ffd2 .*? A:([0-9A-Fa-f]{2})")]
+  [GeneratedRegex(@"\.C:e716 .*? A:([0-9A-Fa-f]{2})")]
   private static partial Regex TraceAccumulator();
 
   private static bool OnPath(string name)

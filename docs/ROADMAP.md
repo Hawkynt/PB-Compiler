@@ -231,7 +231,7 @@ floor under how many they accept - they are this section's to-do list.
   call DOS interrupts, link a DOS object, or are 16-bit inline assembly). Left: `TRY`/`CATCH` (the
   lowering keeps its saved handler in 16-bit cells), `EXIT FAR`, math functions beyond the x87's,
   and whatever a wider corpus finds.
-- **Smaller 6502 code.** The 6502 runs 15 of the 21 battery programs. Code is still dominated by
+- **Smaller 6502 code.** The 6502 runs 17 of the 21 battery programs (the other four: the three that are DOS by nature, and `RANDFILE`, which seeks). Code is still dominated by
   `LDA`/`STA`: every SSA value has its own frame cell, so casts, returns, phi edges and arguments
   are byte-by-byte copies. Done: frames share memory through the call-graph overlay (the innermost
   in page zero), and the portable runtime keeps its lengths and counters in 16 bits here, which cut
@@ -239,9 +239,11 @@ floor under how many they accept - they are this section's to-do list.
   coalescing phi cells with their incoming values.
 
 ### Should
-- **Files and `TRY` on the 6502** - `INPUT` (through `CHRIN`) and `ON ERROR` are done; files need
-  the KERNAL's disk routines behind `sys_open`, and `TRY` the saved-handler cells - and `PEEK`/`POKE`, which reach the IR as `segment:offset` addresses: on a flat machine
-  the segment has no meaning and the offset is the address.
+- **RANDOM, BINARY and `TRY` on the 6502** - `INPUT`, `ON ERROR` and sequential files (on the 1541,
+  through the KERNAL) are done. A 1541's sequential files cannot seek; RANDOM and BINARY would need
+  its REL files, whose `P` command positions by record, or a RAM disk. `TRY` needs the
+  saved-handler cells. And `PEEK`/`POKE`, which reach the IR as `segment:offset` addresses: on a
+  flat machine the segment has no meaning and the offset is the address.
 - **Registers on x86.** Every x86 SSA value lives in a frame slot; a linear-scan allocator over the
   32/64-bit register file is the obvious next step for speed.
 

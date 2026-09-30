@@ -26,6 +26,10 @@ public enum M6502Routine {
   /// <summary>Pops the frame at <c>Arg</c>, <c>Arg+2</c> bytes long, off the soft stack.</summary>
   RestoreFrame,
 
+  // files on the 1541: Mos6502Runtime.Files.cs
+  FileData, FileOpen, FileClose, FileRead, FileWrite, FileUnlink, FileCloseAll, FileCommandChannel, FileStatus,
+  FileAppendPath,
+
   // floating point: Mos6502Runtime.Float.cs
   UnpackSingleA, UnpackSingleB, UnpackDoubleA, UnpackDoubleB, UnpackExtendedA, UnpackExtendedB,
   PackSingle, PackDouble, PackExtended, NormalizeA,
@@ -80,9 +84,10 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
 
   /// <summary>
   /// Assembles the start-up code: it calls <paramref name="main"/> and clears <paramref name="clearBytes"/>
-  /// bytes from <paramref name="clearStart"/> first.
+  /// bytes from <paramref name="clearStart"/> first. A program that opens files (<paramref name="closeFiles"/>)
+  /// closes whatever it left open on the way back to BASIC.
   /// </summary>
-  public void EmitStartup(M6502Label main, M6502Address clearStart, int clearBytes) {
+  public void EmitStartup(M6502Label main, M6502Address clearStart, int clearBytes, bool closeFiles = false) {
     asm.Bind(this.Routine(M6502Routine.Startup));
     this._emitted.Add(M6502Routine.Startup);
     var savedStack = asm.NewLabel("rt.savedStack");
@@ -127,6 +132,8 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
 
     asm.Bind(this.Routine(M6502Routine.Exit));
     this._emitted.Add(M6502Routine.Exit);
+    if (closeFiles)
+      asm.Call(this.Routine(M6502Routine.FileCloseAll));
     this.CopyPageZero(from: savedZeroPage, to: M6502Address.Absolute(Zp.First));
     asm.Memory(Ldx, savedStack);
     asm.Emit(Txs);
@@ -189,6 +196,7 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
       case M6502Routine.SaveFrame: this.EmitSaveFrame(); break;
       case M6502Routine.RestoreFrame: this.EmitRestoreFrame(); break;
       case var floating when this.EmitFloat(floating): break;
+      case var file when this.EmitFile(file): break;
       default:
         throw new InvalidOperationException($"runtime routine {routine} is emitted by the program, not on request");
     }

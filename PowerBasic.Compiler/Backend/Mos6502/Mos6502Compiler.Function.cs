@@ -601,14 +601,19 @@ public static partial class Mos6502Compiler {
       /// </summary>
       private void CallRuntime(IrCall call, IrFunction callee) {
         switch (callee.Name) {
-          case "sys_write":
-            // the only descriptor a C64 program writes is the screen's; files are not modelled
-            if (call.Args.ElementAt(0) is not IrConstantInt { Value: 1 })
-              throw Decline("the 6502 has no files yet: only the screen can be written");
+          case "sys_write": {
+            // the screen, descriptor 1, is the common case and needs no file routines at all
+            var fd = call.Args.ElementAt(0);
             this.Copy(this.Of(call.Args.ElementAt(1)), 2, Zp.Arg, 2);
             this.Copy(this.Of(call.Args.ElementAt(2)), 4, Zp.Arg.Plus(2), 4);
-            this._asm.Call(this._runtime.Routine(M6502Routine.SystemWrite));
+            if (fd is IrConstantInt { Value: 1 }) {
+              this._asm.Call(this._runtime.Routine(M6502Routine.SystemWrite));
+              return;
+            }
+            this.Copy(this.Of(fd), 1, Zp.Arg.Plus(6), 1);
+            this._asm.Call(this._runtime.Routine(M6502Routine.FileWrite));
             return;
+          }
           case "sys_exit":
             this._asm.Jump(this._runtime.Routine(M6502Routine.Exit));
             return;
@@ -649,13 +654,29 @@ public static partial class Mos6502Compiler {
             this.Copy(this.Of(args[0]), SizeOf(args[0].Type), Zp.Arg, 4, signed: true);
             this.Copy(this.Of(args[1]), 2, Zp.Arg.Plus(4), 2);
             this.Copy(this.Of(args[2]), SizeOf(args[2].Type), Zp.Arg.Plus(6), 4, signed: true);
-            this._asm.Call(this._runtime.Routine(M6502Routine.SystemRead));
+            this._asm.Call(this._runtime.Routine(module.UsesFiles ? M6502Routine.FileRead : M6502Routine.SystemRead));
             if (this.Stored(call))
               this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
             return;
           }
-          case "sys_open" or "sys_close" or "sys_seek" or "sys_unlink":
-            throw Decline("the 6502 has no files yet (the KERNAL's disk routines are not modelled)");
+          case "sys_open" or "sys_close" or "sys_unlink": {
+            // a path's address, or a descriptor - a logical file number, which fits a byte
+            var args = call.Args.ToList();
+            var width = args[0].Type.IsPointer ? 2 : 1;
+            this.Copy(this.Of(args[0]), width, Zp.Arg, width);
+            if (callee.Name == "sys_open")
+              this.Copy(this.Of(args[1]), 1, Zp.Arg.Plus(2), 1);
+            this._asm.Call(this._runtime.Routine(callee.Name switch {
+              "sys_open" => M6502Routine.FileOpen,
+              "sys_close" => M6502Routine.FileClose,
+              _ => M6502Routine.FileUnlink,
+            }));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          }
+          case "sys_seek":
+            throw Decline("a 1541's sequential files cannot seek, so RANDOM, BINARY, SEEK and LOF have no 6502 lowering");
           default:
             throw Decline($"the 6502 runtime has no {callee.Name} yet");
         }

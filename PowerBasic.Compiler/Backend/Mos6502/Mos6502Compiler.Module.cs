@@ -78,6 +78,9 @@ public static partial class Mos6502Compiler {
     private int _stagingBytes;
     private readonly Dictionary<string, (M6502Label Label, byte[] Bytes)> _constants = [];
 
+    /// <summary>Whether the program opens files: its reads then go through the file routines, and its exit closes them.</summary>
+    private bool UsesFiles => module.FindFunction("sys_open") is not null;
+
     /// <summary>The program's ERR cell, when it reads ERR at all.</summary>
     private M6502Address? ErrorCode
       => module.Globals.FirstOrDefault(global => global.Name == "rt_err") is { } err ? this._globals[err] : null;
@@ -135,7 +138,7 @@ public static partial class Mos6502Compiler {
       if (module.FindFunction("rt_error") is { IsDeclaration: false } error)
         this._runtime.ErrorFunction = (this._entries[error], this._frames[error].AddressOf(error.Parameters[0]));
       var uninitialized = this._asm.NewLabel("uninitialized");
-      this._runtime.EmitStartup(this._entries[main], uninitialized, this.UninitializedBytes());
+      this._runtime.EmitStartup(this._entries[main], uninitialized, this.UninitializedBytes(), closeFiles: this.UsesFiles);
       foreach (var function in defined)
         new FunctionGenerator(this, function).Generate();
       this._runtime.EmitRequested();
