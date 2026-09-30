@@ -21,6 +21,7 @@ public static partial class Mos6502Compiler {
 
       public void Generate() {
         this._asm.Bind(module._entries[function]);
+        this.PreserveHandler(save: true);
         foreach (var block in function.Blocks)
           this._blocks.Add(block, this._asm.NewLabel($"{function.Name}.{block.Label}"));
         for (var i = 0; i < function.Blocks.Count; ++i) {
@@ -50,8 +51,13 @@ public static partial class Mos6502Compiler {
             return new ConstantOperand(constant.Value);
           case IrNullPtr or IrUndef:
             return new ConstantOperand(0);
-          case IrGlobalVariable { Name: "rt_onerr" or "rt_onerr_bp" or "rt_onerr_sp" }:
-            throw Decline("TRY/CATCH keeps its handler in DOS's cells and has no 6502 lowering yet");
+          // TRY's handler triple is ON ERROR's own state
+          case IrGlobalVariable { Name: "rt_onerr" }:
+            return new AddressOperand(module._errorHandler);
+          case IrGlobalVariable { Name: "rt_onerr_bp" }:
+            return new AddressOperand(module._errorSoftStack);
+          case IrGlobalVariable { Name: "rt_onerr_sp" }:
+            return new AddressOperand(module._errorStack);
           case IrGlobalVariable global:
             return new AddressOperand(module._globals[global]);
           case IrAlloca alloca:
@@ -624,30 +630,38 @@ public static partial class Mos6502Compiler {
               when !module._trapsErrors:
             return;
           case "rt_onerr_arm":
-            this.Copy(this.Of(call.Args.ElementAt(0)), 2, module._errorHandler, 2);
-            this.CaptureStacks();
-            this.SetErrorMode(1);
+            this.Arm(this.Of(call.Args.ElementAt(0)));
             return;
           case "rt_onerr_resume_next":
-            this.CaptureStacks();
-            this.SetErrorMode(2);
+            this.Arm(new AddressOperand(module._resumeNextStub));
             return;
           case "rt_onerr_disarm":
-            this.SetErrorMode(0);
+            this.Copy(new ConstantOperand(0), 2, module._errorHandler, 2);
             return;
           case "rt_resume_mark":
             this.Copy(this.Of(call.Args.ElementAt(0)), 2, module._statementStart, 2);
             this.Copy(this.Of(call.Args.ElementAt(1)), 2, module._statementNext, 2);
             return;
           case "rt_resume_same" or "rt_resume_next":
-            // the handler is done: errors trap again, and control returns to the faulting statement
-            this.SetErrorMode(1);
-            this.RestoreStacks();
-            this.JumpThrough(callee.Name == "rt_resume_same" ? module._faultStart : module._faultNext);
+            this.ClearError();
+            JumpThrough(this._asm, callee.Name == "rt_resume_same" ? module._faultStart : module._faultNext);
             return;
           case "rt_err_clear":
-            if (module.ErrorCode is { } err)
-              this.Copy(new ConstantOperand(0), 2, err, 2);
+            this.ClearError();
+            return;
+          // EXIT FAR AT label: where to land, and the stacks to have back when it does
+          case "rt_efar_arm":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, module._exitFarTarget, 2);
+            this._asm.Emit(Tsx);
+            this._asm.Memory(Stx, module._exitFarStack);
+            this.Copy(new MemoryOperand(Zp.SoftStack), 2, module._exitFarSoftStack, 2);
+            return;
+          // a bare EXIT FAR: every frame between here and there is abandoned at once
+          case "rt_efar_go":
+            this._asm.Memory(Ldx, module._exitFarStack);
+            this._asm.Emit(Txs);
+            this.Copy(new MemoryOperand(module._exitFarSoftStack), 2, Zp.SoftStack, 2);
+            JumpThrough(this._asm, module._exitFarTarget);
             return;
           case "sys_read": {
             var args = call.Args.ToList();
@@ -691,69 +705,63 @@ public static partial class Mos6502Compiler {
         }
       }
 
-      private void SetErrorMode(int mode) {
-        this._asm.Immediate(Lda, mode);
-        this._asm.Memory(Sta, module._errorMode);
+      private void ClearError() {
+        if (module.ErrorCode is { } err)
+          this.Copy(new ConstantOperand(0), 2, err, 2);
       }
 
-      /// <summary>ON ERROR runs its handler on the stacks it was armed with: the hardware one and the soft one.</summary>
-      private void CaptureStacks() {
+      /// <summary>Arms <paramref name="handler"/> on the stacks as they are now, and clears ERR, as DOS does.</summary>
+      private void Arm(Operand handler) {
+        this.Copy(handler, 2, module._errorHandler, 2);
         this._asm.Emit(Tsx);
         this._asm.Memory(Stx, module._errorStack);
         this.Copy(new MemoryOperand(Zp.SoftStack), 2, module._errorSoftStack, 2);
-      }
-
-      private void RestoreStacks() {
-        this._asm.Memory(Ldx, module._errorStack);
-        this._asm.Emit(Txs);
-        this.Copy(new MemoryOperand(module._errorSoftStack), 2, Zp.SoftStack, 2);
+        this.ClearError();
       }
 
       /// <summary>
-      /// <c>sys_trap(code)</c>, the portable runtime's first question in <c>rt_error</c>: with no
-      /// handler armed it falls through and the error is reported; with one it never returns - ERR
-      /// gets the code, the statement that faulted is latched for RESUME, the armed stacks come back,
-      /// and the handler runs (or, for RESUME NEXT, the next statement). An error inside the handler
-      /// is fatal, as in PowerBASIC.
+      /// <c>sys_trap(code)</c>, the portable runtime's first question in <c>rt_error</c>, and the DOS
+      /// runtime's <c>rt_raise</c>: ERR gets the code; with no handler armed it falls through and the
+      /// error is reported; with one it never returns - the statement that faulted is latched for
+      /// RESUME, the armed stacks come back, and the handler runs (a fault inside it enters it again).
       /// </summary>
       private void Trap(IrValue code) {
         if (!module._trapsErrors)
           return;
         var none = this.Local("noHandler");
-        var handler = this.Local("trapHandler");
-        this._asm.Memory(Lda, module._errorMode);
-        this._asm.Immediate(Cmp, 1);
-        this._asm.Branch(Beq, handler);
-        this._asm.Immediate(Cmp, 2);
-        this._asm.Branch(Bne, none);
-        this.LatchFault(code);
-        this.RestoreStacks();
-        this.JumpThrough(module._faultNext);
-        this._asm.Bind(handler);
-        this.LatchFault(code);
-        this.SetErrorMode(3);
-        this.RestoreStacks();
-        this.JumpThrough(module._errorHandler);
+        if (module.ErrorCode is { } err)
+          this.Copy(this.Of(code), 2, err, 2);
+        this._asm.Memory(Lda, module._errorHandler);
+        this._asm.Memory(Ora, module._errorHandler.Plus(1));
+        this._asm.Branch(Beq, none);
+        this.LatchFault();
+        this._asm.Memory(Ldx, module._errorStack);
+        this._asm.Emit(Txs);
+        this.Copy(new MemoryOperand(module._errorSoftStack), 2, Zp.SoftStack, 2);
+        JumpThrough(this._asm, module._errorHandler);
         this._asm.Bind(none);
       }
 
       /// <summary>
-      /// A jump to the address a cell holds, as <c>RTI</c> takes it - status, then the address
-      /// itself - rather than <c>JMP (cell)</c>, which on an NMOS 6502 fetches the high byte from the
-      /// wrong page when the cell's low byte sits at <c>$xxFF</c>, somewhere a RAM cell can land.
+      /// A procedure that arms a handler promises its caller the caller's handler back: the triple is
+      /// saved on entry and restored on every return, as the DOS back end does.
       /// </summary>
-      private void JumpThrough(M6502Address cell) {
-        this._asm.Memory(Lda, cell.Plus(1));
-        this._asm.Emit(Pha);
-        this._asm.Memory(Lda, cell);
-        this._asm.Emit(Pha);
-        this._asm.Emit(Php);
-        this._asm.Emit(Rti);
+      private void PreserveHandler(bool save) {
+        if (!this._frame.Holds(this._frame.SavedHandler))
+          return;
+        var slot = this._frame.AddressOf(this._frame.SavedHandler);
+        var offset = 0;
+        foreach (var cell in (M6502Label[])[module._errorHandler, module._errorSoftStack, module._errorStack]) {
+          if (save)
+            this.Copy(new MemoryOperand(cell), 2, slot.Plus(offset), 2);
+          else
+            this.Copy(new MemoryOperand(slot.Plus(offset)), 2, cell, 2);
+          offset += 2;
+        }
       }
 
-      private void LatchFault(IrValue code) {
-        if (module.ErrorCode is { } err)
-          this.Copy(this.Of(code), 2, err, 2);
+      /// <summary>The statement that faulted becomes the one RESUME returns to.</summary>
+      private void LatchFault() {
         this.Copy(new MemoryOperand(module._statementStart), 2, module._faultStart, 2);
         this.Copy(new MemoryOperand(module._statementNext), 2, module._faultNext, 2);
       }
@@ -768,6 +776,7 @@ public static partial class Mos6502Compiler {
           var size = SizeOf(value.Type);
           this.Copy(this.Of(value), size, Zp.Ret, size);
         }
+        this.PreserveHandler(save: false);
         this._asm.Emit(Rts);
       }
 

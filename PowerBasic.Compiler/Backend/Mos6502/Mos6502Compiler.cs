@@ -101,6 +101,9 @@ public static partial class Mos6502Compiler {
     public Dictionary<IrValue, (int Offset, int Size)> Slots { get; } = [];
     public int Base { get; set; }
 
+    /// <summary>The key of the slot where a procedure with a handler keeps its caller's.</summary>
+    public IrValue SavedHandler { get; } = new IrUndef(IrType.I64);
+
     /// <summary>A frame that recursion saves and restores must be one contiguous block of RAM.</summary>
     public bool Contiguous { get; init; }
 

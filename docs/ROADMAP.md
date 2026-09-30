@@ -228,9 +228,8 @@ floor under how many they accept - they are this section's to-do list.
 
 ### Must
 - **x86-32/x64 run every battery program that is not DOS by nature** (18 of 21: the other three
-  call DOS interrupts, link a DOS object, or are 16-bit inline assembly). Left: `TRY`/`CATCH` (the
-  lowering keeps its saved handler in 16-bit cells), `EXIT FAR`, math functions beyond the x87's,
-  and whatever a wider corpus finds.
+  call DOS interrupts, link a DOS object, or are 16-bit inline assembly). `TRY`/`CATCH` and
+  `EXIT FAR` are done. Left: math functions beyond the x87's, and whatever a wider corpus finds.
 - **Smaller 6502 code.** The 6502 runs 18 of the 21 battery programs - every one that is not DOS by nature, as x86-32 and x64 do. Code is still dominated by
   `LDA`/`STA`: every SSA value has its own frame cell, so casts, returns, phi edges and arguments
   are byte-by-byte copies. Done: frames share memory through the call-graph overlay (the innermost
@@ -239,10 +238,10 @@ floor under how many they accept - they are this section's to-do list.
   coalescing phi cells with their incoming values.
 
 ### Should
-- **`TRY` and `PEEK`/`POKE` on the 6502** - `INPUT`, `ON ERROR` and files (sequential on the 1541
-  through the KERNAL, RANDOM and BINARY in a 4 KB RAM cache) are done. `TRY` needs the
-  saved-handler cells; `PEEK`/`POKE` reach the IR as `segment:offset` addresses: on a flat machine
-  the segment has no meaning and the offset is the address. A RANDOM or BINARY file larger than the
+- **`PEEK`/`POKE` on the 6502** - `INPUT`, `ON ERROR`, `TRY`, `EXIT FAR` and files (sequential on
+  the 1541 through the KERNAL, RANDOM and BINARY in a 4 KB RAM cache) are done. `PEEK`/`POKE`
+  reach the IR as `segment:offset` addresses: on a flat machine the segment has no meaning and the
+  offset is the address. A RANDOM or BINARY file larger than the
   cache would need the 1541's REL files, whose `P` command positions by record.
 - **Registers on x86.** Every x86 SSA value lives in a frame slot; a linear-scan allocator over the
   32/64-bit register file is the obvious next step for speed.

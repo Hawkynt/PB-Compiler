@@ -18,11 +18,14 @@ public static partial class X86NativeCompiler {
     private X86Label _controlWord;
 
     /// <summary>
-    /// ON ERROR's state: the mode (0 disarmed, 1 a handler, 2 RESUME NEXT, 3 inside a handler, where a
-    /// further error is fatal), the handler's address, the frame and stack it runs in, the current
-    /// statement's restart and resume addresses, and the pair a fault latched for RESUME.
+    /// ON ERROR's state, as the DOS runtime keeps it: the handler - nought when disarmed, the
+    /// <see cref="_resumeNextStub"/> for ON ERROR RESUME NEXT - with the frame and stack it runs in
+    /// (the triple TRY saves and restores as <c>rt_onerr</c>, <c>rt_onerr_bp</c> and <c>rt_onerr_sp</c>),
+    /// the current statement's restart and resume addresses, and the pair a fault latched for RESUME.
+    /// EXIT FAR's unwind point is a triple of its own.
     /// </summary>
-    private X86Label _errorMode, _errorHandler, _errorFrame, _errorStack, _statementStart, _statementNext, _faultStart, _faultNext;
+    private X86Label _errorHandler, _errorFrame, _errorStack, _statementStart, _statementNext, _faultStart, _faultNext,
+      _resumeNextStub, _exitFarTarget, _exitFarFrame, _exitFarStack;
 
     /// <summary>The program's ERR cell, when it reads ERR at all.</summary>
     private X86Label? ErrorCode
@@ -51,7 +54,10 @@ public static partial class X86NativeCompiler {
       this._returnArea = this._asm.NewLabel("pb.return");
       this._staging = this._asm.NewLabel("pb.staging");
       this._controlWord = this._asm.NewLabel("pb.controlWord");
-      this._errorMode = this._asm.NewLabel("pb.errorMode");
+      this._resumeNextStub = this._asm.NewLabel("pb.resumeNext");
+      this._exitFarTarget = this._asm.NewLabel("pb.exitFarTarget");
+      this._exitFarFrame = this._asm.NewLabel("pb.exitFarFrame");
+      this._exitFarStack = this._asm.NewLabel("pb.exitFarStack");
       this._errorHandler = this._asm.NewLabel("pb.errorHandler");
       this._errorFrame = this._asm.NewLabel("pb.errorFrame");
       this._errorStack = this._asm.NewLabel("pb.errorStack");
@@ -79,6 +85,10 @@ public static partial class X86NativeCompiler {
       foreach (var function in defined)
         new FunctionGenerator(this, function).Generate();
 
+      // ON ERROR RESUME NEXT arms this as its handler: a fault goes straight on with the next statement
+      this._asm.Bind(this._resumeNextStub);
+      this._asm.JumpIndirect(X86Mem.At(this._faultNext));
+
       foreach (var (global, label) in this._globals) {
         var size = this.SizeOf(global.ValueType) * global.Count;
         if (global.Bytes is null && global.FloatingValues is null) {
@@ -96,8 +106,9 @@ public static partial class X86NativeCompiler {
       this._asm.Reserve(this._returnArea, 16, 16);
       this._asm.Reserve(this._staging, this._stagingBytes, 16);
       this._asm.Reserve(this._controlWord, 4, 4);
-      foreach (var cell in (X86Label[])[this._errorMode, this._errorHandler, this._errorFrame, this._errorStack,
-          this._statementStart, this._statementNext, this._faultStart, this._faultNext])
+      foreach (var cell in (X86Label[])[this._errorHandler, this._errorFrame, this._errorStack,
+          this._statementStart, this._statementNext, this._faultStart, this._faultNext,
+          this._exitFarTarget, this._exitFarFrame, this._exitFarStack])
         this._asm.Reserve(cell, this.WordBytes, this.WordBytes);
       return new(this._asm, start, export);
     }
@@ -201,6 +212,9 @@ public static partial class X86NativeCompiler {
       }
       // scratch for conversions through memory
       Add(frame.Scratch, 16);
+      // a procedure that arms a handler keeps its caller's here, to put back when it returns
+      if (function.HasErrorHandler && function.Name != "main")
+        Add(frame.SavedHandler, 3 * this.WordBytes);
       frame.Size = (below + 15) / 16 * 16;
       return frame;
     }
@@ -215,6 +229,7 @@ public static partial class X86NativeCompiler {
     private sealed class Frame {
       public Dictionary<IrValue, int> Places { get; } = [];
       public IrValue Scratch { get; } = new IrUndef(IrType.I64);
+      public IrValue SavedHandler { get; } = new IrUndef(IrType.I64);
       public int Size { get; set; }
     }
   }

@@ -20,19 +20,39 @@ public static partial class Mos6502Compiler {
     private M6502Label _overlay;
 
     /// <summary>
-    /// ON ERROR's state, reserved only in a program that arms a handler: the mode (0 disarmed,
-    /// 1 a handler, 2 RESUME NEXT, 3 inside a handler), the stacks the handler runs on, the armed
-    /// handler's address, the current statement's restart and resume addresses and the pair a fault
-    /// latched from them.
+    /// ON ERROR's state as the DOS runtime keeps it, reserved only in a program that arms a handler:
+    /// the handler - nought when disarmed, <see cref="_resumeNextStub"/> for ON ERROR RESUME NEXT -
+    /// with the soft stack and the stack pointer it runs on (the triple TRY saves and restores as
+    /// <c>rt_onerr</c>, <c>rt_onerr_bp</c> and <c>rt_onerr_sp</c>, so the stack pointer's cell is
+    /// padded to an address's two bytes), the current statement's restart and resume addresses, and
+    /// the pair a fault latched from them.
     /// </summary>
-    private M6502Label _errorMode, _errorStack, _errorSoftStack, _errorHandler,
-      _statementStart, _statementNext, _faultStart, _faultNext;
+    private M6502Label _errorHandler, _errorSoftStack, _errorStack, _statementStart, _statementNext, _faultStart, _faultNext,
+      _resumeNextStub;
 
-    private bool _trapsErrors;
+    /// <summary>EXIT FAR's unwind point: where to land, and the soft stack and stack pointer to have back.</summary>
+    private M6502Label _exitFarTarget, _exitFarSoftStack, _exitFarStack;
 
-    private (M6502Label Cell, int Bytes)[] ErrorCells => [(this._errorMode, 1), (this._errorStack, 1),
-      (this._errorSoftStack, 2), (this._errorHandler, 2), (this._statementStart, 2), (this._statementNext, 2),
-      (this._faultStart, 2), (this._faultNext, 2)];
+    private bool _trapsErrors, _exitsFar;
+
+    private (M6502Label Cell, int Bytes)[] ErrorCells => [(this._errorHandler, 2), (this._errorSoftStack, 2),
+      (this._errorStack, 2), (this._statementStart, 2), (this._statementNext, 2), (this._faultStart, 2), (this._faultNext, 2)];
+
+    private (M6502Label Cell, int Bytes)[] ExitFarCells => [(this._exitFarTarget, 2), (this._exitFarSoftStack, 2), (this._exitFarStack, 1)];
+
+    /// <summary>
+    /// A jump to the address a cell holds, as <c>RTI</c> takes it - status, then the address itself -
+    /// rather than <c>JMP (cell)</c>, which on an NMOS 6502 fetches the high byte from the wrong page
+    /// when the cell's low byte sits at <c>$xxFF</c>, somewhere a RAM cell can land.
+    /// </summary>
+    private static void JumpThrough(Mos6502Assembler asm, M6502Address cell) {
+      asm.Memory(Lda, cell.Plus(1));
+      asm.Emit(Pha);
+      asm.Memory(Lda, cell);
+      asm.Emit(Pha);
+      asm.Emit(Php);
+      asm.Emit(Rti);
+    }
 
     /// <summary>The RAM behind the frame overlay: as deep as the deepest chain of calls.</summary>
     private int OverlayBytes => this._frames.Values.Select(frame => frame.Base + frame.Size).DefaultIfEmpty(0).Max();
@@ -137,7 +157,11 @@ public static partial class Mos6502Compiler {
         this._globals.Add(global, this._asm.NewLabel(global.Name));
       this._staging = this._asm.NewLabel("staging");
       this._trapsErrors = defined.Any(function => function.HasErrorHandler);
-      this._errorMode = this._asm.NewLabel("errorMode");
+      this._exitsFar = module.FindFunction("rt_efar_arm") is not null;
+      this._resumeNextStub = this._asm.NewLabel("resumeNext");
+      this._exitFarTarget = this._asm.NewLabel("exitFarTarget");
+      this._exitFarSoftStack = this._asm.NewLabel("exitFarSoftStack");
+      this._exitFarStack = this._asm.NewLabel("exitFarStack");
       this._errorStack = this._asm.NewLabel("errorStack");
       this._errorSoftStack = this._asm.NewLabel("errorSoftStack");
       this._errorHandler = this._asm.NewLabel("errorHandler");
@@ -154,6 +178,11 @@ public static partial class Mos6502Compiler {
       this._runtime.EmitStartup(this._entries[main], uninitialized, this.UninitializedBytes(), closeFiles: this.UsesFiles);
       foreach (var function in defined)
         new FunctionGenerator(this, function).Generate();
+      if (this._trapsErrors) {
+        // ON ERROR RESUME NEXT arms this as its handler: a fault goes straight on with the next statement
+        this._asm.Bind(this._resumeNextStub);
+        JumpThrough(this._asm, this._faultNext);
+      }
       this._runtime.EmitRequested();
       foreach (var (label, bytes) in this._constants.Values) {
         this._asm.Bind(label);
@@ -178,16 +207,16 @@ public static partial class Mos6502Compiler {
         this._asm.Bind(cache);
         this._asm.Reserve(Mos6502Runtime.FileCacheBytes);
       }
-      if (this._trapsErrors)
-        foreach (var (cell, bytes) in this.ErrorCells) {
-          this._asm.Bind(cell);
-          this._asm.Reserve(bytes);
-        }
+      foreach (var (cell, bytes) in (this._trapsErrors ? this.ErrorCells : []).Concat(this._exitsFar ? this.ExitFarCells : [])) {
+        this._asm.Bind(cell);
+        this._asm.Reserve(bytes);
+      }
       return this._asm.Assemble(origin);
     }
 
     private int UninitializedBytes()
       => this.OverlayBytes + (this._trapsErrors ? this.ErrorCells.Sum(cell => cell.Bytes) : 0)
+        + (this._exitsFar ? this.ExitFarCells.Sum(cell => cell.Bytes) : 0)
         + (this.Seeks ? Mos6502Runtime.FileCacheBytes : 0)
         + this._globals.Keys.Where(IsUninitialized).Sum(global => SizeOf(global.ValueType) * global.Count)
         + this._stagingBytes;
@@ -229,6 +258,9 @@ public static partial class Mos6502Compiler {
         else if (!instruction.Type.IsVoid && (instruction is IrPhi || !instruction.HasNoUsers))
           frame.Add(instruction, SizeOf(instruction.Type));
       }
+      // a procedure that arms a handler keeps its caller's here, to put back when it returns
+      if (function.HasErrorHandler && function.Name != "main")
+        frame.Add(frame.SavedHandler, 6);
       return frame;
     }
 

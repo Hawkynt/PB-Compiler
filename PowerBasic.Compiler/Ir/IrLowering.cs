@@ -3420,28 +3420,33 @@ public sealed partial class IrLowering {
   /// That is what makes <c>TRY … FINALLY</c> run its cleanup and still fault: swallowing the error
   /// would be a different statement.
   /// </para>
+  /// <para>
+  /// The triple is a code address and two stack addresses, so its cells and slots are pointers: a
+  /// near word on DOS, and whatever an address is on a flat target, whose back end maps the three
+  /// cells onto its own handler state.
+  /// </para>
   /// </summary>
   private void LowerTry(TryStmt stmt) {
     this._fn.HasErrorHandler = true;
-    var onerr = this.RuntimeCell("rt_onerr", IrType.I16);
-    var onerrBp = this.RuntimeCell("rt_onerr_bp", IrType.I16);
-    var onerrSp = this.RuntimeCell("rt_onerr_sp", IrType.I16);
-    IrAlloca Slot(string name) =>
-      this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I16) { Name = name });
-    var savedHandler = Slot("try.onerr");
-    var savedBp = Slot("try.bp");
-    var savedSp = Slot("try.sp");
-    var pending = stmt.Catch is null ? Slot("try.err") : null;   // only TRY/FINALLY carries one
+    var onerr = this.RuntimeCell("rt_onerr", IrType.Ptr);
+    var onerrBp = this.RuntimeCell("rt_onerr_bp", IrType.Ptr);
+    var onerrSp = this.RuntimeCell("rt_onerr_sp", IrType.Ptr);
+    IrAlloca Slot(string name, IrType type) =>
+      this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(type) { Name = name });
+    var savedHandler = Slot("try.onerr", IrType.Ptr);
+    var savedBp = Slot("try.bp", IrType.Ptr);
+    var savedSp = Slot("try.sp", IrType.Ptr);
+    var pending = stmt.Catch is null ? Slot("try.err", IrType.I16) : null;   // only TRY/FINALLY carries one
 
     void Restore() {
-      this._b.Store(this._b.Load(IrType.I16, savedHandler), onerr);
-      this._b.Store(this._b.Load(IrType.I16, savedBp), onerrBp);
-      this._b.Store(this._b.Load(IrType.I16, savedSp), onerrSp);
+      this._b.Store(this._b.Load(IrType.Ptr, savedHandler), onerr);
+      this._b.Store(this._b.Load(IrType.Ptr, savedBp), onerrBp);
+      this._b.Store(this._b.Load(IrType.Ptr, savedSp), onerrSp);
     }
 
-    this._b.Store(this._b.Load(IrType.I16, onerr), savedHandler);
-    this._b.Store(this._b.Load(IrType.I16, onerrBp), savedBp);
-    this._b.Store(this._b.Load(IrType.I16, onerrSp), savedSp);
+    this._b.Store(this._b.Load(IrType.Ptr, onerr), savedHandler);
+    this._b.Store(this._b.Load(IrType.Ptr, onerrBp), savedBp);
+    this._b.Store(this._b.Load(IrType.Ptr, onerrSp), savedSp);
 
     var dispatch = this.NewBlock("try.dispatch");
     var body = this.NewBlock("try.body");

@@ -185,11 +185,16 @@ compiles the lot.
   here Linux system calls (`syscall` on x64, `int 0x80` on i386, which is why an i386 program runs
   on an x64 kernel with no 32-bit library installed), and `sys_trap`, the question `rt_error` asks
   first.
-- **`ON ERROR`** is the back end's, because arming captures the current frame and a call would
-  capture its own: `rt_onerr_arm`, `rt_resume_mark` and the two RESUMEs are expanded in place over a
-  few cells, and `sys_trap` - with a handler armed - sets `ERR`, latches the faulting statement for
-  RESUME, restores the armed frame and stack and enters the handler; an error inside the handler is
-  fatal, as in PowerBASIC. `TRY`/`CATCH` keeps its saved handler in DOS's 16-bit cells and declines.
+- **`ON ERROR`, `TRY` and `EXIT FAR`** are the back end's, because arming captures the current
+  frame and a call would capture its own. The state is the DOS runtime's: a handler cell - nought
+  when disarmed, a RESUME NEXT stub for `ON ERROR RESUME NEXT` - with the frame and stack it runs
+  in, which is exactly the triple `TRY` saves and restores (`rt_onerr`, `rt_onerr_bp`,
+  `rt_onerr_sp`, pointer-sized in the IR, map onto the three cells). `sys_trap`, like `rt_raise`,
+  sets `ERR` and, with a handler armed, latches the faulting statement for RESUME, restores the
+  frame and stack and jumps through the handler. A procedure that arms a handler keeps its caller's
+  in its frame and puts it back on return, as the DOS back end does; `EXIT FAR` has a triple of its
+  own. `FlatTargetNonLocalJumpTests` runs the same programs here, on the 6502 and on DOS, and wants
+  DOS's output from all of them.
 - **`Emit/Elf/ElfWriter`** writes the three containers:
 
 | Option | x86-16 (DOS, default) | x86-32 / x64 | 6502 |
@@ -230,7 +235,8 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   call back into the cycle and restores it after. A call out of the cycle, and every call in a program
   without recursion, pays nothing for it.
 - **The runtime is the portable one** (`Runtime/Portable`, the same IR x86-32 and x64 compile):
-  `PRINT`, `INPUT`, strings, `VAL`/`STR$`, BASIC's errors and `ON ERROR`/`RESUME`. What the 6502 supplies itself is
+  `PRINT`, `INPUT`, strings, `VAL`/`STR$` and BASIC's errors; `ON ERROR`, `TRY` and `EXIT FAR` are
+  the compiler's, in the DOS runtime's shape as on x86-32 and x64. What the 6502 supplies itself is
   `Mos6502Runtime`, assembled routine by routine as the code asks for them: `sys_write` through the
   KERNAL's `CHROUT` (ASCII mapped onto PETSCII after start-up selects the lower-case character set,
   a new line as a carriage return), `sys_read` on the console through `CHRIN` (PETSCII back to
@@ -275,7 +281,7 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
 - **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
   the code.
 
-What it does not lower yet it declines by name - `TRY`, inline assembly,
+What it does not lower yet it declines by name - inline assembly,
 calls through pointers - rather than compiling it into something else.
 `Mos6502ProgramTests` run compiled programs on `Cpu6502` (a hand-decoded interpreter in the test
 project, independent of the compiler's opcode table); `Mos6502BatteryTests` run every DOS battery

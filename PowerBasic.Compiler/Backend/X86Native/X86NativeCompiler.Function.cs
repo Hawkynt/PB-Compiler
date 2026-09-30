@@ -25,6 +25,7 @@ public static partial class X86NativeCompiler {
         this._asm.Mov(this.Word, X86Reg.Bp, X86Reg.Sp);
         if (this._frame.Size > 0)
           this._asm.AluImmediate(X86Alu.Sub, this.Word, X86Reg.Sp, this._frame.Size);
+        this.PreserveHandler(save: true);
         foreach (var block in function.Blocks)
           this._blocks.Add(block, this._asm.NewLabel($"{function.Name}.{block.Label}"));
         for (var i = 0; i < function.Blocks.Count; ++i) {
@@ -75,8 +76,13 @@ public static partial class X86NativeCompiler {
             return new ConstantOperand(0);
           case IrConstantFloat constant:
             return new MemoryOperand(X86Mem.At(module.Constant(constant)));
-          case IrGlobalVariable { Name: "rt_onerr" or "rt_onerr_bp" or "rt_onerr_sp" }:
-            throw Decline("TRY/CATCH keeps its handler in DOS's 16-bit cells and has no native lowering yet");
+          // TRY's handler triple is ON ERROR's own state
+          case IrGlobalVariable { Name: "rt_onerr" }:
+            return new AddressOperand(X86Mem.At(module._errorHandler));
+          case IrGlobalVariable { Name: "rt_onerr_bp" }:
+            return new AddressOperand(X86Mem.At(module._errorFrame));
+          case IrGlobalVariable { Name: "rt_onerr_sp" }:
+            return new AddressOperand(X86Mem.At(module._errorStack));
           case IrGlobalVariable global:
             return new AddressOperand(X86Mem.At(module._globals[global]));
           case IrBlockAddress address when this._blocks.TryGetValue(address.Block, out var label):
@@ -995,36 +1001,50 @@ public static partial class X86NativeCompiler {
       private X86Mem Cell(X86Label label) => X86Mem.At(label);
 
       /// <summary>
-      /// ON ERROR's intrinsics, expanded in place because arming captures the CURRENT frame and stack -
-      /// a call would capture its own. <c>sys_trap(code)</c> is the portable runtime's first question in
-      /// <c>rt_error</c>: with a handler armed it never returns - ERR is set, the statement pair
-      /// latched for RESUME, the armed frame and stack restored, and the handler entered; with none it
-      /// returns and the runtime reports the error.
+      /// A procedure that arms a handler promises its caller the caller's handler back: the triple is
+      /// saved on entry and restored on every return, as the DOS back end does.
+      /// </summary>
+      private void PreserveHandler(bool save) {
+        if (!this._frame.Places.TryGetValue(this._frame.SavedHandler, out var slot))
+          return;
+        var cells = (X86Label[])[module._errorHandler, module._errorFrame, module._errorStack];
+        for (var i = 0; i < cells.Length; ++i) {
+          var saved = X86Mem.At(X86Reg.Bp, slot + i * this.WordBytes);
+          this._asm.Mov(this.Word, X86Reg.Ax, save ? this.Cell(cells[i]) : saved);
+          this._asm.Mov(this.Word, save ? saved : this.Cell(cells[i]), X86Reg.Ax);
+        }
+      }
+
+      /// <summary>
+      /// ON ERROR's and EXIT FAR's intrinsics, expanded in place because arming captures the CURRENT
+      /// frame and stack - a call would capture its own - and keeping the DOS runtime's rules.
+      /// <c>sys_trap(code)</c> is the portable runtime's first question in <c>rt_error</c>, and
+      /// <c>rt_raise</c>'s: ERR gets the code, and with a handler armed it never returns - the
+      /// statement pair is latched for RESUME, the armed frame and stack come back, and the handler
+      /// runs (a fault inside it enters it again); with none it returns and the runtime reports the error.
       /// </summary>
       private bool TryErrorIntrinsic(string name, IReadOnlyList<IrValue> arguments) {
         var word = this.Word;
-        void SetMode(int mode) => this._asm.MovImmediate(X86Width.Dword, this.Cell(module._errorMode), mode);
-        void CaptureFrame() {
+        void ClearError() {
+          if (module.ErrorCode is { } err)
+            this._asm.MovImmediate(X86Width.Word, X86Mem.At(err), 0);
+        }
+        void Arm(Operand handler) {
+          this.Load(X86Reg.Ax, handler, word);
+          this._asm.Mov(word, this.Cell(module._errorHandler), X86Reg.Ax);
           this._asm.Mov(word, this.Cell(module._errorFrame), X86Reg.Bp);
           this._asm.Mov(word, this.Cell(module._errorStack), X86Reg.Sp);
-        }
-        void RestoreFrame() {
-          this._asm.Mov(word, X86Reg.Bp, this.Cell(module._errorFrame));
-          this._asm.Mov(word, X86Reg.Sp, this.Cell(module._errorStack));
+          ClearError();
         }
         switch (name) {
           case "rt_onerr_arm":
-            this.Load(X86Reg.Ax, this.Of(arguments[0]), word);
-            this._asm.Mov(word, this.Cell(module._errorHandler), X86Reg.Ax);
-            CaptureFrame();
-            SetMode(1);
+            Arm(this.Of(arguments[0]));
             return true;
           case "rt_onerr_resume_next":
-            CaptureFrame();
-            SetMode(2);
+            Arm(new AddressOperand(X86Mem.At(module._resumeNextStub)));
             return true;
           case "rt_onerr_disarm":
-            SetMode(0);
+            this._asm.MovImmediate(word, this.Cell(module._errorHandler), 0);
             return true;
           case "rt_resume_mark":
             this.Load(X86Reg.Ax, this.Of(arguments[0]), word);
@@ -1033,46 +1053,48 @@ public static partial class X86NativeCompiler {
             this._asm.Mov(word, this.Cell(module._statementNext), X86Reg.Ax);
             return true;
           case "rt_resume_same" or "rt_resume_next":
-            // the handler is done: errors trap again, and control returns to the faulting statement
-            SetMode(1);
-            RestoreFrame();
+            ClearError();
             this._asm.JumpIndirect(this.Cell(name == "rt_resume_same" ? module._faultStart : module._faultNext));
             return true;
           case "rt_err_clear":
-            if (module.ErrorCode is { } clear)
-              this._asm.MovImmediate(X86Width.Word, X86Mem.At(clear), 0);
+            ClearError();
             return true;
           case "sys_trap": {
             var none = this.Local("noHandler");
-            var handler = this.Local("trapHandler");
-            this._asm.Mov(X86Width.Dword, X86Reg.Ax, this.Cell(module._errorMode));
-            this._asm.AluImmediate(X86Alu.Cmp, X86Width.Dword, X86Reg.Ax, 1);
-            this._asm.Jump(X86Cond.Equal, handler);
-            this._asm.AluImmediate(X86Alu.Cmp, X86Width.Dword, X86Reg.Ax, 2);
-            this._asm.Jump(X86Cond.NotEqual, none);
-            // ON ERROR RESUME NEXT: straight on with the statement after the one that faulted
-            this.LatchFault(arguments[0]);
-            RestoreFrame();
-            this._asm.JumpIndirect(this.Cell(module._faultNext));
-            this._asm.Bind(handler);
-            this.LatchFault(arguments[0]);
-            SetMode(3);
-            RestoreFrame();
+            if (module.ErrorCode is { } err) {
+              this.Load(X86Reg.Ax, this.Of(arguments[0]), X86Width.Dword);
+              this._asm.Mov(X86Width.Word, X86Mem.At(err), X86Reg.Ax);
+            }
+            this._asm.Mov(word, X86Reg.Ax, this.Cell(module._errorHandler));
+            this._asm.Alu(X86Alu.Or, word, X86Reg.Ax, X86Reg.Ax);
+            this._asm.Jump(X86Cond.Equal, none);
+            this.LatchFault();
+            this._asm.Mov(word, X86Reg.Bp, this.Cell(module._errorFrame));
+            this._asm.Mov(word, X86Reg.Sp, this.Cell(module._errorStack));
             this._asm.JumpIndirect(this.Cell(module._errorHandler));
             this._asm.Bind(none);
             return true;
           }
+          // EXIT FAR AT label: where to land, and the frame and stack to have back when it does
+          case "rt_efar_arm":
+            this.Load(X86Reg.Ax, this.Of(arguments[0]), word);
+            this._asm.Mov(word, this.Cell(module._exitFarTarget), X86Reg.Ax);
+            this._asm.Mov(word, this.Cell(module._exitFarFrame), X86Reg.Bp);
+            this._asm.Mov(word, this.Cell(module._exitFarStack), X86Reg.Sp);
+            return true;
+          // a bare EXIT FAR: every frame between here and there is abandoned at once
+          case "rt_efar_go":
+            this._asm.Mov(word, X86Reg.Bp, this.Cell(module._exitFarFrame));
+            this._asm.Mov(word, X86Reg.Sp, this.Cell(module._exitFarStack));
+            this._asm.JumpIndirect(this.Cell(module._exitFarTarget));
+            return true;
           default:
             return false;
         }
       }
 
-      /// <summary>ERR gets the code; the statement that faulted becomes the one RESUME returns to.</summary>
-      private void LatchFault(IrValue code) {
-        if (module.ErrorCode is { } err) {
-          this.Load(X86Reg.Ax, this.Of(code), X86Width.Dword);
-          this._asm.Mov(X86Width.Word, X86Mem.At(err), X86Reg.Ax);
-        }
+      /// <summary>The statement that faulted becomes the one RESUME returns to.</summary>
+      private void LatchFault() {
         this._asm.Mov(this.Word, X86Reg.Ax, this.Cell(module._statementStart));
         this._asm.Mov(this.Word, this.Cell(module._faultStart), X86Reg.Ax);
         this._asm.Mov(this.Word, X86Reg.Ax, this.Cell(module._statementNext));
@@ -1140,6 +1162,7 @@ public static partial class X86NativeCompiler {
       private void LowerReturn(IrRet ret) {
         if (ret.Value is { } value)
           this.Copy(this.Of(value), module.SizeOf(value.Type), X86Mem.At(module._returnArea));
+        this.PreserveHandler(save: false);
         this._asm.Mov(this.Word, X86Reg.Sp, X86Reg.Bp);
         this._asm.Pop(X86Reg.Bp);
         this._asm.Ret();
