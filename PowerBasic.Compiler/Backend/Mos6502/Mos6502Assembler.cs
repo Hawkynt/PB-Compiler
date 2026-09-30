@@ -1,5 +1,8 @@
 namespace PowerBasic.Compiler.Backend.Mos6502;
 
+/// <summary>A program that does not fit the 6502's 64 KB address space.</summary>
+public sealed class M6502ImageTooLargeException(string message) : InvalidOperationException(message);
+
 /// <summary>A position in the program, bound once with <see cref="Mos6502Assembler.Bind"/>.</summary>
 public readonly record struct M6502Label(int Id);
 
@@ -231,7 +234,7 @@ public sealed class Mos6502Assembler {
     }
     var last = this._items.Count == 0 ? origin : offsets[^1] + Size(this._items[^1]);
     if (last > 0x10000)
-      throw new InvalidOperationException($"the program needs {last - origin} bytes and runs past the top of memory");
+      throw new M6502ImageTooLargeException($"the program needs {last - origin} bytes and runs past the top of memory");
     return new(origin, [.. bytes], last, addresses);
   }
 

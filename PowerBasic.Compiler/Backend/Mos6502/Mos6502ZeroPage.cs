@@ -42,11 +42,8 @@ public static class Mos6502ZeroPage {
   /// <summary>Runtime scratch; also where integer division leaves its remainder.</summary>
   public static readonly M6502Address Temp = Take(8);
 
-  /// <summary>Four more bytes of runtime scratch.</summary>
-  public static readonly M6502Address Temp2 = Take(4);
-
-  /// <summary>The output column <c>PRINT</c>'s zones and <c>TAB</c> count from, kept by the character writer.</summary>
-  public static readonly M6502Address Column = Take(1);
+  /// <summary>Eight more bytes of runtime scratch: a 64-bit division's trial difference.</summary>
+  public static readonly M6502Address Temp2 = Take(8);
 
   /// <summary>Signs a signed division remembers across the unsigned one.</summary>
   public static readonly M6502Address QuotientSign = Take(1);

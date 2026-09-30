@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Runtime.Portable;
 using static PowerBasic.Compiler.Backend.Mos6502.M6502Op;
 using Zp = PowerBasic.Compiler.Backend.Mos6502.Mos6502ZeroPage;
 
@@ -57,8 +58,8 @@ public static partial class Mos6502Compiler {
             return new AddressOperand(folded);
           case IrFunction:
             throw Decline($"'{function.Name}' takes a procedure's address, which has no 6502 lowering yet");
-          case IrConstantFloat:
-            throw Decline("floating point has no 6502 lowering yet");
+          case IrConstantFloat constant:
+            return new MemoryOperand(module.Constant(constant));
           default:
             if (this._frame.Offsets.ContainsKey(value))
               return new MemoryOperand(this._frame.AddressOf(value));
@@ -161,8 +162,18 @@ public static partial class Mos6502Compiler {
       }
 
       private void LowerBinary(IrBinary binary) {
-        if (binary.IsFloatOp)
-          throw Decline("floating point has no 6502 lowering yet");
+        if (binary.IsFloatOp) {
+          this.Unpack(binary.Lhs, intoB: false);
+          this.Unpack(binary.Rhs, intoB: true);
+          this._asm.Call(this._runtime.Routine(binary.Op switch {
+            IrBinaryOp.FAdd => M6502Routine.FloatAdd,
+            IrBinaryOp.FSub => M6502Routine.FloatSubtract,
+            IrBinaryOp.FMul => M6502Routine.FloatMultiply,
+            _ => M6502Routine.FloatDivide,
+          }));
+          this.Pack(binary.Type, this.Destination(binary));
+          return;
+        }
         var size = SizeOf(binary.Type);
         var lhs = this.Of(binary.Lhs);
         var rhs = this.Of(binary.Rhs);
@@ -186,15 +197,18 @@ public static partial class Mos6502Compiler {
             return;
           case IrBinaryOp.Mul:
             this.Arithmetic(lhs, rhs, size, signed: false,
-              size <= 2 ? M6502Routine.Multiply16 : M6502Routine.Multiply32, Zp.Ret, destination);
+              size switch { <= 2 => M6502Routine.Multiply16, 4 => M6502Routine.Multiply32, _ => M6502Routine.Multiply64 },
+              Zp.Ret, destination);
             return;
           case IrBinaryOp.SDiv or IrBinaryOp.SRem or IrBinaryOp.UDiv or IrBinaryOp.URem:
             var signed = binary.Op is IrBinaryOp.SDiv or IrBinaryOp.SRem;
-            var routine = (signed, size <= 2) switch {
-              (true, true) => M6502Routine.SignedDivide16,
-              (true, false) => M6502Routine.SignedDivide32,
-              (false, true) => M6502Routine.UnsignedDivide16,
-              _ => M6502Routine.UnsignedDivide32,
+            var routine = (signed, size) switch {
+              (true, <= 2) => M6502Routine.SignedDivide16,
+              (true, 4) => M6502Routine.SignedDivide32,
+              (true, _) => M6502Routine.SignedDivide64,
+              (false, <= 2) => M6502Routine.UnsignedDivide16,
+              (false, 4) => M6502Routine.UnsignedDivide32,
+              _ => M6502Routine.UnsignedDivide64,
             };
             var result = binary.Op is IrBinaryOp.SDiv or IrBinaryOp.UDiv ? Zp.Arg : Zp.Temp;
             this.Arithmetic(lhs, rhs, size, signed, routine, result, destination);
@@ -210,9 +224,7 @@ public static partial class Mos6502Compiler {
       /// <summary>A runtime multiply or divide: operands widened into Arg and ArgB, the result copied back.</summary>
       private void Arithmetic(Operand lhs, Operand rhs, int size, bool signed, M6502Routine routine,
           M6502Address result, M6502Address destination) {
-        if (size > 4)
-          throw Decline("64-bit multiplication and division have no 6502 lowering yet");
-        var width = size <= 2 ? 2 : 4;
+        var width = size <= 2 ? 2 : size <= 4 ? 4 : 8;
         this.Copy(lhs, size, Zp.Arg, width, signed);
         this.Copy(rhs, size, Zp.ArgB, width, signed);
         this._asm.Call(this._runtime.Routine(routine));
@@ -294,8 +306,24 @@ public static partial class Mos6502Compiler {
 
       /// <summary>Jumps to <paramref name="target"/> when the comparison holds; falls through when it does not.</summary>
       private void BranchIf(IrCmp compare, M6502Label target) {
-        if (compare.Lhs.Type.IsFloat)
-          throw Decline("floating point has no 6502 lowering yet");
+        if (compare.Lhs.Type.IsFloat) {
+          // FloatCompare answers $FF, 0 or 1 in A for less, equal and greater
+          this.Unpack(compare.Lhs, intoB: false);
+          this.Unpack(compare.Rhs, intoB: true);
+          this._asm.Call(this._runtime.Routine(M6502Routine.FloatCompare));
+          var (answer, holdsWhenEqual) = compare.Pred switch {
+            IrCmpPred.Foeq => (0, true),
+            IrCmpPred.Fone => (0, false),
+            IrCmpPred.Folt => (0xFF, true),
+            IrCmpPred.Foge => (0xFF, false),
+            IrCmpPred.Fogt => (1, true),
+            IrCmpPred.Fole => (1, false),
+            _ => throw Decline($"{compare.Pred} compares integers, not floats"),
+          };
+          this._asm.Immediate(Cmp, answer);
+          this._asm.Branch(holdsWhenEqual ? Beq : Bne, target);
+          return;
+        }
         var size = SizeOf(compare.Lhs.Type);
         var (lhs, rhs) = (this.Of(compare.Lhs), this.Of(compare.Rhs));
         switch (compare.Pred) {
@@ -361,6 +389,26 @@ public static partial class Mos6502Compiler {
         var size = SizeOf(cast.Type);
         var destination = this.Destination(cast);
         switch (cast.Op) {
+          case IrCastOp.FPExt or IrCastOp.FPTrunc:
+            this.Unpack(cast.Value, intoB: false);
+            this.Pack(cast.Type, destination);
+            return;
+          case IrCastOp.SIToFP or IrCastOp.UIToFP:
+            this.Copy(source, sourceSize, Zp.Arg, 8, signed: cast.Op == IrCastOp.SIToFP);
+            this._asm.Call(this._runtime.Routine(cast.Op == IrCastOp.SIToFP ? M6502Routine.FloatFromSigned : M6502Routine.FloatFromUnsigned));
+            this.Pack(cast.Type, destination);
+            return;
+          case IrCastOp.FPToSI or IrCastOp.FPToUI or IrCastOp.FPToSIRound or IrCastOp.FPToUIRound:
+            this.Unpack(cast.Value, intoB: false);
+            this._asm.Immediate(Ldx, size);
+            this._asm.Call(this._runtime.Routine(cast.Op switch {
+              IrCastOp.FPToSI => M6502Routine.FloatToSignedTruncate,
+              IrCastOp.FPToSIRound => M6502Routine.FloatToSignedRound,
+              IrCastOp.FPToUI => M6502Routine.FloatToUnsignedTruncate,
+              _ => M6502Routine.FloatToUnsignedRound,
+            }));
+            this.Copy(new MemoryOperand(Zp.Ret), size, destination, size);
+            return;
           case IrCastOp.Trunc or IrCastOp.ZExt or IrCastOp.PtrToInt or IrCastOp.IntToPtr or IrCastOp.BitCast:
             this.Copy(source, sourceSize, destination, size);
             return;
@@ -378,6 +426,26 @@ public static partial class Mos6502Compiler {
           default:
             throw Decline($"the {cast.Op} conversion has no 6502 lowering yet");
         }
+      }
+
+      private static M6502FloatFormat FormatOf(IrType type) => type.Bits switch {
+        32 => M6502FloatFormat.Single,
+        64 => M6502FloatFormat.Double,
+        _ => M6502FloatFormat.Extended,
+      };
+
+      /// <summary>Points <c>Ptr</c> at a float and unpacks it into accumulator A or B.</summary>
+      private void Unpack(IrValue value, bool intoB) {
+        if (this.Of(value) is not MemoryOperand { Address: var address })
+          throw Decline($"a float in '{function.Name}' is not in memory");
+        this.Copy(new AddressOperand(address), 2, Zp.Ptr, 2);
+        this._asm.Call(this._runtime.Routine(Mos6502Runtime.Unpack(FormatOf(value.Type), intoB)));
+      }
+
+      /// <summary>Rounds accumulator A into <paramref name="destination"/> in <paramref name="type"/>'s format.</summary>
+      private void Pack(IrType type, M6502Address destination) {
+        this.Copy(new AddressOperand(destination), 2, Zp.Ptr, 2);
+        this._asm.Call(this._runtime.Routine(Mos6502Runtime.Pack(FormatOf(type))));
       }
 
       private void LowerSelect(IrSelect select) {
@@ -473,6 +541,15 @@ public static partial class Mos6502Compiler {
           this.CallRuntime(call, callee);
           return;
         }
+        if (callee.Name == PortableRuntime.NativeCopy) {
+          // (dst, src, n) onto CopyMemory's (Ptr2, Ptr, Temp)
+          var args = call.Args.ToList();
+          this.Copy(this.Of(args[0]), 2, Zp.Ptr2, 2);
+          this.Copy(this.Of(args[1]), 2, Zp.Ptr, 2);
+          this.Copy(this.Of(args[2]), 4, Zp.Temp, 2);
+          this._asm.Call(this._runtime.Routine(M6502Routine.CopyMemory));
+          return;
+        }
 
         var reenters = module.Reenters(function, callee);
         if (reenters)
@@ -513,40 +590,24 @@ public static partial class Mos6502Compiler {
         this._asm.Call(this._runtime.Routine(routine));
       }
 
+      /// <summary>
+      /// A call to a declaration: the portable runtime defines everything a program calls, so what is
+      /// left are its two system primitives - <c>sys_write</c> through the KERNAL, <c>sys_exit</c>
+      /// back to BASIC.
+      /// </summary>
       private void CallRuntime(IrCall call, IrFunction callee) {
-        if (callee.Name == "rt_unreachable") {
-          this.RaiseError(51);
-          return;
+        switch (callee.Name) {
+          case "sys_write":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Arg, 2);
+            this.Copy(this.Of(call.Args.ElementAt(1)), 4, Zp.Arg.Plus(2), 4);
+            this._asm.Call(this._runtime.Routine(M6502Routine.SystemWrite));
+            return;
+          case "sys_exit":
+            this._asm.Jump(this._runtime.Routine(M6502Routine.Exit));
+            return;
+          default:
+            throw Decline($"the 6502 runtime has no {callee.Name} yet");
         }
-        var routine = callee.Name switch {
-          "rt_print_i8" => M6502Routine.PrintI8,
-          "rt_print_i16" => M6502Routine.PrintI16,
-          "rt_print_i32" => M6502Routine.PrintI32,
-          "rt_print_u8" => M6502Routine.PrintU8,
-          "rt_print_u16" => M6502Routine.PrintU16,
-          "rt_print_u32" => M6502Routine.PrintU32,
-          "rt_print_nl" => M6502Routine.PrintNewLine,
-          "rt_print_comma" or "rt_print_zone" => M6502Routine.PrintZone,
-          "rt_print_tab" => M6502Routine.PrintTab,
-          "rt_print_spc" => M6502Routine.PrintSpaces,
-          "rt_print_str" => M6502Routine.PrintString,
-          "rt_error" => M6502Routine.Error,
-          "rt_end" => M6502Routine.End,
-          "rt_inp" => M6502Routine.ReturnZero,
-          "rt_outp" => M6502Routine.Nothing,
-          _ => throw Decline($"the 6502 runtime has no {callee.Name} yet"),
-        };
-        var offset = 0;
-        foreach (var argument in call.Args) {
-          var size = SizeOf(argument.Type);
-          if (offset + size > Zp.ArgumentBytes)
-            throw Decline($"{callee.Name} takes more argument bytes than the 6502 runtime passes");
-          this.Copy(this.Of(argument), size, Zp.Arg.Plus(offset), size);
-          offset += size;
-        }
-        this._asm.Call(this._runtime.Routine(routine));
-        if (this.Stored(call))
-          this.Copy(new MemoryOperand(Zp.Ret), SizeOf(call.Type), this.Destination(call), SizeOf(call.Type));
       }
 
       private void RaiseError(int code) {

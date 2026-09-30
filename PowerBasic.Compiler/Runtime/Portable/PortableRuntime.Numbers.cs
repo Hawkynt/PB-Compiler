@@ -179,6 +179,7 @@ public static partial class PortableRuntime {
         w.If(w.B.And(w.Cmp(IrCmpPred.Sgt, total.Get(), w.I64(0x7FFF)), w.Cmp(IrCmpPred.Sle, total.Get(), w.I64(0xFFFF))),
           () => total.Set(w.B.Sub(total.Get(), w.I64(0x10000))));
         var result = w.B.Cast(IrCastOp.SIToFP, total.Get(), IrType.F64);
+        this.Consume(w, handle);
         w.Return(w.B.Select(negative.Get(), w.B.Binary(IrBinaryOp.FSub, new IrConstantFloat(IrType.F64, 0), result), result));
       });
 
@@ -228,7 +229,7 @@ public static partial class PortableRuntime {
         i.Set(w.B.Add(i.Get(), w.I32(1)));
       });
       var magnitude = w.B.Cast(IrCastOp.FPTrunc, scaled.Get(), IrType.F64);
-      w.B.Ret(w.B.Select(negative.Get(), w.B.Binary(IrBinaryOp.FSub, new IrConstantFloat(IrType.F64, 0), magnitude), magnitude));
+      this.ReturnConsuming(w, w.B.Select(negative.Get(), w.B.Binary(IrBinaryOp.FSub, new IrConstantFloat(IrType.F64, 0), magnitude), magnitude), handle);
     }
 
     // --- floats --------------------------------------------------------------------------------
@@ -280,16 +281,35 @@ public static partial class PortableRuntime {
     /// <c>%G</c> shape. The value is scaled by powers of ten into a <paramref name="digits"/>-digit
     /// integer, rounded to nearest-even, and the digits are laid out around the decimal exponent.
     /// </summary>
-    /// <summary><c>rt.formatFloat{digits}(value, buffer)</c>, the length written.</summary>
+    /// <summary>
+    /// <c>rt.formatFloat{digits}(value, buffer)</c>, the length written: a thin entry onto the one
+    /// shared formatter, which takes the digit count as an argument so a program printing SINGLEs
+    /// and DOUBLEs carries it once.
+    /// </summary>
     private IrFunction FormatFloat(int digits) {
       if (!this._formatFloat.TryGetValue(digits, out var function)) {
-        function = this.Internal($"rt.formatFloat{digits}", IrType.I32, [IrType.F80, IrType.Ptr], w => this.FloatText(w, digits));
+        function = this.Internal($"rt.formatFloat{digits}", IrType.I32, [IrType.F80, IrType.Ptr],
+          w => w.B.Ret(w.B.Call(IrType.I32, this.FloatFormatter, w.Function.Parameters[0], w.Function.Parameters[1], w.I32(digits))));
         this._formatFloat[digits] = function;
       }
       return function;
     }
 
-    private void FloatText(IrWriter w, int digits) {
+    private IrFunction? _floatFormatter;
+
+    private IrFunction FloatFormatter => this._floatFormatter ??= this.Internal("rt.formatFloat", IrType.I32,
+      [IrType.F80, IrType.Ptr, IrType.I32], this.FloatText);
+
+    private void FloatText(IrWriter w) {
+      var digits = w.Function.Parameters[2];
+      // 10^(digits - 1) and 10^digits: the range a scaled mantissa must land in
+      var lower = w.Variable(IrType.I64, w.I64(1));
+      var count = w.Variable(IrType.I32, w.I32(1));
+      w.While(() => w.Cmp(IrCmpPred.Slt, count.Get(), digits), () => {
+        lower.Set(w.B.Mul(lower.Get(), w.I64(10)));
+        count.Set(w.B.Add(count.Get(), w.I32(1)));
+      });
+      var upper = w.B.Mul(lower.Get(), w.I64(10));
       var value = w.Function.Parameters[0];
       var zero = w.Extended(0);
       var output = w.Function.Parameters[1];
@@ -336,7 +356,7 @@ public static partial class PortableRuntime {
       var scaled = w.Block("scaled");
       w.B.Br(scale);
       w.B.Position(scale);
-      var k = w.B.Sub(w.I32(digits - 1), exponent.Get());
+      var k = w.B.Sub(w.B.Sub(digits, w.I32(1)), exponent.Get());
       var up = w.Cmp(IrCmpPred.Sgt, k, w.I32(0));
       var remaining = w.Variable(IrType.I32, w.B.Select(up, k, w.B.Sub(w.I32(0), k)));
       var product = w.Variable(IrType.F80, magnitude);
@@ -351,12 +371,12 @@ public static partial class PortableRuntime {
         i.Set(w.B.Add(i.Get(), w.I32(1)));
       });
       mantissa.Set(w.B.Cast(IrCastOp.FPToSIRound, product.Get(), IrType.I64));
-      w.If(w.Cmp(IrCmpPred.Sge, mantissa.Get(), w.I64(Pow10(digits))), () => {
+      w.If(w.Cmp(IrCmpPred.Sge, mantissa.Get(), upper), () => {
         exponent.Set(w.B.Add(exponent.Get(), w.I32(1)));
         w.B.Br(scale);
         w.B.Position(w.Block("after"));
       });
-      w.If(w.Cmp(IrCmpPred.Slt, mantissa.Get(), w.I64(Pow10(digits - 1))), () => {
+      w.If(w.Cmp(IrCmpPred.Slt, mantissa.Get(), lower.Get()), () => {
         exponent.Set(w.B.Sub(exponent.Get(), w.I32(1)));
         w.B.Br(scale);
         w.B.Position(w.Block("after"));
@@ -365,15 +385,15 @@ public static partial class PortableRuntime {
       w.B.Position(scaled);
 
       // the digits, most significant first; trailing zeros are not significant
-      var digitText = w.Buffer(digits);
-      var j = w.Variable(IrType.I32, w.I32(digits - 1));
+      var digitText = w.Buffer(18);
+      var j = w.Variable(IrType.I32, w.B.Sub(digits, w.I32(1)));
       w.While(() => w.Cmp(IrCmpPred.Sge, j.Get(), w.I32(0)), () => {
         var digit = w.B.Trunc(w.B.Binary(IrBinaryOp.URem, mantissa.Get(), w.I64(10)), IrType.I8);
         w.SetByte(digitText, j.Get(), w.B.Add(digit, w.I8('0')));
         mantissa.Set(w.B.Binary(IrBinaryOp.UDiv, mantissa.Get(), w.I64(10)));
         j.Set(w.B.Sub(j.Get(), w.I32(1)));
       });
-      var significant = w.Variable(IrType.I32, w.I32(digits));
+      var significant = w.Variable(IrType.I32, digits);
       w.While(() => w.B.And(w.Cmp(IrCmpPred.Sgt, significant.Get(), w.I32(1)),
           w.Cmp(IrCmpPred.Eq, w.ByteAt(digitText, w.B.Sub(significant.Get(), w.I32(1))), w.I8('0'))),
         () => significant.Set(w.B.Sub(significant.Get(), w.I32(1))));
@@ -388,7 +408,7 @@ public static partial class PortableRuntime {
 
       Emit(w.B.Select(negative, w.I8('-'), w.I8(' ')));
       var e = exponent.Get();
-      var scientific = w.B.Or(w.Cmp(IrCmpPred.Slt, e, w.I32(-4)), w.Cmp(IrCmpPred.Sge, e, w.I32(digits)));
+      var scientific = w.B.Or(w.Cmp(IrCmpPred.Slt, e, w.I32(-4)), w.Cmp(IrCmpPred.Sge, e, digits));
       w.If(scientific, () => {
         Emit(w.ByteAt(digitText, w.I32(0)));
         w.If(w.Cmp(IrCmpPred.Sgt, significant.Get(), w.I32(1)), () => {
@@ -431,11 +451,5 @@ public static partial class PortableRuntime {
       w.B.Ret(length.Get());
     }
 
-    private static long Pow10(int n) {
-      var value = 1L;
-      for (var i = 0; i < n; ++i)
-        value *= 10;
-      return value;
-    }
   }
 }

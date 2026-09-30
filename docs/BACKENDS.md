@@ -152,7 +152,9 @@ pbc --platform x86-32 --emit-obj P.BAS  # -> P.o, exporting pb_main and pb_start
 
 Nothing but `pbc` is involved: no C compiler, assembler or linker. The IR goes through the hosted
 middle end (`RunHostedModule`, the one `--emit-c` uses), `Runtime/Portable/PortableRuntime` defines
-the `rt_*` functions the module calls into it, and `Backend/X86Native` compiles the lot.
+the `rt_*` functions the module calls into it - before the middle end, so the optimizer sees runtime
+and program together, and again after it for the calls it introduced - and `Backend/X86Native`
+compiles the lot.
 
 - **`X86Assembler`** is the instruction set as types, for both modes: `X86Reg`, `X86Width`,
   `X86Mem`, the ALU/shift/x87 groups as enums, immediates under their own method names (a literal `0`
@@ -215,19 +217,29 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   (Tarjan's SCCs over direct calls) saves its own frame to a soft stack at `$C000`-`$CFFF` before a
   call back into the cycle and restores it after. A call out of the cycle, and every call in a program
   without recursion, pays nothing for it.
-- **`Mos6502Runtime`** is assembled into the program routine by routine as the code asks for them:
-  `PRINT` with BASIC's sign slot, zones, `TAB` and `SPC`; 16- and 32-bit multiply and signed and
-  unsigned divide (error 11 on a zero divisor); frame save and restore; `rt_error`/`rt_end`.
-  Output goes through the KERNAL's `CHROUT` after start-up selects the lower-case character set,
-  and ASCII is mapped onto its PETSCII.
+- **The runtime is the portable one** (`Runtime/Portable`, the same IR x86-32 and x64 compile):
+  `PRINT`, strings, `VAL`/`STR$`, BASIC's errors. What the 6502 supplies itself is
+  `Mos6502Runtime`, assembled routine by routine as the code asks for them: `sys_write` through the
+  KERNAL's `CHROUT` (ASCII mapped onto PETSCII after start-up selects the lower-case character set,
+  a new line as a carriage return), 16-, 32- and 64-bit multiply and divide (error 11 on a zero
+  divisor), frame save and restore, and the runtime's own block copy in place of `rt.copy`'s IR body.
+- **Floating point is soft float** (`Mos6502Runtime.Float.cs`). A SINGLE, DOUBLE or EXT is stored in
+  its IEEE format and unpacked into page-zero accumulators with a 72-bit mantissa - 64 bits and a
+  guard byte whose bit 0 is sticky - so an operation is exact up to that bit and rounds to
+  nearest-even once, when it is packed back into the format its IR type names. There are no
+  infinities: overflow is error 6, a zero divisor error 11. `Mos6502FloatTests` hold add, subtract,
+  multiply, divide and compare to .NET's IEEE results bit for bit over random operands.
+- **Size comes first.** A C64 leaves 38 KB for program and data, so the build optimizes for size
+  unless `$OPTIMIZE SPEED` asks otherwise, and the string heap is 4 KB. A program that does not fit
+  is declined with how far past `$A000` it would reach.
 - **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$2F`, BASIC's own)
   and the stack pointer are saved on entry and restored on exit, so the final `RTS` - or `END`, or a
   run-time error, from any depth - lands at `READY.` with BASIC intact.
 - **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
   the code.
 
-What it does not lower yet it declines by name - floating point, dynamic strings, `ON ERROR`, inline
-assembly, `INPUT`, calls through pointers - rather than compiling it into something else.
+What it does not lower yet it declines by name - math functions, `ON ERROR`, inline assembly,
+`INPUT`, calls through pointers - rather than compiling it into something else.
 `Mos6502ProgramTests` run compiled programs on `Cpu6502` (a hand-decoded interpreter in the test
 project, independent of the compiler's opcode table); `Mos6502BatteryTests` run every DOS battery
 program the back end accepts against its DOS golden output, keep a floor under how many that is, and

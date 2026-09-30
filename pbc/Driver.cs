@@ -5,7 +5,6 @@ using PowerBasic.Compiler.Emit;
 using PowerBasic.Compiler.Emit.Commodore;
 using PowerBasic.Compiler.Backend.X86Native;
 using PowerBasic.Compiler.Emit.Elf;
-using PowerBasic.Compiler.Runtime.Portable;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -420,12 +419,9 @@ public static class Driver {
       Optimize = effectiveOptimize,
       OptimizeForSpeed = effectiveSpeed,
       RecoverIntegerArithmetic = effectiveOptimize,
+      PortableRuntimeHeapBytes = NativeHeapBytes,
     }, out var declined);
-    X86NativeCompiler.Program? program = null;
-    if (compiled is not null) {
-      PortableRuntime.Define(compiled.Module, heapBytes: NativeHeapBytes);
-      program = X86NativeCompiler.TryCompile(compiled.Module, machine, out declined);
-    }
+    var program = compiled is null ? null : X86NativeCompiler.TryCompile(compiled.Module, machine, out declined);
     if (program is null) {
       stderr.WriteLine($"error: {name}: {declined ?? "unsupported construct"}");
       return 1;
@@ -443,6 +439,9 @@ public static class Driver {
     stdout.WriteLine($"{Path.GetFileName(output)}: {bytes.Length} bytes ({name})");
     return 0;
   }
+
+  /// <summary>The string heap of a C64 program: a slice of the 38 KB BASIC leaves free.</summary>
+  private const int C64HeapBytes = 4096;
 
   /// <summary>The string heap of a native Linux program: uninitialised storage, so it costs no file space.</summary>
   private const int NativeHeapBytes = 16 << 20;
@@ -478,7 +477,10 @@ public static class Driver {
       Target = IrBackendTarget.Mos6502,
       Optimize = effectiveOptimize,
       OptimizeForSpeed = effectiveSpeed,
+      // a C64 has 38 KB for program and data: unless SPEED is asked for, optimize for size
+      OptimizeForSize = !effectiveSpeed,
       RecoverIntegerArithmetic = effectiveOptimize,
+      PortableRuntimeHeapBytes = C64HeapBytes,
     }, out var declined);
     var image = compiled is null ? null
       : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, C64Prg.MemoryTop, out declined);

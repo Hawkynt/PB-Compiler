@@ -55,6 +55,31 @@ public sealed class Cpu6502 {
     return new(cpu._output.ToString(), cpu._pc == Sentinel, steps, cpu._s, cpu._memory);
   }
 
+  /// <summary>
+  /// Calls the machine code at <paramref name="start"/> in <paramref name="memory"/> (64 KB, used in
+  /// place) as a subroutine, until it returns or <paramref name="maxSteps"/> instructions have run.
+  /// </summary>
+  public static Result Call(byte[] memory, int start, long maxSteps = 50_000_000) {
+    ArgumentOutOfRangeException.ThrowIfNotEqual(memory.Length, 0x10000);
+    var cpu = new Cpu6502();
+    memory.CopyTo(cpu._memory, 0);
+    cpu.Push((byte)((Sentinel - 1) >> 8));
+    cpu.Push((byte)((Sentinel - 1) & 0xFF));
+    cpu._pc = (ushort)start;
+    long steps = 0;
+    while (cpu._pc != Sentinel && steps < maxSteps) {
+      if (cpu._pc == Chrout) {
+        cpu.Capture(cpu._a);
+        cpu.Return();
+      } else {
+        cpu.Step();
+      }
+      ++steps;
+    }
+    cpu._memory.CopyTo(memory, 0);
+    return new(cpu._output.ToString(), cpu._pc == Sentinel, steps, cpu._s, memory);
+  }
+
   /// <summary>PETSCII, in the upper- and lower-case set the programs select, back to ASCII.</summary>
   private void Capture(byte character) {
     switch (character) {

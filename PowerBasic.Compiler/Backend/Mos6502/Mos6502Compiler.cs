@@ -18,9 +18,16 @@ namespace PowerBasic.Compiler.Backend.Mos6502;
 /// </para>
 ///
 /// <para>
-/// <b>What it declines.</b> Floating point, strings the runtime would have to manage, inline
-/// assembly, error trapping and indirect calls have no 6502 lowering yet; a module that uses one is
-/// declined with the construct named, never compiled into something that does something else.
+/// <b>Floating point</b> is the runtime's soft float: each operation unpacks its operands, works in
+/// 72 bits and rounds once into the result's IEEE format. <b>Everything else the program calls</b> -
+/// PRINT, strings, BASIC's errors - is the portable runtime, IR compiled here like the program; its
+/// output primitive <c>sys_write</c> is the KERNAL's <c>CHROUT</c>.
+/// </para>
+///
+/// <para>
+/// <b>What it declines.</b> Math functions, inline assembly, error trapping and indirect calls have
+/// no 6502 lowering yet; a module that uses one is declined with the construct named, never compiled
+/// into something that does something else.
 /// </para>
 /// </summary>
 public static partial class Mos6502Compiler {
@@ -39,6 +46,9 @@ public static partial class Mos6502Compiler {
     } catch (DeclinedException exception) {
       declined = exception.Message;
       return null;
+    } catch (M6502ImageTooLargeException exception) {
+      declined = exception.Message;
+      return null;
     }
   }
 
@@ -48,8 +58,11 @@ public static partial class Mos6502Compiler {
 
   /// <summary>The bytes a value of <paramref name="type"/> occupies.</summary>
   private static int SizeOf(IrType type) {
-    if (type.IsFloat)
-      throw Decline("floating point has no 6502 lowering yet");
+    if (type.IsFloat) {
+      if (type.IsMbf)
+        throw Decline("Microsoft Binary Format floats have no 6502 lowering yet");
+      return type.Bits switch { 32 => 4, 64 => 8, 80 => 10, _ => throw Decline($"{type} has no 6502 lowering") };
+    }
     if (type.IsFarPointer)
       throw Decline("far pointers have no 6502 meaning");
     if (type.IsPointer)

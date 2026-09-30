@@ -17,20 +17,28 @@ namespace PowerBasic.Compiler.Runtime.Portable;
 /// </summary>
 public static partial class PortableRuntime {
 
+  /// <summary>
+  /// The runtime's block copy, <c>(dst, src, n)</c>: a back end that has a faster one of its own may
+  /// lower calls to it natively and leave this body out.
+  /// </summary>
+  public const string NativeCopy = "rt.copy";
+
   /// <summary>BASIC's print zone: the comma separator's tab stop.</summary>
   private const int ZoneWidth = 14;
 
   /// <summary>
   /// Defines, in <paramref name="module"/>, every runtime function it declares that this runtime
-  /// implements; strings live in a heap of <paramref name="heapBytes"/>.
+  /// implements; strings live in a heap of <paramref name="heapBytes"/>. Before the middle end the
+  /// new functions are left in alloca form for it to promote; after it, <paramref name="cleanUp"/>
+  /// promotes and tidies them here.
   /// </summary>
-  public static void Define(IrModule module, int heapBytes) {
+  public static void Define(IrModule module, int heapBytes, bool cleanUp = true) {
     ArgumentNullException.ThrowIfNull(module);
     ArgumentOutOfRangeException.ThrowIfLessThan(heapBytes, 256);
-    new Definer(module, heapBytes).Run();
+    new Definer(module, heapBytes, cleanUp).Run();
   }
 
-  private sealed partial class Definer(IrModule module, int heapBytes) {
+  private sealed partial class Definer(IrModule module, int heapBytes, bool cleanUp) {
 
     private IrFunction? _write, _exit, _out;
     private IrGlobalVariable? _column;
@@ -42,11 +50,12 @@ public static partial class PortableRuntime {
       this.RewriteConcatenationChains();
       foreach (var function in module.Functions.Where(function => function.IsDeclaration).ToList())
         this.DefineIfKnown(function);
-      foreach (var function in this._defined) {
-        Mem2Reg.Run(function);
-        SimplifyCfg.Run(function);
-        Dce.Run(function);
-      }
+      if (cleanUp)
+        foreach (var function in this._defined) {
+          Mem2Reg.Run(function);
+          SimplifyCfg.Run(function);
+          Dce.Run(function);
+        }
       var errors = IrVerifier.Verify(module);
       if (errors.Count != 0)
         throw new InvalidOperationException("the portable runtime built invalid IR: " + string.Join("; ", errors));

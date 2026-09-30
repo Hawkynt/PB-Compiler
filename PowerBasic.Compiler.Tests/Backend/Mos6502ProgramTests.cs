@@ -13,9 +13,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <para>
 /// The inputs are opaque: <c>INP</c> reads a port the C64 does not have, which answers 0, and the
 /// optimizer cannot know that - so the arithmetic below is done by the 6502 at run time rather than
-/// by the compiler folding it away. Unary minus on a variable, and wide arithmetic written straight
-/// into a PRINT, are avoided: BASIC evaluates both in floating point, which this back end declines
-/// for now. Assigned to an integer variable first, the same arithmetic stays integral.
+/// by the compiler folding it away.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -160,14 +158,45 @@ public sealed class Mos6502ProgramTests {
   }
 
   [Test]
-  public void Build_GivenFloatingPoint_ThenItIsDeclinedByName() {
-    var (code, error, prg) = this.Build("x! = INP(&H60) / 3\nPRINT x!\n");
+  public void Run_GivenFloatingPoint_ThenSoftFloatComputesWhatThePcPrints() {
+    var output = this.Run("""
+      k = INP(&H60)
+      a! = (k + 1) / 3
+      b# = (k + 2) / 3#
+      PRINT a!; b#; (k - 5) / 2; (k + 1.5) * 1E-7; (k + 1) / 10000
+      x& = (k + 7.5)
+      y% = (k + 2.5)
+      PRINT x&; y%; FIX(k - 2.7); INT(k - 2.7); CINT(k + 3.5)
+      """);
 
-    Assert.Multiple(() => {
-      Assert.That(code, Is.Not.Zero);
-      Assert.That(error, Does.Contain("floating point"));
-      Assert.That(prg, Is.Empty);
-    });
+    Assert.That(output, Is.EqualTo(" .3333333  .666666666666667 -2.5  1.5E-07  .0001 \n 8  2 -2 -3  4 "));
+  }
+
+  [Test]
+  public void Run_GivenStrings_ThenThePortableRuntimeBuildsThemOnTheC64() {
+    var output = this.Run("""
+      k = INP(&H60)
+      a$ = "Hello" + STR$(k + 42)
+      b$ = MID$(a$, 2, 3) + LEFT$(a$, 1) + RIGHT$(a$, 2)
+      MID$(b$, 1, 1) = "E"
+      PRINT a$; LEN(a$); b$; INSTR(a$, "lo"); UCASE$("mixed Case")
+      """);
+
+    Assert.That(output, Is.EqualTo("Hello 42 8 EllH42 4 MIXED CASE"));
+  }
+
+  [Test]
+  public void Run_GivenStringChurn_ThenTheHeapReusesWhatIsFreed() {
+    // two hundred concatenations through a 4 KB heap: only reuse keeps it from running out
+    var output = this.Run("""
+      FOR i = 1 TO 200
+        c$ = c$ + CHR$(65 + i MOD 26)
+        IF LEN(c$) > 30 THEN c$ = MID$(c$, 10)
+      NEXT
+      PRINT c$; LEN(c$)
+      """);
+
+    Assert.That(output, Is.EqualTo("QRSTUVWXYZABCDEFGHIJKLMNOPQRS 29 "));
   }
 
   [Test]

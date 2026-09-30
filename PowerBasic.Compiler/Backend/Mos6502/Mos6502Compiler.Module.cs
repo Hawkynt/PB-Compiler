@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Runtime.Portable;
 using static PowerBasic.Compiler.Backend.Mos6502.M6502Op;
 using Zp = PowerBasic.Compiler.Backend.Mos6502.Mos6502ZeroPage;
 
@@ -18,10 +19,32 @@ public static partial class Mos6502Compiler {
     private Mos6502Runtime _runtime = null!;
     private M6502Label _staging;
     private int _stagingBytes;
+    private readonly Dictionary<string, (M6502Label Label, byte[] Bytes)> _constants = [];
+
+    /// <summary>A float constant in its IEEE format, in the data - one copy per bit pattern.</summary>
+    private M6502Label Constant(IrConstantFloat constant) {
+      if (constant.Type.IsMbf)
+        throw Decline("Microsoft Binary Format floats have no 6502 lowering yet");
+      var key = $"{constant.Type.Bits}:{constant.BitPatternKey()}";
+      if (!this._constants.TryGetValue(key, out var entry)) {
+        byte[] bytes;
+        if (constant.Type.Bits == 80) {
+          bytes = new byte[10];
+          BitConverter.GetBytes(constant.Float80.Significand).CopyTo(bytes, 0);
+          BitConverter.GetBytes(constant.Float80.SignExponent).CopyTo(bytes, 8);
+        } else {
+          bytes = constant.Type.Bits == 32 ? BitConverter.GetBytes((float)constant.Value) : BitConverter.GetBytes(constant.Value);
+        }
+        entry = (this._asm.NewLabel("float." + key), bytes);
+        this._constants.Add(key, entry);
+      }
+      return entry.Label;
+    }
 
     public Mos6502Assembler.Image Generate(int origin) {
       this._runtime = new(this._asm);
-      var defined = module.Functions.Where(function => !function.IsDeclaration).ToList();
+      // the portable runtime's block copy is the runtime's own CopyMemory here: its IR body is not needed
+      var defined = module.Functions.Where(function => !function.IsDeclaration && function.Name != PortableRuntime.NativeCopy).ToList();
       var main = defined.FirstOrDefault(function => function.Name == "main")
         ?? throw Decline("the module has no main program");
       foreach (var function in defined)
@@ -38,11 +61,17 @@ public static partial class Mos6502Compiler {
       this._stagingBytes = defined.Select(function => function.Parameters.Sum(parameter => SizeOf(parameter.Type)))
         .DefaultIfEmpty(0).Max();
 
+      if (module.FindFunction("rt_error") is { IsDeclaration: false } error)
+        this._runtime.ErrorFunction = (this._entries[error], this._frames[error].AddressOf(error.Parameters[0]));
       var uninitialized = this._asm.NewLabel("uninitialized");
       this._runtime.EmitStartup(this._entries[main], uninitialized, this.UninitializedBytes());
       foreach (var function in defined)
         new FunctionGenerator(this, function).Generate();
       this._runtime.EmitRequested();
+      foreach (var (label, bytes) in this._constants.Values) {
+        this._asm.Bind(label);
+        this._asm.Bytes(bytes);
+      }
       foreach (var (global, label) in this._globals.Where(pair => !IsUninitialized(pair.Key))) {
         this._asm.Bind(label);
         this._asm.Bytes(InitialBytes(global));
@@ -68,14 +97,20 @@ public static partial class Mos6502Compiler {
         + this._globals.Keys.Where(IsUninitialized).Sum(global => SizeOf(global.ValueType) * global.Count)
         + this._stagingBytes;
 
-    private static bool IsUninitialized(IrGlobalVariable global) => global.Bytes is null;
+    private static bool IsUninitialized(IrGlobalVariable global) => global.Bytes is null && global.FloatingValues is null;
 
     private static byte[] InitialBytes(IrGlobalVariable global) {
-      if (global.FloatingValues is not null)
-        throw Decline($"global '{global.Name}' holds floating-point values, which have no 6502 lowering yet");
       var size = SizeOf(global.ValueType) * global.Count;
-      var bytes = new byte[Math.Max(size, global.Bytes!.Length)];
-      global.Bytes.CopyTo(bytes, 0);
+      var bytes = new byte[Math.Max(size, global.Bytes?.Length ?? 0)];
+      if (global.FloatingValues is { } floats) {
+        if (global.ValueType.Bits == 80)
+          throw Decline($"global '{global.Name}' holds 80-bit float values given as doubles");
+        for (var i = 0; i < floats.Length; ++i)
+          (global.ValueType.Bits == 32 ? BitConverter.GetBytes((float)floats[i]) : BitConverter.GetBytes(floats[i]))
+            .CopyTo(bytes, i * SizeOf(global.ValueType));
+      } else {
+        global.Bytes!.CopyTo(bytes, 0);
+      }
       return bytes;
     }
 

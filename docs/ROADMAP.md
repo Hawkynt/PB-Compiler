@@ -231,11 +231,14 @@ floor under how many they accept - they are this section's to-do list.
   declined battery programs wait for now is `rt_file_*` and `rt_kill` (system calls beside
   `sys_write`), `INPUT` (`sys_read`), and error trapping, which needs a non-local return to the
   handler.
-- **The 6502 onto the portable runtime.** Its runtime is hand-written 6502 today. Compiling the
-  portable runtime instead shares every string and formatting routine; what the 6502 then needs of
-  its own is soft floating point for the IR's float operations. Half of that is written - unpacking
-  and packing all three IEEE widths with one rounding - and parked outside the tree; add, multiply,
-  divide, compare and the integer conversions remain.
+- **Smaller 6502 code.** The 6502 compiles the portable runtime and has soft float, and what now
+  keeps battery programs off a C64 is size: `STRINGS` and `STRBOUND` compile but reach past `$A000`.
+  Every 32- and 64-bit IR operation is expanded byte by byte and every SSA value has its own frame
+  cell; narrowing values proven small (the middle end keeps 16 bits for x86-16 - a 6502 wants 8),
+  sharing cells between values whose live ranges do not overlap, and a peephole over the store/load
+  pairs the per-instruction lowering leaves are the three big levers.
+- **Math functions on the 6502.** SQR, SIN, LOG, `^` and the rest are x87 instructions on x86; the
+  6502 needs them as soft-float routines.
 
 ### Should
 - **`ON ERROR`, `INPUT`** (`sys_read` beside `sys_write`; the KERNAL's `CHRIN` on a C64), and
@@ -243,9 +246,6 @@ floor under how many they accept - they are this section's to-do list.
   and the offset is the address.
 - **Registers on x86.** Every x86 SSA value lives in a frame slot; a linear-scan allocator over the
   32/64-bit register file is the obvious next step for speed.
-- **Smaller 6502 frames and narrower arithmetic.** Values whose live ranges do not overlap can share
-  a cell, which also shrinks what a recursive call saves; hot values belong in page zero; values
-  proven to fit a byte should be computed in one.
 
 ### Could
 - **Other 6502 machines** - VIC-20, Apple II, Atari 8-bit: the code is the same, only the load

@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
+using PowerBasic.Compiler.Runtime.Portable;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Backend.Targets;
 
@@ -40,6 +41,8 @@ public sealed class IrBackendModule {
       return null;
 
     module.AsciiOnly = model.AsciiOnly;
+    if (options.PortableRuntimeHeapBytes is { } heap)
+      PortableRuntime.Define(module, heap, cleanUp: false);
     if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35
         or IrBackendTarget.X86_32 or IrBackendTarget.X64)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
@@ -52,6 +55,9 @@ public sealed class IrBackendModule {
       declinedBecause = $"target '{options.Target}' has no emitter yet";
       return null;
     }
+
+    if (options.PortableRuntimeHeapBytes is { } lateHeap)
+      PortableRuntime.Define(module, lateHeap, cleanUp: true);
 
     var errors = IrVerifier.Verify(module);
     if (errors.Count != 0) {

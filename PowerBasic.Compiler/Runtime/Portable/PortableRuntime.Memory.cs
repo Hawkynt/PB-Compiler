@@ -26,7 +26,10 @@ public static partial class PortableRuntime {
 
     private IrFunction? _copyBytes;
 
-    /// <summary><c>rt.copy(dst, src, n)</c>: copies <c>n</c> bytes forwards.</summary>
+    /// <summary>
+    /// <c>rt.copy(dst, src, n)</c>: copies <c>n</c> bytes forwards. A back end with a faster block
+    /// copy of its own may call that instead (<see cref="NativeCopy"/>); this body is the fallback.
+    /// </summary>
     private IrFunction CopyBytes => this._copyBytes ??= this.Internal("rt.copy", IrType.Void, [IrType.Ptr, IrType.Ptr, IrType.I32], w => {
       var (destination, source, length) = (w.Function.Parameters[0], w.Function.Parameters[1], w.Function.Parameters[2]);
       var i = w.Variable(IrType.I32, w.I32(0));

@@ -12,4 +12,11 @@ public sealed record IrBackendOptions {
   public bool RecoverIntegerArithmetic { get; init; }
   public bool PrepareParallelLoops { get; init; }
   public RuntimeTarget RuntimeTarget { get; init; } = RuntimeTarget.Baseline;
+
+  /// <summary>
+  /// When set, the portable runtime (<c>Runtime/Portable</c>) is defined into the module with a string
+  /// heap of this many bytes: before the middle end, so the optimizer works on the runtime together
+  /// with the program, and again after it, for the runtime calls the optimizer itself introduced.
+  /// </summary>
+  public int? PortableRuntimeHeapBytes { get; init; }
 }
