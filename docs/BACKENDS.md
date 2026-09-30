@@ -259,13 +259,16 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   `π/2`, a power-of-two split for `ln` and `√` - and sum a short series. Any target without
   floating-point hardware can switch them on; `Mos6502ProgramTests` holds them to .NET's answers to
   fourteen digits.
-- **Size comes first.** A C64 leaves 38 KB for program and data, so the build optimizes for size
+- **Size comes first.** A C64 leaves 46 KB for program and data - `$0801` up to the soft stack at
+  `$C000`, the top 8 KB under the BASIC ROM, which start-up maps out while the program runs and the
+  return to BASIC maps back in - so the build optimizes for size
   unless `$OPTIMIZE SPEED` asks otherwise, the string heap is 4 KB, and the portable runtime keeps
   its lengths, positions and counters in 16 bits (`IrWriter.Index`) - the `rt_*` ABI keeps its
   declared widths and each entry converts at that edge. A program that does not fit
-  is declined with how far past `$A000` it would reach.
-- **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$2F`, BASIC's own)
-  and the stack pointer are saved on entry and restored on exit, so the final `RTS` - or `END`, or a
+  is declined with how far past `$C000` it would reach.
+- **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$8F`, BASIC's own),
+  the processor port that maps the BASIC ROM and the stack pointer are saved on entry and restored
+  on exit, so the final `RTS` - or `END`, or a
   run-time error, from any depth - lands at `READY.` with BASIC intact.
 - **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
   the code.

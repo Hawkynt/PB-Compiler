@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text.RegularExpressions;
 using PowerBasic.Compiler.Cli;
 using PowerBasic.Compiler.Tests.Exec;
 
@@ -13,7 +11,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// keeps the covered part from quietly getting smaller.
 /// </summary>
 [TestFixture]
-public sealed partial class Mos6502BatteryTests {
+public sealed class Mos6502BatteryTests {
 
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
@@ -55,7 +53,7 @@ public sealed partial class Mos6502BatteryTests {
 
     Assert.That(result.Returned, Is.True, $"{program} did not return to BASIC within the step budget");
     var expected = File.ReadAllText(Path.Combine(_repoRoot, "tests", Path.ChangeExtension(program, ".expected")));
-    Assert.That(Normalize(result.Output), Is.EqualTo(Normalize(expected)));
+    Assert.That(Vice.Normalize(result.Output), Is.EqualTo(Vice.Normalize(expected)));
   }
 
   [Test]
@@ -70,77 +68,19 @@ public sealed partial class Mos6502BatteryTests {
   }
 
   /// <summary>
-  /// The same program on VICE, the reference C64 emulator, with the real KERNAL and a drive 8 that
-  /// is a host directory: a tracepoint on the screen editor's output (<c>$E716</c>) logs the
-  /// accumulator at every character that reaches the screen, which is the program's output one
-  /// PETSCII byte at a time - bytes written to a file go to the drive instead and are not in it. It
-  /// proves the start-up, the page-zero save, the return to BASIC and the file routines on the
-  /// machine they were written for, and that <see cref="Cpu6502"/>'s KERNAL and 1541 agree with it.
-  /// Skipped unless <c>x64sc</c> and <c>xvfb-run</c> are installed.
+  /// The same program on VICE (<see cref="Vice"/>), with the real KERNAL and a host directory as
+  /// drive 8. It proves the start-up, the page-zero save, the return to BASIC and the file routines on
+  /// the machine they were written for, and that <see cref="Cpu6502"/>'s KERNAL and 1541 agree with
+  /// it. Skipped unless <c>x64sc</c> and <c>xvfb-run</c> are installed.
   /// </summary>
   [TestCase("CTRL.BAS")]
   [TestCase("FILEIO1.BAS")]
   [TestCase("ONERR.BAS")]
   public void Run_GivenAProgramOnVice_ThenTheRealKernalPrintsWhatTheInterpreterPrints(string program) {
-    Assume.That(OnPath("x64sc") && OnPath("xvfb-run"), "VICE or Xvfb is not installed");
+    Assume.That(Vice.IsAvailable, "VICE or Xvfb is not installed");
     var prg = Compile(program, out var declined);
     Assert.That(prg, Is.Not.Null, declined);
 
-    var work = Directory.CreateTempSubdirectory("pbc-6502-vice-");
-    try {
-      var path = Path.Combine(work.FullName, "PROG.PRG");
-      var commands = Path.Combine(work.FullName, "trace.mon");
-      var log = Path.Combine(work.FullName, "monitor.log");
-      File.WriteAllBytes(path, prg!);
-      // the screen editor's output, which CHROUT reaches only for the screen - not for a file
-      File.WriteAllText(commands, "trace exec $e716\n");
-      var disk = work.CreateSubdirectory("disk");
-      string viceOutput;
-      using (var vice = Process.Start(new ProcessStartInfo("xvfb-run", [
-          "-a", "-n", Random.Shared.Next(200, 900).ToString(System.Globalization.CultureInfo.InvariantCulture), "x64sc", "-default", "-warp", "-sounddev", "dummy", "-autostart", path,
-          "-moncommands", commands, "-monlog", "-monlogname", log, "-autostartprgmode", "1", "-limitcycles", "150000000",
-          // drive 8 is the host directory, answering on the serial bus as a 1541 would
-          "-drive8type", "0", "-busdevice8", "-fs8", disk.FullName]) {
-          RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
-        })!) {
-        var stdout = vice.StandardOutput.ReadToEndAsync();
-        var stderr = vice.StandardError.ReadToEndAsync();
-        Assert.That(vice.WaitForExit(TimeSpan.FromMinutes(2)), Is.True, "VICE did not stop at its cycle limit");
-        viceOutput = stdout.Result + stderr.Result;
-      }
-
-      // after the program, BASIC prints its own READY. prompt; the program's output is what precedes it
-      var printed = PetsciiAfterCharsetSwitch(File.ReadAllText(log));
-      var prompt = printed.LastIndexOf("ready.", StringComparison.Ordinal);
-      Assert.That(prompt, Is.GreaterThanOrEqualTo(0), $"the program never returned to BASIC; VICE printed: {printed}\n{viceOutput}");
-      Assert.That(Normalize(printed[..prompt]), Is.EqualTo(Normalize(Cpu6502.RunC64Program(prg!).Output)));
-    } finally {
-      work.Delete(recursive: true);
-    }
+    Assert.That(Vice.Run(prg!), Is.EqualTo(Vice.Normalize(Cpu6502.RunC64Program(prg!).Output)));
   }
-
-  /// <summary>
-  /// The accumulator at every traced screen output, decoded, from the program's switch to the
-  /// lower-case character set on: what came before it is the autostart's own <c>LOAD</c> and <c>RUN</c>.
-  /// </summary>
-  private static string PetsciiAfterCharsetSwitch(string log) {
-    var bytes = TraceAccumulator().Matches(log).Select(match => Convert.ToByte(match.Groups[1].Value, 16)).ToList();
-    var start = bytes.LastIndexOf(0x0E) + 1;
-    return string.Concat(bytes.Skip(start).Select(character => character switch {
-      0x0D => "\n",
-      >= 0x41 and <= 0x5A => ((char)(character + 0x20)).ToString(),
-      >= 0xC1 and <= 0xDA => ((char)(character - 0x80)).ToString(),
-      _ => ((char)character).ToString(),
-    }));
-  }
-
-  [GeneratedRegex(@"\.C:e716 .*? A:([0-9A-Fa-f]{2})")]
-  private static partial Regex TraceAccumulator();
-
-  private static bool OnPath(string name)
-    => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
-      .Any(dir => dir.Length > 0 && File.Exists(Path.Combine(dir, name)));
-
-  private static string Normalize(string text) =>
-    string.Join("\n", text.Replace("\r\n", "\n").Split('\n').Select(line => line.TrimEnd())).Trim('\n');
 }

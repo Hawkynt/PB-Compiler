@@ -214,6 +214,32 @@ public sealed class Mos6502ProgramTests {
     }
   }
 
+  /// <summary>
+  /// A program too big for the RAM below the BASIC ROM: it runs only because start-up maps the ROM
+  /// out, and VICE - where the ROM is real - proves the code past <c>$A000</c> is what executes.
+  /// </summary>
+  [Test]
+  public void Run_GivenAProgramReachingPastTheBasicRom_ThenTheRamUnderItHoldsTheCode() {
+    var data = string.Join(", ", MathArguments.Select(value => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
+    var (code, error, prg) = this.Build($"""
+      k = INP(&H60)
+      FOR i = 1 TO 3
+        READ x#
+        x# = x# + k
+        PRINT {string.Join("; ", MathGroups.Select(group => group.Basic))}
+      NEXT
+      DATA {data}
+      """);
+    Assert.That(code, Is.Zero, error);
+    Assert.That(C64Prg.LoadAddress + prg.Length - 2, Is.GreaterThan(0xA000), "the program should reach past the BASIC ROM's start");
+
+    var interpreted = Cpu6502.RunC64Program(prg);
+    Assert.That(interpreted.Returned, Is.True);
+    Assert.That(interpreted.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries), Has.Length.EqualTo(3), interpreted.Output);
+    Assume.That(Vice.IsAvailable, "VICE or Xvfb is not installed");
+    Assert.That(Vice.Run(prg), Is.EqualTo(Vice.Normalize(interpreted.Output)));
+  }
+
   [Test]
   public void Run_GivenAWholePower_ThenItIsExact() {
     var output = this.Run("""

@@ -64,6 +64,9 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
   /// <summary>The KERNAL's character input: a line from the screen editor, a carriage return at its end.</summary>
   public static readonly M6502Address Chrin = M6502Address.Absolute(0xFFCF);
 
+  /// <summary>The processor port: bit 0 maps the BASIC ROM in at <c>$A000</c>, or the RAM beneath it out of sight.</summary>
+  private static readonly M6502Address ProcessorPort = M6502Address.Absolute(0x0001);
+
   /// <summary>Where recursion's frames go: the 4 KB under the I/O area, free on a C64.</summary>
   public const int SoftStackTop = 0xD000;
   public const int SoftStackBottom = 0xC000;
@@ -91,9 +94,15 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
     asm.Bind(this.Routine(M6502Routine.Startup));
     this._emitted.Add(M6502Routine.Startup);
     var savedStack = asm.NewLabel("rt.savedStack");
+    var savedPort = asm.NewLabel("rt.savedPort");
     var savedZeroPage = asm.NewLabel("rt.savedZeroPage");
     asm.Emit(Tsx);
     asm.Memory(Stx, savedStack);
+    // the BASIC ROM out, the RAM under it in: the program may reach $C000
+    asm.Memory(Lda, ProcessorPort);
+    asm.Memory(Sta, savedPort);
+    asm.Immediate(M6502Op.And, 0xFE);
+    asm.Memory(Sta, ProcessorPort);
     this.CopyPageZero(from: M6502Address.Absolute(Zp.First), to: savedZeroPage);
     this.LoadWord(Zp.SoftStack, SoftStackTop);
     if (clearBytes > 0) {
@@ -135,11 +144,15 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
     if (closeFiles)
       asm.Call(this.Routine(M6502Routine.FileCloseAll));
     this.CopyPageZero(from: savedZeroPage, to: M6502Address.Absolute(Zp.First));
+    asm.Memory(Lda, savedPort);
+    asm.Memory(Sta, ProcessorPort);
     asm.Memory(Ldx, savedStack);
     asm.Emit(Txs);
     asm.Emit(Rts);
     // the saved state is initialised data: the clear above must not wipe it
     asm.Bind(savedStack);
+    asm.Bytes([0]);
+    asm.Bind(savedPort);
     asm.Bytes([0]);
     asm.Bind(savedZeroPage);
     asm.Bytes(new byte[Zp.Last - Zp.First + 1]);

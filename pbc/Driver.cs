@@ -440,7 +440,7 @@ public static class Driver {
     return 0;
   }
 
-  /// <summary>The string heap of a C64 program: a slice of the 38 KB BASIC leaves free.</summary>
+  /// <summary>The string heap of a C64 program: a slice of the 46 KB a program has.</summary>
   private const int C64HeapBytes = 4096;
 
   /// <summary>The string heap of a native Linux program: uninitialised storage, so it costs no file space.</summary>
@@ -477,7 +477,7 @@ public static class Driver {
       Target = IrBackendTarget.Mos6502,
       Optimize = effectiveOptimize,
       OptimizeForSpeed = effectiveSpeed,
-      // a C64 has 38 KB for program and data: unless SPEED is asked for, optimize for size
+      // a C64 has 46 KB for program and data: unless SPEED is asked for, optimize for size
       OptimizeForSize = !effectiveSpeed,
       RecoverIntegerArithmetic = effectiveOptimize,
       PortableRuntimeHeapBytes = C64HeapBytes,
