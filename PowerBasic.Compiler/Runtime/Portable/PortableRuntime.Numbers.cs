@@ -34,9 +34,9 @@ public static partial class PortableRuntime {
       "rt_str_from_single" => w => this.NumberString(w, w.Function.Parameters[0], this.FormatFloat(7)),
       "rt_str_from_double" => w => this.NumberString(w, w.Function.Parameters[0], this.FormatFloat(15)),
       "rt_str_from_ext" => w => this.NumberString(w, w.Function.Parameters[0], this.FormatFloat(18)),
-      "rt_str_hex" => w => this.Radix(w, w.Function.Parameters[0], w.I32((1 << 8) | 4)),
-      "rt_str_oct" => w => this.Radix(w, w.Function.Parameters[0], w.I32((1 << 8) | 3)),
-      "rt_str_bin" => w => this.Radix(w, w.Function.Parameters[0], w.I32((1 << 8) | 1)),
+      "rt_str_hex" => w => this.Radix(w, w.Function.Parameters[0], w.Ix((1 << 8) | 4)),
+      "rt_str_oct" => w => this.Radix(w, w.Function.Parameters[0], w.Ix((1 << 8) | 3)),
+      "rt_str_bin" => w => this.Radix(w, w.Function.Parameters[0], w.Ix((1 << 8) | 1)),
       "rt_str_radix" => w => this.Radix(w, w.Function.Parameters[0], w.Function.Parameters[1]),
       "rt_str_val" => w => w.B.Ret(w.B.Call(IrType.F64, this.ValFunction, w.Function.Parameters[0])),
       _ => null,
@@ -50,45 +50,45 @@ public static partial class PortableRuntime {
     /// <summary>PRINT: the formatted number, then its trailing space.</summary>
     private void PrintNumber(IrWriter w, IrValue value, IrFunction format) {
       var buffer = w.Buffer(NumberText);
-      var length = w.B.Call(IrType.I32, format, value, buffer);
+      var length = w.B.Call(w.Index, format, value, buffer);
       w.SetByte(buffer, length, w.I8(' '));
-      w.B.Call(IrType.Void, this.Out, buffer, w.B.Add(length, w.I32(1)));
+      w.B.Call(IrType.Void, this.Out, buffer, w.B.Add(length, w.Ix(1)));
       w.B.Ret();
     }
 
     /// <summary>STR$: the formatted number, sign slot and all, as a string.</summary>
     private void NumberString(IrWriter w, IrValue value, IrFunction format) {
       var buffer = w.Buffer(NumberText);
-      var length = w.B.Call(IrType.I32, format, value, buffer);
+      var length = w.B.Call(w.Index, format, value, buffer);
       w.B.Ret(this.Make(w, buffer, length));
     }
 
-    private IrFunction FormatSigned => this._formatSigned ??= this.Internal("rt.formatSigned", IrType.I32, [IrType.I64, IrType.Ptr],
+    private IrFunction FormatSigned => this._formatSigned ??= this.Internal("rt.formatSigned", this.Index, [IrType.I64, IrType.Ptr],
       w => this.FormatInteger(w, signed: true));
 
-    private IrFunction FormatUnsigned => this._formatUnsigned ??= this.Internal("rt.formatUnsigned", IrType.I32, [IrType.I64, IrType.Ptr],
+    private IrFunction FormatUnsigned => this._formatUnsigned ??= this.Internal("rt.formatUnsigned", this.Index, [IrType.I64, IrType.Ptr],
       w => this.FormatInteger(w, signed: false));
 
     /// <summary>A sign slot and the digits, built backwards and copied to the front of the buffer.</summary>
     private void FormatInteger(IrWriter w, bool signed) {
       var (value, output) = (w.Function.Parameters[0], w.Function.Parameters[1]);
       var digits = w.Buffer(24);
-      var at = w.Variable(IrType.I32, w.I32(24));
+      var at = w.Variable(w.Index, w.Ix(24));
       var negative = signed ? w.Cmp(IrCmpPred.Slt, value, w.I64(0)) : IrBuilder.ConstBool(false);
       var magnitude = w.Variable(IrType.I64, signed ? w.B.Select(negative, w.B.Sub(w.I64(0), value), value) : value);
       var loop = w.Block("digit");
       var done = w.Block("digits");
       w.B.Br(loop);
       w.B.Position(loop);
-      at.Set(w.B.Sub(at.Get(), w.I32(1)));
+      at.Set(w.B.Sub(at.Get(), w.Ix(1)));
       var digit = w.B.Trunc(w.B.Binary(IrBinaryOp.URem, magnitude.Get(), w.I64(10)), IrType.I8);
       w.SetByte(digits, at.Get(), w.B.Add(digit, w.I8('0')));
       magnitude.Set(w.B.Binary(IrBinaryOp.UDiv, magnitude.Get(), w.I64(10)));
       w.B.CondBr(w.Cmp(IrCmpPred.Ne, magnitude.Get(), w.I64(0)), loop, done);
       w.B.Position(done);
-      at.Set(w.B.Sub(at.Get(), w.I32(1)));
+      at.Set(w.B.Sub(at.Get(), w.Ix(1)));
       w.SetByte(digits, at.Get(), w.B.Select(negative, w.I8('-'), w.I8(' ')));
-      var length = w.B.Sub(w.I32(24), at.Get());
+      var length = w.B.Sub(w.Ix(24), at.Get());
       w.B.Call(IrType.Void, this.CopyBytes, output, w.B.Gep(digits, at.Get()), length);
       w.B.Ret(length);
     }
@@ -99,15 +99,21 @@ public static partial class PortableRuntime {
     /// sign-extended renders at sixteen bits - HEX$(-1) is FFFF - as the DOS runtime does.
     /// </summary>
     private void Radix(IrWriter w, IrValue value, IrValue packed) {
-      var bits = w.B.And(packed, w.I32(0xFF));
-      var least = w.B.And(w.B.Binary(IrBinaryOp.LShr, packed, w.I32(8)), w.I32(0xFF));
+      // the value's own arithmetic is 32-bit, whatever width the declaration gave it; only the digit
+      // count is the runtime's index
+      static IrValue C(long constant) => IrBuilder.ConstI32(constant);
+      IrValue Wide(IrValue x) => x.Type.Bits == 32 ? x : x.Type.Bits < 32 ? w.B.SExt(x, IrType.I32) : w.B.Trunc(x, IrType.I32);
+      value = Wide(value);
+      packed = Wide(packed);
+      var bits = w.B.And(packed, C(0xFF));
+      var least = w.ToIndex(w.B.And(w.B.Binary(IrBinaryOp.LShr, packed, C(8)), C(0xFF)));
       var remaining = w.Variable(IrType.I32, value);
-      w.If(w.B.And(w.Cmp(IrCmpPred.Eq, w.B.Binary(IrBinaryOp.LShr, value, w.I32(16)), w.I32(0xFFFF)),
-          w.Cmp(IrCmpPred.Ne, w.B.And(value, w.I32(0x8000)), w.I32(0))),
-        () => remaining.Set(w.B.And(value, w.I32(0xFFFF))));
-      var mask = w.B.Sub(w.B.Shl(w.I32(1), bits), w.I32(1));
+      w.If(w.B.And(w.Cmp(IrCmpPred.Eq, w.B.Binary(IrBinaryOp.LShr, value, C(16)), C(0xFFFF)),
+          w.Cmp(IrCmpPred.Ne, w.B.And(value, C(0x8000)), C(0))),
+        () => remaining.Set(w.B.And(value, C(0xFFFF))));
+      var mask = w.B.Sub(w.B.Shl(C(1), bits), C(1));
       var reversed = w.Buffer(NumberText);
-      var count = w.Variable(IrType.I32, w.I32(0));
+      var count = w.Variable(w.Index, w.Ix(0));
       var loop = w.Block("radix");
       var done = w.Block("radixed");
       w.B.Br(loop);
@@ -115,15 +121,15 @@ public static partial class PortableRuntime {
       var digit = w.B.Trunc(w.B.And(remaining.Get(), mask), IrType.I8);
       w.SetByte(reversed, count.Get(), w.B.Select(w.Cmp(IrCmpPred.Ult, digit, w.I8(10)),
         w.B.Add(digit, w.I8('0')), w.B.Add(digit, w.I8('A' - 10))));
-      count.Set(w.B.Add(count.Get(), w.I32(1)));
+      count.Set(w.B.Add(count.Get(), w.Ix(1)));
       remaining.Set(w.B.Binary(IrBinaryOp.LShr, remaining.Get(), bits));
-      w.B.CondBr(w.B.Or(w.Cmp(IrCmpPred.Ne, remaining.Get(), w.I32(0)), w.Cmp(IrCmpPred.Slt, count.Get(), least)), loop, done);
+      w.B.CondBr(w.B.Or(w.Cmp(IrCmpPred.Ne, remaining.Get(), C(0)), w.Cmp(IrCmpPred.Slt, count.Get(), least)), loop, done);
       w.B.Position(done);
       var text = w.Buffer(NumberText);
-      var i = w.Variable(IrType.I32, w.I32(0));
+      var i = w.Variable(w.Index, w.Ix(0));
       w.While(() => w.Cmp(IrCmpPred.Slt, i.Get(), count.Get()), () => {
-        w.SetByte(text, i.Get(), w.ByteAt(reversed, w.B.Sub(w.B.Sub(count.Get(), w.I32(1)), i.Get())));
-        i.Set(w.B.Add(i.Get(), w.I32(1)));
+        w.SetByte(text, i.Get(), w.ByteAt(reversed, w.B.Sub(w.B.Sub(count.Get(), w.Ix(1)), i.Get())));
+        i.Set(w.B.Add(i.Get(), w.Ix(1)));
       });
       w.B.Ret(this.Make(w, text, count.Get()));
     }
@@ -137,11 +143,11 @@ public static partial class PortableRuntime {
     /// </summary>
     private void Val(IrWriter w) {
       var handle = w.Function.Parameters[0];
-      var (bytes, length) = this.View(w, handle, w.I32(1), this.Length(w, handle));
-      var at = w.Variable(IrType.I32, w.I32(0));
+      var (bytes, length) = this.View(w, handle, w.Ix(1), this.Length(w, handle));
+      var at = w.Variable(w.Index, w.Ix(0));
       IrValue More() => w.Cmp(IrCmpPred.Slt, at.Get(), length);
       IrValue Current() => w.ByteAt(bytes, at.Get());
-      void Next() => at.Set(w.B.Add(at.Get(), w.I32(1)));
+      void Next() => at.Set(w.B.Add(at.Get(), w.Ix(1)));
       void SkipBlanks() => w.While(() => w.B.And(More(), w.Cmp(IrCmpPred.Eq, w.B.Select(More(), Current(), w.I8(0)), w.I8(' '))), Next);
       IrValue Peek() => w.B.Select(More(), Current(), w.I8(0));
       IrValue Upper(IrValue character) => w.B.And(character, w.I8(unchecked((sbyte)0xDF)));
@@ -185,18 +191,18 @@ public static partial class PortableRuntime {
 
       // decimal: at most 18 digits are kept; later ones only move the point
       var mantissa = w.Variable(IrType.I64, w.I64(0));
-      var kept = w.Variable(IrType.I32, w.I32(0));
-      var exponent = w.Variable(IrType.I32, w.I32(0));
+      var kept = w.Variable(w.Index, w.Ix(0));
+      var exponent = w.Variable(w.Index, w.Ix(0));
       var seenPoint = w.Variable(IrType.I1, IrBuilder.ConstBool(false));
       var scanning = w.Variable(IrType.I1, IrBuilder.ConstBool(true));
       w.While(() => w.B.And(scanning.Get(), More()), () => {
         var character = Current();
         w.If(IsDigit(character), () => {
-          w.If(w.Cmp(IrCmpPred.Slt, kept.Get(), w.I32(18)), () => {
+          w.If(w.Cmp(IrCmpPred.Slt, kept.Get(), w.Ix(18)), () => {
             mantissa.Set(w.B.Add(w.B.Mul(mantissa.Get(), w.I64(10)), w.B.ZExt(w.B.Sub(character, w.I8('0')), IrType.I64)));
-            w.If(w.Cmp(IrCmpPred.Ne, mantissa.Get(), w.I64(0)), () => kept.Set(w.B.Add(kept.Get(), w.I32(1))));
-            w.If(seenPoint.Get(), () => exponent.Set(w.B.Sub(exponent.Get(), w.I32(1))));
-          }, () => w.If(w.B.Xor(seenPoint.Get(), IrBuilder.ConstBool(true)), () => exponent.Set(w.B.Add(exponent.Get(), w.I32(1)))));
+            w.If(w.Cmp(IrCmpPred.Ne, mantissa.Get(), w.I64(0)), () => kept.Set(w.B.Add(kept.Get(), w.Ix(1))));
+            w.If(seenPoint.Get(), () => exponent.Set(w.B.Sub(exponent.Get(), w.Ix(1))));
+          }, () => w.If(w.B.Xor(seenPoint.Get(), IrBuilder.ConstBool(true)), () => exponent.Set(w.B.Add(exponent.Get(), w.Ix(1)))));
           Next();
         }, () => w.If(w.B.And(w.Cmp(IrCmpPred.Eq, character, w.I8('.')), w.B.Xor(seenPoint.Get(), IrBuilder.ConstBool(true))),
           () => { seenPoint.Set(IrBuilder.ConstBool(true)); Next(); },
@@ -208,25 +214,25 @@ public static partial class PortableRuntime {
         var exponentNegative = w.Variable(IrType.I1, IrBuilder.ConstBool(false));
         w.If(w.Cmp(IrCmpPred.Eq, Peek(), w.I8('-')), () => { exponentNegative.Set(IrBuilder.ConstBool(true)); Next(); },
           () => w.If(w.Cmp(IrCmpPred.Eq, Peek(), w.I8('+')), Next));
-        var written = w.Variable(IrType.I32, w.I32(0));
+        var written = w.Variable(w.Index, w.Ix(0));
         w.While(() => w.B.And(More(), IsDigit(Peek())), () => {
-          w.If(w.Cmp(IrCmpPred.Slt, written.Get(), w.I32(10000)),
-            () => written.Set(w.B.Add(w.B.Mul(written.Get(), w.I32(10)), w.B.ZExt(w.B.Sub(Current(), w.I8('0')), IrType.I32))));
+          w.If(w.Cmp(IrCmpPred.Slt, written.Get(), w.Ix(10000)),
+            () => written.Set(w.B.Add(w.B.Mul(written.Get(), w.Ix(10)), w.B.ZExt(w.B.Sub(Current(), w.I8('0')), w.Index))));
           Next();
         });
-        exponent.Set(w.B.Add(exponent.Get(), w.B.Select(exponentNegative.Get(), w.B.Sub(w.I32(0), written.Get()), written.Get())));
+        exponent.Set(w.B.Add(exponent.Get(), w.B.Select(exponentNegative.Get(), w.B.Sub(w.Ix(0), written.Get()), written.Get())));
       });
       var scaled = w.Variable(IrType.F80, w.B.Cast(IrCastOp.SIToFP, mantissa.Get(), IrType.F80));
-      var up = w.Cmp(IrCmpPred.Sgt, exponent.Get(), w.I32(0));
-      var remaining = w.Variable(IrType.I32, w.B.Select(up, exponent.Get(), w.B.Sub(w.I32(0), exponent.Get())));
-      var i = w.Variable(IrType.I32, w.I32(0));
-      w.While(() => w.B.And(w.Cmp(IrCmpPred.Ne, remaining.Get(), w.I32(0)), w.Cmp(IrCmpPred.Slt, i.Get(), w.I32(PowerCount))), () => {
-        w.If(w.Cmp(IrCmpPred.Ne, w.B.And(remaining.Get(), w.I32(1)), w.I32(0)), () => {
+      var up = w.Cmp(IrCmpPred.Sgt, exponent.Get(), w.Ix(0));
+      var remaining = w.Variable(w.Index, w.B.Select(up, exponent.Get(), w.B.Sub(w.Ix(0), exponent.Get())));
+      var i = w.Variable(w.Index, w.Ix(0));
+      w.While(() => w.B.And(w.Cmp(IrCmpPred.Ne, remaining.Get(), w.Ix(0)), w.Cmp(IrCmpPred.Slt, i.Get(), w.Ix(PowerCount))), () => {
+        w.If(w.Cmp(IrCmpPred.Ne, w.B.And(remaining.Get(), w.Ix(1)), w.Ix(0)), () => {
           var power = this.Power(w, i.Get());
           scaled.Set(w.B.Select(up, w.B.Binary(IrBinaryOp.FMul, scaled.Get(), power), w.B.Binary(IrBinaryOp.FDiv, scaled.Get(), power)));
         });
-        remaining.Set(w.B.Binary(IrBinaryOp.LShr, remaining.Get(), w.I32(1)));
-        i.Set(w.B.Add(i.Get(), w.I32(1)));
+        remaining.Set(w.B.Binary(IrBinaryOp.LShr, remaining.Get(), w.Ix(1)));
+        i.Set(w.B.Add(i.Get(), w.Ix(1)));
       });
       var magnitude = w.B.Cast(IrCastOp.FPTrunc, scaled.Get(), IrType.F64);
       this.ReturnConsuming(w, w.B.Select(negative.Get(), w.B.Binary(IrBinaryOp.FSub, new IrConstantFloat(IrType.F64, 0), magnitude), magnitude), handle);
@@ -273,7 +279,7 @@ public static partial class PortableRuntime {
     }
 
     private IrValue Power(IrWriter w, IrValue index)
-      => w.B.Load(IrType.F80, w.B.Gep(this.Powers, w.B.Mul(index, w.I32(10))));
+      => w.B.Load(IrType.F80, w.B.Gep(this.Powers, w.B.Mul(index, w.Ix(10))));
 
     /// <summary>
     /// BASIC's float: at most <paramref name="digits"/> significant digits, trailing zeros dropped,
@@ -288,8 +294,8 @@ public static partial class PortableRuntime {
     /// </summary>
     private IrFunction FormatFloat(int digits) {
       if (!this._formatFloat.TryGetValue(digits, out var function)) {
-        function = this.Internal($"rt.formatFloat{digits}", IrType.I32, [IrType.F80, IrType.Ptr],
-          w => w.B.Ret(w.B.Call(IrType.I32, this.FloatFormatter, w.Function.Parameters[0], w.Function.Parameters[1], w.I32(digits))));
+        function = this.Internal($"rt.formatFloat{digits}", this.Index, [IrType.F80, IrType.Ptr],
+          w => w.B.Ret(w.B.Call(w.Index, this.FloatFormatter, w.Function.Parameters[0], w.Function.Parameters[1], w.Ix(digits))));
         this._formatFloat[digits] = function;
       }
       return function;
@@ -297,26 +303,26 @@ public static partial class PortableRuntime {
 
     private IrFunction? _floatFormatter;
 
-    private IrFunction FloatFormatter => this._floatFormatter ??= this.Internal("rt.formatFloat", IrType.I32,
-      [IrType.F80, IrType.Ptr, IrType.I32], this.FloatText);
+    private IrFunction FloatFormatter => this._floatFormatter ??= this.Internal("rt.formatFloat", this.Index,
+      [IrType.F80, IrType.Ptr, this.Index], this.FloatText);
 
     private void FloatText(IrWriter w) {
       var digits = w.Function.Parameters[2];
       // 10^(digits - 1) and 10^digits: the range a scaled mantissa must land in
       var lower = w.Variable(IrType.I64, w.I64(1));
-      var count = w.Variable(IrType.I32, w.I32(1));
+      var count = w.Variable(w.Index, w.Ix(1));
       w.While(() => w.Cmp(IrCmpPred.Slt, count.Get(), digits), () => {
         lower.Set(w.B.Mul(lower.Get(), w.I64(10)));
-        count.Set(w.B.Add(count.Get(), w.I32(1)));
+        count.Set(w.B.Add(count.Get(), w.Ix(1)));
       });
       var upper = w.B.Mul(lower.Get(), w.I64(10));
       var value = w.Function.Parameters[0];
       var zero = w.Extended(0);
       var output = w.Function.Parameters[1];
-      var length = w.Variable(IrType.I32, w.I32(0));
+      var length = w.Variable(w.Index, w.Ix(0));
       void Emit(IrValue character) {
         w.SetByte(output, length.Get(), character);
-        length.Set(w.B.Add(length.Get(), w.I32(1)));
+        length.Set(w.B.Add(length.Get(), w.Ix(1)));
       }
 
       w.If(w.Cmp(IrCmpPred.Foeq, value, zero), () => {
@@ -330,24 +336,24 @@ public static partial class PortableRuntime {
 
       // the decimal exponent: divide or multiply down into [1, 10), greatest power first
       var reduced = w.Variable(IrType.F80, magnitude);
-      var exponent = w.Variable(IrType.I32, w.I32(0));
-      var i = w.Variable(IrType.I32, w.I32(PowerCount - 1));
+      var exponent = w.Variable(w.Index, w.Ix(0));
+      var i = w.Variable(w.Index, w.Ix(PowerCount - 1));
       w.If(w.Cmp(IrCmpPred.Foge, magnitude, w.Extended(1)),
-        () => w.While(() => w.Cmp(IrCmpPred.Sge, i.Get(), w.I32(0)), () => {
+        () => w.While(() => w.Cmp(IrCmpPred.Sge, i.Get(), w.Ix(0)), () => {
           var power = this.Power(w, i.Get());
           w.If(w.Cmp(IrCmpPred.Foge, reduced.Get(), power), () => {
             reduced.Set(w.B.Binary(IrBinaryOp.FDiv, reduced.Get(), power));
-            exponent.Set(w.B.Add(exponent.Get(), w.B.Shl(w.I32(1), i.Get())));
+            exponent.Set(w.B.Add(exponent.Get(), w.B.Shl(w.Ix(1), i.Get())));
           });
-          i.Set(w.B.Sub(i.Get(), w.I32(1)));
+          i.Set(w.B.Sub(i.Get(), w.Ix(1)));
         }),
-        () => w.While(() => w.Cmp(IrCmpPred.Sge, i.Get(), w.I32(0)), () => {
+        () => w.While(() => w.Cmp(IrCmpPred.Sge, i.Get(), w.Ix(0)), () => {
           var scaled = w.B.Binary(IrBinaryOp.FMul, reduced.Get(), this.Power(w, i.Get()));
           w.If(w.Cmp(IrCmpPred.Folt, scaled, w.Extended(10)), () => {
             reduced.Set(scaled);
-            exponent.Set(w.B.Sub(exponent.Get(), w.B.Shl(w.I32(1), i.Get())));
+            exponent.Set(w.B.Sub(exponent.Get(), w.B.Shl(w.Ix(1), i.Get())));
           });
-          i.Set(w.B.Sub(i.Get(), w.I32(1)));
+          i.Set(w.B.Sub(i.Get(), w.Ix(1)));
         }));
 
       // scale the value itself to `digits` digits, correcting the exponent if rounding says so
@@ -356,28 +362,28 @@ public static partial class PortableRuntime {
       var scaled = w.Block("scaled");
       w.B.Br(scale);
       w.B.Position(scale);
-      var k = w.B.Sub(w.B.Sub(digits, w.I32(1)), exponent.Get());
-      var up = w.Cmp(IrCmpPred.Sgt, k, w.I32(0));
-      var remaining = w.Variable(IrType.I32, w.B.Select(up, k, w.B.Sub(w.I32(0), k)));
+      var k = w.B.Sub(w.B.Sub(digits, w.Ix(1)), exponent.Get());
+      var up = w.Cmp(IrCmpPred.Sgt, k, w.Ix(0));
+      var remaining = w.Variable(w.Index, w.B.Select(up, k, w.B.Sub(w.Ix(0), k)));
       var product = w.Variable(IrType.F80, magnitude);
-      i.Set(w.I32(0));
-      w.While(() => w.Cmp(IrCmpPred.Ne, remaining.Get(), w.I32(0)), () => {
-        w.If(w.Cmp(IrCmpPred.Ne, w.B.And(remaining.Get(), w.I32(1)), w.I32(0)), () => {
+      i.Set(w.Ix(0));
+      w.While(() => w.Cmp(IrCmpPred.Ne, remaining.Get(), w.Ix(0)), () => {
+        w.If(w.Cmp(IrCmpPred.Ne, w.B.And(remaining.Get(), w.Ix(1)), w.Ix(0)), () => {
           var power = this.Power(w, i.Get());
           product.Set(w.B.Select(up, w.B.Binary(IrBinaryOp.FMul, product.Get(), power),
             w.B.Binary(IrBinaryOp.FDiv, product.Get(), power)));
         });
-        remaining.Set(w.B.Binary(IrBinaryOp.LShr, remaining.Get(), w.I32(1)));
-        i.Set(w.B.Add(i.Get(), w.I32(1)));
+        remaining.Set(w.B.Binary(IrBinaryOp.LShr, remaining.Get(), w.Ix(1)));
+        i.Set(w.B.Add(i.Get(), w.Ix(1)));
       });
       mantissa.Set(w.B.Cast(IrCastOp.FPToSIRound, product.Get(), IrType.I64));
       w.If(w.Cmp(IrCmpPred.Sge, mantissa.Get(), upper), () => {
-        exponent.Set(w.B.Add(exponent.Get(), w.I32(1)));
+        exponent.Set(w.B.Add(exponent.Get(), w.Ix(1)));
         w.B.Br(scale);
         w.B.Position(w.Block("after"));
       });
       w.If(w.Cmp(IrCmpPred.Slt, mantissa.Get(), lower.Get()), () => {
-        exponent.Set(w.B.Sub(exponent.Get(), w.I32(1)));
+        exponent.Set(w.B.Sub(exponent.Get(), w.Ix(1)));
         w.B.Br(scale);
         w.B.Position(w.Block("after"));
       });
@@ -386,67 +392,67 @@ public static partial class PortableRuntime {
 
       // the digits, most significant first; trailing zeros are not significant
       var digitText = w.Buffer(18);
-      var j = w.Variable(IrType.I32, w.B.Sub(digits, w.I32(1)));
-      w.While(() => w.Cmp(IrCmpPred.Sge, j.Get(), w.I32(0)), () => {
+      var j = w.Variable(w.Index, w.B.Sub(digits, w.Ix(1)));
+      w.While(() => w.Cmp(IrCmpPred.Sge, j.Get(), w.Ix(0)), () => {
         var digit = w.B.Trunc(w.B.Binary(IrBinaryOp.URem, mantissa.Get(), w.I64(10)), IrType.I8);
         w.SetByte(digitText, j.Get(), w.B.Add(digit, w.I8('0')));
         mantissa.Set(w.B.Binary(IrBinaryOp.UDiv, mantissa.Get(), w.I64(10)));
-        j.Set(w.B.Sub(j.Get(), w.I32(1)));
+        j.Set(w.B.Sub(j.Get(), w.Ix(1)));
       });
-      var significant = w.Variable(IrType.I32, digits);
-      w.While(() => w.B.And(w.Cmp(IrCmpPred.Sgt, significant.Get(), w.I32(1)),
-          w.Cmp(IrCmpPred.Eq, w.ByteAt(digitText, w.B.Sub(significant.Get(), w.I32(1))), w.I8('0'))),
-        () => significant.Set(w.B.Sub(significant.Get(), w.I32(1))));
+      var significant = w.Variable(w.Index, digits);
+      w.While(() => w.B.And(w.Cmp(IrCmpPred.Sgt, significant.Get(), w.Ix(1)),
+          w.Cmp(IrCmpPred.Eq, w.ByteAt(digitText, w.B.Sub(significant.Get(), w.Ix(1))), w.I8('0'))),
+        () => significant.Set(w.B.Sub(significant.Get(), w.Ix(1))));
 
       void CopyDigits(IrValue from) {
-        var at = w.Variable(IrType.I32, from);
+        var at = w.Variable(w.Index, from);
         w.While(() => w.Cmp(IrCmpPred.Slt, at.Get(), significant.Get()), () => {
           Emit(w.ByteAt(digitText, at.Get()));
-          at.Set(w.B.Add(at.Get(), w.I32(1)));
+          at.Set(w.B.Add(at.Get(), w.Ix(1)));
         });
       }
 
       Emit(w.B.Select(negative, w.I8('-'), w.I8(' ')));
       var e = exponent.Get();
-      var scientific = w.B.Or(w.Cmp(IrCmpPred.Slt, e, w.I32(-4)), w.Cmp(IrCmpPred.Sge, e, digits));
+      var scientific = w.B.Or(w.Cmp(IrCmpPred.Slt, e, w.Ix(-4)), w.Cmp(IrCmpPred.Sge, e, digits));
       w.If(scientific, () => {
-        Emit(w.ByteAt(digitText, w.I32(0)));
-        w.If(w.Cmp(IrCmpPred.Sgt, significant.Get(), w.I32(1)), () => {
+        Emit(w.ByteAt(digitText, w.Ix(0)));
+        w.If(w.Cmp(IrCmpPred.Sgt, significant.Get(), w.Ix(1)), () => {
           Emit(w.I8('.'));
-          CopyDigits(w.I32(1));
+          CopyDigits(w.Ix(1));
         });
         Emit(w.I8('E'));
         var power = exponent.Get();
-        Emit(w.B.Select(w.Cmp(IrCmpPred.Slt, power, w.I32(0)), w.I8('-'), w.I8('+')));
-        var absolute = w.Variable(IrType.I32, w.B.Select(w.Cmp(IrCmpPred.Slt, power, w.I32(0)), w.B.Sub(w.I32(0), power), power));
+        Emit(w.B.Select(w.Cmp(IrCmpPred.Slt, power, w.Ix(0)), w.I8('-'), w.I8('+')));
+        var absolute = w.Variable(w.Index, w.B.Select(w.Cmp(IrCmpPred.Slt, power, w.Ix(0)), w.B.Sub(w.Ix(0), power), power));
         foreach (var place in new[] { 1000, 100 }) {
           var p = place;
-          w.If(w.Cmp(IrCmpPred.Sge, absolute.Get(), w.I32(p)),
-            () => Emit(w.B.Add(w.B.Trunc(w.B.Binary(IrBinaryOp.URem, w.B.Binary(IrBinaryOp.UDiv, absolute.Get(), w.I32(p)), w.I32(10)), IrType.I8), w.I8('0'))));
+          w.If(w.Cmp(IrCmpPred.Sge, absolute.Get(), w.Ix(p)),
+            () => Emit(w.B.Add(w.B.Trunc(w.B.Binary(IrBinaryOp.URem, w.B.Binary(IrBinaryOp.UDiv, absolute.Get(), w.Ix(p)), w.Ix(10)), IrType.I8), w.I8('0'))));
         }
-        Emit(w.B.Add(w.B.Trunc(w.B.Binary(IrBinaryOp.URem, w.B.Binary(IrBinaryOp.UDiv, absolute.Get(), w.I32(10)), w.I32(10)), IrType.I8), w.I8('0')));
-        Emit(w.B.Add(w.B.Trunc(w.B.Binary(IrBinaryOp.URem, absolute.Get(), w.I32(10)), IrType.I8), w.I8('0')));
-      }, () => w.If(w.Cmp(IrCmpPred.Sge, exponent.Get(), w.I32(0)), () => {
+        Emit(w.B.Add(w.B.Trunc(w.B.Binary(IrBinaryOp.URem, w.B.Binary(IrBinaryOp.UDiv, absolute.Get(), w.Ix(10)), w.Ix(10)), IrType.I8), w.I8('0')));
+        Emit(w.B.Add(w.B.Trunc(w.B.Binary(IrBinaryOp.URem, absolute.Get(), w.Ix(10)), IrType.I8), w.I8('0')));
+      }, () => w.If(w.Cmp(IrCmpPred.Sge, exponent.Get(), w.Ix(0)), () => {
         // the integer part, padded with zeros past the significant digits, then any fraction
-        var at = w.Variable(IrType.I32, w.I32(0));
+        var at = w.Variable(w.Index, w.Ix(0));
         w.While(() => w.Cmp(IrCmpPred.Sle, at.Get(), exponent.Get()), () => {
           Emit(w.B.Select(w.Cmp(IrCmpPred.Slt, at.Get(), significant.Get()), w.ByteAt(digitText, at.Get()), w.I8('0')));
-          at.Set(w.B.Add(at.Get(), w.I32(1)));
+          at.Set(w.B.Add(at.Get(), w.Ix(1)));
         });
-        var fraction = w.B.Add(exponent.Get(), w.I32(1));
+        var fraction = w.B.Add(exponent.Get(), w.Ix(1));
         w.If(w.Cmp(IrCmpPred.Sgt, significant.Get(), fraction), () => {
           Emit(w.I8('.'));
-          CopyDigits(w.B.Add(exponent.Get(), w.I32(1)));
+          CopyDigits(w.B.Add(exponent.Get(), w.Ix(1)));
         });
       }, () => {
         // a pure fraction: no leading zero, the point, then zeros up to the first digit
         Emit(w.I8('.'));
-        var zeros = w.Variable(IrType.I32, w.B.Sub(w.I32(-1), exponent.Get()));
-        w.While(() => w.Cmp(IrCmpPred.Sgt, zeros.Get(), w.I32(0)), () => {
+        var zeros = w.Variable(w.Index, w.B.Sub(w.Ix(-1), exponent.Get()));
+        w.While(() => w.Cmp(IrCmpPred.Sgt, zeros.Get(), w.Ix(0)), () => {
           Emit(w.I8('0'));
-          zeros.Set(w.B.Sub(zeros.Get(), w.I32(1)));
+          zeros.Set(w.B.Sub(zeros.Get(), w.Ix(1)));
         });
-        CopyDigits(w.I32(0));
+        CopyDigits(w.Ix(0));
       }));
       w.B.Ret(length.Get());
     }

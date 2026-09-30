@@ -242,7 +242,9 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   infinities: overflow is error 6, a zero divisor error 11. `Mos6502FloatTests` hold add, subtract,
   multiply, divide and compare to .NET's IEEE results bit for bit over random operands.
 - **Size comes first.** A C64 leaves 38 KB for program and data, so the build optimizes for size
-  unless `$OPTIMIZE SPEED` asks otherwise, and the string heap is 4 KB. A program that does not fit
+  unless `$OPTIMIZE SPEED` asks otherwise, the string heap is 4 KB, and the portable runtime keeps
+  its lengths, positions and counters in 16 bits (`IrWriter.Index`) - the `rt_*` ABI keeps its
+  declared widths and each entry converts at that edge. A program that does not fit
   is declined with how far past `$A000` it would reach.
 - **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$2F`, BASIC's own)
   and the stack pointer are saved on entry and restored on exit, so the final `RTS` - or `END`, or a

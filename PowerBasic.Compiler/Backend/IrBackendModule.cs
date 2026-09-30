@@ -42,7 +42,7 @@ public sealed class IrBackendModule {
 
     module.AsciiOnly = model.AsciiOnly;
     if (options.PortableRuntimeHeapBytes is { } heap)
-      PortableRuntime.Define(module, heap, cleanUp: false);
+      PortableRuntime.Define(module, heap, cleanUp: false, options.PortableRuntimeIndexBits);
     if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35
         or IrBackendTarget.X86_32 or IrBackendTarget.X64)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
@@ -57,7 +57,7 @@ public sealed class IrBackendModule {
     }
 
     if (options.PortableRuntimeHeapBytes is { } lateHeap)
-      PortableRuntime.Define(module, lateHeap, cleanUp: true);
+      PortableRuntime.Define(module, lateHeap, cleanUp: true, options.PortableRuntimeIndexBits);
 
     var errors = IrVerifier.Verify(module);
     if (errors.Count != 0) {

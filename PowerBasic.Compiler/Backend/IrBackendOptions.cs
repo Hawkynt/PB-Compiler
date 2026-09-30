@@ -19,4 +19,7 @@ public sealed record IrBackendOptions {
   /// with the program, and again after it, for the runtime calls the optimizer itself introduced.
   /// </summary>
   public int? PortableRuntimeHeapBytes { get; init; }
+
+  /// <summary>The portable runtime's index width: 16 for a target whose pointers are 16 bits, else 32.</summary>
+  public int PortableRuntimeIndexBits { get; init; } = 32;
 }

@@ -481,6 +481,7 @@ public static class Driver {
       OptimizeForSize = !effectiveSpeed,
       RecoverIntegerArithmetic = effectiveOptimize,
       PortableRuntimeHeapBytes = C64HeapBytes,
+      PortableRuntimeIndexBits = 16,
     }, out var declined);
     var image = compiled is null ? null
       : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, C64Prg.MemoryTop, out declined);

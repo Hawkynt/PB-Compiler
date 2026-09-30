@@ -34,13 +34,19 @@ public static partial class PortableRuntime {
   /// new functions are left in alloca form for it to promote; after it, <paramref name="cleanUp"/>
   /// promotes and tidies them here.
   /// </summary>
-  public static void Define(IrModule module, int heapBytes, bool cleanUp = true) {
+  public static void Define(IrModule module, int heapBytes, bool cleanUp = true, int indexBits = 32) {
     ArgumentNullException.ThrowIfNull(module);
     ArgumentOutOfRangeException.ThrowIfLessThan(heapBytes, 256);
-    new Definer(module, heapBytes, cleanUp).Run();
+    if (indexBits is not (16 or 32))
+      throw new ArgumentOutOfRangeException(nameof(indexBits), indexBits, "the runtime's index is 16 or 32 bits");
+    new Definer(module, heapBytes, cleanUp, indexBits == 16 ? IrType.I16 : IrType.I32).Run();
   }
 
-  private sealed partial class Definer(IrModule module, int heapBytes, bool cleanUp) {
+  private sealed partial class Definer(IrModule module, int heapBytes, bool cleanUp, IrType index) {
+
+    /// <summary>The runtime's integer for lengths, sizes and counters; see <see cref="IrWriter.Index"/>.</summary>
+    private IrType Index => index;
+
 
     private IrFunction? _write, _exit, _out;
     private IrGlobalVariable? _column;
@@ -63,6 +69,17 @@ public static partial class PortableRuntime {
         throw new InvalidOperationException("the portable runtime built invalid IR: " + string.Join("; ", errors));
     }
 
+    /// <summary>
+    /// Calls a system primitive: its integers are the ABI's <c>i32</c>s, so the runtime's indexes are
+    /// widened going in and the answer narrowed coming back.
+    /// </summary>
+    private IrValue System(IrWriter w, IrFunction primitive, params IrValue[] arguments) {
+      var converted = arguments.Select((argument, i) => primitive.Parameters[i].Type.IsInteger
+        ? w.FromIndex(argument, primitive.Parameters[i].Type) : argument).ToArray();
+      var result = w.B.Call(primitive.ReturnType, primitive, converted);
+      return primitive.ReturnType.IsInteger ? w.ToIndex(result) : result;
+    }
+
     private IrFunction Declare(string name, IrType returnType, params IrType[] parameters)
       => module.FindFunction(name)
         ?? module.AddFunction(new IrFunction(name, returnType, parameters.Select((type, i) => new IrArgument(type, i))));
@@ -72,7 +89,7 @@ public static partial class PortableRuntime {
         ?? this.FileRoutine(function.Name)
         ?? (Action<IrWriter>?)(function.Name switch {
         "rt_print_str" => w => {
-          w.B.Call(IrType.Void, this.Out, w.Function.Parameters[0], w.Function.Parameters[1]);
+          w.B.Call(IrType.Void, this.Out, w.Function.Parameters[0], w.ToIndex(w.Function.Parameters[1]));
           w.B.Ret();
         },
         "rt_print_nl" => w => this.PrintByte(w, '\n'),
@@ -81,7 +98,7 @@ public static partial class PortableRuntime {
         "rt_print_spc" => this.PrintSpaces,
         "rt_error" => this.Error,
         "rt_end" => w => {
-          w.B.Call(IrType.Void, this.Exit, w.B.SExt(w.Function.Parameters[0], IrType.I32));
+          this.System(w, this.Exit, w.Function.Parameters[0]);
           w.B.Ret();
         },
         "rt_inp" => w => w.B.Ret(IrBuilder.ConstInt(w.Function.ReturnType, 0)),
@@ -96,7 +113,7 @@ public static partial class PortableRuntime {
     }
 
     private void Build(IrFunction function, Action<IrWriter> body) {
-      var writer = new IrWriter(function);
+      var writer = new IrWriter(function, this.Index);
       body(writer);
       this._defined.Add(function);
     }
@@ -115,27 +132,27 @@ public static partial class PortableRuntime {
     private IrFunction Exit => this._exit ??= this.Declare("sys_exit", IrType.Void, IrType.I32);
 
     /// <summary>The output column, counted from zero, that zones and TAB measure from.</summary>
-    private IrGlobalVariable Column => this._column ??= module.AddGlobal(new IrGlobalVariable("rt.column", IrType.I32));
+    private IrGlobalVariable Column => this._column ??= module.AddGlobal(new IrGlobalVariable("rt.column", this.Index));
 
     /// <summary><c>rt.out(buffer, length)</c>: writes, and keeps the column.</summary>
-    private IrFunction Out => this._out ??= this.Internal("rt.out", IrType.Void, [IrType.Ptr, IrType.I32], w => {
+    private IrFunction Out => this._out ??= this.Internal("rt.out", IrType.Void, [IrType.Ptr, this.Index], w => {
       var (buffer, length) = (w.Function.Parameters[0], w.Function.Parameters[1]);
-      var i = w.Variable(IrType.I32, w.I32(0));
+      var i = w.Variable(w.Index, w.Ix(0));
       w.While(() => w.Cmp(IrCmpPred.Slt, i.Get(), length), () => {
-        var column = w.B.Load(IrType.I32, this.Column);
+        var column = w.B.Load(w.Index, this.Column);
         w.If(w.Cmp(IrCmpPred.Eq, w.ByteAt(buffer, i.Get()), w.I8('\n')),
-          () => w.B.Store(w.I32(0), this.Column),
-          () => w.B.Store(w.B.Add(column, w.I32(1)), this.Column));
-        i.Set(w.B.Add(i.Get(), w.I32(1)));
+          () => w.B.Store(w.Ix(0), this.Column),
+          () => w.B.Store(w.B.Add(column, w.Ix(1)), this.Column));
+        i.Set(w.B.Add(i.Get(), w.Ix(1)));
       });
-      w.B.Call(IrType.I32, this.Write, w.I32(1), buffer, length);
+      this.System(w, this.Write, w.Ix(1), buffer, length);
       w.B.Ret();
     });
 
     private void OutByte(IrWriter w, IrValue character) {
       var buffer = w.Buffer(1);
       w.B.Store(character, buffer);
-      w.B.Call(IrType.Void, this.Out, buffer, w.I32(1));
+      w.B.Call(IrType.Void, this.Out, buffer, w.Ix(1));
     }
 
     private void PrintByte(IrWriter w, char character) {
@@ -150,27 +167,27 @@ public static partial class PortableRuntime {
       w.B.Br(loop);
       w.B.Position(loop);
       this.OutByte(w, w.I8(' '));
-      var column = w.B.Load(IrType.I32, this.Column);
-      w.B.CondBr(w.Cmp(IrCmpPred.Ne, w.B.Binary(IrBinaryOp.SRem, column, w.I32(ZoneWidth)), w.I32(0)), loop, done);
+      var column = w.B.Load(w.Index, this.Column);
+      w.B.CondBr(w.Cmp(IrCmpPred.Ne, w.B.Binary(IrBinaryOp.SRem, column, w.Ix(ZoneWidth)), w.Ix(0)), loop, done);
       w.B.Position(done);
       w.B.Ret();
     }
 
     private void PrintTab(IrWriter w) {
-      var target = w.Variable(IrType.I32, w.Function.Parameters[0]);
-      w.If(w.Cmp(IrCmpPred.Slt, target.Get(), w.I32(1)), () => target.Set(w.I32(1)));
-      w.While(() => w.Cmp(IrCmpPred.Sgt, w.B.Load(IrType.I32, this.Column), w.B.Sub(target.Get(), w.I32(1))),
+      var target = w.Variable(w.Index, w.ToIndex(w.Function.Parameters[0]));
+      w.If(w.Cmp(IrCmpPred.Slt, target.Get(), w.Ix(1)), () => target.Set(w.Ix(1)));
+      w.While(() => w.Cmp(IrCmpPred.Sgt, w.B.Load(w.Index, this.Column), w.B.Sub(target.Get(), w.Ix(1))),
         () => this.OutByte(w, w.I8('\n')));
-      w.While(() => w.Cmp(IrCmpPred.Slt, w.B.Load(IrType.I32, this.Column), w.B.Sub(target.Get(), w.I32(1))),
+      w.While(() => w.Cmp(IrCmpPred.Slt, w.B.Load(w.Index, this.Column), w.B.Sub(target.Get(), w.Ix(1))),
         () => this.OutByte(w, w.I8(' ')));
       w.B.Ret();
     }
 
     private void PrintSpaces(IrWriter w) {
-      var count = w.Variable(IrType.I32, w.Function.Parameters[0]);
-      w.While(() => w.Cmp(IrCmpPred.Sgt, count.Get(), w.I32(0)), () => {
+      var count = w.Variable(w.Index, w.ToIndex(w.Function.Parameters[0]));
+      w.While(() => w.Cmp(IrCmpPred.Sgt, count.Get(), w.Ix(0)), () => {
         this.OutByte(w, w.I8(' '));
-        count.Set(w.B.Sub(count.Get(), w.I32(1)));
+        count.Set(w.B.Sub(count.Get(), w.Ix(1)));
       });
       w.B.Ret();
     }
@@ -181,14 +198,14 @@ public static partial class PortableRuntime {
       // otherwise "Error n", a new line, and the program is over
       var text = w.Buffer(5);
       for (var i = 0; i < 5; ++i)
-        w.SetByte(text, w.I32(i), w.I8("Error"[i]));
-      w.B.Call(IrType.Void, this.Out, text, w.I32(5));
+        w.SetByte(text, w.Ix(i), w.I8("Error"[i]));
+      w.B.Call(IrType.Void, this.Out, text, w.Ix(5));
       var number = w.Buffer(NumberText);
-      var length = w.B.Call(IrType.I32, this.FormatSigned, w.B.SExt(w.Function.Parameters[0], IrType.I64), number);
+      var length = w.B.Call(w.Index, this.FormatSigned, w.B.SExt(w.Function.Parameters[0], IrType.I64), number);
       w.B.Call(IrType.Void, this.Out, number, length);
       this.OutByte(w, w.I8(' '));
       this.OutByte(w, w.I8('\n'));
-      w.B.Call(IrType.Void, this.Exit, w.I32(3));
+      this.System(w, this.Exit, w.Ix(3));
       w.B.Ret();
     }
 

@@ -19,7 +19,7 @@ public sealed partial class Mos6502BatteryTests {
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   /// <summary>How many battery programs the 6502 compiled when this floor was last raised.</summary>
-  private const int CompiledFloor = 10;
+  private const int CompiledFloor = 12;
 
   public static IEnumerable<string> Programs() {
     var dir = Path.Combine(_repoRoot, "tests");

@@ -12,14 +12,34 @@ internal sealed class IrWriter {
   private readonly IrBasicBlock _entry;
   private int _blocks;
 
-  public IrWriter(IrFunction function) {
+  public IrWriter(IrFunction function, IrType index) {
     this.Function = function;
+    this.Index = index;
     this._entry = function.CreateBlock("entry");
     this.B = new IrBuilder(this._entry);
   }
 
   public IrFunction Function { get; }
   public IrBuilder B { get; }
+
+  /// <summary>
+  /// The runtime's own integer for lengths, sizes, positions and counters: 16 bits where pointers
+  /// are 16 bits, 32 elsewhere. The <c>rt_*</c> ABI keeps its declared widths; routines convert at
+  /// that edge with <see cref="ToIndex"/> and <see cref="FromIndex"/>.
+  /// </summary>
+  public IrType Index { get; }
+
+  public IrValue Ix(long value) => IrBuilder.ConstInt(this.Index, value);
+
+  /// <summary>An ABI integer as the runtime's index: truncated or sign-extended.</summary>
+  public IrValue ToIndex(IrValue value) => Resize(this.B, value, this.Index);
+
+  /// <summary>The runtime's index as the ABI integer <paramref name="type"/>.</summary>
+  public IrValue FromIndex(IrValue value, IrType type) => Resize(this.B, value, type);
+
+  private static IrValue Resize(IrBuilder b, IrValue value, IrType type)
+    => value.Type.Bits == type.Bits ? value
+      : value.Type.Bits > type.Bits ? b.Trunc(value, type) : b.SExt(value, type);
 
   /// <summary>A mutable local, optionally initialised where it is declared.</summary>
   public sealed class Local(IrWriter writer, IrAlloca slot, IrType type) {
