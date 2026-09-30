@@ -38,7 +38,7 @@ public static partial class PortableRuntime {
       "rt_str_oct" => w => this.Radix(w, w.Function.Parameters[0], w.I32((1 << 8) | 3)),
       "rt_str_bin" => w => this.Radix(w, w.Function.Parameters[0], w.I32((1 << 8) | 1)),
       "rt_str_radix" => w => this.Radix(w, w.Function.Parameters[0], w.Function.Parameters[1]),
-      "rt_str_val" => this.Val,
+      "rt_str_val" => w => w.B.Ret(w.B.Call(IrType.F64, this.ValFunction, w.Function.Parameters[0])),
       _ => null,
     };
 

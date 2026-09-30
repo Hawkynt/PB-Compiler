@@ -6,8 +6,10 @@ namespace PowerBasic.Compiler.Runtime.Portable;
 /// <summary>
 /// The runtime for native targets that are not DOS, written once as IR and compiled by each back end
 /// like the program itself. It defines the <c>rt_*</c> functions a module declares - the same ABI
-/// <c>runtime/pbc_rt.h</c> documents - on top of two primitives a back end emits for its operating
-/// system: <c>sys_write(buffer, length)</c> to standard output and <c>sys_exit(code)</c>.
+/// <c>runtime/pbc_rt.h</c> documents - on top of a handful of primitives a back end emits for its
+/// operating system: <c>sys_write(fd, buffer, length)</c> and <c>sys_exit(code)</c>, and for files
+/// and input <c>sys_read</c>, <c>sys_open</c>, <c>sys_close</c>, <c>sys_seek</c> and
+/// <c>sys_unlink</c> (<c>PortableRuntime.Files.cs</c>).
 ///
 /// <para>
 /// Only what the module calls is defined, so a program that never prints a float carries no float
@@ -67,6 +69,7 @@ public static partial class PortableRuntime {
 
     private void DefineIfKnown(IrFunction function) {
       var body = this.StringRoutine(function.Name) ?? this.NumberRoutine(function.Name) ?? this.ArrayRoutine(function.Name)
+        ?? this.FileRoutine(function.Name)
         ?? (Action<IrWriter>?)(function.Name switch {
         "rt_print_str" => w => {
           w.B.Call(IrType.Void, this.Out, w.Function.Parameters[0], w.Function.Parameters[1]);
@@ -107,7 +110,8 @@ public static partial class PortableRuntime {
       return function;
     }
 
-    private IrFunction Write => this._write ??= this.Declare("sys_write", IrType.Void, IrType.Ptr, IrType.I32);
+    /// <summary><c>sys_write(fd, buffer, length)</c>: the bytes written, or a negative error.</summary>
+    private IrFunction Write => this._write ??= this.Declare("sys_write", IrType.I32, IrType.I32, IrType.Ptr, IrType.I32);
     private IrFunction Exit => this._exit ??= this.Declare("sys_exit", IrType.Void, IrType.I32);
 
     /// <summary>The output column, counted from zero, that zones and TAB measure from.</summary>
@@ -124,7 +128,7 @@ public static partial class PortableRuntime {
           () => w.B.Store(w.B.Add(column, w.I32(1)), this.Column));
         i.Set(w.B.Add(i.Get(), w.I32(1)));
       });
-      w.B.Call(IrType.Void, this.Write, buffer, length);
+      w.B.Call(IrType.I32, this.Write, w.I32(1), buffer, length);
       w.B.Ret();
     });
 

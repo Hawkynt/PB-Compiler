@@ -17,7 +17,7 @@ public sealed class NativeBatteryTests {
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   /// <summary>How many battery programs each machine compiled when this floor was last raised.</summary>
-  private const int CompiledFloor = 13;
+  private const int CompiledFloor = 16;
 
   private static readonly string[] _machines = ["x86-32", "x64"];
 
@@ -51,6 +51,10 @@ public sealed class NativeBatteryTests {
       using var process = Process.Start(new ProcessStartInfo(executable!) {
         RedirectStandardOutput = true, RedirectStandardInput = true, UseShellExecute = false, WorkingDirectory = work.FullName,
       })!;
+      // a program that reads the console gets its input file, as the DOS battery gives it
+      var input = Path.Combine(_repoRoot, "tests", Path.ChangeExtension(program, ".IN"));
+      if (File.Exists(input))
+        process.StandardInput.Write(File.ReadAllText(input));
       process.StandardInput.Close();
       var output = process.StandardOutput.ReadToEnd();
       Assert.That(process.WaitForExit(TimeSpan.FromSeconds(30)), Is.True, $"{program} did not finish");

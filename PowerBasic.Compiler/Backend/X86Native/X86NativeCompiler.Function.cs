@@ -816,9 +816,9 @@ public static partial class X86NativeCompiler {
           throw Decline("delegates have no native lowering yet");
         var arguments = call.Args.ToList();
         if (callee.IsDeclaration) {
-          switch (callee.Name) {
-            case "sys_write": this.SystemWrite(arguments[0], arguments[1]); return;
-            case "sys_exit": this.SystemExit(arguments[0]); return;
+          if (SystemCalls.TryGetValue(callee.Name, out var numbers)) {
+            this.SystemCall(call, numbers, arguments);
+            return;
           }
           if (TryMathIntrinsic(callee.Name) is { } math && this.Stored(call)) {
             this.MathFunction(math, arguments);
@@ -986,30 +986,55 @@ public static partial class X86NativeCompiler {
         this._asm.Bind(done);
       }
 
-      private void SystemWrite(IrValue buffer, IrValue length) {
-        if (this.Is64) {
-          this.Load(X86Reg.Si, this.Of(buffer), X86Width.Qword);
-          this.Load(X86Reg.Dx, this.Of(length), X86Width.Dword);
-          this._asm.MovImmediate(X86Width.Dword, X86Reg.Di, 1);
-          this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, 1);
-        } else {
-          this.Load(X86Reg.Cx, this.Of(buffer), X86Width.Dword);
-          this.Load(X86Reg.Dx, this.Of(length), X86Width.Dword);
-          this._asm.MovImmediate(X86Width.Dword, X86Reg.Bx, 1);
-          this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, 4);
-        }
-        this._asm.SystemCall();
-      }
+      /// <summary>The portable runtime's system primitives, by Linux system call number: x64, then i386.</summary>
+      private static readonly Dictionary<string, (int Amd64, int I386)> SystemCalls = new() {
+        ["sys_read"] = (0, 3),
+        ["sys_write"] = (1, 4),
+        ["sys_open"] = (2, 5),
+        ["sys_close"] = (3, 6),
+        ["sys_seek"] = (8, 19),
+        ["sys_unlink"] = (87, 10),
+        ["sys_exit"] = (231, 1),     // exit_group on x64, so no thread is left behind
+      };
 
-      private void SystemExit(IrValue code) {
-        if (this.Is64) {
-          this.LoadExtended(X86Reg.Di, this.Of(code), module.SizeOf(code.Type), signed: true, X86Width.Dword);
-          this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, 231);
-        } else {
-          this.LoadExtended(X86Reg.Bx, this.Of(code), module.SizeOf(code.Type), signed: true, X86Width.Dword);
-          this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, 1);
+      /// <summary>
+      /// A system primitive as a Linux system call: the arguments into the ABI's registers - RDI, RSI,
+      /// RDX on x64, EBX, ECX, EDX on i386 - and the answer, a result or a negative errno, from the
+      /// accumulator. <c>sys_open</c>'s portable mode becomes the flags that mean it, and a file it
+      /// creates gets 0644.
+      /// </summary>
+      private void SystemCall(IrCall call, (int Amd64, int I386) numbers, IReadOnlyList<IrValue> arguments) {
+        X86Reg[] registers = this.Is64 ? [X86Reg.Di, X86Reg.Si, X86Reg.Dx] : [X86Reg.Bx, X86Reg.Cx, X86Reg.Dx];
+        for (var i = 0; i < arguments.Count; ++i) {
+          var argument = arguments[i];
+          if (argument.Type.IsPointer)
+            this.Load(registers[i], this.Of(argument), this.Word);
+          else
+            this.LoadExtended(registers[i], this.Of(argument), module.SizeOf(argument.Type), signed: true,
+              this.Is64 ? X86Width.Qword : X86Width.Dword);
         }
+        if (call.Callee is IrFunction { Name: "sys_open" }) {
+          // mode 0 read, 1 create and truncate, 2 append (creating), 3 read and write (creating)
+          const int readOnly = 0, writeOnly = 1, readWrite = 2, create = 0x40, truncate = 0x200, append = 0x400;
+          var flags = registers[1];
+          var done = this.Local("flags");
+          foreach (var (mode, value) in (ReadOnlySpan<(int, int)>)[
+              (1, writeOnly | create | truncate), (2, writeOnly | create | append), (3, readWrite | create)]) {
+            var next = this.Local("mode");
+            this._asm.AluImmediate(X86Alu.Cmp, X86Width.Dword, flags, mode);
+            this._asm.Jump(X86Cond.NotEqual, next);
+            this._asm.MovImmediate(X86Width.Dword, flags, value);
+            this._asm.Jump(done);
+            this._asm.Bind(next);
+          }
+          this._asm.MovImmediate(X86Width.Dword, flags, readOnly);
+          this._asm.Bind(done);
+          this._asm.MovImmediate(X86Width.Dword, registers[2], 0x1A4);
+        }
+        this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, this.Is64 ? numbers.Amd64 : numbers.I386);
         this._asm.SystemCall();
+        if (this.Stored(call))
+          this.Store(this.Place(call), X86Reg.Ax, WidthOf(module.SizeOf(call.Type)));
       }
 
       /// <summary>BASIC's run-time error <paramref name="code"/>, through the portable runtime's <c>rt_error</c>.</summary>

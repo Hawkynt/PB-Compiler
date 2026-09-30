@@ -598,13 +598,18 @@ public static partial class Mos6502Compiler {
       private void CallRuntime(IrCall call, IrFunction callee) {
         switch (callee.Name) {
           case "sys_write":
-            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Arg, 2);
-            this.Copy(this.Of(call.Args.ElementAt(1)), 4, Zp.Arg.Plus(2), 4);
+            // the only descriptor a C64 program writes is the screen's; files are not modelled
+            if (call.Args.ElementAt(0) is not IrConstantInt { Value: 1 })
+              throw Decline("the 6502 has no files yet: only the screen can be written");
+            this.Copy(this.Of(call.Args.ElementAt(1)), 2, Zp.Arg, 2);
+            this.Copy(this.Of(call.Args.ElementAt(2)), 4, Zp.Arg.Plus(2), 4);
             this._asm.Call(this._runtime.Routine(M6502Routine.SystemWrite));
             return;
           case "sys_exit":
             this._asm.Jump(this._runtime.Routine(M6502Routine.Exit));
             return;
+          case "sys_read" or "sys_open" or "sys_close" or "sys_seek" or "sys_unlink":
+            throw Decline("the 6502 has no files or keyboard input yet");
           default:
             throw Decline($"the 6502 runtime has no {callee.Name} yet");
         }

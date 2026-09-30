@@ -92,6 +92,8 @@ public static class SimplifyCfg {
         var target = incoming.IsZero ? cb.IfFalse : cb.IfTrue;
         if (ReferenceEquals(target, block) || ReferenceEquals(target, pred))
           continue;                                    // keep loop/self-edge shapes for dedicated passes
+        if (Reaches(target, block) || !PhiUsesStayLocal(block, phis, target))
+          continue;
         if (!TryTranslateSuccessorPhis(block, pred, target, out var translated))
           continue;
 
@@ -109,6 +111,46 @@ public static class SimplifyCfg {
       }
     }
     return threaded;
+  }
+
+  /// <summary>
+  /// Whether <paramref name="to"/> is reachable from <paramref name="from"/>. A target that loops back
+  /// to the block being bypassed makes that block a loop header, and a header phi's incoming value
+  /// on the back edge may be the phi itself - "unchanged this iteration" - which silently becomes the
+  /// value of a DIFFERENT edge once the bypassed edge's incoming is removed: the loop's first-iteration
+  /// state is lost and the phi folds to the exit value.
+  /// </summary>
+  private static bool Reaches(IrBasicBlock from, IrBasicBlock to) {
+    var seen = new HashSet<IrBasicBlock>();
+    var work = new Stack<IrBasicBlock>([from]);
+    while (work.TryPop(out var block)) {
+      if (ReferenceEquals(block, to))
+        return true;
+      if (seen.Add(block))
+        foreach (var successor in block.Successors)
+          work.Push(successor);
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Whether every use of the bypassed block's phis is one the threading accounts for: the block's own
+  /// phis and terminator, or the target's phis on their edge from the block (which are translated).
+  /// Any other use - an instruction downstream of the target - would no longer be dominated by the
+  /// phi once the target is reachable without passing through the block.
+  /// </summary>
+  private static bool PhiUsesStayLocal(IrBasicBlock block, List<IrPhi> phis, IrBasicBlock target) {
+    foreach (var phi in phis)
+      foreach (var user in phi.Users) {
+        if (ReferenceEquals(user.Parent, block))
+          continue;
+        if (user is IrPhi targetPhi && ReferenceEquals(targetPhi.Parent, target)
+            && Enumerable.Range(0, targetPhi.IncomingBlocks.Count).All(i =>
+              ReferenceEquals(targetPhi.IncomingBlocks[i], block) || !ReferenceEquals(targetPhi.Operands[i], phi)))
+          continue;
+        return false;
+      }
+    return true;
   }
 
   private static bool TryTranslateSuccessorPhis(
