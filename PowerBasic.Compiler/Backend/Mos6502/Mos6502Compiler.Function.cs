@@ -50,12 +50,16 @@ public static partial class Mos6502Compiler {
             return new ConstantOperand(constant.Value);
           case IrNullPtr or IrUndef:
             return new ConstantOperand(0);
+          case IrGlobalVariable { Name: "rt_onerr" or "rt_onerr_bp" or "rt_onerr_sp" }:
+            throw Decline("TRY/CATCH keeps its handler in DOS's cells and has no 6502 lowering yet");
           case IrGlobalVariable global:
             return new AddressOperand(module._globals[global]);
           case IrAlloca alloca:
             return new AddressOperand(this._frame.AddressOf(alloca));
           case IrGep gep when this.FoldedAddress(gep) is { } folded:
             return new AddressOperand(folded);
+          case IrBlockAddress address when this._blocks.TryGetValue(address.Block, out var label):
+            return new AddressOperand(label);
           case IrFunction:
             throw Decline($"'{function.Name}' takes a procedure's address, which has no 6502 lowering yet");
           case IrConstantFloat constant:
@@ -609,13 +613,119 @@ public static partial class Mos6502Compiler {
             this._asm.Jump(this._runtime.Routine(M6502Routine.Exit));
             return;
           case "sys_trap":
-            // no ON ERROR on the 6502 (a handler declines), so there is never one to take the error
+            this.Trap(call.Args.ElementAt(0));
             return;
-          case "sys_read" or "sys_open" or "sys_close" or "sys_seek" or "sys_unlink":
-            throw Decline("the 6502 has no files or keyboard input yet");
+          case "rt_onerr_arm" or "rt_onerr_resume_next" or "rt_onerr_disarm" or "rt_resume_mark"
+              when !module._trapsErrors:
+            return;
+          case "rt_onerr_arm":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, module._errorHandler, 2);
+            this.CaptureStacks();
+            this.SetErrorMode(1);
+            return;
+          case "rt_onerr_resume_next":
+            this.CaptureStacks();
+            this.SetErrorMode(2);
+            return;
+          case "rt_onerr_disarm":
+            this.SetErrorMode(0);
+            return;
+          case "rt_resume_mark":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, module._statementStart, 2);
+            this.Copy(this.Of(call.Args.ElementAt(1)), 2, module._statementNext, 2);
+            return;
+          case "rt_resume_same" or "rt_resume_next":
+            // the handler is done: errors trap again, and control returns to the faulting statement
+            this.SetErrorMode(1);
+            this.RestoreStacks();
+            this.JumpThrough(callee.Name == "rt_resume_same" ? module._faultStart : module._faultNext);
+            return;
+          case "rt_err_clear":
+            if (module.ErrorCode is { } err)
+              this.Copy(new ConstantOperand(0), 2, err, 2);
+            return;
+          case "sys_read": {
+            var args = call.Args.ToList();
+            this.Copy(this.Of(args[0]), SizeOf(args[0].Type), Zp.Arg, 4, signed: true);
+            this.Copy(this.Of(args[1]), 2, Zp.Arg.Plus(4), 2);
+            this.Copy(this.Of(args[2]), SizeOf(args[2].Type), Zp.Arg.Plus(6), 4, signed: true);
+            this._asm.Call(this._runtime.Routine(M6502Routine.SystemRead));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          }
+          case "sys_open" or "sys_close" or "sys_seek" or "sys_unlink":
+            throw Decline("the 6502 has no files yet (the KERNAL's disk routines are not modelled)");
           default:
             throw Decline($"the 6502 runtime has no {callee.Name} yet");
         }
+      }
+
+      private void SetErrorMode(int mode) {
+        this._asm.Immediate(Lda, mode);
+        this._asm.Memory(Sta, module._errorMode);
+      }
+
+      /// <summary>ON ERROR runs its handler on the stacks it was armed with: the hardware one and the soft one.</summary>
+      private void CaptureStacks() {
+        this._asm.Emit(Tsx);
+        this._asm.Memory(Stx, module._errorStack);
+        this.Copy(new MemoryOperand(Zp.SoftStack), 2, module._errorSoftStack, 2);
+      }
+
+      private void RestoreStacks() {
+        this._asm.Memory(Ldx, module._errorStack);
+        this._asm.Emit(Txs);
+        this.Copy(new MemoryOperand(module._errorSoftStack), 2, Zp.SoftStack, 2);
+      }
+
+      /// <summary>
+      /// <c>sys_trap(code)</c>, the portable runtime's first question in <c>rt_error</c>: with no
+      /// handler armed it falls through and the error is reported; with one it never returns - ERR
+      /// gets the code, the statement that faulted is latched for RESUME, the armed stacks come back,
+      /// and the handler runs (or, for RESUME NEXT, the next statement). An error inside the handler
+      /// is fatal, as in PowerBASIC.
+      /// </summary>
+      private void Trap(IrValue code) {
+        if (!module._trapsErrors)
+          return;
+        var none = this.Local("noHandler");
+        var handler = this.Local("trapHandler");
+        this._asm.Memory(Lda, module._errorMode);
+        this._asm.Immediate(Cmp, 1);
+        this._asm.Branch(Beq, handler);
+        this._asm.Immediate(Cmp, 2);
+        this._asm.Branch(Bne, none);
+        this.LatchFault(code);
+        this.RestoreStacks();
+        this.JumpThrough(module._faultNext);
+        this._asm.Bind(handler);
+        this.LatchFault(code);
+        this.SetErrorMode(3);
+        this.RestoreStacks();
+        this.JumpThrough(module._errorHandler);
+        this._asm.Bind(none);
+      }
+
+      /// <summary>
+      /// A jump to the address a cell holds, as <c>RTI</c> takes it - status, then the address
+      /// itself - rather than <c>JMP (cell)</c>, which on an NMOS 6502 fetches the high byte from the
+      /// wrong page when the cell's low byte sits at <c>$xxFF</c>, somewhere a RAM cell can land.
+      /// </summary>
+      private void JumpThrough(M6502Address cell) {
+        this._asm.Memory(Lda, cell.Plus(1));
+        this._asm.Emit(Pha);
+        this._asm.Memory(Lda, cell);
+        this._asm.Emit(Pha);
+        this._asm.Emit(Php);
+        this._asm.Emit(Rti);
+      }
+
+      private void LatchFault(IrValue code) {
+        if (module.ErrorCode is { } err)
+          this.Copy(this.Of(code), 2, err, 2);
+        this.Copy(new MemoryOperand(module._statementStart), 2, module._faultStart, 2);
+        this.Copy(new MemoryOperand(module._statementNext), 2, module._faultNext, 2);
       }
 
       private void RaiseError(int code) {

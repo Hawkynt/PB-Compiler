@@ -19,6 +19,21 @@ public static partial class Mos6502Compiler {
     private readonly List<List<IrFunction>> _cyclesCalleesFirst = [];
     private M6502Label _overlay;
 
+    /// <summary>
+    /// ON ERROR's state, reserved only in a program that arms a handler: the mode (0 disarmed,
+    /// 1 a handler, 2 RESUME NEXT, 3 inside a handler), the stacks the handler runs on, the armed
+    /// handler's address, the current statement's restart and resume addresses and the pair a fault
+    /// latched from them.
+    /// </summary>
+    private M6502Label _errorMode, _errorStack, _errorSoftStack, _errorHandler,
+      _statementStart, _statementNext, _faultStart, _faultNext;
+
+    private bool _trapsErrors;
+
+    private (M6502Label Cell, int Bytes)[] ErrorCells => [(this._errorMode, 1), (this._errorStack, 1),
+      (this._errorSoftStack, 2), (this._errorHandler, 2), (this._statementStart, 2), (this._statementNext, 2),
+      (this._faultStart, 2), (this._faultNext, 2)];
+
     /// <summary>The RAM behind the frame overlay: as deep as the deepest chain of calls.</summary>
     private int OverlayBytes => this._frames.Values.Select(frame => frame.Base + frame.Size).DefaultIfEmpty(0).Max();
 
@@ -63,6 +78,10 @@ public static partial class Mos6502Compiler {
     private int _stagingBytes;
     private readonly Dictionary<string, (M6502Label Label, byte[] Bytes)> _constants = [];
 
+    /// <summary>The program's ERR cell, when it reads ERR at all.</summary>
+    private M6502Address? ErrorCode
+      => module.Globals.FirstOrDefault(global => global.Name == "rt_err") is { } err ? this._globals[err] : null;
+
     /// <summary>A float constant in its IEEE format, in the data - one copy per bit pattern.</summary>
     private M6502Label Constant(IrConstantFloat constant) {
       if (constant.Type.IsMbf)
@@ -101,6 +120,15 @@ public static partial class Mos6502Compiler {
       foreach (var global in module.Globals.OfType<IrGlobalVariable>())
         this._globals.Add(global, this._asm.NewLabel(global.Name));
       this._staging = this._asm.NewLabel("staging");
+      this._trapsErrors = defined.Any(function => function.HasErrorHandler);
+      this._errorMode = this._asm.NewLabel("errorMode");
+      this._errorStack = this._asm.NewLabel("errorStack");
+      this._errorSoftStack = this._asm.NewLabel("errorSoftStack");
+      this._errorHandler = this._asm.NewLabel("errorHandler");
+      this._statementStart = this._asm.NewLabel("statementStart");
+      this._statementNext = this._asm.NewLabel("statementNext");
+      this._faultStart = this._asm.NewLabel("faultStart");
+      this._faultNext = this._asm.NewLabel("faultNext");
       this._stagingBytes = defined.Select(function => function.Parameters.Sum(parameter => SizeOf(parameter.Type)))
         .DefaultIfEmpty(0).Max();
 
@@ -130,11 +158,16 @@ public static partial class Mos6502Compiler {
       }
       this._asm.Bind(this._staging);
       this._asm.Reserve(this._stagingBytes);
+      if (this._trapsErrors)
+        foreach (var (cell, bytes) in this.ErrorCells) {
+          this._asm.Bind(cell);
+          this._asm.Reserve(bytes);
+        }
       return this._asm.Assemble(origin);
     }
 
     private int UninitializedBytes()
-      => this.OverlayBytes
+      => this.OverlayBytes + (this._trapsErrors ? this.ErrorCells.Sum(cell => cell.Bytes) : 0)
         + this._globals.Keys.Where(IsUninitialized).Sum(global => SizeOf(global.ValueType) * global.Count)
         + this._stagingBytes;
 
@@ -159,8 +192,6 @@ public static partial class Mos6502Compiler {
     private static void Validate(IrFunction function) {
       if (function.HasInlineAsm)
         throw Decline($"'{function.Name}' contains inline assembly, which is x86 text");
-      if (function.HasErrorHandler)
-        throw Decline($"'{function.Name}' traps errors (ON ERROR), which has no 6502 lowering yet");
       _ = SizeOf(function.ReturnType);
       foreach (var parameter in function.Parameters)
         _ = SizeOf(parameter.Type);

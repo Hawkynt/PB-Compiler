@@ -230,10 +230,12 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   call back into the cycle and restores it after. A call out of the cycle, and every call in a program
   without recursion, pays nothing for it.
 - **The runtime is the portable one** (`Runtime/Portable`, the same IR x86-32 and x64 compile):
-  `PRINT`, strings, `VAL`/`STR$`, BASIC's errors. What the 6502 supplies itself is
+  `PRINT`, `INPUT`, strings, `VAL`/`STR$`, BASIC's errors and `ON ERROR`/`RESUME`. What the 6502 supplies itself is
   `Mos6502Runtime`, assembled routine by routine as the code asks for them: `sys_write` through the
   KERNAL's `CHROUT` (ASCII mapped onto PETSCII after start-up selects the lower-case character set,
-  a new line as a carriage return), 16-, 32- and 64-bit multiply and divide (error 11 on a zero
+  a new line as a carriage return), `sys_read` on the console through `CHRIN` (PETSCII back to
+  ASCII, the carriage return as a new line), a run-time error that unwinds to the armed handler
+  with the stack pointers saved when it was armed, 16-, 32- and 64-bit multiply and divide (error 11 on a zero
   divisor), frame save and restore, and the runtime's own block copy in place of `rt.copy`'s IR body.
 - **Floating point is soft float** (`Mos6502Runtime.Float.cs`). A SINGLE, DOUBLE or EXT is stored in
   its IEEE format and unpacked into page-zero accumulators with a 72-bit mantissa - 64 bits and a
@@ -252,8 +254,8 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
 - **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
   the code.
 
-What it does not lower yet it declines by name - math functions, `ON ERROR`, inline assembly,
-`INPUT`, calls through pointers - rather than compiling it into something else.
+What it does not lower yet it declines by name - math functions, files, `TRY`, inline assembly,
+calls through pointers - rather than compiling it into something else.
 `Mos6502ProgramTests` run compiled programs on `Cpu6502` (a hand-decoded interpreter in the test
 project, independent of the compiler's opcode table); `Mos6502BatteryTests` run every DOS battery
 program the back end accepts against its DOS golden output, keep a floor under how many that is, and

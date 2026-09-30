@@ -19,7 +19,7 @@ public sealed partial class Mos6502BatteryTests {
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   /// <summary>How many battery programs the 6502 compiled when this floor was last raised.</summary>
-  private const int CompiledFloor = 12;
+  private const int CompiledFloor = 14;
 
   public static IEnumerable<string> Programs() {
     var dir = Path.Combine(_repoRoot, "tests");
@@ -50,7 +50,8 @@ public sealed partial class Mos6502BatteryTests {
     var prg = Compile(program, out var declined);
     Assume.That(prg, Is.Not.Null, $"{program}: {declined}");
 
-    var result = Cpu6502.RunC64Program(prg!);
+    var input = Path.Combine(_repoRoot, "tests", Path.ChangeExtension(program, ".IN"));
+    var result = Cpu6502.RunC64Program(prg!, input: File.Exists(input) ? File.ReadAllText(input) : null);
 
     Assert.That(result.Returned, Is.True, $"{program} did not return to BASIC within the step budget");
     var expected = File.ReadAllText(Path.Combine(_repoRoot, "tests", Path.ChangeExtension(program, ".expected")));

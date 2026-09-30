@@ -222,7 +222,7 @@ front-ends:
 ## D. The platforms beyond DOS: 6502, x86-32, x64 (`docs/BACKENDS.md`)
 
 All three are emitted by pbc alone. x86-32 and x64 compile integer and floating-point programs to
-static Linux ELF files; the 6502 compiles integer programs to a C64 `.PRG`. `NativeBatteryTests` and
+static Linux ELF files; the 6502 compiles integer and floating-point programs to a C64 `.PRG`. `NativeBatteryTests` and
 `Mos6502BatteryTests` list every battery program each still declines, with the reason, and hold a
 floor under how many they accept - they are this section's to-do list.
 
@@ -231,7 +231,7 @@ floor under how many they accept - they are this section's to-do list.
   call DOS interrupts, link a DOS object, or are 16-bit inline assembly). Left: `TRY`/`CATCH` (the
   lowering keeps its saved handler in 16-bit cells), `EXIT FAR`, math functions beyond the x87's,
   and whatever a wider corpus finds.
-- **Smaller 6502 code.** The 6502 runs 12 of the 21 battery programs. Code is still dominated by
+- **Smaller 6502 code.** The 6502 runs 14 of the 21 battery programs. Code is still dominated by
   `LDA`/`STA`: every SSA value has its own frame cell, so casts, returns, phi edges and arguments
   are byte-by-byte copies. Done: frames share memory through the call-graph overlay (the innermost
   in page zero), and the portable runtime keeps its lengths and counters in 16 bits here, which cut
@@ -241,9 +241,8 @@ floor under how many they accept - they are this section's to-do list.
   6502 needs them as soft-float routines.
 
 ### Should
-- **`INPUT`, files and `ON ERROR` on the 6502** - the portable runtime has them; the 6502 needs
-  `sys_read` through the KERNAL's `CHRIN`, its disk routines behind `sys_open`, and the `ON ERROR`
-  intrinsics - and `PEEK`/`POKE`, which reach the IR as `segment:offset` addresses: on a flat machine
+- **Files and `TRY` on the 6502** - `INPUT` (through `CHRIN`) and `ON ERROR` are done; files need
+  the KERNAL's disk routines behind `sys_open`, and `TRY` the saved-handler cells - and `PEEK`/`POKE`, which reach the IR as `segment:offset` addresses: on a flat machine
   the segment has no meaning and the offset is the address.
 - **Registers on x86.** Every x86 SSA value lives in a frame slot; a linear-scan allocator over the
   32/64-bit register file is the obvious next step for speed.

@@ -13,6 +13,8 @@ public enum M6502Routine {
   PutChar,
   /// <summary><c>sys_write(bytes, length)</c>: the portable runtime's output, a new line as a carriage return.</summary>
   SystemWrite,
+  /// <summary><c>sys_read(fd, buffer, length)</c>: one byte of console input through <c>CHRIN</c>; other descriptors are at their end.</summary>
+  SystemRead,
   Multiply16, Multiply32, Multiply64,
   UnsignedDivide16, UnsignedDivide32, UnsignedDivide64, SignedDivide16, SignedDivide32, SignedDivide64,
   /// <summary>BASIC's run-time error in Arg, handed to the portable runtime's <c>rt_error</c>.</summary>
@@ -54,6 +56,9 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
 
   /// <summary>The KERNAL's character output.</summary>
   public static readonly M6502Address Chrout = M6502Address.Absolute(0xFFD2);
+
+  /// <summary>The KERNAL's character input: a line from the screen editor, a carriage return at its end.</summary>
+  public static readonly M6502Address Chrin = M6502Address.Absolute(0xFFCF);
 
   /// <summary>Where recursion's frames go: the 4 KB under the I/O area, free on a C64.</summary>
   public const int SoftStackTop = 0xD000;
@@ -169,6 +174,7 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
     switch (routine) {
       case M6502Routine.PutChar: this.EmitPutChar(); break;
       case M6502Routine.SystemWrite: this.EmitSystemWrite(); break;
+      case M6502Routine.SystemRead: this.EmitSystemRead(); break;
       case M6502Routine.Multiply16: this.EmitMultiply(2); break;
       case M6502Routine.Multiply32: this.EmitMultiply(4); break;
       case M6502Routine.Multiply64: this.EmitMultiply(8); break;
@@ -205,6 +211,51 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
     asm.Immediate(Ora, 0x80);
     asm.Bind(output);
     asm.Jump(Chrout);
+  }
+
+  private void EmitSystemRead() {
+    // Arg: the descriptor (4 bytes), Arg+4: the buffer, Arg+6: the length. Only the console reads,
+    // one byte at a time - which is all the portable runtime asks for - PETSCII back to ASCII
+    var console = asm.NewLabel("rt.systemRead.console");
+    var noReturn = asm.NewLabel("rt.systemRead.notReturn");
+    var capital = asm.NewLabel("rt.systemRead.capital");
+    var store = asm.NewLabel("rt.systemRead.store");
+    asm.Memory(Lda, Zp.Arg);
+    for (var i = 1; i < 4; ++i)
+      asm.Memory(Ora, Zp.Arg.Plus(i));
+    asm.Branch(Beq, console);
+    asm.Immediate(Lda, 0xFF);
+    for (var i = 0; i < 4; ++i)
+      asm.Memory(Sta, Zp.Ret.Plus(i));
+    asm.Emit(Rts);
+    asm.Bind(console);
+    asm.Call(Chrin);
+    asm.Immediate(Cmp, 13);
+    asm.Branch(Bne, noReturn);
+    asm.Immediate(Lda, '\n');
+    asm.Jump(store);
+    asm.Bind(noReturn);
+    asm.Immediate(Cmp, 0xC1);
+    asm.Branch(Bcs, capital);
+    asm.Immediate(Cmp, 0x41);
+    asm.Branch(Bcc, store);
+    asm.Immediate(Cmp, 0x5B);
+    asm.Branch(Bcs, store);
+    asm.Immediate(Ora, 0x20);
+    asm.Jump(store);
+    asm.Bind(capital);
+    asm.Immediate(Cmp, 0xDB);
+    asm.Branch(Bcs, store);
+    asm.Immediate(M6502Op.And, 0x7F);
+    asm.Bind(store);
+    asm.Immediate(Ldy, 0);
+    asm.IndirectY(Sta, Zp.Arg.Plus(4));
+    asm.Immediate(Lda, 1);
+    asm.Memory(Sta, Zp.Ret);
+    asm.Immediate(Lda, 0);
+    for (var i = 1; i < 4; ++i)
+      asm.Memory(Sta, Zp.Ret.Plus(i));
+    asm.Emit(Rts);
   }
 
   private void EmitSystemWrite() {

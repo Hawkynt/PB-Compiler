@@ -17,6 +17,7 @@ namespace PowerBasic.Compiler.Tests.Exec;
 public sealed class Cpu6502 {
 
   private const ushort Chrout = 0xFFD2;
+  private const ushort Chrin = 0xFFCF;
   private const ushort Sentinel = 0xFFF0;
 
   private readonly byte[] _memory = new byte[0x10000];
@@ -35,8 +36,8 @@ public sealed class Cpu6502 {
   /// Loads a <c>.PRG</c> and calls its machine code at <paramref name="start"/> as <c>SYS</c> would,
   /// until it returns or <paramref name="maxSteps"/> instructions have run.
   /// </summary>
-  public static Result RunC64Program(byte[] prg, int start = 0x080D, long maxSteps = 50_000_000) {
-    var cpu = new Cpu6502();
+  public static Result RunC64Program(byte[] prg, int start = 0x080D, long maxSteps = 50_000_000, string? input = null) {
+    var cpu = new Cpu6502 { _input = input ?? "" };
     var load = prg[0] | (prg[1] << 8);
     prg.AsSpan(2).CopyTo(cpu._memory.AsSpan(load));
     cpu.Push((byte)((Sentinel - 1) >> 8));
@@ -46,6 +47,9 @@ public sealed class Cpu6502 {
     while (cpu._pc != Sentinel && steps < maxSteps) {
       if (cpu._pc == Chrout) {
         cpu.Capture(cpu._a);
+        cpu.Return();
+      } else if (cpu._pc == Chrin) {
+        cpu._a = cpu.NextInput();
         cpu.Return();
       } else {
         cpu.Step();
@@ -78,6 +82,27 @@ public sealed class Cpu6502 {
     }
     cpu._memory.CopyTo(memory, 0);
     return new(cpu._output.ToString(), cpu._pc == Sentinel, steps, cpu._s, memory);
+  }
+
+  private string _input = "";
+  private int _inputAt;
+
+  /// <summary>
+  /// CHRIN: the next byte of the test's input, as PETSCII in the lower-case set - a carriage return
+  /// for a line end, and carriage returns once the input is used up, as an empty keyboard line gives.
+  /// </summary>
+  private byte NextInput() {
+    while (this._inputAt < this._input.Length && this._input[this._inputAt] == '\r')
+      ++this._inputAt;
+    if (this._inputAt >= this._input.Length)
+      return 13;
+    var character = this._input[this._inputAt++];
+    return character switch {
+      '\n' => 13,
+      >= 'a' and <= 'z' => (byte)(character - 0x20),
+      >= 'A' and <= 'Z' => (byte)(character + 0x80),
+      _ => (byte)character,
+    };
   }
 
   /// <summary>PETSCII, in the upper- and lower-case set the programs select, back to ASCII.</summary>
