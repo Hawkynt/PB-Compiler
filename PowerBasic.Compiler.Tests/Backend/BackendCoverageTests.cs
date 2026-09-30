@@ -29,8 +29,8 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// non-default calling convention, error handling in the body - before the selector is asked at all.
 /// A procedure the filter skips appeared in neither the numerator nor the denominator, so the ratio
 /// measured "of the functions we attempted, how many succeeded", which is nearly a tautology. Today that costs
-/// nothing, because a skipped procedure falls back to the direct emitter; after <c>CodeGen/</c> is
-/// retired there is no fallback and each one is a compile failure. So the routed figure is now taken
+/// nothing in the old hybrid pipeline because another emitter took the procedure. Production now has
+/// no fallback and each skip is a compile failure. So the routed figure is taken
 /// from <see cref="CodeGenerator.BackendDeclines"/>, which is the routing's own record of its own
 /// decision, and the selector figure is kept BESIDE it rather than in front of it.
 /// </para>

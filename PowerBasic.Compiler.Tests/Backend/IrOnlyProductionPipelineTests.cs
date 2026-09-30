@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 
@@ -38,8 +39,29 @@ public sealed class IrOnlyProductionPipelineTests {
       Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
       Assert.That(image, Is.Not.Empty);
       Assert.That(generator.BackendDeclines, Is.Empty);
+      Assert.That(generator.BackendModuleForTesting?.RepresentationStage, Is.EqualTo(IrRepresentationStage.LowIr),
+        "production selection must consume the verified Low IR boundary, not an implicitly compatible SSA module");
       Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
       Assert.That(generator.BackendRoutedNames, Does.Contain("Twice"));
+      Assert.That(generator.BackendEmittedNamesForTesting, Does.Contain("main"));
+      Assert.That(generator.BackendEmittedNamesForTesting, Does.Contain("Twice"));
+    });
+  }
+
+  [Test]
+  public void Com_GivenOptimizedConstantOutput_ThenArtifactStillComesFromX8616MachineIr() {
+    var generator = new CodeGenerator(Bind("PRINT \"routed\"\nEND")) { Optimize = true };
+
+    var image = generator.EmitCom();
+
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      Assert.That(image, Is.Not.Empty);
+      Assert.That(generator.BackendDeclines, Is.Empty);
+      Assert.That(generator.BackendModuleForTesting?.RepresentationStage, Is.EqualTo(IrRepresentationStage.LowIr));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+      Assert.That(generator.BackendEmittedNamesForTesting, Does.Contain("main"),
+        "routing/allocating main is insufficient: the COM bytes must be emitted from its machine product");
     });
   }
 
@@ -60,7 +82,9 @@ public sealed class IrOnlyProductionPipelineTests {
       Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
       Assert.That(generator.BackendDeclines.Where(d => !d.Name.Equals("main", StringComparison.OrdinalIgnoreCase)), Is.Empty,
         "UNIT has no module body; only real procedure declines matter");
+      Assert.That(generator.BackendModuleForTesting?.RepresentationStage, Is.EqualTo(IrRepresentationStage.LowIr));
       Assert.That(generator.BackendRoutedNames, Does.Contain("AddOne"));
+      Assert.That(generator.BackendEmittedNamesForTesting, Does.Contain("AddOne"));
       Assert.That(unit.Code, Is.Not.Empty);
       Assert.That(unit.Exports.Select(e => e.Name), Does.Contain("AddOne"));
     });

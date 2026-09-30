@@ -68,14 +68,16 @@ flowchart TD
     direction TB
     L1["P1 runtime-after-user + trim to reached sections"]
     L2["P2 data-on-demand, P3 BSS, P4 right-sized memory"]
-    L3["P5 .COM, P6 header squeeze, P7 trivial-I/O image"]
+    L3["P5 .COM, P6 header squeeze"]
     L1 --> L2 --> L3
   end
   T1 --> T2 --> T3
 ```
 
-**Tier 1 — the IR middle end.** `Ir/IrLowering.cs` turns the bound model into typed
-SSA IR; `Ir/Passes/IrMiddleEndPipeline.cs` then optimizes the whole module.
+**Tier 1 — the IR middle end.** `Hir/BoundAstToHir.cs` snapshots the bound model as
+HIR, `Hir/HirToMir.cs` lowers it to MIR, and `Ir/Passes/IrMiddleEndPipeline.cs`
+forms SSA and optimizes the whole module. Production then verifies the
+`OptimizedSsa` boundary and legalizes it to `LowIr` before target selection.
 `RunNativeModule` runs `Standard(...)` twice (unoptimized: `Legalize(...)` twice), then
 the `Inliner`, and `Standard` twice more when it inlined something. `Standard` is
 organized in named phases — LoopPreparation, ScalarSimplification, MemoryAndObjects,
@@ -258,5 +260,5 @@ that runs the same.
 | Front end | always | dialect | lex / parse / bind (no opt) |
 | Tier 1 IR middle end | per module | `Optimize` (+ ownership, SPEED) | InstCombine, SCCP, GVN, LICM, FloatDemotion, IpConstantProp, Inliner, GlobalDce, PrivateCallingConvention |
 | Tier 2 x86-16 back end | per procedure | `Optimize` / `OptimizeSpeed` | selection idioms, peephole, scheduling, linear-scan allocation |
-| Tier 3 layout | post-emission | `Optimize` (+ self-contained) | runtime trim, BSS, .COM, trivial-I/O |
+| Tier 3 layout | post-emission | `Optimize` (+ self-contained) | runtime trim, BSS, .COM |
 | Linker | always (foreign when `$LINK`) | — | OMF read, convention, selective extraction |

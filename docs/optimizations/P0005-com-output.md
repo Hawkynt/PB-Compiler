@@ -42,18 +42,8 @@ Total on disk  : 14 254 bytes
 
 ## With the optimizer
 
-```
-Raw image      : 25 bytes, no header, no relocations
-```
-
-```asm
-    org     100h
-    mov     dx, msg
-    mov     ah, 9
-    int     21h
-    int     20h
-msg db "Hello, World!", 0Dh, 0Ah, "$"
-```
+The optimized image has no MZ header or relocation table. Its program bodies still
+come from the complete Low IR → x86-16 machine pipeline; only the DOS container changes.
 
 ## Equivalent BASIC
 

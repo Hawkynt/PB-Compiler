@@ -7,10 +7,9 @@ namespace PowerBasic.Compiler.Backend;
 /// <para>
 /// It exists to keep two very different failures from looking alike. A construct the back end cannot
 /// compile must DECLINE - <c>InstructionSelector.Decline</c>, a null from
-/// <c>LinearScanAllocator.Allocate</c>, an <c>IrLoweringException</c> - so the direct emitter takes
-/// the function and the refusal lands in the coverage histogram with a reason attached. That path is
-/// survivable and is measured. A broken invariant is neither: no fallback can repair it, and it must
-/// be loud. Before this type both spellings were <c>NotSupportedException</c> and
+/// <c>LinearScanAllocator.Allocate</c>, an <c>IrLoweringException</c> - so mandatory routing produces
+/// a named compile diagnostic. A broken invariant is different: it must be loud rather than reported
+/// as unsupported source. Before this type both spellings were <c>NotSupportedException</c> and
 /// <c>InvalidOperationException</c>, so reading a stack trace could not tell "this program uses
 /// something we do not support" from "this back end has a bug".
 /// </para>

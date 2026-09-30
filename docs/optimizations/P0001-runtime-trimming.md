@@ -51,8 +51,9 @@ Runtime
   rt_exit
 ```
 
-916 bytes on disk through the general trimmed path — and 25 bytes when
-[P0007](P0007-trivial-io-lowering.md)'s fast path also applies.
+The general trimmed path remains the only production path: its user code is selected,
+scheduled, allocated and emitted by the x86-16 backend before unused runtime sections
+are removed.
 
 ## Equivalent BASIC
 

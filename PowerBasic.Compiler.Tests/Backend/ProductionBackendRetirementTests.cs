@@ -8,6 +8,27 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class ProductionBackendRetirementTests {
 
+  private static readonly string _repoRoot =
+    Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
+
+  private static readonly string[] _retiredSyntaxEmitterFiles = [
+    "CodeGenerator.Arrays.cs",
+    "CodeGenerator.Expressions.cs",
+    "CodeGenerator.Extras.cs",
+    "CodeGenerator.Graphics.cs",
+    "CodeGenerator.Intrinsics.cs",
+    "CodeGenerator.Io.cs",
+    "CodeGenerator.LowLevel.cs",
+    "CodeGenerator.OnGoto.cs",
+    "CodeGenerator.Optimize.cs",
+    "CodeGenerator.OverflowVectorization.cs",
+    "CodeGenerator.Places.cs",
+    "CodeGenerator.Procs.cs",
+    "CodeGenerator.Search.cs",
+    "CodeGenerator.Trivial.cs",
+    "CodeGenerator.Vendor.cs",
+  ];
+
   [Test]
   public void CodeGenerator_GivenNoRoutingOverride_ThenIrBackendIsMandatory() {
     var model = Binder.Bind(
@@ -35,6 +56,35 @@ public sealed class ProductionBackendRetirementTests {
         "there is no second code generator to select");
       Assert.That(properties.Any(p => p.Name == "RequireBackend"), Is.False,
         "IR routing is not a policy: a declined body is a compile error");
+    });
+  }
+
+  [Test]
+  public void CompilerSources_GivenTheRetirementBoundary_ThenNoSyntaxOrRawByteEmitterRemains() {
+    var codeGeneratorDirectory = Path.Combine(_repoRoot, "PowerBasic.Compiler", "CodeGen");
+    var existingSyntaxEmitters = _retiredSyntaxEmitterFiles
+      .Where(file => File.Exists(Path.Combine(codeGeneratorDirectory, file)))
+      .ToList();
+    var rawByteEmitter = Path.Combine(_repoRoot, "PowerBasic.Compiler", "Emit", "DosTrivialImage.cs");
+    var codeGeneratorMethods = typeof(CodeGenerator)
+      .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+        | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static)
+      .Select(method => method.Name)
+      .ToHashSet(StringComparer.Ordinal);
+    var retiredEntryPoints = new[] {
+      "EmitStatement", "EmitStatements", "EmitExpression", "EmitProcedure", "EmitDirect",
+      "CanCallDirectCallee", "DirectCalleeWithCompatibleAbi", "InlineAsmAboveTarget",
+    }.Where(codeGeneratorMethods.Contains).ToList();
+
+    Assert.Multiple(() => {
+      Assert.That(existingSyntaxEmitters, Is.Empty,
+        "retired bound-AST machine emitters must not re-enter the SDK-default compiler inputs");
+      Assert.That(File.Exists(rawByteEmitter), Is.False,
+        "a whole-program raw-byte shortcut bypasses selection, scheduling, allocation and MachineEmitter");
+      Assert.That(typeof(CodeGenerator).Assembly.GetType("PowerBasic.Compiler.Emit.DosTrivialImage"), Is.Null,
+        "the raw-byte shortcut must not survive in the compiled compiler under another project-item rule");
+      Assert.That(retiredEntryPoints, Is.Empty,
+        "a renamed source file must not restore a syntax-level emission entry point");
     });
   }
 

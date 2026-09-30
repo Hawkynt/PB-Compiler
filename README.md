@@ -44,9 +44,9 @@ it doesn't merely *resemble* the genuine compilers — it is driven against the
 original binaries and produces **byte-identical output**, documented bugs and
 all. Second, **a forward path**: a real SSA-based optimization pipeline and
 lean-output backend — available in *every* dialect via `--optimize` and on by
-default in the `pb36` language-features superset — that drops a hello world from a
-fat always-linked runtime to a 25-byte image while every existing program keeps
-behaving exactly as it did.
+  default in the `pb36` language-features superset — that replaces the fat
+  always-linked runtime with a trimmed COM image while every existing program keeps
+  behaving exactly as it did.
 
 ("Byte-identical" here and below always means the program's **output**, which the oracle harness
 diffs after running both executables. Nothing compares compiled images; the contract is that a
@@ -373,9 +373,9 @@ status column below cannot drift apart:
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
 | O — optimization passes | 177 | 78 | 152 | 407 |
-| P — lean output | 7 | 0 | 0 | 7 |
+| P — lean output | 6 | 0 | 1 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **191** | **78** | **152** | **421** |
+| **all** | **190** | **78** | **153** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -874,9 +874,9 @@ next free number rather than displacing anything.
 | ✅ | [P0002](docs/optimizations/P0002-data-on-demand.md) | Data on demand | Descriptor table, capture buffer, file table and DATA pool are emitted per subsystem, only when referenced. |
 | ✅ | [P0003](docs/optimizations/P0003-bss.md) | BSS instead of image bytes | Zero-initialized data moves behind the image via the MZ `MinAlloc` instead of being written as zero bytes. |
 | ✅ | [P0004](docs/optimizations/P0004-right-sized-memory.md) | Right-sized memory footprint | Unused string/array heap segments are never reserved — hello world drops from ~192 KiB resident to 64 KiB. |
-| ✅ | [P0005](docs/optimizations/P0005-com-output.md) | `.COM`-style output | A trimmed program with no relocations is emitted as a raw, header-less image (via P0007); `$COMPILE COM` as an explicit switch is still planned. |
+| ✅ | [P0005](docs/optimizations/P0005-com-output.md) | `.COM`-style output | An optimized self-contained DOS program is emitted as a header-less COM image; `$COMPILE EXE` keeps MZ and `$COMPILE COM` / `--emit-com` select COM explicitly. |
 | ✅ | [P0006](docs/optimizations/P0006-header-squeeze.md) | Header & padding squeeze | Minimal MZ header, no padding between trimmed sections, literal dedup and code folding. |
-| ✅ | [P0007](docs/optimizations/P0007-trivial-io-lowering.md) | Trivial-I/O lowering | A program that only PRINTs compile-time values becomes a 25-byte raw image with one DOS call. |
+| ⬜ | [P0007](docs/optimizations/P0007-trivial-io-lowering.md) | Trivial-I/O lowering | Reintroduce constant-output specialization inside IR/machine lowering; the former raw-byte artifact shortcut was retired because it bypassed the x86-16 stages. |
 
 ### R — runtime speed: drawing, text, strings
 

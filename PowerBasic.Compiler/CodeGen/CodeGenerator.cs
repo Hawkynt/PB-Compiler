@@ -156,28 +156,18 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     //
     // It used to be resolved further down, next to the peephole and scheduler switches it also sets,
     // and that was correct for as long as nothing consulted the routing before then. Mandatory
-    // routing does: BackendDeclines forces BackendProcs/BackendMain, which runs selection. So under
-    // PBC_X_BACKEND_STRICT the selector ran with OptimizeSpeed still false, every cost-model trade
-    // declined, and the cached machine code was the compact form - strict mode did not merely measure
-    // a different program from the one it shipped, it emitted one. ResolveOptimizeObjective's own
+    // routing does: BackendDeclines forces BackendProcs/BackendMain, which runs selection. The former
+    // strict-routing probe could therefore select with OptimizeSpeed still false and cache compact
+    // machine code for a SPEED build. ResolveOptimizeObjective's own
     // summary already promised "before backend selection and emission"; this is that promise.
     //
     this.ResolveOptimizeObjective(optimizeMeta);
 
     // Asked HERE, after the optimizer has had its say about calling conventions and before a single
     // byte is emitted, because the routing's answer depends on both. Production routing is mandatory:
-    // a decline is a compile failure and MUST NOT fall through to the legacy direct emitter. Tests may
-    // still opt into that emitter explicitly as a behavioural oracle.
+    // a decline is a compile failure and cannot reach artifact emission.
     if (this.RaiseWhenRoutingIsMandatoryAndSomethingDeclined())
       return [];
-
-    // P7: a program whose optimized body only prints known text is a raw COM-style image of a few
-    // dozen bytes (docs/PB36.md) - a lean-output optimization, available to any dialect under the
-    // optimizer flag
-    if ((emitCom || this.ChoosesComContainer())
-        && this.Optimize && !this._allowExternalCalls && !this._isUnit
-        && this._backendModule is { } optimized && Emit.DosTrivialImage.TryBuild(optimized) is { } trivial)
-      return trivial;
 
     var asm = this._asm;
     // Model COM's PSP:0100h load origin inside the assembler itself. The prefix is not written to

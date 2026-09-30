@@ -45,8 +45,9 @@ internal static class DialectBattery {
   internal static readonly Dimension[] Dimensions = [
     new("syntax", "Statement syntax and parameter combinations",
       "Every statement form the dialect provides is accepted, in each combination of its optional parameters."),
-    new("lowering", "Lowers to the IR",
-      "Every accepted form reaches verified IR; a named decline is still a missing production path."),
+    new("lowering", "Lowers through the production IR/x86-16 route",
+      "Every accepted form reaches verified Low IR and selects, schedules and allocates through the x86-16 backend; "
+      + "a named decline is still a missing production path."),
     new("dead-branch", "Syntax errors in unreachable branches are ignored, and warned about",
       "Source that no control flow can reach may be malformed without failing the compile, and says so."),
     new("live-branch", "Syntax errors on reachable flow fail",

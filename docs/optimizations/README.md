@@ -17,9 +17,9 @@ the equivalent BASIC the transformed program behaves like.
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 3 | 0 | 0 | 3 |
 | O — optimization passes | 178 | 77 | 152 | 407 |
-| P — lean output | 7 | 0 | 0 | 7 |
+| P — lean output | 6 | 0 | 1 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **192** | **77** | **152** | **421** |
+| **all** | **191** | **77** | **153** | **421** |
 
 **A 🟡 page's "Still planned" list can be behind the code, so check before building
 from it.** Of eight partial pages read closely on 2026-08-06, four named work that
@@ -556,7 +556,7 @@ Conventions used on every page:
 | ✅ | [P0004](P0004-right-sized-memory.md) | Right-sized memory footprint |
 | ✅ | [P0005](P0005-com-output.md) | `.COM`-style output |
 | ✅ | [P0006](P0006-header-squeeze.md) | Header & padding squeeze |
-| ✅ | [P0007](P0007-trivial-io-lowering.md) | Trivial-I/O lowering |
+| ⬜ | [P0007](P0007-trivial-io-lowering.md) | Trivial-I/O lowering |
 
 ## R — runtime speed
 
@@ -614,7 +614,7 @@ Binder → IrLowering (bound model → typed SSA IR)
            SuperoptimizedPeepholes O0355) → LinearScanAllocator (CopyCoalescer O0085)
          → post-RA peepholes (O0357) → late load/store (O0358) → MachineEmitter
        → Assembler (O0034, O0035, O0038–O0040, C0002, C0003)
-       → RuntimeTrimmer (P0001, P0002) → MZ/COM writer (P0003–P0007)
+       → RuntimeTrimmer (P0001, P0002) → MZ/COM writer (P0003–P0006)
 ```
 
 Without the optimizer, `RunNativeModule` runs only the `Legalize()` subset

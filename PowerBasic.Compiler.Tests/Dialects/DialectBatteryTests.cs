@@ -108,7 +108,11 @@ public sealed class DialectBatteryTests {
     WriteIfChanged(path, expected);
 
     TestContext.Out.Write(expected);
-    Assert.That(File.ReadAllText(path).Replace("\r\n", "\n"), Is.EqualTo(expected.Replace("\r\n", "\n")));
+    var productionRoute = results.Single(result => result.Dimension.Id == "lowering").Measurement;
+    Assert.Multiple(() => {
+      Assert.That(File.ReadAllText(path).Replace("\r\n", "\n"), Is.EqualTo(expected.Replace("\r\n", "\n")));
+      Assert.That(productionRoute.State, Is.EqualTo(DialectBattery.State.Held), productionRoute.Note);
+    });
   }
 
   /// <summary>

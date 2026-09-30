@@ -5,8 +5,8 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
 /// <summary>
-/// pb36 optimizer (docs/PB36.md): runtime trimming, trivial-I/O lowering,
-/// wrap-correct constant folding, multiply strength reduction and the zero
+/// pb36 optimizer (docs/PB36.md): runtime trimming, wrap-correct constant folding,
+/// multiply strength reduction and the zero
 /// idiom. The behavioral contract (byte-identical output to pb35/genuine
 /// PBC 3.50) is enforced by the differential harness's pb36 pass; these tests
 /// pin the size wins, the image shapes and the wrap arithmetic.
@@ -14,30 +14,8 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 [TestFixture]
 public sealed class OptimizerTests {
 
-  /// <summary>
-  /// Compiles through the DIRECT emitter, explicitly.
-  ///
-  /// <para>
-  /// Every byte-pattern claim in this fixture is a claim about that emitter's instruction selection,
-  /// and was written when it was the only one. It now has to say so: routing became the default, and
-  /// a fixture asserting <c>CMP AX,BX</c> against a back end that reaches the same result through
-  /// <c>CMP AX,[BP+4]</c> is measuring which emitter ran, not whether the optimization happened.
-  /// <see cref="CompileWithBackend"/> is the routed sibling, and moving a test from one to the other
-  /// is the unit of work in docs/DIRECT-EMITTER-RETIREMENT.md - done by reading what the test means,
-  /// one at a time, never by relaxing the assertion.
-  /// </para>
-  /// </summary>
+  /// <summary>Compiles through the mandatory IR middle end and x86-16 machine pipeline.</summary>
   private static byte[] Compile(string source, Dialect dialect) {
-    var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
-    var model = Binder.Bind(unit, dialect);
-    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model);
-    var exe = generator.EmitExecutable();
-    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
-    return exe;
-  }
-
-  private static byte[] CompileWithBackend(string source, Dialect dialect) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", dialect), "TEST.BAS", dialect);
     var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -130,72 +108,6 @@ public sealed class OptimizerTests {
     _ = Compile(_HELLO, Dialect.Pb36);
     var second = Compile(_HELLO, Dialect.Pb35);
     Assert.That(second, Is.EqualTo(first));
-  }
-
-  #endregion
-
-  #region P7 - trivial-I/O lowering (raw COM-style image)
-
-  [Test]
-  public void Emit_GivenHelloWorld_WhenPb36_ThenTwentyFiveByteComImage() {
-    var image = Compile(_HELLO, Dialect.Pb36);
-    Assert.Multiple(() => {
-      Assert.That(image, Has.Length.EqualTo(25), "MOV AH,9 / MOV DX / INT 21h / INT 20h + text + '$'");
-      Assert.That(image[..2], Is.EqualTo(new byte[] { 0xB4, 0x09 }), "AH=9 DOS string writer");
-      Assert.That(image[^1], Is.EqualTo((byte)'$'));
-      Assert.That(Ascii(image), Does.Contain("Hello, World!\r\n"));
-    });
-  }
-
-  [Test]
-  public void Emit_GivenLiteralContainingDollar_WhenPb36_ThenHandleWriterVariant() {
-    var image = Compile("PRINT \"100$ for you\"\nEND", Dialect.Pb36);
-    Assert.Multiple(() => {
-      Assert.That(image[..2], Is.EqualTo(new byte[] { 0xB4, 0x40 }), "'$' in text forces the AH=40h writer");
-      Assert.That(Ascii(image), Does.Contain("100$ for you"));
-    });
-  }
-
-  [Test]
-  public void Emit_GivenConstantNumericPrint_WhenPb36_ThenPbFormattedAtCompileTime() {
-    var image = Compile("PRINT 2 + 3\nPRINT -7\nEND", Dialect.Pb36);
-    Assert.Multiple(() => {
-      Assert.That(image, Has.Length.LessThan(64));
-      Assert.That(Ascii(image), Does.Contain(" 5 \r\n"), "PB integer format: space, digits, trailing space");
-      Assert.That(Ascii(image), Does.Contain("-7 \r\n"));
-    });
-  }
-
-  [Test]
-  public void Emit_GivenCommaSeparator_WhenPb36_ThenFourteenColumnZonesPrecomputed() {
-    var image = Compile("PRINT \"ab\", \"cd\"\nEND", Dialect.Pb36);
-    Assert.That(Ascii(image), Does.Contain("ab" + new string(' ', 12) + "cd\r\n"));
-  }
-
-  [Test]
-  public void Emit_GivenEndWithExitCode_WhenPb36_ThenExplicitTerminateCall() {
-    var image = Compile("PRINT \"x\"\nEND 3", Dialect.Pb36);
-    var hasExit = false;
-    for (var i = 0; i + 4 < image.Length; ++i)
-      hasExit |= image[i] == 0xB8 && image[i + 1] == 0x03 && image[i + 2] == 0x4C; // MOV AX,4C03h
-    Assert.That(hasExit, Is.True, "explicit exit code uses AH=4Ch with AL=3");
-  }
-
-  [Test]
-  public void Emit_GivenNonTrivialStatement_WhenPb36_ThenGeneralMzPathTaken() {
-    var image = Compile("x% = INP(&H60)\nPRINT x%\nEND", Dialect.Pb36);
-    var known = Compile("x% = 1\nPRINT x%\nEND", Dialect.Pb36);
-    Assert.Multiple(() => {
-      Assert.That(image[..2], Is.Not.EqualTo(new byte[] { 0xB4, 0x09 }), "a value known only at run time needs the real runtime");
-      Assert.That(image, Has.Length.GreaterThan(64), "...which is the trimmed runtime, not the one-call image");
-      Assert.That(known[..2], Is.EqualTo(new byte[] { 0xB4, 0x09 }), "a variable the optimizer folds into known text does not");
-    });
-  }
-
-  [Test]
-  public void Emit_GivenHelloWorld_WhenPb35_ThenNoTrivialLowering() {
-    var image = Compile(_HELLO, Dialect.Pb35);
-    Assert.That(image[..2], Is.EqualTo(new byte[] { (byte)'M', (byte)'Z' }), "P7 is pb36-only");
   }
 
   #endregion
@@ -2132,8 +2044,8 @@ public sealed class OptimizerTests {
     // the increment is ADD ESI, imm (66 83 C6), absent without $CPU 80386 (the counter then lives
     // in its 4-byte memory cell). The "true win" of the 386 path - a full LONG local in a register.
     const string body = "$OPTIMIZE SPEED\ns& = 0\nFOR i& = 1 TO 100\n  s& = s& + i&\n  PRINT s&\nNEXT i&\nPRINT s&\nEND";
-    var with386 = CompileWithBackend("$CPU 80386\n" + body, Dialect.Pb36);
-    var no386 = CompileWithBackend(body, Dialect.Pb36);
+    var with386 = Compile("$CPU 80386\n" + body, Dialect.Pb36);
+    var no386 = Compile(body, Dialect.Pb36);
     Assert.That(CountAddEsiImm(with386), Is.GreaterThan(CountAddEsiImm(no386)),
       "a LONG FOR counter should increment in ESI (66 83 C6) under $CPU 80386");
   }
@@ -2145,8 +2057,8 @@ public sealed class OptimizerTests {
     // counter has no LONG accumulator and so no such operation.
     const string withAcc = "$CPU 80386\n$OPTIMIZE SPEED\ns& = 0\nFOR i& = 1 TO 100\n  s& = s& + i&\n  PRINT s&\nNEXT i&\nPRINT s&\nEND";
     const string noAcc = "$CPU 80386\n$OPTIMIZE SPEED\nFOR i& = 1 TO 100\n  PRINT i&\nNEXT i&\nEND";
-    Assert.That(CountAddEdiEsi(CompileWithBackend(withAcc, Dialect.Pb36)),
-      Is.GreaterThan(CountAddEdiEsi(CompileWithBackend(noAcc, Dialect.Pb36))),
+    Assert.That(CountAddEdiEsi(Compile(withAcc, Dialect.Pb36)),
+      Is.GreaterThan(CountAddEdiEsi(Compile(noAcc, Dialect.Pb36))),
       "a LONG accumulator joins the ESI counter in EDI (66 01 F7) under $CPU 80386");
   }
 

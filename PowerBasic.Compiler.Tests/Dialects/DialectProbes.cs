@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax.Ast;
@@ -82,11 +83,12 @@ internal static class DialectProbes {
   }
 
   /// <summary>
-  /// D2 - every accepted form reaches the IR. A named decline is still a missing production path,
-  /// so it fails this dimension just as an exception does.
+  /// D2 - every accepted form reaches verified Low IR and the x86-16 machine pipeline. Merely creating
+  /// MIR is too weak: production consumes Low IR, and a selection or allocation decline is just as much
+  /// a missing production path as a lowering decline.
   /// </summary>
   internal static DialectBattery.Measurement Lowering(Dialect dialect) {
-    int total = 0, lowered = 0;
+    int total = 0, routed = 0;
     var failed = new List<string>();
     foreach (var form in StatementSurface.All.Where(f => StatementSurface.ShouldAccept(f, dialect))) {
       var source = StatementSurface.Program(form, dialect);
@@ -100,20 +102,30 @@ internal static class DialectProbes {
       }
       ++total;
       try {
-        if (IrLowering.TryLowerModule(model, out var why) is not null)
-          ++lowered;
-        else
-          failed.Add(form.Id + (string.IsNullOrWhiteSpace(why)
-            ? " (declined with no reason)"
-            : $" ({why})"));
+        var generator = new CodeGenerator(model);
+        var declines = generator.BackendDeclines
+          .Where(decline => !decline.Reason.StartsWith("filter: external declaration", StringComparison.Ordinal))
+          .ToList();
+        var mainRouted = generator.BackendRoutedNames.Contains("main", StringComparer.OrdinalIgnoreCase);
+        var stage = generator.BackendModuleForTesting?.RepresentationStage;
+        if (declines.Count == 0 && mainRouted && stage == IrRepresentationStage.LowIr)
+          ++routed;
+        else {
+          var why = declines.Count > 0
+            ? string.Join("; ", declines.Take(2).Select(decline => $"{decline.Name}: {decline.Reason}"))
+            : !mainRouted ? "main did not reach machine IR"
+            : $"production module stopped at {stage?.ToString() ?? "no IR"}";
+          failed.Add($"{form.Id} ({why})");
+        }
       } catch (Exception e) {
         failed.Add($"{form.Id} ({e.GetType().Name})");
       }
     }
     if (failed.Count > 0)
-      return new(DialectBattery.State.Partial, lowered, total,
-        $"{failed.Count} form(s) do not reach the IR: {string.Join(", ", failed.Take(4))}");
-    return new(DialectBattery.State.Held, lowered, total, $"all {total} accepted forms reach the IR");
+      return new(DialectBattery.State.Partial, routed, total,
+        $"{failed.Count} form(s) do not reach the production x86-16 route: {string.Join(", ", failed.Take(4))}");
+    return new(DialectBattery.State.Held, routed, total,
+      $"all {total} accepted forms reach verified Low IR and x86-16 machine lowering");
   }
 
   /// <summary>

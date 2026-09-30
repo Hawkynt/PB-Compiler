@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-09-30 08:49 UTC by index_codebase.py.
+Generated 2026-09-30 12:07 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1178 files, 10451 symbols.
+1177 files, 10443 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -536,9 +536,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `source` — PowerBasic.Compiler.Tests/Backend/BackendInlineAsmTests.cs:854
 - method `Relay()` — PowerBasic.Compiler.Tests/Backend/BackendInlineAsmTests.cs:855
 
-### BackendInlineAsmVirtualizationTests.cs  `C#, 105 lines`
+### BackendInlineAsmVirtualizationTests.cs  `C#, 97 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendInlineAsmVirtualizationTests.cs:4
-- class `BackendInlineAsmVirtualizationTests` — Inline assembly the declared CPU cannot execute must not route. — PowerBasic.Compiler.Tests/Backend/BackendInlineAsmVirtualizationTests.cs:31
+- class `BackendInlineAsmVirtualizationTests` — Inline assembly the declared CPU cannot execute must be virtualized inside the production route. — PowerBasic.Compiler.Tests/Backend/BackendInlineAsmVirtualizationTests.cs:25
 
 ### BackendInputRoutingTests.cs  `C#, 243 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendInputRoutingTests.cs:5
@@ -882,9 +882,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/InstructionSelectorTests.cs:4
 - class `InstructionSelectorTests` — Stage 2 of the x86-16 back end (docs/X86-BACKEND.md): selecting the typed-SSA IR into the — PowerBasic.Compiler.Tests/Backend/InstructionSelectorTests.cs:12
 
-### IrOnlyProductionPipelineTests.cs  `C#, 69 lines`
-- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/IrOnlyProductionPipelineTests.cs:4
-- class `IrOnlyProductionPipelineTests` — Production architecture gate: executable and unit machine code may only be emitted from the — PowerBasic.Compiler.Tests/Backend/IrOnlyProductionPipelineTests.cs:12
+### IrOnlyProductionPipelineTests.cs  `C#, 93 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/IrOnlyProductionPipelineTests.cs:5
+- class `IrOnlyProductionPipelineTests` — Production architecture gate: executable and unit machine code may only be emitted from the — PowerBasic.Compiler.Tests/Backend/IrOnlyProductionPipelineTests.cs:13
 
 ### LinearScanAllocatorTests.cs  `C#, 206 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/LinearScanAllocatorTests.cs:4
@@ -1040,7 +1040,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/ProcedureErrorHandlerPreservationTests.cs:2
 - class `ProcedureErrorHandlerPreservationTests` — PowerBasic.Compiler.Tests/Backend/ProcedureErrorHandlerPreservationTests.cs:4
 
-### ProductionBackendRetirementTests.cs  `C#, 75 lines`
+### ProductionBackendRetirementTests.cs  `C#, 125 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/ProductionBackendRetirementTests.cs:5
 - class `ProductionBackendRetirementTests` — PowerBasic.Compiler.Tests/Backend/ProductionBackendRetirementTests.cs:7
 
@@ -1603,235 +1603,235 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/OptimizeAllDialectsTests.cs:4
 - class `OptimizeAllDialectsTests` — The optimizer is a dialect-agnostic axis: it is only on by default for pb36, but EVERY — PowerBasic.Compiler.Tests/CodeGen/OptimizeAllDialectsTests.cs:14
 
-### OptimizerTests.cs  `C#, 3392 lines`
+### OptimizerTests.cs  `C#, 3304 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:4
-- class `OptimizerTests` — pb36 optimizer (docs/PB36.md): runtime trimming, trivial-I/O lowering, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:14
-- method `Contains` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:93
-- method `if(image.AsSpan(i, needle.Length).SequenceEqual(needle))` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:96
-- method `Resident` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:100
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:110
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:121
-- method `Compile(string source)` — $OPTIMIZE SIZE inlines only what cannot grow the program, where the default objective inlines a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:230
-- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:237
-- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:263
-- method `CompileCase` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:264
-- field `body` — O6's purge drops a procedure it expects to inline at EVERY call site - but $OPTIMIZE SIZE — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:291
-- field `source` — O9 closure: right-nested and mixed concat trees flatten into the O24 single-allocation — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:314
-- method `HasMarker(string source, bool optimize)` — O16 completed: the interval lattice (not just FOR-counter ranges) feeds comparison — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:336
-- method `if(exe.AsSpan(i, marker.Length).SequenceEqual(marker))` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:343
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:347
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:459
-- method `CountOf` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:467
-- method `if(image.AsSpan(i, needle.Length).SequenceEqual(needle))` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:472
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:480
-- field `body` — A small CONSTANT trip is unrolled and folded under any objective - it usually leaves nothing. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:490
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:533
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:545
-- field `source` — a record big enough to stay a block copy, filled from a port so the optimizer cannot fold it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:554
-- field `body` — a constant-count LONG SHIFT collapses the per-bit loop to one 66 C1 dword shift — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:573
-- field `with386` — a constant divisor of magnitude >= 2 drops the LongDiv runtime call for a 66 F7 IDIV; — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:595
-- field `no386` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:596
-- field `narrowed` — a LONG \ whose operands the range analysis proves fit 16 bits (INP reads a byte; the divisor — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:615
-- field `wide` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:616
-- method `HasBranchlessAbs(byte[] img)` — O0249: ABS on a 16-bit value is emitted branchless (cwd; xor ax,dx; sub ax,dx = 99 31 D0 29 D0) — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:638
-- method `if(img[i] == 0x99 && img[i + 1] == 0x31 && img[i + 2] == 0xD0 && img[i …` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:640
-- method `CmpSi(byte[] img)` — O0112: a fixed-trip FOR whose counter is never read counts SI down to zero (DEC/JNZ), so no — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:662
-- method `if((img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6) || ((img[i] == 0x81…` — cmp si, r/m16 (3B, modrm reg field = 110b) OR cmp si, imm (81/83 FE): O0113 folds a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:667
-- method `CmpSi(byte[] img)` — O0062: a register-resident FOR counter (SI) is rotated - an entry guard plus a bottom test. With — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:684
-- method `if((img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6) || ((img[i] == 0x81…` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:687
-- method `CmpBound(byte[] img)` — O0062: under $OPTIMIZE SPEED a pre-tested DO WHILE is rotated to an entry guard plus a bottom — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:702
-- method `if((img[i] == 0x3D && img[i + 1] == 0xE8 && img[i + 2] == 0x03) || (img…` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:705
-- field `loop` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:711
-- method `HasNoZeroAlloc(byte[] img)` — O0068: DIM a(1 TO n) immediately followed by FOR i=1 TO n : a(i)=expr writes every element — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:723
-- method `if(img[i] == 0x89 && img[i + 1] == 0xD8 && img[i + 2] == 0x5B && img[i …` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:725
-- method `Imuls(byte[] img)` — O0066: a fully-unrolled FOR sees its counter as a constant per copy, so i * i folds to a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:742
-- method `if(img[i] == 0xF7 && img[i + 1] is >= 0xE8 and <= 0xEF)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:745
-- method `Imuls(byte[] img)` — O0078: under $OPTIMIZE SPEED, a three-set-bit multiplier (11 = 8+2+1) decomposes into shifts and ad… — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:756
-- method `if(img[i] == 0xF7 && img[i + 1] is >= 0xE8 and <= 0xEF)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:759
-- method `Imuls(byte[] img)` — O0078 + O0174: a four-set-bit multiplier (23 = 16+4+2+1) is ~8 instructions - a win over the 8086's — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:775
-- method `if(img[i] == 0xF7 && img[i + 1] is >= 0xE8 and <= 0xEF)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:778
-- field `head` — O0248: `IF a > b THEN m = a ELSE m = b` is a MAX, and folds to exactly the integer CMP/keep the MAX% — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:793
-- method `Has(byte[] img, params byte[] seq)` — O0081: IF x AND mask emits `test ax, mask` (A9 iw), not `and ax, mask` (83 E0 ib) + `test ax,ax`. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:806
-- method `Has(byte[] img, params byte[] seq)` — O0081: `(x AND mask) = 0` and `<> 0` are the same bit test as the bare `IF x AND mask` - the compare — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:823
-- field `head` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:831
-- method `Has(ReadOnlySpan<byte> code, params byte[] sequence)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:848
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:849
-- method `Has(byte[] img, params byte[] seq)` — O0029: four+ targets dispatch through a jump table (a `cmp ax, count` bounds check followed by an — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:873
-- method `HasIndexedJump(byte[] img)` — FF /4 with a memory mod field = JMP r/m16 through memory - the jump table's dispatch — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:882
-- method `if(img[i] == 0xFF && (img[i + 1] & 0x38) == 0x20 && (img[i + 1] & 0xC0)…` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:884
-- field `head` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:888
-- field `head` — O0181: LEN(s$) = 0 is the emptiness handle test, identical to the s$ = "" spelling. Two call — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:902
-- field `head` — O0020: SWAP of two scalars is exchanged inline, so the rt_swap byte-loop routine is never — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:923
-- method `Has(byte[] img, params byte[] seq)` — O0249: SGN over an INTEGER folds to cwd/neg/adc dx,dx/mov ax,dx - branchless and off the x87. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:940
-- field `head` — O0248: the one-armed clamp `IF x > hi THEN x = hi` (no ELSE) is a MIN, and `IF x < lo THEN x = lo` … — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:964
-- method `JgJl(byte[] img)` — O0248: MAX/MIN over LONG arguments fold with a signed 32-bit compare rather than the x87 — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1005
-- method `if(img[i] == 0x7F && img[i + 2] == 0x7C)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1008
-- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1012
-- field `head` — O0248: the LONG min/max diamond folds to exactly the 32-bit MAX(a&, b&) intrinsic code. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1024
-- field `head` — The fold evaluates each operand once; the branch re-evaluates the taken arm. A call operand would r… — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1034
-- field `tail` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1035
-- field `body` — O7 + O0174: a six-iteration tiny FOR loop is above the fetch-bound 8086's four-copy budget (it keep… — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1047
-- field `src` — O0079: q = n\d immediately followed by m = n MOD d over the same runtime operands reuses the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1059
-- method `Idivs(byte[] img)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1064
-- method `if(img[i] == 0xF7 && (img[i + 1] & 0x38) == 0x38)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1067
-- field `body` — O0067: an IF/ELSEIF chain of equality tests on one integer variable against >= 4 dense — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1088
-- field `three` — O0180: LEN(s$) + LEN(s$) + LEN(s$) reads the descriptor once and reloads a slot for the rest, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1118
-- field `source` — O0088: f = (a < b) over WORD operands used as a value tests the carry the CMP already set, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1162
-- field `body` — a one-expression FUNCTION is the inliner's bread and butter: without NOINLINE it is — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1186
-- field `narrowed` — a LONG compare of two range-known values (INP reads a byte) is one 16-bit CMP; the same compare — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1221
-- field `wide` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1222
-- method `Emit_GivenLongCompareRangeKnown_WhenOptimizerOff_ThenWideCompareKept` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1235
-- field `source` — the narrowing is the optimizer's: the faithful build compares both halves even when it could not — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1241
-- method `Emit_GivenDwordMultiplyRangeKnown_WhenPb36_ThenNarrowedTo16BitMul` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1245
-- field `narrowed` — $ERROR NUMERIC ON keeps an unsigned multiply integral (no float promotion), so it reaches the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1252
-- field `wide` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1253
-- method `Execute_GivenLongCompareRangeKnown_WhenPb36_ThenSameResultsAsWide` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1267
-- field `source` — the narrowed compare must decide exactly like the 32-bit one across the sign — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1273
-- field `source` — the narrowed MUL must produce the full 32-bit product, including the upper word — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1295
-- field `body` — a QUAD OR runs inline as two 66 0B (OR EAX, m32) halves instead of the QuadOr call — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1315
-- field `body` — a constant-count QUAD SHIFT LEFT collapses the per-bit loop to a 66 0F A4 SHLD — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1349
-- field `with386` — ERASE of a static array zeroes it DWORD-wide (F3 66 AB) instead of REP STOSW — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1382
-- field `no386` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1383
-- field `with386` — a FOR-loop constant array fill stores two elements per REP STOSD instead of REP STOSW — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1392
-- field `no386` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1393
-- field `folds` — p% is [5,8] (IF-join), so `p% < 20` is always true - the ELSE arm is unreachable and its — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1403
-- field `nofold` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1404
-- field `bounded` — k% is [5,10] (an IF-join, not a constant and not a FOR counter) - the interval lattice — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1416
-- field `unknown` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1417
-- field `counterIdx` — a%(i%) with i% the in-bounds FOR counter drops its bounds check; an index nothing can pin down — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1432
-- field `varIdx` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1433
-- field `twoRange` — a%(i% + j%) with i% the [2,9] FOR counter and j% = i% - 1 a derived [1,8] var: — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1445
-- field `defeated` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1446
-- field `andIdx` — a(x AND 7) is always in [0,7] (the mask keeps only the low bits); a(i% MOD 8) over a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1463
-- field `modIdx` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1464
-- field `unknownIdx` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1465
-- field `idx` — a(i% \ 2) over i% in [0,30] is in [0,15] (truncated divide is monotonic in the dividend), — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1479
-- field `unknownIdx` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1480
-- field `counterAdd` — i% + 1 over an in-range FOR counter drops its Error-6 check; k% + 1 keeps it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1490
-- field `varAdd` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1491
-- field `counterAdd` — a LONG i& + 1& over [1,100] -> [2,101] stays inside 32 bits and drops its Error-6 — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1501
-- field `varAdd` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1502
-- field `counterSub` — a LONG i& - 1& over [1,100] -> [0,99] stays inside 32 bits and drops its Error-6 check — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1511
-- field `varSub` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1512
-- field `counterDiv` — 100 \ i% with i% a [1,10] counter (excludes 0) drops the divide-by-zero guard; 100 \ k% keeps it. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1527
-- field `varDiv` — a SUB parameter divisor (differing call args) is non-constant and not range-known — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1529
-- field `append` — s$ = s$ + "x" appends the literal in place (rt_strcatlit) - the literal is NOT materialized — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1544
-- field `prepend` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1545
-- field `withVar` — s$ = s$ + v$ emits a CALL to the in-place rt_strcatvar routine; a literal self-append — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1563
-- field `literal` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1564
-- method `if(image[i + j] != _strCatVarHead[j])` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1580
-- field `funcLeft` — LEFT$/RIGHT$/MID$ construct a fresh, dead, topmost temp - like a concat - so a tail operand — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1597
-- field `varLeft` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1598
-- field `balanced` — (a$+b$) + (c$+d$): a four-leaf tree of plain string variables. O24 (multi-concat) subsumes the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1611
-- field `impure` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1612
-- field `chain` — a$ + b$ + c$ is a three-leaf chain: O24 builds it with one rt_strcatn allocation (it subsumes — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1623
-- field `pair` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1624
-- field `selfAppend` — s$ = s$ + x$ skips the StrDup of s$ and the StrAssign (StrCat consumes s$ directly), — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1635
-- field `nonSelf` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1636
-- method `if(image[i + j] != _strCatNHead[j])` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1650
-- method `if(image[i + j] != seq[j])` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1667
-- field `program` — O0290: ASC(MID$(s$, i, 1)) with a compile-time length of 1 reads the byte directly (rt_charat), — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1709
-- method `WindowAfterPrologue(byte[] img, params byte[] marker)` — O0298: `=` / `<>` use rt_strcmpeq under --optimize, which after loading the two string — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1768
-- method `for(var k = i; k < i + 64 && k + marker.Length <= img.Length; ++k)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1774
-- method `HasResultReload(byte[] img)` — O0102: a function's result is a returned value, never a result slot reloaded in the epilogue — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1794
-- method `if(img[i] == 0x8B && img[i + 1] == 0x46 && img[i + 3] == 0x89 && img[i …` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1796
-- method `Emit_GivenConstantForLimit_WhenPb36_ThenComparedAgainstImmediate` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1809
-- field `head` — O0113: a constant FOR limit is compared as an immediate (CMP r,100) - no temp cell, no — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1817
-- field `tail` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1819
-- field `source` — O0113 on a nested loop: the inner counter is compared against its constant limit too. The inner — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1846
-- field `invariant` — O0180/LICM: LEN(s$) in a WHILE condition (re-evaluated every iteration) and again in the body is — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1884
-- field `variant` — The invariance guard: when the body writes s$ its length changes per iteration, so the condition's — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1915
-- field `chain` — r$ = a$ & b$ & c$ & d$ is a 4-leaf chain: it builds with ONE rt_strcatn call (a single heap — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1926
-- field `pair` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1927
-- field `three` — boundary: three leaves is the smallest chain the multi-concat builder fires on (two go to O9). — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1937
-- field `chain` — the optimization is strictly Optimize-gated: pb35 (unoptimized) never calls rt_strcatn, so its — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1946
-- field `withCall` — a string-returning function call yields a SHARED/volatile result buffer: a later operand's — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1957
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2002
-- field `body` — $ERROR OVERFLOW ON: a shift chain cannot raise error 6 on signed overflow, so the strength reducer — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2026
-- field `body` — Both objectives keep a loop's accumulator in a register now; what SPEED adds is the SI/DI — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2043
-- method `Emit_GivenConditionalAccumulateLoop_WhenPb36Speed_ThenCounterInSi` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2051
-- field `body` — a FOR loop whose body is a clean IF keeps its counter in the SI/DI pair under SPEED — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2056
-- method `Emit_GivenBinaryWithProvenConstantOperand_WhenPb36_ThenImmediateAlu` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2060
-- field `proven` — a proven-constant operand folds into an immediate ALU op (ADD r,imm); a runtime one cannot — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2065
-- field `runtime` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2066
-- field `source` — a% = x% : b% = x% : d% = x% with x% BYREF: the value is read through its pointer ONCE and kept in — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2095
-- field `numeric` — a numeric/literal PRINT preserves SI/DI, so the counter stays in the pair across it; a string — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2109
-- field `stringVar` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2110
-- method `Emit_GivenSelectCaseInLoopBody_WhenPb36Speed_ThenCounterStaysInSi` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2114
-- field `intSel` — an INTEGER SELECT CASE dispatches through the general registers (a membership mask or a compare — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2122
-- field `strSel` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2123
-- method `Emit_GivenLongForLoop_WhenCpu386Speed_ThenCounterInEsi` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2127
-- field `body` — a LONG FOR counter over an SI-clean body lives in the 32-bit register ESI under $CPU 80386: — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2134
-- field `withAcc` — a hot LONG accumulator joins the ESI counter in EDI under $CPU 80386 - two full LONG locals — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2146
-- field `noAcc` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2147
-- field `body` — nested FOR loops: SPEED's residency pair takes loop values that the default objective leaves — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2186
-- field `body` — an SI/DI-clean DO/LOOP keeps its loop-carried values in SI/DI under SPEED - the accumulate is an — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2206
-- field `body` — a DO loop has no FOR counter claiming SI, so SPEED's residency pair holds loop values: the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2218
-- field `source` — x% is made opaque (BYREF call) so SCCP cannot fold it - this pins the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2283
-- field `source` — O0078: 13 = 1101b (8+4+1) is a three-set-bit multiplier, so it decomposes into a shift-add — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2292
-- field `withRead` — DATA bytes nobody READs are dead - the pool labels stay (the runtime references rt_dataptr) but — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2301
-- field `noRead` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2302
-- field `source` — x% * z% (variable * variable): the right operand is a direct cell, so the modular path reads it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2312
-- field `source` — the shift chains are a SPEED trade (bytes for cycles); the default objective keeps the compact — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2321
-- field `source` — y% = x% AND 15 folds the mask into AND r,imm - no register holds the 15. z% = x% AND w% reads — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2372
-- field `mem` — c% + n% with n% a direct-cell operand reads it as an ALU memory operand (ADD AX,[n%]), so it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2398
-- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2399
-- field `source` — i% > n% with n% a parameter: n% is read straight into the compare (CMP r,[BP+4]), loaded once — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2409
-- method `if(code[i] == 0x3B)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2419
-- field `rmw` — a% = a% + 1 on a SHARED cell becomes INC [a%] (one instruction); the same increment into a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2435
-- field `nonrmw` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2436
-- field `shared` — INCR a%, 5 on a SHARED cell becomes ADD [a%],5 - one immediate, no register park. INCR of a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2454
-- field `local` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2455
-- field `mem` — r! = a! + b! with b! a SINGLE adds it straight from its cell (FADD m32); an expression right — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2498
-- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2499
-- field `mem` — IF a! < b! with b! a SINGLE compares it where it lives (FCOMP m32); an expression right operand — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2517
-- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2518
-- field `mem` — x! = x! + i% with i% a signed-integer direct cell reads it with FIADD m16 (no AX load, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2538
-- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2539
-- field `mem` — r! = a! * 1.5 multiplies by the data-segment float constant in place (FMUL qword [f_n]); — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2557
-- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2558
-- field `source` — LONG AND/OR/XOR against BYVAL parameters read each parameter half from its cell at most once - — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2577
-- field `source` — b& = a& AND 255 is AND r,0FFh on the low word - the high word is simply zero - and no register — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2599
-- field `source` — y% = (p& = 123456) compares each half against its immediate (1 and E240h) - the comparand is — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2619
-- field `source` — x% = 0 never compares against an immediate zero: OR r,r / TEST r,r ask it with no immediate, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2646
-- field `source` — the FUNCTION call has side effects - x * 0 must keep the call (assert: the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2667
-- field `head` — a%(i%) = i% over an affine subscript: O6b walks the elements instead of recomputing each address — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2697
-- field `tail` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2698
-- field `source` — verify the stored values are byte-identical to the unoptimized path — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2708
-- field `source` — lbound != 0: the initial pointer must account for the bias — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2724
-- field `body` — expr reads a%(0) - O6b must decline (conservative aliasing: any a% reference — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2741
-- field `body` — $ERROR BOUNDS ON suppresses O6b so per-element bounds checking keeps working — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2762
-- field `head` — \ and MOD by a power of two are a sign-corrected shift and mask - no IDIV at all. Every other — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2801
-- method `Emit_GivenLongPowerOfTwoDivide_WhenPb36_ThenNoRuntimeDivCall` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2818
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2822
-- field `head` — x% = a%(i%) over an affine subscript scales i% by the element size every iteration unless IVSR — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2882
-- field `tail` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2883
-- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2905
-- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2923
-- method `CountDown(BYVAL n&)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2942
-- method `Twice(n&)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2963
-- field `source` — GIVEN a SUB whose last action is CALL B with a DIFFERENT argument count — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2989
-- method `Forward(BYVAL n%)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2990
-- method `Ping(BYVAL n&)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3018
-- field `source` — GIVEN a call that is NOT in tail position (a PRINT runs after it returns) - — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3044
-- method `AfterWork(BYVAL n%)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3045
-- method `Note` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3052
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3073
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3095
-- field `source` — GIVEN a small multi-statement leaf FUNCTION (a temp local, then the result) — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3120
-- field `inlinedAll` — GIVEN a multi-statement leaf whose every call inlines — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3148
-- field `addressTaken` — """; — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3158
-- field `inlinedAll` — GIVEN a trivial TYPE method (its body reads/writes fields through the BYREF THIS receiver) — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3182
-- method `Sum` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3183
-- field `addressTaken` — """; — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3195
-- method `Sum` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3197
-- field `source` — GIVEN a leaf that mutates its own BYVAL parameter and a body local — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3224
-- field `source` — GIVEN callees that disqualify inlining (a nested call, a loop, an ON ERROR) — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3246
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3288
-- field `source` — 16-byte procedure alignment is output-invariant; the program must run — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3320
-- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3335
-- method `INP` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3352
-- field `body` — With $OPTIMIZE SPEED, LICM hoists k%*m% to the preheader; without SPEED it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3373
+- class `OptimizerTests` — pb36 optimizer (docs/PB36.md): runtime trimming, wrap-correct constant folding, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:14
+- method `Contains` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:71
+- method `if(image.AsSpan(i, needle.Length).SequenceEqual(needle))` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:74
+- method `Resident` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:78
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:88
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:99
+- method `Compile(string source)` — $OPTIMIZE SIZE inlines only what cannot grow the program, where the default objective inlines a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:142
+- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:149
+- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:175
+- method `CompileCase` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:176
+- field `body` — O6's purge drops a procedure it expects to inline at EVERY call site - but $OPTIMIZE SIZE — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:203
+- field `source` — O9 closure: right-nested and mixed concat trees flatten into the O24 single-allocation — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:226
+- method `HasMarker(string source, bool optimize)` — O16 completed: the interval lattice (not just FOR-counter ranges) feeds comparison — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:248
+- method `if(exe.AsSpan(i, marker.Length).SequenceEqual(marker))` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:255
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:259
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:371
+- method `CountOf` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:379
+- method `if(image.AsSpan(i, needle.Length).SequenceEqual(needle))` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:384
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:392
+- field `body` — A small CONSTANT trip is unrolled and folded under any objective - it usually leaves nothing. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:402
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:445
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:457
+- field `source` — a record big enough to stay a block copy, filled from a port so the optimizer cannot fold it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:466
+- field `body` — a constant-count LONG SHIFT collapses the per-bit loop to one 66 C1 dword shift — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:485
+- field `with386` — a constant divisor of magnitude >= 2 drops the LongDiv runtime call for a 66 F7 IDIV; — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:507
+- field `no386` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:508
+- field `narrowed` — a LONG \ whose operands the range analysis proves fit 16 bits (INP reads a byte; the divisor — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:527
+- field `wide` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:528
+- method `HasBranchlessAbs(byte[] img)` — O0249: ABS on a 16-bit value is emitted branchless (cwd; xor ax,dx; sub ax,dx = 99 31 D0 29 D0) — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:550
+- method `if(img[i] == 0x99 && img[i + 1] == 0x31 && img[i + 2] == 0xD0 && img[i …` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:552
+- method `CmpSi(byte[] img)` — O0112: a fixed-trip FOR whose counter is never read counts SI down to zero (DEC/JNZ), so no — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:574
+- method `if((img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6) || ((img[i] == 0x81…` — cmp si, r/m16 (3B, modrm reg field = 110b) OR cmp si, imm (81/83 FE): O0113 folds a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:579
+- method `CmpSi(byte[] img)` — O0062: a register-resident FOR counter (SI) is rotated - an entry guard plus a bottom test. With — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:596
+- method `if((img[i] == 0x3B && ((img[i + 1] >> 3) & 7) == 6) || ((img[i] == 0x81…` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:599
+- method `CmpBound(byte[] img)` — O0062: under $OPTIMIZE SPEED a pre-tested DO WHILE is rotated to an entry guard plus a bottom — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:614
+- method `if((img[i] == 0x3D && img[i + 1] == 0xE8 && img[i + 2] == 0x03) || (img…` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:617
+- field `loop` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:623
+- method `HasNoZeroAlloc(byte[] img)` — O0068: DIM a(1 TO n) immediately followed by FOR i=1 TO n : a(i)=expr writes every element — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:635
+- method `if(img[i] == 0x89 && img[i + 1] == 0xD8 && img[i + 2] == 0x5B && img[i …` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:637
+- method `Imuls(byte[] img)` — O0066: a fully-unrolled FOR sees its counter as a constant per copy, so i * i folds to a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:654
+- method `if(img[i] == 0xF7 && img[i + 1] is >= 0xE8 and <= 0xEF)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:657
+- method `Imuls(byte[] img)` — O0078: under $OPTIMIZE SPEED, a three-set-bit multiplier (11 = 8+2+1) decomposes into shifts and ad… — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:668
+- method `if(img[i] == 0xF7 && img[i + 1] is >= 0xE8 and <= 0xEF)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:671
+- method `Imuls(byte[] img)` — O0078 + O0174: a four-set-bit multiplier (23 = 16+4+2+1) is ~8 instructions - a win over the 8086's — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:687
+- method `if(img[i] == 0xF7 && img[i + 1] is >= 0xE8 and <= 0xEF)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:690
+- field `head` — O0248: `IF a > b THEN m = a ELSE m = b` is a MAX, and folds to exactly the integer CMP/keep the MAX% — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:705
+- method `Has(byte[] img, params byte[] seq)` — O0081: IF x AND mask emits `test ax, mask` (A9 iw), not `and ax, mask` (83 E0 ib) + `test ax,ax`. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:718
+- method `Has(byte[] img, params byte[] seq)` — O0081: `(x AND mask) = 0` and `<> 0` are the same bit test as the bare `IF x AND mask` - the compare — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:735
+- field `head` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:743
+- method `Has(ReadOnlySpan<byte> code, params byte[] sequence)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:760
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:761
+- method `Has(byte[] img, params byte[] seq)` — O0029: four+ targets dispatch through a jump table (a `cmp ax, count` bounds check followed by an — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:785
+- method `HasIndexedJump(byte[] img)` — FF /4 with a memory mod field = JMP r/m16 through memory - the jump table's dispatch — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:794
+- method `if(img[i] == 0xFF && (img[i + 1] & 0x38) == 0x20 && (img[i + 1] & 0xC0)…` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:796
+- field `head` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:800
+- field `head` — O0181: LEN(s$) = 0 is the emptiness handle test, identical to the s$ = "" spelling. Two call — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:814
+- field `head` — O0020: SWAP of two scalars is exchanged inline, so the rt_swap byte-loop routine is never — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:835
+- method `Has(byte[] img, params byte[] seq)` — O0249: SGN over an INTEGER folds to cwd/neg/adc dx,dx/mov ax,dx - branchless and off the x87. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:852
+- field `head` — O0248: the one-armed clamp `IF x > hi THEN x = hi` (no ELSE) is a MIN, and `IF x < lo THEN x = lo` … — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:876
+- method `JgJl(byte[] img)` — O0248: MAX/MIN over LONG arguments fold with a signed 32-bit compare rather than the x87 — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:917
+- method `if(img[i] == 0x7F && img[i + 2] == 0x7C)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:920
+- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:924
+- field `head` — O0248: the LONG min/max diamond folds to exactly the 32-bit MAX(a&, b&) intrinsic code. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:936
+- field `head` — The fold evaluates each operand once; the branch re-evaluates the taken arm. A call operand would r… — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:946
+- field `tail` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:947
+- field `body` — O7 + O0174: a six-iteration tiny FOR loop is above the fetch-bound 8086's four-copy budget (it keep… — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:959
+- field `src` — O0079: q = n\d immediately followed by m = n MOD d over the same runtime operands reuses the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:971
+- method `Idivs(byte[] img)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:976
+- method `if(img[i] == 0xF7 && (img[i + 1] & 0x38) == 0x38)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:979
+- field `body` — O0067: an IF/ELSEIF chain of equality tests on one integer variable against >= 4 dense — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1000
+- field `three` — O0180: LEN(s$) + LEN(s$) + LEN(s$) reads the descriptor once and reloads a slot for the rest, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1030
+- field `source` — O0088: f = (a < b) over WORD operands used as a value tests the carry the CMP already set, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1074
+- field `body` — a one-expression FUNCTION is the inliner's bread and butter: without NOINLINE it is — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1098
+- field `narrowed` — a LONG compare of two range-known values (INP reads a byte) is one 16-bit CMP; the same compare — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1133
+- field `wide` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1134
+- method `Emit_GivenLongCompareRangeKnown_WhenOptimizerOff_ThenWideCompareKept` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1147
+- field `source` — the narrowing is the optimizer's: the faithful build compares both halves even when it could not — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1153
+- method `Emit_GivenDwordMultiplyRangeKnown_WhenPb36_ThenNarrowedTo16BitMul` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1157
+- field `narrowed` — $ERROR NUMERIC ON keeps an unsigned multiply integral (no float promotion), so it reaches the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1164
+- field `wide` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1165
+- method `Execute_GivenLongCompareRangeKnown_WhenPb36_ThenSameResultsAsWide` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1179
+- field `source` — the narrowed compare must decide exactly like the 32-bit one across the sign — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1185
+- field `source` — the narrowed MUL must produce the full 32-bit product, including the upper word — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1207
+- field `body` — a QUAD OR runs inline as two 66 0B (OR EAX, m32) halves instead of the QuadOr call — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1227
+- field `body` — a constant-count QUAD SHIFT LEFT collapses the per-bit loop to a 66 0F A4 SHLD — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1261
+- field `with386` — ERASE of a static array zeroes it DWORD-wide (F3 66 AB) instead of REP STOSW — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1294
+- field `no386` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1295
+- field `with386` — a FOR-loop constant array fill stores two elements per REP STOSD instead of REP STOSW — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1304
+- field `no386` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1305
+- field `folds` — p% is [5,8] (IF-join), so `p% < 20` is always true - the ELSE arm is unreachable and its — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1315
+- field `nofold` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1316
+- field `bounded` — k% is [5,10] (an IF-join, not a constant and not a FOR counter) - the interval lattice — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1328
+- field `unknown` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1329
+- field `counterIdx` — a%(i%) with i% the in-bounds FOR counter drops its bounds check; an index nothing can pin down — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1344
+- field `varIdx` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1345
+- field `twoRange` — a%(i% + j%) with i% the [2,9] FOR counter and j% = i% - 1 a derived [1,8] var: — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1357
+- field `defeated` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1358
+- field `andIdx` — a(x AND 7) is always in [0,7] (the mask keeps only the low bits); a(i% MOD 8) over a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1375
+- field `modIdx` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1376
+- field `unknownIdx` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1377
+- field `idx` — a(i% \ 2) over i% in [0,30] is in [0,15] (truncated divide is monotonic in the dividend), — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1391
+- field `unknownIdx` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1392
+- field `counterAdd` — i% + 1 over an in-range FOR counter drops its Error-6 check; k% + 1 keeps it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1402
+- field `varAdd` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1403
+- field `counterAdd` — a LONG i& + 1& over [1,100] -> [2,101] stays inside 32 bits and drops its Error-6 — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1413
+- field `varAdd` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1414
+- field `counterSub` — a LONG i& - 1& over [1,100] -> [0,99] stays inside 32 bits and drops its Error-6 check — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1423
+- field `varSub` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1424
+- field `counterDiv` — 100 \ i% with i% a [1,10] counter (excludes 0) drops the divide-by-zero guard; 100 \ k% keeps it. — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1439
+- field `varDiv` — a SUB parameter divisor (differing call args) is non-constant and not range-known — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1441
+- field `append` — s$ = s$ + "x" appends the literal in place (rt_strcatlit) - the literal is NOT materialized — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1456
+- field `prepend` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1457
+- field `withVar` — s$ = s$ + v$ emits a CALL to the in-place rt_strcatvar routine; a literal self-append — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1475
+- field `literal` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1476
+- method `if(image[i + j] != _strCatVarHead[j])` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1492
+- field `funcLeft` — LEFT$/RIGHT$/MID$ construct a fresh, dead, topmost temp - like a concat - so a tail operand — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1509
+- field `varLeft` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1510
+- field `balanced` — (a$+b$) + (c$+d$): a four-leaf tree of plain string variables. O24 (multi-concat) subsumes the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1523
+- field `impure` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1524
+- field `chain` — a$ + b$ + c$ is a three-leaf chain: O24 builds it with one rt_strcatn allocation (it subsumes — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1535
+- field `pair` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1536
+- field `selfAppend` — s$ = s$ + x$ skips the StrDup of s$ and the StrAssign (StrCat consumes s$ directly), — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1547
+- field `nonSelf` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1548
+- method `if(image[i + j] != _strCatNHead[j])` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1562
+- method `if(image[i + j] != seq[j])` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1579
+- field `program` — O0290: ASC(MID$(s$, i, 1)) with a compile-time length of 1 reads the byte directly (rt_charat), — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1621
+- method `WindowAfterPrologue(byte[] img, params byte[] marker)` — O0298: `=` / `<>` use rt_strcmpeq under --optimize, which after loading the two string — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1680
+- method `for(var k = i; k < i + 64 && k + marker.Length <= img.Length; ++k)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1686
+- method `HasResultReload(byte[] img)` — O0102: a function's result is a returned value, never a result slot reloaded in the epilogue — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1706
+- method `if(img[i] == 0x8B && img[i + 1] == 0x46 && img[i + 3] == 0x89 && img[i …` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1708
+- method `Emit_GivenConstantForLimit_WhenPb36_ThenComparedAgainstImmediate` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1721
+- field `head` — O0113: a constant FOR limit is compared as an immediate (CMP r,100) - no temp cell, no — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1729
+- field `tail` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1731
+- field `source` — O0113 on a nested loop: the inner counter is compared against its constant limit too. The inner — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1758
+- field `invariant` — O0180/LICM: LEN(s$) in a WHILE condition (re-evaluated every iteration) and again in the body is — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1796
+- field `variant` — The invariance guard: when the body writes s$ its length changes per iteration, so the condition's — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1827
+- field `chain` — r$ = a$ & b$ & c$ & d$ is a 4-leaf chain: it builds with ONE rt_strcatn call (a single heap — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1838
+- field `pair` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1839
+- field `three` — boundary: three leaves is the smallest chain the multi-concat builder fires on (two go to O9). — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1849
+- field `chain` — the optimization is strictly Optimize-gated: pb35 (unoptimized) never calls rt_strcatn, so its — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1858
+- field `withCall` — a string-returning function call yields a SHARED/volatile result buffer: a later operand's — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1869
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1914
+- field `body` — $ERROR OVERFLOW ON: a shift chain cannot raise error 6 on signed overflow, so the strength reducer — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1938
+- field `body` — Both objectives keep a loop's accumulator in a register now; what SPEED adds is the SI/DI — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1955
+- method `Emit_GivenConditionalAccumulateLoop_WhenPb36Speed_ThenCounterInSi` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1963
+- field `body` — a FOR loop whose body is a clean IF keeps its counter in the SI/DI pair under SPEED — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1968
+- method `Emit_GivenBinaryWithProvenConstantOperand_WhenPb36_ThenImmediateAlu` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1972
+- field `proven` — a proven-constant operand folds into an immediate ALU op (ADD r,imm); a runtime one cannot — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1977
+- field `runtime` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:1978
+- field `source` — a% = x% : b% = x% : d% = x% with x% BYREF: the value is read through its pointer ONCE and kept in — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2007
+- field `numeric` — a numeric/literal PRINT preserves SI/DI, so the counter stays in the pair across it; a string — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2021
+- field `stringVar` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2022
+- method `Emit_GivenSelectCaseInLoopBody_WhenPb36Speed_ThenCounterStaysInSi` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2026
+- field `intSel` — an INTEGER SELECT CASE dispatches through the general registers (a membership mask or a compare — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2034
+- field `strSel` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2035
+- method `Emit_GivenLongForLoop_WhenCpu386Speed_ThenCounterInEsi` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2039
+- field `body` — a LONG FOR counter over an SI-clean body lives in the 32-bit register ESI under $CPU 80386: — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2046
+- field `withAcc` — a hot LONG accumulator joins the ESI counter in EDI under $CPU 80386 - two full LONG locals — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2058
+- field `noAcc` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2059
+- field `body` — nested FOR loops: SPEED's residency pair takes loop values that the default objective leaves — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2098
+- field `body` — an SI/DI-clean DO/LOOP keeps its loop-carried values in SI/DI under SPEED - the accumulate is an — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2118
+- field `body` — a DO loop has no FOR counter claiming SI, so SPEED's residency pair holds loop values: the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2130
+- field `source` — x% is made opaque (BYREF call) so SCCP cannot fold it - this pins the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2195
+- field `source` — O0078: 13 = 1101b (8+4+1) is a three-set-bit multiplier, so it decomposes into a shift-add — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2204
+- field `withRead` — DATA bytes nobody READs are dead - the pool labels stay (the runtime references rt_dataptr) but — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2213
+- field `noRead` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2214
+- field `source` — x% * z% (variable * variable): the right operand is a direct cell, so the modular path reads it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2224
+- field `source` — the shift chains are a SPEED trade (bytes for cycles); the default objective keeps the compact — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2233
+- field `source` — y% = x% AND 15 folds the mask into AND r,imm - no register holds the 15. z% = x% AND w% reads — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2284
+- field `mem` — c% + n% with n% a direct-cell operand reads it as an ALU memory operand (ADD AX,[n%]), so it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2310
+- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2311
+- field `source` — i% > n% with n% a parameter: n% is read straight into the compare (CMP r,[BP+4]), loaded once — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2321
+- method `if(code[i] == 0x3B)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2331
+- field `rmw` — a% = a% + 1 on a SHARED cell becomes INC [a%] (one instruction); the same increment into a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2347
+- field `nonrmw` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2348
+- field `shared` — INCR a%, 5 on a SHARED cell becomes ADD [a%],5 - one immediate, no register park. INCR of a — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2366
+- field `local` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2367
+- field `mem` — r! = a! + b! with b! a SINGLE adds it straight from its cell (FADD m32); an expression right — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2410
+- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2411
+- field `mem` — IF a! < b! with b! a SINGLE compares it where it lives (FCOMP m32); an expression right operand — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2429
+- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2430
+- field `mem` — x! = x! + i% with i% a signed-integer direct cell reads it with FIADD m16 (no AX load, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2450
+- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2451
+- field `mem` — r! = a! * 1.5 multiplies by the data-segment float constant in place (FMUL qword [f_n]); — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2469
+- field `staged` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2470
+- field `source` — LONG AND/OR/XOR against BYVAL parameters read each parameter half from its cell at most once - — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2489
+- field `source` — b& = a& AND 255 is AND r,0FFh on the low word - the high word is simply zero - and no register — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2511
+- field `source` — y% = (p& = 123456) compares each half against its immediate (1 and E240h) - the comparand is — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2531
+- field `source` — x% = 0 never compares against an immediate zero: OR r,r / TEST r,r ask it with no immediate, — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2558
+- field `source` — the FUNCTION call has side effects - x * 0 must keep the call (assert: the — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2579
+- field `head` — a%(i%) = i% over an affine subscript: O6b walks the elements instead of recomputing each address — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2609
+- field `tail` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2610
+- field `source` — verify the stored values are byte-identical to the unoptimized path — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2620
+- field `source` — lbound != 0: the initial pointer must account for the bias — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2636
+- field `body` — expr reads a%(0) - O6b must decline (conservative aliasing: any a% reference — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2653
+- field `body` — $ERROR BOUNDS ON suppresses O6b so per-element bounds checking keeps working — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2674
+- field `head` — \ and MOD by a power of two are a sign-corrected shift and mask - no IDIV at all. Every other — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2713
+- method `Emit_GivenLongPowerOfTwoDivide_WhenPb36_ThenNoRuntimeDivCall` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2730
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2734
+- field `head` — x% = a%(i%) over an affine subscript scales i% by the element size every iteration unless IVSR — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2794
+- field `tail` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2795
+- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2817
+- field `body` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2835
+- method `CountDown(BYVAL n&)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2854
+- method `Twice(n&)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2875
+- field `source` — GIVEN a SUB whose last action is CALL B with a DIFFERENT argument count — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2901
+- method `Forward(BYVAL n%)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2902
+- method `Ping(BYVAL n&)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2930
+- field `source` — GIVEN a call that is NOT in tail position (a PRINT runs after it returns) - — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2956
+- method `AfterWork(BYVAL n%)` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2957
+- method `Note` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2964
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:2985
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3007
+- field `source` — GIVEN a small multi-statement leaf FUNCTION (a temp local, then the result) — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3032
+- field `inlinedAll` — GIVEN a multi-statement leaf whose every call inlines — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3060
+- field `addressTaken` — """; — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3070
+- field `inlinedAll` — GIVEN a trivial TYPE method (its body reads/writes fields through the BYREF THIS receiver) — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3094
+- method `Sum` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3095
+- field `addressTaken` — """; — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3107
+- method `Sum` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3109
+- field `source` — GIVEN a leaf that mutates its own BYVAL parameter and a body local — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3136
+- field `source` — GIVEN callees that disqualify inlining (a nested call, a loop, an ON ERROR) — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3158
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3200
+- field `source` — 16-byte procedure alignment is output-invariant; the program must run — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3232
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3247
+- method `INP` — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3264
+- field `body` — With $OPTIMIZE SPEED, LICM hoists k%*m% to the preheader; without SPEED it — PowerBasic.Compiler.Tests/CodeGen/OptimizerTests.cs:3285
 
 ### PCopyTests.cs  `C#, 104 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/PCopyTests.cs:5
@@ -2147,14 +2147,14 @@ with unrelated edits, so treat them as anchors, not gospel.
 
 ## PowerBasic.Compiler.Tests/Dialects/
 
-### DialectBattery.cs  `C#, 82 lines`
+### DialectBattery.cs  `C#, 83 lines`
 - namespace `PowerBasic.Compiler.Tests.Dialects` — PowerBasic.Compiler.Tests/Dialects/DialectBattery.cs:3
 - class `DialectBattery` — The per-dialect conformance battery, as data. — PowerBasic.Compiler.Tests/Dialects/DialectBattery.cs:16
 - enum `State` — How far along a dimension is for one dialect. — PowerBasic.Compiler.Tests/Dialects/DialectBattery.cs:19
 - record `Measurement` — PowerBasic.Compiler.Tests/Dialects/DialectBattery.cs:32
 - record `Dimension` — Stable slug, used as the anchor in the generated README. — PowerBasic.Compiler.Tests/Dialects/DialectBattery.cs:38
 
-### DialectBatteryTests.cs  `C#, 157 lines`
+### DialectBatteryTests.cs  `C#, 161 lines`
 - namespace `PowerBasic.Compiler.Tests.Dialects` — PowerBasic.Compiler.Tests/Dialects/DialectBatteryTests.cs:3
 - class `DialectBatteryTests` — Runs the per-dialect battery and writes each dialect's README from what it measured. — PowerBasic.Compiler.Tests/Dialects/DialectBatteryTests.cs:13
 - method `return(run.Output, run.ExitCode)` — PowerBasic.Compiler.Tests/Dialects/DialectBatteryTests.cs:36
@@ -2175,34 +2175,34 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `DialectNumericClaims` — D6 - the numeric typing each dialect actually has, as a table of claims. — PowerBasic.Compiler.Tests/Dialects/DialectNumericClaims.cs:19
 - record `Claim` — Stable name, used in the failure message and the README note. — PowerBasic.Compiler.Tests/Dialects/DialectNumericClaims.cs:27
 
-### DialectProbes.cs  `C#, 560 lines`
-- namespace `PowerBasic.Compiler.Tests.Dialects` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:6
-- class `DialectProbes` — The measurements behind . Each probe answers one dimension for one — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:17
-- record `FrontEnd` — Whether the front end accepts a source, and whether a rejection was a controlled diagnostic. — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:22
-- class `MemorySource` — Feeds an in-memory source to the preprocessor, which is a separate entry point from the lexer. — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:25
-- method `TryReadSource(string name, string? includedFrom, out string sourceText, out string…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:26
-- method `new(false, true, e.Message)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:47
-- method `new(DialectBattery.State.NotApplicable, 0, 0, "this dialect provides eve…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:80
-- method `if(model.Errors.Count > 0)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:96
-- method `if(IrLowering.TryLowerModule(model, out var why) is not null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:103
-- method `new(DialectBattery.State.Partial, lowered, total, $"{failed.Count} form(…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:114
-- method `new(DialectBattery.State.NotApplicable, 0, 0, why)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:182
-- method `new(DialectBattery.State.NotApplicable, 0, 0, "the dead-branch dimension…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:198
-- method `if(model.Errors.Count > 0)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:230
-- method `if(module is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:235
-- method `new(DialectBattery.State.NotApplicable, 0, 0, "no compiler metastatement…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:266
-- method `if(second is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:282
-- method `if(first is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:284
-- method `if` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:290
-- method `Unprobed("docs/QUIRKS.md is not present")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:321
-- method `new(DialectBattery.State.Unprobed, 0, 0, "docs/QUIRKS.md catalogues the …` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:328
-- method `Unprobed("no quirk rows found in docs/QUIRKS.md")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:336
-- method `new(DialectBattery.State.Held, reproduced, rows.Count, $"all {rows.Count…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:345
-- method `if(statement is AssignStmt { Value: FloatLiteralExpr f })` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:393
-- method `if(actual == scenario.Expect)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:429
-- method `new(DialectBattery.State.Held, covered, total, $"all {total} {verb}")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:483
-- method `if` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:503
-- method `if(statement is AssignStmt assign && model.ExpressionTypes.TryGetValue(…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:541
+### DialectProbes.cs  `C#, 572 lines`
+- namespace `PowerBasic.Compiler.Tests.Dialects` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:7
+- class `DialectProbes` — The measurements behind . Each probe answers one dimension for one — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:18
+- record `FrontEnd` — Whether the front end accepts a source, and whether a rejection was a controlled diagnostic. — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:23
+- class `MemorySource` — Feeds an in-memory source to the preprocessor, which is a separate entry point from the lexer. — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:26
+- method `TryReadSource(string name, string? includedFrom, out string sourceText, out string…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:27
+- method `new(false, true, e.Message)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:48
+- method `new(DialectBattery.State.NotApplicable, 0, 0, "this dialect provides eve…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:81
+- method `if(model.Errors.Count > 0)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:98
+- method `if(declines.Count == 0 && mainRouted && stage == IrRepresentationStage.…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:111
+- method `new(DialectBattery.State.Partial, routed, total, $"{failed.Count} form(s…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:125
+- method `new(DialectBattery.State.NotApplicable, 0, 0, why)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:194
+- method `new(DialectBattery.State.NotApplicable, 0, 0, "the dead-branch dimension…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:210
+- method `if(model.Errors.Count > 0)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:242
+- method `if(module is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:247
+- method `new(DialectBattery.State.NotApplicable, 0, 0, "no compiler metastatement…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:278
+- method `if(second is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:294
+- method `if(first is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:296
+- method `if` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:302
+- method `Unprobed("docs/QUIRKS.md is not present")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:333
+- method `new(DialectBattery.State.Unprobed, 0, 0, "docs/QUIRKS.md catalogues the …` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:340
+- method `Unprobed("no quirk rows found in docs/QUIRKS.md")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:348
+- method `new(DialectBattery.State.Held, reproduced, rows.Count, $"all {rows.Count…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:357
+- method `if(statement is AssignStmt { Value: FloatLiteralExpr f })` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:405
+- method `if(actual == scenario.Expect)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:441
+- method `new(DialectBattery.State.Held, covered, total, $"all {total} {verb}")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:495
+- method `if` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:515
+- method `if(statement is AssignStmt assign && model.ExpressionTypes.TryGetValue(…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:553
 
 ### DialectRuntimeClaims.cs  `C#, 53 lines`
 - namespace `PowerBasic.Compiler.Tests.Dialects` — PowerBasic.Compiler.Tests/Dialects/DialectRuntimeClaims.cs:2
@@ -4342,9 +4342,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 
 ## PowerBasic.Compiler/Backend/
 
-### BackendInvariantException.cs  `C#, 43 lines`
+### BackendInvariantException.cs  `C#, 42 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/BackendInvariantException.cs:1
-- class `BackendInvariantException` — An internal-consistency violation inside the x86-16 back end: something the selector, the — PowerBasic.Compiler/Backend/BackendInvariantException.cs:25
+- class `BackendInvariantException` — An internal-consistency violation inside the x86-16 back end: something the selector, the — PowerBasic.Compiler/Backend/BackendInvariantException.cs:24
 
 ### CopyCoalescer.cs  `C#, 205 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/CopyCoalescer.cs:1
@@ -5346,38 +5346,34 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(@try.Finally != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.ArtifactSupport.cs:366
 - enum `ValueKind` — Temporary compatibility category for mixed artifact helpers still being reduced. It is not an — PowerBasic.Compiler/CodeGen/CodeGenerator.ArtifactSupport.cs:406
 
-### CodeGenerator.Backend.cs  `C#, 1293 lines`
+### CodeGenerator.Backend.cs  `C#, 1262 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:9
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:11
-- method `if(!X86CallAbi.TryDefinitionStackLayout(irFn, out var rewrittenLayout, …` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:340
-- method `for(var i = set.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:378
-- method `if(CalleeNames(fnOf(set[i])) .FirstOrDefault(name => !routable.Contains…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:379
-- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:424
-- method `if(this._backendMain is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:761
-- method `if(proc.Body is not { } body || (!ReferencesVariable(body, symbol.Name)…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:774
-- method `if(this._backendProcs.ContainsKey(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:777
-- method `var(arguments, site)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:829
-- method `if(arguments is null || !model.CallBindings.TryGetValue(site, out var c…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:834
-- method `foreach(var argument in arguments)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:836
-- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1033
-- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1041
-- method `if(operand is IrFarEntry { Target.IsDeclaration: false } farEntry)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1184
+- method `if(!X86CallAbi.TryDefinitionStackLayout(irFn, out var rewrittenLayout, …` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:353
+- method `if(!proc.IsExternal && proc.Body is not null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:381
+- method `for(var i = set.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:400
+- method `if(CalleeNames(fnOf(set[i])).FirstOrDefault(name => !routable.Contains(…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:401
+- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:444
+- method `if(this._backendMain is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:780
+- method `if(proc.Body is not { } body || (!ReferencesVariable(body, symbol.Name)…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:793
+- method `if(this._backendProcs.ContainsKey(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:796
+- method `var(arguments, site)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:848
+- method `if(arguments is null || !model.CallBindings.TryGetValue(site, out var c…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:853
+- method `foreach(var argument in arguments)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:855
+- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1037
+- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1045
+- method `if(operand is IrFarEntry { Target.IsDeclaration: false } farEntry)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1188
 
 ### CodeGenerator.BackendGenerated.cs  `C#, 240 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendGenerated.cs:7
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendGenerated.cs:9
 - record `BackendGeneratedFunction` — A private IR-only definition synthesized by the middle end. Unlike a source procedure it has no — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendGenerated.cs:18
 - method `if(CloneSourceName(module, generated.Ir) is { } cloneSource)` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendGenerated.cs:181
-- method `if(stranded is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendGenerated.cs:187
+- method `if(stranded is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendGenerated.cs:186
 
-### CodeGenerator.BackendInlineAsm.cs  `C#, 127 lines`
-- namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendInlineAsm.cs:4
-- class `CodeGenerator` — The one thing inline assembly makes the routing refuse: an instruction the DECLARED CPU cannot — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendInlineAsm.cs:36
-- method `foreach(var line in asm.Text.Split('\n'))` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendInlineAsm.cs:104
-- method `if(instruction.Mnemonic.Length == 0)` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendInlineAsm.cs:106
-- method `if(!x87)` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendInlineAsm.cs:110
-- method `if(required != RuntimeCpuFeatures.None && !target.Has(required))` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendInlineAsm.cs:113
-- method `if(this.InlineAsmAboveTarget(block) is { } nested)` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendInlineAsm.cs:121
+### CodeGenerator.BackendInlineAsm.cs  `C#, 64 lines`
+- namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendInlineAsm.cs:2
+- class `CodeGenerator` — Bridges machine-IR inline assembly into the target ISA policy. Instructions above the declared — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendInlineAsm.cs:10
 
 ### CodeGenerator.InlineAsm.cs  `C#, 14 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsm.cs:6
@@ -5589,10 +5585,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `switch` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:268
 - method `if(value < codeLength)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:272
 
-### CodeGenerator.cs  `C#, 527 lines`
+### CodeGenerator.cs  `C#, 517 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:7
 - class `CodeGenerator` — Translates a bound program into a 16-bit real-mode DOS executable. — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:19
-- method `if(bytes > resource.Length)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:474
+- method `if(bytes > resource.Length)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:464
 
 ### DosContainer.cs  `C#, 10 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/DosContainer.cs:1
@@ -5730,12 +5726,6 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `InvalidDataException( $"COM image plus virtual BSS reaches {virtualEnd:X}h; it must fit a…` — PowerBasic.Compiler/Emit/ComWriter.cs:27
 - method `InvalidDataException( $"COM cannot encode load-time segment relocation at {relocation.Sit…` — PowerBasic.Compiler/Emit/ComWriter.cs:36
 - method `InvalidDataException( $"COM cannot contain unresolved external symbol '{relocation.Symbol…` — PowerBasic.Compiler/Emit/ComWriter.cs:40
-
-### DosTrivialImage.cs  `C#, 105 lines`
-- namespace `PowerBasic.Compiler.Emit` — PowerBasic.Compiler/Emit/DosTrivialImage.cs:2
-- class `DosTrivialImage` — pb36 P7 (docs/PB36.md): a program whose every observable effect, once optimized, is writing known — PowerBasic.Compiler/Emit/DosTrivialImage.cs:26
-- method `Build(text, exitCode)` — PowerBasic.Compiler/Emit/DosTrivialImage.cs:61
-- method `Build(text, exitCode)` — PowerBasic.Compiler/Emit/DosTrivialImage.cs:63
 
 ### IrBasicWriter.cs  `C#, 898 lines`
 - namespace `PowerBasic.Compiler.Emit` — PowerBasic.Compiler/Emit/IrBasicWriter.cs:5
@@ -6086,9 +6076,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `foreach(var (value, target) in s.Cases)` — PowerBasic.Compiler/Ir/CEmitter.cs:401
 - method `EmitDeclinedException($"C emission: invalid raw bitcast from {from} to {to}")` — PowerBasic.Compiler/Ir/CEmitter.cs:432
 
-### EmitDeclinedException.cs  `C#, 43 lines`
+### EmitDeclinedException.cs  `C#, 41 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/EmitDeclinedException.cs:1
-- class `EmitDeclinedException` — A construct one of the IR back ends (, ) has no — PowerBasic.Compiler/Ir/EmitDeclinedException.cs:25
+- class `EmitDeclinedException` — A construct one of the IR back ends (, ) has no — PowerBasic.Compiler/Ir/EmitDeclinedException.cs:23
 
 ### FpMath.cs  `C#, 68 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/FpMath.cs:1

@@ -163,9 +163,9 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// Removes generated bodies whose defined callees - and, for a CLONE, whose original source
-  /// definition - failed to route. Requiring the source definition is intentionally stronger than mere
-  /// codegen convenience: a clone and its original may share DATA/dynamic-array/static storage, and
-  /// routing only one side would split ownership between the IR and direct emitters. It is a rule
+    /// definition - failed to route. Requiring the source definition is intentionally stronger than mere
+    /// codegen convenience: a clone and its original may share DATA/dynamic-array/static storage, and
+    /// retaining only one side would split ownership between separate native definitions. It is a rule
   /// about CLONING rather than about generated definitions, so an outlined region - which shares no
   /// storage with anything, having been lifted out of a single body - is held to the callee rule only.
   /// </summary>
@@ -182,8 +182,7 @@ public sealed partial class CodeGenerator {
           stranded = this.BackendNameIsRouted(cloneSource) ? null : cloneSource;
         else
           stranded = ContextSensitiveCloning.IsGeneratedClone(generated.Ir) ? "its source definition" : null;
-        stranded ??= CalleeNames(generated.Ir)
-          .FirstOrDefault(name => !this.BackendNameIsRouted(name) && !this.CanCallDirectCallee(name));
+        stranded ??= CalleeNames(generated.Ir).FirstOrDefault(name => !this.BackendNameIsRouted(name));
         if (stranded is null)
           continue;
 
@@ -227,6 +226,7 @@ public sealed partial class CodeGenerator {
         generated.StackLayout.ParameterOffsets, cleanupBytes, this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: generated.ElideFrame,
         registerSpills: [.. generated.StackLayout.Spills], emitInlineAsm: this.EmitRoutedInlineAsm);
+      this._backendEmittedNames.Add(generated.Ir.Name);
     }
   }
 

@@ -5,7 +5,8 @@
 **Retirement is complete** (see [Completion](#completion) at the end). There is one code generator:
 
 ```text
-source -> parser/binder -> typed SSA IR -> middle-end -> x86-16 machine IR -> assembler/linker
+source -> parser/binder -> HIR -> MIR -> SSA -> optimized SSA -> Low IR
+       -> x86-16 selection/scheduling/allocation -> MachineEmitter -> assembler/linker
 ```
 
 Routing through the IR back end is mandatory. A procedure body the back end declines is a compile
@@ -14,6 +15,28 @@ There is no routing selector left: `CodeGenerator.UseExperimentalBackend` and `R
 `pbc` rejects `--x-backend`, `--no-x-backend` and `--x-backend-strict` as retired controls, and the
 `PBC_X_BACKEND*` environment variables do nothing. Executable semantics pass through exactly one
 optimizer, `IrMiddleEndPipeline`.
+
+The boundaries are executable contracts, not labels in this document. Production advances the
+module through `OptimizedSsa` and `IrLowIrLegalization` before target selection. Every emitted source
+or generated body is recorded only after `X86ProductionEmitter` consumes its allocated machine
+product. The former `DosTrivialImage` fast path was removed because it returned hand-authored x86
+bytes after routing had been measured but before that machine product was emitted.
+
+The retirement proof is held by tests with different failure modes:
+
+- `IrOnlyProductionPipelineTests` requires executable, COM and PBU bodies to reach verified Low IR
+  and to be emitted from their x86-16 machine products.
+- `ProductionBackendRetirementTests` rejects every retired syntax-emitter source file, the raw-byte
+  shortcut, legacy routing properties and command-line selectors.
+- `DialectBatteryTests` sends every statement form accepted by each of the nineteen declared
+  dialects through verified Low IR and x86-16 selection, scheduling and allocation.
+- `StatementSurfaceCensusTests` compiles the complete PB 3.6 reference surface through DOS emission,
+  while `BackendCoverageTests` and `MandatoryRoutingTests` reject corpus declines.
+- `BackendRuntimeCallTests` checks that every runtime ABI row resolves to a routine the DOS runtime
+  actually defines.
+
+`PowerBasic35Emitter`, `CEmitter` and `LlvmEmitter` are explicit source/hosted output targets. None is
+a DOS production fallback; the PB 3.5 class renders BASIC source and does not emit machine code.
 
 What stays in `CodeGen/CodeGenerator*.cs` is the whole-program DOS infrastructure the back end is
 driven from: image and data layout, runtime selection and trimming, OMF/PBU/PBL linking, labels,

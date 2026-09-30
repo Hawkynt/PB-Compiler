@@ -14,10 +14,10 @@ When the format is a **literal**, interpreting its field structure is compile-ti
 work: emit a straight-line sequence of the specific conversions the format calls
 for, and avoid the general formatter wherever the value is known too.
 
-[P0007](P0007-trivial-io-lowering.md) already does the extreme case — a program
-whose whole output is known — by precomputing the bytes. O0303 works at a smaller
-granularity, so a constant formatted field can disappear even when the surrounding
-statement or program still contains dynamic output.
+The planned [P0007](P0007-trivial-io-lowering.md) is the extreme case — a program
+whose whole output is known. O0303 works at a smaller granularity, so a constant
+formatted field can disappear even when the surrounding statement or program still
+contains dynamic output.
 
 ## Applies to
 

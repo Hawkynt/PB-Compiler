@@ -83,8 +83,8 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// Removes synthetic helpers whose defined callees did not survive native routing. The source thunks
-  /// that call a removed helper are then removed by BackendProcs' ordinary call-closure fixpoint, so
-  /// they fall back to the direct emitter with their untouched source ABI/body semantics.
+  /// that call a removed helper are then removed by BackendProcs' ordinary call-closure fixpoint, and
+  /// mandatory routing reports the closed-graph failure before artifact emission.
   /// </summary>
   private bool PruneBackendSemanticMerges() {
     if (this._backendSemanticMerges is not { Count: > 0 } helpers)
@@ -92,8 +92,7 @@ public sealed partial class CodeGenerator {
 
     var changed = false;
     foreach (var (name, helper) in helpers.ToList())
-      if (CalleeNames(helper.Function)
-          .Any(callee => !this.BackendNameIsRouted(callee) && !this.CanCallDirectCallee(callee))) {
+      if (CalleeNames(helper.Function).Any(callee => !this.BackendNameIsRouted(callee))) {
         helpers.Remove(name);
         changed = true;
       }
@@ -133,6 +132,7 @@ public sealed partial class CodeGenerator {
         alignLoops: this.Optimize && this.Cost.AlignHotLoops,
         allowFrameElision: helper.ElideFrame,
         emitInlineAsm: this.EmitRoutedInlineAsm);
+      this._backendEmittedNames.Add(helper.Function.Name);
     }
   }
 
