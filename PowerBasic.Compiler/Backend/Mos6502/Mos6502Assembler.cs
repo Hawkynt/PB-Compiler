@@ -166,8 +166,33 @@ public sealed class Mos6502Assembler {
     public int UninitializedStart => this.Origin + this.Bytes.Length;
   }
 
+  /// <summary>
+  /// Drops a <c>LDA x</c> that directly follows <c>STA x</c>: A already holds the value. The two must be
+  /// adjacent - no label between them, so nothing jumps in to the load - and what follows the load
+  /// must not be a branch, which would read the flags only the load sets.
+  /// </summary>
+  private int RemoveRedundantReloads() {
+    var removed = 0;
+    var end = this._uninitializedStart < 0 ? this._items.Count : this._uninitializedStart;
+    for (var i = 0; i + 1 < end; ++i) {
+      var (store, load) = (this._items[i], this._items[i + 1]);
+      if (store is not { Kind: ItemKind.Instruction, Op: M6502Op.Sta }
+          || load is not { Kind: ItemKind.Instruction, Op: M6502Op.Lda, Select: ByteSelect.Whole }
+          || load.Mode != store.Mode || load.Operand != store.Operand
+          || (i + 2 < end && this._items[i + 2] is { Kind: ItemKind.Branch } or { Op: M6502Op.Php, Kind: ItemKind.Instruction }))
+        continue;
+      this._items.RemoveAt(i + 1);
+      --end;
+      if (this._uninitializedStart >= 0)
+        --this._uninitializedStart;
+      ++removed;
+    }
+    return removed;
+  }
+
   /// <summary>Lays the program out at <paramref name="origin"/> and encodes it.</summary>
   public Image Assemble(int origin) {
+    this.RemoveRedundantReloads();
     var addresses = new Dictionary<M6502Label, int>();
     int[] offsets;
     bool relaxed;

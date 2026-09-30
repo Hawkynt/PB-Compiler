@@ -143,14 +143,19 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
     }
   }
 
+  /// <summary>
+  /// Copies BASIC's page-zero range, counting X up: the range is longer than 128 bytes, past where a
+  /// DEX/BPL loop would stop.
+  /// </summary>
   private void CopyPageZero(M6502Address from, M6502Address to) {
     var loop = asm.NewLabel("rt.copyZeroPage");
-    asm.Immediate(Ldx, Zp.Last - Zp.First);
+    asm.Immediate(Ldx, 0);
     asm.Bind(loop);
     asm.Memory(Lda, from, M6502Index.X);
     asm.Memory(Sta, to, M6502Index.X);
-    asm.Emit(Dex);
-    asm.Branch(Bpl, loop);
+    asm.Emit(Inx);
+    asm.Immediate(Cpx, Zp.Last - Zp.First + 1);
+    asm.Branch(Bne, loop);
   }
 
   private void LoadWord(M6502Address cell, int value) {

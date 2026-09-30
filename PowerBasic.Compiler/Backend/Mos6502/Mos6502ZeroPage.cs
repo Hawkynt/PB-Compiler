@@ -64,8 +64,17 @@ public static class Mos6502ZeroPage {
   /// <summary>Scratch for a float product or a division's remainder: sixteen bytes.</summary>
   public static readonly M6502Address FloatWork = Take(16);
 
-  /// <summary>The last cell allocated: start-up saves <see cref="First"/> through this one.</summary>
-  public static readonly int Last = _next - 1;
+  /// <summary>
+  /// Where the frame window starts: the rest of BASIC's page zero, up to <see cref="FrameWindowEnd"/>,
+  /// is where the innermost functions' frames live (see <c>Mos6502Compiler</c>'s frame overlay).
+  /// </summary>
+  public static readonly int FrameWindowStart = _next;
+
+  /// <summary>The first cell past the frame window: BASIC's page zero ends at <c>$8F</c>.</summary>
+  public const int FrameWindowEnd = 0x90;
+
+  /// <summary>The last cell used: start-up saves <see cref="First"/> through this one.</summary>
+  public const int Last = FrameWindowEnd - 1;
 
   /// <summary>How many bytes <see cref="Arg"/> holds: two eight-byte operands.</summary>
   public const int ArgumentBytes = 16;

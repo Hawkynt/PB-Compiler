@@ -91,17 +91,34 @@ public static partial class Mos6502Compiler {
   /// <summary>A value that IS an address known at assembly time: a local, a global, a folded offset of one.</summary>
   private sealed record AddressOperand(M6502Address Address) : Operand;
 
-  /// <summary>One function's static storage.</summary>
-  private sealed class Frame(M6502Label start) {
-    public M6502Label Start { get; } = start;
+  /// <summary>
+  /// One function's storage: each value's offset and size within the frame, and where the frame
+  /// sits in the program-wide overlay (<see cref="Base"/>) - placed by the module, which also says
+  /// how an overlay offset becomes an address.
+  /// </summary>
+  private sealed class Frame {
     public int Size { get; private set; }
-    public Dictionary<IrValue, int> Offsets { get; } = [];
+    public Dictionary<IrValue, (int Offset, int Size)> Slots { get; } = [];
+    public int Base { get; set; }
+
+    /// <summary>A frame that recursion saves and restores must be one contiguous block of RAM.</summary>
+    public bool Contiguous { get; init; }
+
+    public Func<int, int, bool, M6502Address> Place { get; init; } = null!;
 
     public void Add(IrValue value, int bytes) {
-      this.Offsets.Add(value, this.Size);
+      this.Slots.Add(value, (this.Size, bytes));
       this.Size += bytes;
     }
 
-    public M6502Address AddressOf(IrValue value) => new(this.Start, this.Offsets[value]);
+    public bool Holds(IrValue value) => this.Slots.ContainsKey(value);
+
+    public M6502Address AddressOf(IrValue value) {
+      var (offset, size) = this.Slots[value];
+      return this.Place(this.Base + offset, size, this.Contiguous);
+    }
+
+    /// <summary>The first byte of a contiguous frame.</summary>
+    public M6502Address Start => this.Place(this.Base, this.Size, true);
   }
 }

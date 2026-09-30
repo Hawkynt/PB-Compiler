@@ -220,7 +220,11 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   `M6502Mode` the chip has, or an exception where it is written. The assembler resolves labels and
   relaxes a conditional branch that cannot reach its target into the inverse branch over a `JMP`.
 - **Values live in static frames.** Every function gets one fixed address per argument, SSA value
-  and local, addressed absolutely - the fastest access the 6502 has. Recursion is the one thing that
+  and local, addressed absolutely - the fastest access the 6502 has. Frames share memory through a
+  call-graph overlay: a function's frame sits above those of everything it calls, so functions on
+  different branches of the call tree reuse the same bytes, and the innermost functions - the
+  tightest loops - land in the page-zero window left over below `$90`, where every access is a
+  two-byte instruction. Recursion is the one thing that
   makes a static frame wrong, and the call graph says where it can happen: a function in a cycle
   (Tarjan's SCCs over direct calls) saves its own frame to a soft stack at `$C000`-`$CFFF` before a
   call back into the cycle and restores it after. A call out of the cycle, and every call in a program

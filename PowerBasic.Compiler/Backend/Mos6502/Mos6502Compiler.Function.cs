@@ -61,7 +61,7 @@ public static partial class Mos6502Compiler {
           case IrConstantFloat constant:
             return new MemoryOperand(module.Constant(constant));
           default:
-            if (this._frame.Offsets.ContainsKey(value))
+            if (this._frame.Holds(value))
               return new MemoryOperand(this._frame.AddressOf(value));
             throw Decline($"'{function.Name}' uses a {value.GetType().Name}, which has no 6502 lowering");
         }
@@ -102,7 +102,7 @@ public static partial class Mos6502Compiler {
 
       private M6502Address Destination(IrValue value) => this._frame.AddressOf(value);
 
-      private bool Stored(IrInstruction instruction) => this._frame.Offsets.ContainsKey(instruction);
+      private bool Stored(IrInstruction instruction) => this._frame.Holds(instruction);
 
       /// <summary>Copies <paramref name="bytes"/> bytes of a value, zero- or sign-extending it past its own width.</summary>
       private void Copy(Operand source, int sourceSize, M6502Address destination, int bytes, bool signed = false) {

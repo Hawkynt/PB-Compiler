@@ -16,6 +16,48 @@ public static partial class Mos6502Compiler {
     private readonly Dictionary<IrGlobalVariable, M6502Label> _globals = [];
     private readonly Dictionary<IrFunction, int> _cycleOf = [];
     private readonly HashSet<IrFunction> _recursive = [];
+    private readonly List<List<IrFunction>> _cyclesCalleesFirst = [];
+    private M6502Label _overlay;
+
+    /// <summary>The RAM behind the frame overlay: as deep as the deepest chain of calls.</summary>
+    private int OverlayBytes => this._frames.Values.Select(frame => frame.Base + frame.Size).DefaultIfEmpty(0).Max();
+
+    private static int WindowBytes => Mos6502ZeroPage.FrameWindowEnd - Mos6502ZeroPage.FrameWindowStart;
+
+    /// <summary>
+    /// An overlay offset as an address: in the page-zero window when the whole slot fits there and
+    /// the frame need not be contiguous, else in the overlay's RAM at the same offset. A slot in page
+    /// zero is reached with two-byte instructions instead of three.
+    /// </summary>
+    private M6502Address Place(int offset, int size, bool contiguous)
+      => !contiguous && offset + size <= WindowBytes
+        ? M6502Address.Absolute(Mos6502ZeroPage.FrameWindowStart + offset)
+        : new M6502Address(this._overlay, offset);
+
+    /// <summary>
+    /// The frame overlay. Two functions that are never active at the same time can share memory, and
+    /// the call graph says which: a function's frame is placed above the frames of everything it calls,
+    /// so a caller never overlaps a callee, and functions on different branches of the call tree share.
+    /// Placing callees first - Tarjan's order - puts the innermost functions, the ones in the tightest
+    /// loops, at the bottom: in the page-zero window. The members of one recursive cycle are laid side
+    /// by side; each saves its own frame before a call back into the cycle, so a re-entry finds it.
+    /// </summary>
+    private void PlaceFrames() {
+      this._overlay = this._asm.NewLabel("frames");
+      foreach (var cycle in this._cyclesCalleesFirst) {
+        var members = cycle.Where(this._frames.ContainsKey).ToList();
+        var floor = members
+          .SelectMany(member => member.Blocks.SelectMany(block => block.Instructions).OfType<IrCall>())
+          .Select(call => call.Callee).OfType<IrFunction>()
+          .Where(callee => this._frames.ContainsKey(callee) && !cycle.Contains(callee))
+          .Select(callee => this._frames[callee].Base + this._frames[callee].Size)
+          .DefaultIfEmpty(0).Max();
+        foreach (var member in members) {
+          this._frames[member].Base = floor;
+          floor += this._frames[member].Size;
+        }
+      }
+    }
     private Mos6502Runtime _runtime = null!;
     private M6502Label _staging;
     private int _stagingBytes;
@@ -54,7 +96,8 @@ public static partial class Mos6502Compiler {
         this._entries.Add(function, this._asm.NewLabel(function.Name));
       this.FindRecursion(defined);
       foreach (var function in defined)
-        this._frames.Add(function, LayOut(function, this._asm.NewLabel(function.Name + ".frame")));
+        this._frames.Add(function, this.LayOut(function));
+      this.PlaceFrames();
       foreach (var global in module.Globals.OfType<IrGlobalVariable>())
         this._globals.Add(global, this._asm.NewLabel(global.Name));
       this._staging = this._asm.NewLabel("staging");
@@ -79,10 +122,8 @@ public static partial class Mos6502Compiler {
 
       this._asm.BeginUninitialized();
       this._asm.Bind(uninitialized);
-      foreach (var (function, frame) in this._frames) {
-        this._asm.Bind(frame.Start);
-        this._asm.Reserve(frame.Size);
-      }
+      this._asm.Bind(this._overlay);
+      this._asm.Reserve(this.OverlayBytes);
       foreach (var (global, label) in this._globals.Where(pair => IsUninitialized(pair.Key))) {
         this._asm.Bind(label);
         this._asm.Reserve(SizeOf(global.ValueType) * global.Count);
@@ -93,7 +134,7 @@ public static partial class Mos6502Compiler {
     }
 
     private int UninitializedBytes()
-      => this._frames.Values.Sum(frame => frame.Size)
+      => this.OverlayBytes
         + this._globals.Keys.Where(IsUninitialized).Sum(global => SizeOf(global.ValueType) * global.Count)
         + this._stagingBytes;
 
@@ -125,9 +166,9 @@ public static partial class Mos6502Compiler {
         _ = SizeOf(parameter.Type);
     }
 
-    /// <summary>Gives every argument, local and SSA value of <paramref name="function"/> its fixed address.</summary>
-    private static Frame LayOut(IrFunction function, M6502Label start) {
-      var frame = new Frame(start);
+    /// <summary>Gives every argument, local and SSA value of <paramref name="function"/> its place in the frame.</summary>
+    private Frame LayOut(IrFunction function) {
+      var frame = new Frame { Contiguous = this._recursive.Contains(function), Place = this.Place };
       foreach (var parameter in function.Parameters)
         frame.Add(parameter, SizeOf(parameter.Type));
       foreach (var instruction in function.Blocks.SelectMany(block => block.Instructions)) {
@@ -176,6 +217,7 @@ public static partial class Mos6502Compiler {
         } while (member != function);
         if (members.Count > 1 || Callees(function).Contains(function))
           this._recursive.UnionWith(members);
+        this._cyclesCalleesFirst.Add(members);
         ++cycle;
       }
 

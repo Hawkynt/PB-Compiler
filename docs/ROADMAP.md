@@ -231,12 +231,13 @@ floor under how many they accept - they are this section's to-do list.
   call DOS interrupts, link a DOS object, or are 16-bit inline assembly). Left: `TRY`/`CATCH` (the
   lowering keeps its saved handler in 16-bit cells), `EXIT FAR`, math functions beyond the x87's,
   and whatever a wider corpus finds.
-- **Smaller 6502 code.** The 6502 compiles the portable runtime and has soft float, and what now
-  keeps battery programs off a C64 is size: `STRINGS` and `STRBOUND` compile but reach past `$A000`.
-  Every 32- and 64-bit IR operation is expanded byte by byte and every SSA value has its own frame
-  cell; narrowing values proven small (the middle end keeps 16 bits for x86-16 - a 6502 wants 8),
-  sharing cells between values whose live ranges do not overlap, and a peephole over the store/load
-  pairs the per-instruction lowering leaves are the three big levers.
+- **Smaller 6502 code.** What keeps `STRINGS` and `STRBOUND` off a C64 is code size: 36 KB, of
+  which over 60% is `LDA`/`STA` - every SSA value has its own frame cell, so casts, returns, phi
+  edges and arguments are byte-by-byte copies, and the portable runtime does its bookkeeping in
+  32-bit lengths and indices. Frames already share memory through the call-graph overlay, the
+  innermost ones in page zero. The next levers: an index type the portable runtime chooses per target
+  (16 bits where pointers are 16), which halves most runtime copies; aliasing a truncating cast to its
+  source's cell; and coalescing phi cells with their incoming values.
 - **Math functions on the 6502.** SQR, SIN, LOG, `^` and the rest are x87 instructions on x86; the
   6502 needs them as soft-float routines.
 
