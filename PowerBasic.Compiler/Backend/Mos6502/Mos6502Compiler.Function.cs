@@ -608,6 +608,9 @@ public static partial class Mos6502Compiler {
           case "sys_exit":
             this._asm.Jump(this._runtime.Routine(M6502Routine.Exit));
             return;
+          case "sys_trap":
+            // no ON ERROR on the 6502 (a handler declines), so there is never one to take the error
+            return;
           case "sys_read" or "sys_open" or "sys_close" or "sys_seek" or "sys_unlink":
             throw Decline("the 6502 has no files or keyboard input yet");
           default:

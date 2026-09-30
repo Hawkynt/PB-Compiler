@@ -12,9 +12,10 @@ namespace PowerBasic.Compiler.Runtime.Portable;
 /// BASIC numbers its files 1 to 15, so the runtime keeps a table indexed by that number, as the DOS
 /// runtime does: the descriptor (plus one, so a zeroed table means all closed), the column its comma
 /// zones count from, and one byte of look-ahead - <c>EOF</c> is true only once the last byte has been
-/// read, so it has to peek. Slot 0 is the console's input. The semantics and error numbers are
-/// <c>runtime/pbc_rt.c</c>'s: 52 bad file number, 53 file not found, 55 already open, 64 bad file
-/// name, 67 too many files; <c>KILL</c> of a missing file is ignored, as the DOS runtime ignores it.
+/// read, so it has to peek. Slot 0 is the console's input. The error numbers are the DOS runtime's,
+/// which are genuine PowerBASIC's: 52 bad file number, 55 already open, 57 for an open that fails -
+/// not <c>runtime/pbc_rt.c</c>'s 53 - and 67 too many files; <c>KILL</c> of a missing file is
+/// ignored, as the DOS runtime ignores it.
 /// </para>
 /// </summary>
 public static partial class PortableRuntime {
@@ -246,8 +247,8 @@ public static partial class PortableRuntime {
       // INPUT, OUTPUT, APPEND as they are; RANDOM and BINARY read and write, created when absent
       var access = w.B.Select(w.Cmp(IrCmpPred.Sge, mode, w.I32(3)), w.I32(3), mode);
       var fd = w.B.Call(IrType.I32, this.OpenCall, path, access);
-      w.If(w.Cmp(IrCmpPred.Slt, fd, w.I32(0)),
-        () => w.B.Call(IrType.Void, this.ErrorFunction, w.B.Select(w.Cmp(IrCmpPred.Eq, mode, w.I32(0)), w.I32(53), w.I32(64))));
+      // a failed open is ERR 57, whatever DOS said - the genuine runtime maps every file failure there
+      w.If(w.Cmp(IrCmpPred.Slt, fd, w.I32(0)), () => w.B.Call(IrType.Void, this.ErrorFunction, w.I32(57)));
       w.B.Store(w.B.Add(fd, w.I32(1)), this.Cell(w, this.Descriptors, n));
       w.B.Store(w.I32(0), this.Cell(w, this.Columns, n));
       w.B.Store(w.I32(0), this.Cell(w, this.LookAhead, n));

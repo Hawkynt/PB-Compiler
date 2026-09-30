@@ -397,6 +397,13 @@ public sealed class X86Assembler(X86Machine machine) {
 
   public void Jump(X86Label target) => this.Branch(null, target);
 
+  /// <summary><c>jmp [mem]</c>: through an address held in memory.</summary>
+  public void JumpIndirect(X86Mem target) {
+    this.Byte(0xFF);
+    this.ModRmMemory(4, target);
+    this.End();
+  }
+
   public void Jump(X86Cond condition, X86Label target) => this.Branch(condition, target);
 
   public void Call(X86Label target) {

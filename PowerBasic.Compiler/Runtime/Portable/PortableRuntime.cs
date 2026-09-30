@@ -176,7 +176,9 @@ public static partial class PortableRuntime {
     }
 
     private void Error(IrWriter w) {
-      // "Error n", a new line, and the program is over
+      // an armed ON ERROR takes the error first: sys_trap does not come back when it does
+      w.B.Call(IrType.Void, this.Declare("sys_trap", IrType.Void, IrType.I32), w.Function.Parameters[0]);
+      // otherwise "Error n", a new line, and the program is over
       var text = w.Buffer(5);
       for (var i = 0; i < 5; ++i)
         w.SetByte(text, w.I32(i), w.I8("Error"[i]));

@@ -75,8 +75,12 @@ public static partial class X86NativeCompiler {
             return new ConstantOperand(0);
           case IrConstantFloat constant:
             return new MemoryOperand(X86Mem.At(module.Constant(constant)));
+          case IrGlobalVariable { Name: "rt_onerr" or "rt_onerr_bp" or "rt_onerr_sp" }:
+            throw Decline("TRY/CATCH keeps its handler in DOS's 16-bit cells and has no native lowering yet");
           case IrGlobalVariable global:
             return new AddressOperand(X86Mem.At(module._globals[global]));
+          case IrBlockAddress address when this._blocks.TryGetValue(address.Block, out var label):
+            return new AddressOperand(X86Mem.At(label));
           case IrAlloca alloca:
             return new AddressOperand(this.Place(alloca));
           case IrGep gep when this.FoldedAddress(gep) is { } folded:
@@ -820,6 +824,8 @@ public static partial class X86NativeCompiler {
             this.SystemCall(call, numbers, arguments);
             return;
           }
+          if (this.TryErrorIntrinsic(callee.Name, arguments))
+            return;
           if (TryMathIntrinsic(callee.Name) is { } math && this.Stored(call)) {
             this.MathFunction(math, arguments);
             this._asm.Fstp(FormatOf(call.Type), this.Place(call));
@@ -984,6 +990,93 @@ public static partial class X86NativeCompiler {
         this._asm.X87(X87Code.Fyl2x);                 // y * log2(x)
         this.TwoToThePower();
         this._asm.Bind(done);
+      }
+
+      private X86Mem Cell(X86Label label) => X86Mem.At(label);
+
+      /// <summary>
+      /// ON ERROR's intrinsics, expanded in place because arming captures the CURRENT frame and stack -
+      /// a call would capture its own. <c>sys_trap(code)</c> is the portable runtime's first question in
+      /// <c>rt_error</c>: with a handler armed it never returns - ERR is set, the statement pair
+      /// latched for RESUME, the armed frame and stack restored, and the handler entered; with none it
+      /// returns and the runtime reports the error.
+      /// </summary>
+      private bool TryErrorIntrinsic(string name, IReadOnlyList<IrValue> arguments) {
+        var word = this.Word;
+        void SetMode(int mode) => this._asm.MovImmediate(X86Width.Dword, this.Cell(module._errorMode), mode);
+        void CaptureFrame() {
+          this._asm.Mov(word, this.Cell(module._errorFrame), X86Reg.Bp);
+          this._asm.Mov(word, this.Cell(module._errorStack), X86Reg.Sp);
+        }
+        void RestoreFrame() {
+          this._asm.Mov(word, X86Reg.Bp, this.Cell(module._errorFrame));
+          this._asm.Mov(word, X86Reg.Sp, this.Cell(module._errorStack));
+        }
+        switch (name) {
+          case "rt_onerr_arm":
+            this.Load(X86Reg.Ax, this.Of(arguments[0]), word);
+            this._asm.Mov(word, this.Cell(module._errorHandler), X86Reg.Ax);
+            CaptureFrame();
+            SetMode(1);
+            return true;
+          case "rt_onerr_resume_next":
+            CaptureFrame();
+            SetMode(2);
+            return true;
+          case "rt_onerr_disarm":
+            SetMode(0);
+            return true;
+          case "rt_resume_mark":
+            this.Load(X86Reg.Ax, this.Of(arguments[0]), word);
+            this._asm.Mov(word, this.Cell(module._statementStart), X86Reg.Ax);
+            this.Load(X86Reg.Ax, this.Of(arguments[1]), word);
+            this._asm.Mov(word, this.Cell(module._statementNext), X86Reg.Ax);
+            return true;
+          case "rt_resume_same" or "rt_resume_next":
+            // the handler is done: errors trap again, and control returns to the faulting statement
+            SetMode(1);
+            RestoreFrame();
+            this._asm.JumpIndirect(this.Cell(name == "rt_resume_same" ? module._faultStart : module._faultNext));
+            return true;
+          case "rt_err_clear":
+            if (module.ErrorCode is { } clear)
+              this._asm.MovImmediate(X86Width.Word, X86Mem.At(clear), 0);
+            return true;
+          case "sys_trap": {
+            var none = this.Local("noHandler");
+            var handler = this.Local("trapHandler");
+            this._asm.Mov(X86Width.Dword, X86Reg.Ax, this.Cell(module._errorMode));
+            this._asm.AluImmediate(X86Alu.Cmp, X86Width.Dword, X86Reg.Ax, 1);
+            this._asm.Jump(X86Cond.Equal, handler);
+            this._asm.AluImmediate(X86Alu.Cmp, X86Width.Dword, X86Reg.Ax, 2);
+            this._asm.Jump(X86Cond.NotEqual, none);
+            // ON ERROR RESUME NEXT: straight on with the statement after the one that faulted
+            this.LatchFault(arguments[0]);
+            RestoreFrame();
+            this._asm.JumpIndirect(this.Cell(module._faultNext));
+            this._asm.Bind(handler);
+            this.LatchFault(arguments[0]);
+            SetMode(3);
+            RestoreFrame();
+            this._asm.JumpIndirect(this.Cell(module._errorHandler));
+            this._asm.Bind(none);
+            return true;
+          }
+          default:
+            return false;
+        }
+      }
+
+      /// <summary>ERR gets the code; the statement that faulted becomes the one RESUME returns to.</summary>
+      private void LatchFault(IrValue code) {
+        if (module.ErrorCode is { } err) {
+          this.Load(X86Reg.Ax, this.Of(code), X86Width.Dword);
+          this._asm.Mov(X86Width.Word, X86Mem.At(err), X86Reg.Ax);
+        }
+        this._asm.Mov(this.Word, X86Reg.Ax, this.Cell(module._statementStart));
+        this._asm.Mov(this.Word, this.Cell(module._faultStart), X86Reg.Ax);
+        this._asm.Mov(this.Word, X86Reg.Ax, this.Cell(module._statementNext));
+        this._asm.Mov(this.Word, this.Cell(module._faultNext), X86Reg.Ax);
       }
 
       /// <summary>The portable runtime's system primitives, by Linux system call number: x64, then i386.</summary>

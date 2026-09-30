@@ -175,13 +175,21 @@ compiles the lot.
   digits (scaled by correctly rounded powers of ten kept as EXT constants) shared by `PRINT` and
   `STR$`, `HEX$`/`OCT$`/`BIN$` with the DOS 16-bit fold, and a BASIC-shaped `VAL`; strings - a
   power-of-two size-class heap (error 14 when it runs out), handles pointing at `[length][bytes]`,
-  a null handle as `""`, and every `rt_str_*` routine the battery uses, leaving its arguments to
-  the caller exactly as `runtime/pbc_rt.c` does; `rt_error`, `rt_end`. A varargs
+  a null handle as `""`, and every `rt_str_*` routine the battery uses, CONSUMING the handles it is
+  given as the DOS runtime does (`RuntimeAbi.cs` names the few that borrow) - `runtime/pbc_rt.c`
+  never frees, which only a host with memory to spare can afford; dynamic arrays on the same heap
+  (error 7); sequential and record files and `INPUT`; `rt_error`, `rt_end`. A varargs
   `rt_str_concat_n` is rewritten into the pairwise chain it stands for, since IR cannot read C
-  varargs. Its whole contact with the operating system is two
-  primitives each back end emits: `sys_write` and `sys_exit`, here Linux system calls
-  (`syscall` on x64, `int 0x80` on i386 - which is why an i386 program runs on an x64 kernel with
-  no 32-bit library installed).
+  varargs. Its whole contact with the operating system is a handful of primitives each back end
+  emits - `sys_write`, `sys_read`, `sys_open`, `sys_close`, `sys_seek`, `sys_unlink`, `sys_exit` -
+  here Linux system calls (`syscall` on x64, `int 0x80` on i386, which is why an i386 program runs
+  on an x64 kernel with no 32-bit library installed), and `sys_trap`, the question `rt_error` asks
+  first.
+- **`ON ERROR`** is the back end's, because arming captures the current frame and a call would
+  capture its own: `rt_onerr_arm`, `rt_resume_mark` and the two RESUMEs are expanded in place over a
+  few cells, and `sys_trap` - with a handler armed - sets `ERR`, latches the faulting statement for
+  RESUME, restores the armed frame and stack and enters the handler; an error inside the handler is
+  fatal, as in PowerBASIC. `TRY`/`CATCH` keeps its saved handler in DOS's 16-bit cells and declines.
 - **`Emit/Elf/ElfWriter`** writes the three containers:
 
 | Option | x86-16 (DOS, default) | x86-32 / x64 | 6502 |

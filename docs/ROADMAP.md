@@ -227,10 +227,10 @@ static Linux ELF files; the 6502 compiles integer programs to a C64 `.PRG`. `Nat
 floor under how many they accept - they are this section's to-do list.
 
 ### Must
-- **Files, `INPUT`, `ON ERROR` for x86-32/x64.** Strings are in the portable runtime; what the
-  declined battery programs wait for now is `rt_file_*` and `rt_kill` (system calls beside
-  `sys_write`), `INPUT` (`sys_read`), and error trapping, which needs a non-local return to the
-  handler.
+- **x86-32/x64 run every battery program that is not DOS by nature** (18 of 21: the other three
+  call DOS interrupts, link a DOS object, or are 16-bit inline assembly). Left: `TRY`/`CATCH` (the
+  lowering keeps its saved handler in 16-bit cells), `EXIT FAR`, math functions beyond the x87's,
+  and whatever a wider corpus finds.
 - **Smaller 6502 code.** The 6502 compiles the portable runtime and has soft float, and what now
   keeps battery programs off a C64 is size: `STRINGS` and `STRBOUND` compile but reach past `$A000`.
   Every 32- and 64-bit IR operation is expanded byte by byte and every SSA value has its own frame
@@ -241,9 +241,10 @@ floor under how many they accept - they are this section's to-do list.
   6502 needs them as soft-float routines.
 
 ### Should
-- **`ON ERROR`, `INPUT`** (`sys_read` beside `sys_write`; the KERNAL's `CHRIN` on a C64), and
-  `PEEK`/`POKE`, which reach the IR as far pointers: on a flat machine the segment has no meaning
-  and the offset is the address.
+- **`INPUT`, files and `ON ERROR` on the 6502** - the portable runtime has them; the 6502 needs
+  `sys_read` through the KERNAL's `CHRIN`, its disk routines behind `sys_open`, and the `ON ERROR`
+  intrinsics - and `PEEK`/`POKE`, which reach the IR as `segment:offset` addresses: on a flat machine
+  the segment has no meaning and the offset is the address.
 - **Registers on x86.** Every x86 SSA value lives in a frame slot; a linear-scan allocator over the
   32/64-bit register file is the obvious next step for speed.
 

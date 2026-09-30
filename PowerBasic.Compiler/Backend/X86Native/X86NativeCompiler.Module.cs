@@ -17,6 +17,17 @@ public static partial class X86NativeCompiler {
     private int _stagingBytes = 16;
     private X86Label _controlWord;
 
+    /// <summary>
+    /// ON ERROR's state: the mode (0 disarmed, 1 a handler, 2 RESUME NEXT, 3 inside a handler, where a
+    /// further error is fatal), the handler's address, the frame and stack it runs in, the current
+    /// statement's restart and resume addresses, and the pair a fault latched for RESUME.
+    /// </summary>
+    private X86Label _errorMode, _errorHandler, _errorFrame, _errorStack, _statementStart, _statementNext, _faultStart, _faultNext;
+
+    /// <summary>The program's ERR cell, when it reads ERR at all.</summary>
+    private X86Label? ErrorCode
+      => module.Globals.FirstOrDefault(global => global.Name == "rt_err") is { } err ? this._globals[err] : null;
+
     /// <summary>The portable runtime's <c>rt_error</c>, through which BASIC's run-time errors are raised.</summary>
     private IrFunction? ErrorFunction
       => module.FindFunction("rt_error") is { IsDeclaration: false } error ? error : null;
@@ -31,8 +42,6 @@ public static partial class X86NativeCompiler {
       foreach (var function in defined) {
         if (function.HasInlineAsm)
           throw Decline($"'{function.Name}' contains inline assembly, which is 16-bit DOS text");
-        if (function.HasErrorHandler)
-          throw Decline($"'{function.Name}' traps errors (ON ERROR), which has no native lowering yet");
         this._entries.Add(function, this._asm.NewLabel(function.Name));
       }
       foreach (var function in defined)
@@ -42,6 +51,14 @@ public static partial class X86NativeCompiler {
       this._returnArea = this._asm.NewLabel("pb.return");
       this._staging = this._asm.NewLabel("pb.staging");
       this._controlWord = this._asm.NewLabel("pb.controlWord");
+      this._errorMode = this._asm.NewLabel("pb.errorMode");
+      this._errorHandler = this._asm.NewLabel("pb.errorHandler");
+      this._errorFrame = this._asm.NewLabel("pb.errorFrame");
+      this._errorStack = this._asm.NewLabel("pb.errorStack");
+      this._statementStart = this._asm.NewLabel("pb.statementStart");
+      this._statementNext = this._asm.NewLabel("pb.statementNext");
+      this._faultStart = this._asm.NewLabel("pb.faultStart");
+      this._faultNext = this._asm.NewLabel("pb.faultNext");
 
       // _start: the program, then exit(0) - the stack pointer as the kernel left it
       var start = this._asm.NewLabel("_start");
@@ -79,6 +96,9 @@ public static partial class X86NativeCompiler {
       this._asm.Reserve(this._returnArea, 16, 16);
       this._asm.Reserve(this._staging, this._stagingBytes, 16);
       this._asm.Reserve(this._controlWord, 4, 4);
+      foreach (var cell in (X86Label[])[this._errorMode, this._errorHandler, this._errorFrame, this._errorStack,
+          this._statementStart, this._statementNext, this._faultStart, this._faultNext])
+        this._asm.Reserve(cell, this.WordBytes, this.WordBytes);
       return new(this._asm, start, export);
     }
 
