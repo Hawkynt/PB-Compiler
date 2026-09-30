@@ -50,12 +50,12 @@ PBC_X_BACKEND_STRICT=1 dotnet test PowerBasic.Compiler.Tests -c Release --filter
 Routing is now mandatory in every build, so the `PBC_X_BACKEND_STRICT=1` prefix does nothing and the
 same commands work without it.
 
-**Gate 1 is met.** The corpus has **no routing declines**, from 127; the suite has **no failing tests** with routing mandatory, from 337. A third measurement was added along the way, because the first two together still missed things: `Compile_GivenEveryStatementForm` compiles every statement form the language has through BOTH emitters, and it is at **299 of 299** but `FILES`, which neither emitter generates.
+**Gate 1 is met.** The corpus has **no routing declines**, from 127; the suite has **no failing tests** with routing mandatory, from 337. A third measurement was added along the way, because the first two together still missed things: `Compile_GivenEveryStatementForm` compiles every statement form the language has through the mandatory IR/x86-16 path, and it is at **300 of 300**, including both `FILES` spellings.
 
 ```text
 corpus (31 suites)        0 routing declines
 suite (strict)            0 failing of 6564
-statement census        299/299 except FILES
+statement census        300/300
 golden battery          568 pass / 0 fail / 0 skip
 round-trip              284 pass / 0 fail
 ```

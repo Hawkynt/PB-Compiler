@@ -112,18 +112,10 @@ public sealed class StatementSurfaceCensusTests {
   }
 
   /// <summary>
-  /// The statement forms that reach no code generator under pb36 - every one a statement the genuine
-  /// compiler accepts, so every one a real gap rather than a dialect saying no.
-  ///
-  /// FILES is the last one, and the only statement form in the table that reaches no code generator.
-  /// It needs INT 21h's FindFirst and FindNext and a DTA, neither of which the test interpreter
-  /// models, and its listing format is not verifiable here without the genuine compiler to compare
-  /// against - a guessed column layout would be worse than the error it gives now.
-  /// Strike a name from here when it starts compiling - the test insists on it.
+  /// The statement forms that reach no code generator under pb36. Keep this set explicit: an empty
+  /// set is the production-path gate, while any future entry must name the regression it permits.
   /// </summary>
-  private static readonly string[] _pb36Gaps = [
-    "files",
-  ];
+  private static readonly string[] _pb36Gaps = [];
 
   /// <summary>
   /// The same surface across every dialect the compiler claims. A form must be accepted by the

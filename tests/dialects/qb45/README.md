@@ -9,8 +9,8 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 
 | | Dimension | Measured | Notes |
 |---|---|---|---|
-| [x] | Statement syntax and parameter combinations | 205 / 205 | all 205 accepted |
-| [x] | Lowers to the IR | 204 / 205 | 204 of 205 reach the IR; the rest decline by name, which is the documented subset |
+| [x] | Statement syntax and parameter combinations | 206 / 206 | all 206 accepted |
+| [x] | Lowers to the IR | 206 / 206 | all 206 accepted forms reach the IR |
 | [-] | Syntax errors in unreachable branches are ignored, and warned about | - | no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches |
 | [-] | Syntax errors on reachable flow fail | - | the dead-branch dimension's reason: no conditional compilation in this family; $STATIC/$DYNAMIC are storage directives, not branches |
 | [x] | Syntax belonging to another dialect is rejected | 98 / 98 | all 98 cleanly refused |
@@ -25,7 +25,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 ## What each dimension claims
 
 - **Statement syntax and parameter combinations** - Every statement form the dialect provides is accepted, in each combination of its optional parameters.
-- **Lowers to the IR** - Every accepted form reaches the IR, or declines with a named reason rather than an internal exception.
+- **Lowers to the IR** - Every accepted form reaches verified IR; a named decline is still a missing production path.
 - **Syntax errors in unreachable branches are ignored, and warned about** - Source that no control flow can reach may be malformed without failing the compile, and says so.
 - **Syntax errors on reachable flow fail** - The same malformed source, where control can reach it, is a diagnostic and not a miscompile.
 - **Syntax belonging to another dialect is rejected** - A form this dialect never had is refused, with a controlled diagnostic naming the requirement.

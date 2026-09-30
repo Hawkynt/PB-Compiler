@@ -808,6 +808,8 @@ internal static class RuntimeAbi {
     // DIR$ is the DOS find-first/find-next pair behind one name: a mask handle in AX opens a search
     // and a null one continues it, with the attribute mask in CX.
     ["rt_dir"] = new("rt_dir", [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    // FILES [mask$] consumes its owned mask handle and writes the DOS directory listing to stdout.
+    ["rt_files"] = new("rt_files", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     // GET / PUT of a screen rectangle: corners in the graphics cells, the buffer's offset and segment
     // in two more, and PUT's combining verb in a third.
     // FILEATTR(n, 2): the DOS handle behind a PB file number. AX in, BX out - which is the same

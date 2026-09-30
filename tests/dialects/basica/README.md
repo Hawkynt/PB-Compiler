@@ -9,8 +9,8 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 
 | | Dimension | Measured | Notes |
 |---|---|---|---|
-| [x] | Statement syntax and parameter combinations | 165 / 165 | all 165 accepted |
-| [x] | Lowers to the IR | 164 / 165 | 164 of 165 reach the IR; the rest decline by name, which is the documented subset |
+| [x] | Statement syntax and parameter combinations | 166 / 166 | all 166 accepted |
+| [x] | Lowers to the IR | 166 / 166 | all 166 accepted forms reach the IR |
 | [x] | Syntax errors in unreachable branches are ignored, and warned about | 1 / 1 | all 1 held |
 | [~] | Syntax errors on reachable flow fail | 0 / 1 | 1 not held: reachable malformed source was accepted |
 | [x] | Syntax belonging to another dialect is rejected | 138 / 138 | all 138 cleanly refused |
@@ -25,7 +25,7 @@ passes; an empty box means nobody has checked yet, which is not the same as fail
 ## What each dimension claims
 
 - **Statement syntax and parameter combinations** - Every statement form the dialect provides is accepted, in each combination of its optional parameters.
-- **Lowers to the IR** - Every accepted form reaches the IR, or declines with a named reason rather than an internal exception.
+- **Lowers to the IR** - Every accepted form reaches verified IR; a named decline is still a missing production path.
 - **Syntax errors in unreachable branches are ignored, and warned about** - Source that no control flow can reach may be malformed without failing the compile, and says so.
 - **Syntax errors on reachable flow fail** - The same malformed source, where control can reach it, is a diagnostic and not a miscompile.
 - **Syntax belonging to another dialect is rejected** - A form this dialect never had is refused, with a controlled diagnostic naming the requirement.

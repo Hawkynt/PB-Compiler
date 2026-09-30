@@ -82,15 +82,12 @@ internal static class DialectProbes {
   }
 
   /// <summary>
-  /// D2 - every accepted form reaches the IR, or declines with a NAMED reason.
-  ///
-  /// The bar is deliberately "declines by name" rather than "lowers": the lowering has a documented
-  /// subset and refusing outside it is correct behaviour. What is not acceptable is an internal
-  /// exception, which is a crash wearing a decline's clothes.
+  /// D2 - every accepted form reaches the IR. A named decline is still a missing production path,
+  /// so it fails this dimension just as an exception does.
   /// </summary>
   internal static DialectBattery.Measurement Lowering(Dialect dialect) {
     int total = 0, lowered = 0;
-    var crashed = new List<string>();
+    var failed = new List<string>();
     foreach (var form in StatementSurface.All.Where(f => StatementSurface.ShouldAccept(f, dialect))) {
       var source = StatementSurface.Program(form, dialect);
       SemanticModel model;
@@ -105,17 +102,18 @@ internal static class DialectProbes {
       try {
         if (IrLowering.TryLowerModule(model, out var why) is not null)
           ++lowered;
-        else if (string.IsNullOrWhiteSpace(why))
-          crashed.Add(form.Id + " (declined with no reason)");
+        else
+          failed.Add(form.Id + (string.IsNullOrWhiteSpace(why)
+            ? " (declined with no reason)"
+            : $" ({why})"));
       } catch (Exception e) {
-        crashed.Add($"{form.Id} ({e.GetType().Name})");
+        failed.Add($"{form.Id} ({e.GetType().Name})");
       }
     }
-    if (crashed.Count > 0)
+    if (failed.Count > 0)
       return new(DialectBattery.State.Partial, lowered, total,
-        $"{crashed.Count} form(s) fail without a named reason: {string.Join(", ", crashed.Take(4))}");
-    return new(DialectBattery.State.Held, lowered, total,
-      $"{lowered} of {total} reach the IR; the rest decline by name, which is the documented subset");
+        $"{failed.Count} form(s) do not reach the IR: {string.Join(", ", failed.Take(4))}");
+    return new(DialectBattery.State.Held, lowered, total, $"all {total} accepted forms reach the IR");
   }
 
   /// <summary>

@@ -46,7 +46,7 @@ internal static class DialectBattery {
     new("syntax", "Statement syntax and parameter combinations",
       "Every statement form the dialect provides is accepted, in each combination of its optional parameters."),
     new("lowering", "Lowers to the IR",
-      "Every accepted form reaches the IR, or declines with a named reason rather than an internal exception."),
+      "Every accepted form reaches verified IR; a named decline is still a missing production path."),
     new("dead-branch", "Syntax errors in unreachable branches are ignored, and warned about",
       "Source that no control flow can reach may be malformed without failing the compile, and says so."),
     new("live-branch", "Syntax errors on reachable flow fail",

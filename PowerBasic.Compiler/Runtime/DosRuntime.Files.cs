@@ -5,7 +5,7 @@ namespace PowerBasic.Compiler.Runtime;
 
 /// <summary>
 /// DOS handle-based file I/O. PB file numbers 1..15 map through the word table
-/// <c>rt_files</c> (0 = closed) to DOS handles; PB file number 0 denotes the
+/// <c>rt_file_table</c> (0 = closed) to DOS handles; PB file number 0 denotes the
 /// console (DOS handle 0). Register conventions:
 ///   FOpen:     AX=filename handle (consumed), BX=PB file number, CX=mode
 ///              (0=INPUT, 1=OUTPUT, 2=APPEND, 3=RANDOM with SI=reclen, 4=BINARY)
@@ -116,7 +116,7 @@ public sealed partial class DosRuntime {
   }
 
   private void EmitFileProcedures(Assembler asm) {
-    var files = asm.Lbl("rt_files");
+    var files = asm.Lbl("rt_file_table");
     var ioError = asm.Lbl("rt_err_io");
 
     // rt_name_z: AX=string handle -> ASCIIZ filename in rt_namebuf (consumes)
@@ -1116,7 +1116,7 @@ public sealed partial class DosRuntime {
 
   private void EmitFileData(Assembler asm) {
     asm.Align(2);
-    this.ZeroBlob(asm, "rt_files", 32);
+    this.ZeroBlob(asm, "rt_file_table", 32);
     this.ZeroBlob(asm, "rt_fmode", 32);
     asm.MarkLabel("rt_reclen");
     asm.Db(new byte[32]);

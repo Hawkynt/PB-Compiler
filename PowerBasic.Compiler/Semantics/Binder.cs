@@ -289,6 +289,7 @@ public sealed class Binder {
       ["WIDTH"] = ([1, 2], null),         // PBC refuses a bare WIDTH; 2 ok / 3 refused
       ["PALETTE"] = ([0, 2], [0, 2]),     // 0 and 2 ok, 1 and 3 refused - not a range
       ["SCREEN"] = ([0, 1, 2, 3, 4], null),    // PBC accepts a bare SCREEN; 4 ok / 5 refused
+      ["FILES"] = (null, [0, 1]),          // BC 4.50 accepts the optional filespec; 2 refused
     };
 
   /// <summary>

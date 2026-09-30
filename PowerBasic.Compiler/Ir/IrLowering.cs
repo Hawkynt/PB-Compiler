@@ -1888,6 +1888,13 @@ public sealed partial class IrLowering {
           this.RuntimeFn("rt_" + dirCmd.Keyword.ToLowerInvariant(), IrType.Void, IrType.Ptr),
           this.LowerStringExpr(dirPath));
         break;
+      case CommandStmt { Keyword: "FILES", Arguments.Count: <= 1 } files:
+        var mask = files.Arguments.Count == 0
+          ? new StringLiteralExpr(files.Position, "*.*")
+          : files.Arguments[0] ?? throw new IrLoweringException("FILES requires a string filespec");
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_files", IrType.Void, IrType.Ptr),
+          this.LowerStringExpr(mask));
+        break;
       // NAME old$ AS new$ - two handles rather than one, and otherwise KILL again
       case CommandStmt { Keyword: "NAME", Arguments: [{ } oldName, { } newName] }:
         this._b.Call(IrType.Void, this.RuntimeFn("rt_rename", IrType.Void, IrType.Ptr, IrType.Ptr),
