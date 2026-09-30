@@ -28,7 +28,7 @@ public enum M6502Routine {
 
   // files on the 1541: Mos6502Runtime.Files.cs
   FileData, FileOpen, FileClose, FileRead, FileWrite, FileUnlink, FileCloseAll, FileCommandChannel, FileStatus,
-  FileAppendPath,
+  FileAppendPath, FileOpenCached, FileReadCached, FileWriteCached, FileSeek, FileFlushCache,
 
   // floating point: Mos6502Runtime.Float.cs
   UnpackSingleA, UnpackSingleB, UnpackDoubleA, UnpackDoubleB, UnpackExtendedA, UnpackExtendedB,

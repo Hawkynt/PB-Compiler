@@ -81,6 +81,17 @@ public static partial class Mos6502Compiler {
     /// <summary>Whether the program opens files: its reads then go through the file routines, and its exit closes them.</summary>
     private bool UsesFiles => module.FindFunction("sys_open") is not null;
 
+    /// <summary>
+    /// Whether the program may open a RANDOM or BINARY file, and so needs the file cache: it seeks,
+    /// or it opens a file in a mode that is not a constant INPUT, OUTPUT or APPEND - the mode is
+    /// <c>rt_file_open</c>'s third argument, and <c>sys_open</c>'s second once that is inlined.
+    /// </summary>
+    private bool Seeks => module.FindFunction("sys_seek") is not null
+      || module.Functions.Where(function => !function.IsDeclaration && function.Name != "rt_file_open")
+        .SelectMany(function => function.Blocks).SelectMany(block => block.Instructions).OfType<IrCall>()
+        .Any(call => call.Callee is IrFunction { Name: "rt_file_open" or "sys_open" } callee
+          && call.Args.ElementAt(callee.Name == "sys_open" ? 1 : 2) is not IrConstantInt { Value: >= 0 and < 3 });
+
     /// <summary>The program's ERR cell, when it reads ERR at all.</summary>
     private M6502Address? ErrorCode
       => module.Globals.FirstOrDefault(global => global.Name == "rt_err") is { } err ? this._globals[err] : null;
@@ -107,6 +118,8 @@ public static partial class Mos6502Compiler {
 
     public Mos6502Assembler.Image Generate(int origin) {
       this._runtime = new(this._asm);
+      if (this.Seeks)
+        this._runtime.FileCache = this._asm.NewLabel("fileCache");
       // the portable runtime's block copy is the runtime's own CopyMemory here: its IR body is not needed
       var defined = module.Functions.Where(function => !function.IsDeclaration && function.Name != PortableRuntime.NativeCopy).ToList();
       var main = defined.FirstOrDefault(function => function.Name == "main")
@@ -161,6 +174,10 @@ public static partial class Mos6502Compiler {
       }
       this._asm.Bind(this._staging);
       this._asm.Reserve(this._stagingBytes);
+      if (this._runtime.FileCache is { } cache) {
+        this._asm.Bind(cache);
+        this._asm.Reserve(Mos6502Runtime.FileCacheBytes);
+      }
       if (this._trapsErrors)
         foreach (var (cell, bytes) in this.ErrorCells) {
           this._asm.Bind(cell);
@@ -171,6 +188,7 @@ public static partial class Mos6502Compiler {
 
     private int UninitializedBytes()
       => this.OverlayBytes + (this._trapsErrors ? this.ErrorCells.Sum(cell => cell.Bytes) : 0)
+        + (this.Seeks ? Mos6502Runtime.FileCacheBytes : 0)
         + this._globals.Keys.Where(IsUninitialized).Sum(global => SizeOf(global.ValueType) * global.Count)
         + this._stagingBytes;
 

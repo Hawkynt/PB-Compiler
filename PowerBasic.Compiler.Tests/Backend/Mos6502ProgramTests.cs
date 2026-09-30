@@ -327,14 +327,56 @@ public sealed class Mos6502ProgramTests {
   }
 
   [Test]
-  public void Build_GivenARandomFile_ThenThe6502DeclinesItBecauseA1541CannotSeek() {
-    var (code, error, _) = this.Build("""
-      OPEN "R.DAT" FOR RANDOM AS #1 LEN = 4
+  public void Run_GivenARandomFile_ThenItsRecordsReachTheDiskWhenItCloses() {
+    var disk = new Dictionary<string, List<byte>>();
+    var output = this.Run("""
+      TYPE Pair
+        A AS INTEGER
+        B AS STRING * 2
+      END TYPE
+      DIM p AS Pair
+      OPEN "PAIRS" FOR RANDOM AS #1 LEN = 4
+      p.A = 258: p.B = "hi": PUT #1, 2, p
+      p.A = 3: p.B = "yo": PUT #1, 1, p
       PRINT LOF(1)
+      CLOSE #1
+      OPEN "PAIRS" FOR RANDOM AS #1 LEN = 4
+      GET #1, 2, p
+      PRINT p.A; p.B
+      CLOSE #1
+      """, disk);
+
+    Assert.That(output, Is.EqualTo(" 8 \n 258 hi"));
+    Assert.That(disk["PAIRS"], Is.EqualTo(new byte[] { 3, 0, (byte)'y', (byte)'o', 2, 1, (byte)'h', (byte)'i' }));
+  }
+
+  [Test]
+  public void Run_GivenABinaryFileOnTheDisk_ThenItReadsWhatIsThere() {
+    var disk = new Dictionary<string, List<byte>> { ["DATA.BIN"] = [.. "ABCDEFGH"u8.ToArray()] };
+    var output = this.Run("""
+      DIM s AS STRING
+      OPEN "data.bin" FOR BINARY AS #1
+      SEEK #1, 3
+      GET$ #1, 4, s
+      PRINT s; LOF(1)
+      CLOSE #1
+      """, disk);
+
+    Assert.That(output, Is.EqualTo("DEFG 8 "));
+    Assert.That(disk["DATA.BIN"], Is.EqualTo("ABCDEFGH"u8.ToArray()), "a file only read is not written back");
+  }
+
+  [Test]
+  public void Run_GivenABinaryFileLongerThanTheCache_ThenErrorSixtyOneEndsTheProgram() {
+    var output = this.Run($"""
+      OPEN "BIG.BIN" FOR BINARY AS #1
+      FOR i = 1 TO {Mos6502Runtime.FileCacheBytes / 64 + 1}
+        PUT$ #1, STRING$(64, "x")
+      NEXT
+      PRINT "never"
       """);
 
-    Assert.That(code, Is.Not.Zero);
-    Assert.That(error, Does.Contain("cannot seek"));
+    Assert.That(output, Does.Contain("61").And.Not.Contains("never"));
   }
 
   [Test]

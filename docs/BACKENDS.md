@@ -249,9 +249,11 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   `name,S,A` in PETSCII capitals and reads the drive's status back off channel 15, since a 1541
   reports a missing file there rather than failing the `OPEN`; `KILL` sends `S0:name`. APPEND to a
   missing file creates it, as DOS does, and the return to BASIC closes what the program left open,
-  because a 1541 file never closed is a splat file. Sequential files cannot seek, so RANDOM, BINARY,
-  `SEEK` and `LOF` decline. `Cpu6502` models the KERNAL calls and the drive, and the VICE test runs
-  the file programs against a host directory as drive 8.
+  because a 1541 file never closed is a splat file. Sequential files cannot seek, so a RANDOM or
+  BINARY file lives in a 4 KB RAM cache while it is open (`Mos6502Runtime.FileCache.cs`): read whole
+  at `OPEN`, written back whole with `@0:` at `CLOSE` if it changed - one such file at a time, and
+  the cache reserved only in a program that opens one. `Cpu6502` models the KERNAL calls and the
+  drive, and the VICE test runs the file programs against a host directory as drive 8.
 - **Math functions are portable IR** (`PortableRuntime.Math.cs`, switched on by
   `PortableRuntimeSoftMath`): the `llvm.sqrt`/`sin`/`cos`/`tan`/`atan`/`log`/`exp`/`pow` family,
   each computed in EXTENDED on the soft float. A whole exponent multiplies by repeated squaring, so
@@ -273,12 +275,12 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
 - **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
   the code.
 
-What it does not lower yet it declines by name - RANDOM and BINARY files (`sys_seek`), `TRY`, inline assembly,
+What it does not lower yet it declines by name - `TRY`, inline assembly,
 calls through pointers - rather than compiling it into something else.
 `Mos6502ProgramTests` run compiled programs on `Cpu6502` (a hand-decoded interpreter in the test
 project, independent of the compiler's opcode table); `Mos6502BatteryTests` run every DOS battery
 program the back end accepts against its DOS golden output, keep a floor under how many that is, and
-cross-check three - one of them writing, appending, reading and scratching a file - on VICE with the real KERNAL when `x64sc` and `xvfb-run` are installed.
+cross-check four - among them the sequential and the RANDOM/BINARY file programs - on VICE with the real KERNAL when `x64sc` and `xvfb-run` are installed.
 
 ## The seam is a test, not an interface
 

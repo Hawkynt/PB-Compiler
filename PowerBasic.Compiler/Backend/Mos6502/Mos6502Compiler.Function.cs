@@ -675,8 +675,17 @@ public static partial class Mos6502Compiler {
               this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
             return;
           }
-          case "sys_seek":
-            throw Decline("a 1541's sequential files cannot seek, so RANDOM, BINARY, SEEK and LOF have no 6502 lowering");
+          case "sys_seek": {
+            // a descriptor, the offset's low word - a cached file is 4 KB at most - and whence
+            var args = call.Args.ToList();
+            this.Copy(this.Of(args[0]), 1, Zp.Arg, 1);
+            this.Copy(this.Of(args[1]), 2, Zp.Arg.Plus(2), 2);
+            this.Copy(this.Of(args[2]), 1, Zp.Arg.Plus(4), 1);
+            this._asm.Call(this._runtime.Routine(M6502Routine.FileSeek));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          }
           default:
             throw Decline($"the 6502 runtime has no {callee.Name} yet");
         }

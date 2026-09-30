@@ -4,7 +4,10 @@ namespace PowerBasic.Compiler.Backend.Mos6502;
 public sealed class M6502ImageTooLargeException(string message) : InvalidOperationException(message);
 
 /// <summary>A position in the program, bound once with <see cref="Mos6502Assembler.Bind"/>.</summary>
-public readonly record struct M6502Label(int Id);
+public readonly record struct M6502Label(int Id) {
+  /// <summary>The address <paramref name="bytes"/> past the label.</summary>
+  public M6502Address Plus(int bytes) => new(this, bytes);
+}
 
 /// <summary>An address: a label plus a displacement, or a plain number when <see cref="Label"/> is null.</summary>
 public readonly record struct M6502Address(M6502Label? Label, int Offset) {

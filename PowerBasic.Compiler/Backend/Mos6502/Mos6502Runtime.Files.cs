@@ -14,7 +14,8 @@ namespace PowerBasic.Compiler.Backend.Mos6502;
 /// <c>CHKOUT</c> with carry set) is never left pointing at the keyboard or the screen instead: a
 /// read finds the end of the file and a write goes nowhere. The command channel stays open while any file is used;
 /// the return to BASIC closes whatever the program left open, so nothing written is lost. Sequential
-/// files cannot seek, so RANDOM and BINARY - the one mode that reads and writes - fail to open.
+/// files cannot seek, so RANDOM and BINARY - the one mode that reads and writes - live in a RAM
+/// cache while they are open (<c>Mos6502Runtime.FileCache.cs</c>).
 /// </summary>
 public sealed partial class Mos6502Runtime {
 
@@ -62,6 +63,11 @@ public sealed partial class Mos6502Runtime {
       case M6502Routine.FileCommandChannel: this.EmitFileCommandChannel(); return true;
       case M6502Routine.FileStatus: this.EmitFileStatus(); return true;
       case M6502Routine.FileAppendPath: this.EmitFileAppendPath(); return true;
+      case M6502Routine.FileOpenCached: this.EmitFileOpenCached(); return true;
+      case M6502Routine.FileReadCached: this.EmitFileReadCached(); return true;
+      case M6502Routine.FileWriteCached: this.EmitFileWriteCached(); return true;
+      case M6502Routine.FileSeek: this.EmitFileSeek(); return true;
+      case M6502Routine.FileFlushCache: this.EmitFileFlushCache(); return true;
       default: return false;
     }
   }
@@ -79,6 +85,8 @@ public sealed partial class Mos6502Runtime {
     }
     asm.Bind(cells.Name);
     asm.Bytes(new byte[NameBytes]);
+    if (this.FileCache is not null)
+      this.EmitCacheData();
   }
 
   /// <summary>Sets Ret to the byte in A, zero-extended.</summary>
@@ -199,7 +207,7 @@ public sealed partial class Mos6502Runtime {
     var fail = asm.NewLabel("rt.files.open.fail");
     asm.Call(this.Routine(M6502Routine.FileCommandChannel));
     asm.Memory(Lda, Zp.Arg.Plus(2));
-    asm.Immediate(Cmp, 3);
+    asm.Immediate(Cmp, this.FileCache is null ? 3 : 4);
     asm.Branch(Bcs, fail);
     asm.Immediate(Ldx, FirstFile);
     asm.Bind(find);
@@ -211,6 +219,14 @@ public sealed partial class Mos6502Runtime {
     asm.Jump(fail);
     asm.Bind(found);
     asm.Memory(Stx, cells.File);
+    if (this.FileCache is not null) {
+      var sequential = asm.NewLabel("rt.files.open.sequential");
+      asm.Memory(Lda, Zp.Arg.Plus(2));
+      asm.Immediate(Cmp, 3);
+      asm.Branch(Bne, sequential);
+      asm.Jump(this.Routine(M6502Routine.FileOpenCached));
+      asm.Bind(sequential);
+    }
 
     asm.Bind(attempt);
     asm.Immediate(Lda, 0);
@@ -271,8 +287,19 @@ public sealed partial class Mos6502Runtime {
   /// <summary><c>sys_close(fd)</c>: fd at Arg.</summary>
   private void EmitFileClose() {
     var cells = this.Files;
+    var release = asm.NewLabel("rt.files.close.release");
+    if (this.FileCache is not null) {
+      var sequential = asm.NewLabel("rt.files.close.sequential");
+      asm.Memory(Lda, Zp.Arg);
+      asm.Memory(Cmp, this.Cache.File);
+      asm.Branch(Bne, sequential);
+      asm.Call(this.Routine(M6502Routine.FileFlushCache));
+      asm.Jump(release);
+      asm.Bind(sequential);
+    }
     asm.Memory(Lda, Zp.Arg);
     asm.Call(Close);
+    asm.Bind(release);
     asm.Memory(Ldx, Zp.Arg);
     asm.Immediate(Lda, 0);
     asm.Memory(Sta, cells.InUse, M6502Index.X);
@@ -297,6 +324,8 @@ public sealed partial class Mos6502Runtime {
     asm.Branch(Bne, file);
     asm.Jump(this.Routine(M6502Routine.SystemRead));
     asm.Bind(file);
+    if (this.FileCache is not null)
+      this.WhenCached(Zp.Arg, this.Routine(M6502Routine.FileReadCached));
     asm.Immediate(Lda, 0);
     for (var i = 0; i < 4; ++i)
       asm.Memory(Sta, Zp.Ret.Plus(i));
@@ -358,6 +387,8 @@ public sealed partial class Mos6502Runtime {
     asm.Branch(Bne, file);
     asm.Jump(this.Routine(M6502Routine.SystemWrite));
     asm.Bind(file);
+    if (this.FileCache is not null)
+      this.WhenCached(Zp.Arg.Plus(6), this.Routine(M6502Routine.FileWriteCached));
     asm.Memory(Ldx, Zp.Arg.Plus(6));
     asm.Call(Chkout);
     asm.Branch(Bcs, done);
@@ -440,6 +471,14 @@ public sealed partial class Mos6502Runtime {
     asm.Immediate(Lda, 0);
     asm.Memory(Sta, cells.InUse, M6502Index.X);
     asm.Emit(Txa);
+    if (this.FileCache is not null) {
+      var sequential = asm.NewLabel("rt.files.closeAll.sequential");
+      asm.Memory(Cmp, this.Cache.File);
+      asm.Branch(Bne, sequential);
+      asm.Call(this.Routine(M6502Routine.FileFlushCache));
+      asm.Jump(next);
+      asm.Bind(sequential);
+    }
     asm.Call(Close);
     asm.Bind(next);
     asm.Memory(Inc, cells.File);

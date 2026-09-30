@@ -17,7 +17,7 @@ public sealed class Mos6502BatteryTests {
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   /// <summary>How many battery programs the 6502 compiled when this floor was last raised.</summary>
-  private const int CompiledFloor = 17;
+  private const int CompiledFloor = 18;
 
   public static IEnumerable<string> Programs() {
     var dir = Path.Combine(_repoRoot, "tests");
@@ -76,6 +76,7 @@ public sealed class Mos6502BatteryTests {
   [TestCase("CTRL.BAS")]
   [TestCase("FILEIO1.BAS")]
   [TestCase("ONERR.BAS")]
+  [TestCase("RANDFILE.BAS")]
   public void Run_GivenAProgramOnVice_ThenTheRealKernalPrintsWhatTheInterpreterPrints(string program) {
     Assume.That(Vice.IsAvailable, "VICE or Xvfb is not installed");
     var prg = Compile(program, out var declined);
