@@ -837,6 +837,8 @@ public static partial class X86NativeCompiler {
             this._asm.Fstp(FormatOf(call.Type), this.Place(call));
             return;
           }
+          if (callee.Name is "rt_peek" or "rt_peeki" or "rt_peekl" or "rt_poke" or "rt_poke_str")
+            throw Decline("PEEK and POKE name 16-bit DOS offsets, and a 32- or 64-bit Linux process has nothing at them");
           throw Decline($"the native runtime has no {callee.Name} yet");
         }
         this.CallFunction(callee, arguments.Select(this.Of).ToList(), arguments.Select(argument => argument.Type).ToList());

@@ -649,6 +649,34 @@ public static partial class Mos6502Compiler {
           case "rt_err_clear":
             this.ClearError();
             return;
+          // PEEK and POKE: on a flat 16-bit machine the offset IS the address - the VIC-II's border at
+          // 53280, the SID at 54272 - and DEF SEG's segment has nothing to select
+          case "rt_peek" or "rt_peeki" or "rt_peekl": {
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Ptr, 2);
+            var bytes = callee.Name switch { "rt_peek" => 1, "rt_peeki" => 2, _ => 4 };
+            if (!this.Stored(call))
+              return;
+            var destination = this.Destination(call);
+            for (var i = 0; i < SizeOf(call.Type); ++i) {
+              if (i < bytes) {
+                this._asm.Immediate(Ldy, i);
+                this._asm.IndirectY(Lda, Zp.Ptr);
+              } else {
+                this._asm.Immediate(Lda, 0);
+              }
+              this._asm.Memory(Sta, destination.Plus(i));
+            }
+            return;
+          }
+          case "rt_poke":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Ptr, 2);
+            this.Copy(this.Of(call.Args.ElementAt(1)), 1, Zp.Temp, 1);
+            this._asm.Memory(Lda, Zp.Temp);
+            this._asm.Immediate(Ldy, 0);
+            this._asm.IndirectY(Sta, Zp.Ptr);
+            return;
+          case "rt_defseg_reset":
+            return;
           // EXIT FAR AT label: where to land, and the stacks to have back when it does
           case "rt_efar_arm":
             this.Copy(this.Of(call.Args.ElementAt(0)), 2, module._exitFarTarget, 2);

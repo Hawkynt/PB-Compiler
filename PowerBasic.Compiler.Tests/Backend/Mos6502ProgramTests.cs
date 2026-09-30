@@ -380,6 +380,27 @@ public sealed class Mos6502ProgramTests {
   }
 
   [Test]
+  public void Run_GivenPeekAndPoke_ThenTheOffsetIsTheC64sOwnAddress() {
+    var (code, error, prg) = this.Build("""
+      POKE 53280, 2
+      a% = 513
+      p% = VARPTR(a%)
+      PRINT PEEK(p%); PEEK(p% + 1); PEEKI(p%)
+      DEF SEG = 1234
+      POKE p%, 7
+      PRINT a%
+      """);
+    Assert.That(code, Is.Zero, error);
+
+    var result = Cpu6502.RunC64Program(prg);
+
+    Assert.Multiple(() => {
+      Assert.That(result.Output.TrimEnd('\n'), Is.EqualTo(" 1  2  513 \n 519 "), "DEF SEG selects nothing on a flat machine");
+      Assert.That(result.Memory[0xD020], Is.EqualTo(2), "the VIC-II's border colour register");
+    });
+  }
+
+  [Test]
   public void Build_GivenAProgram_ThenItIsAPrgThatLoadsBehindASysLine() {
     var (_, error, prg) = this.Build("PRINT \"hi\"\n");
 

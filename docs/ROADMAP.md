@@ -238,11 +238,8 @@ floor under how many they accept - they are this section's to-do list.
   coalescing phi cells with their incoming values.
 
 ### Should
-- **`PEEK`/`POKE` on the 6502** - `INPUT`, `ON ERROR`, `TRY`, `EXIT FAR` and files (sequential on
-  the 1541 through the KERNAL, RANDOM and BINARY in a 4 KB RAM cache) are done. `PEEK`/`POKE`
-  reach the IR as `segment:offset` addresses: on a flat machine the segment has no meaning and the
-  offset is the address. A RANDOM or BINARY file larger than the
-  cache would need the 1541's REL files, whose `P` command positions by record.
+- **RANDOM and BINARY files past 4 KB on the 6502** - they live in a RAM cache while open; a larger
+  one would need the 1541's REL files, whose `P` command positions by record.
 - **Registers on x86.** Every x86 SSA value lives in a frame slot; a linear-scan allocator over the
   32/64-bit register file is the obvious next step for speed.
 

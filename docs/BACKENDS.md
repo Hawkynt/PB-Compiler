@@ -260,6 +260,9 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   at `OPEN`, written back whole with `@0:` at `CLOSE` if it changed - one such file at a time, and
   the cache reserved only in a program that opens one. `Cpu6502` models the KERNAL calls and the
   drive, and the VICE test runs the file programs against a host directory as drive 8.
+- **`PEEK` and `POKE` take the offset as the address** - the machine is flat and 16-bit, so
+  `POKE 53280, 0` sets the border colour as it does in C64 BASIC - and `DEF SEG` selects nothing.
+  (x86-32 and x64 decline them: a 16-bit DOS offset names nothing in a Linux process.)
 - **Math functions are portable IR** (`PortableRuntime.Math.cs`, switched on by
   `PortableRuntimeSoftMath`): the `llvm.sqrt`/`sin`/`cos`/`tan`/`atan`/`log`/`exp`/`pow` family,
   each computed in EXTENDED on the soft float. A whole exponent multiplies by repeated squaring, so
