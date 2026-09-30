@@ -195,15 +195,30 @@ compiles the lot.
   in its frame and puts it back on return, as the DOS back end does; `EXIT FAR` has a triple of its
   own. `FlatTargetNonLocalJumpTests` runs the same programs here, on the 6502 and on DOS, and wants
   DOS's output from all of them.
-- **`Emit/Elf/ElfWriter`** writes the three containers:
+- **`Emit/Elf/ElfWriter`** writes the ELF containers, and **`Ir/IrUnitFile`** the units of the
+  three IR platforms. What every platform builds:
 
 | Option | x86-16 (DOS, default) | x86-32 / x64 | 6502 |
 |---|---|---|---|
 | *(none)* | MZ `.EXE` | static ELF executable | C64 `.PRG` |
-| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a DOS container | refused |
-| `$COMPILE UNIT` | `.PBU` | refused: use `--emit-obj` or `--emit-lib` | refused |
-| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o`: `pb_main` for a C caller, `pb_start` to link alone | refused |
-| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `ar` archive of that object, with the GNU symbol index | refused |
+| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a COM image is DOS's own container (a PSP, an entry at `0100h`) | refused, likewise |
+| `$COMPILE UNIT` | `.PBU` of 8086 code | `.PBU` of IR | `.PBU` of IR |
+| `pbc lib build` | `.PBL` / OMF `.LIB` | `.PBL` of IR units | `.PBL` of IR units |
+| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o`: `pb_main` for a C caller, `pb_start` to link alone | `.OBJ`: an IR unit |
+| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `ar` archive of that object, with the GNU symbol index | `.LIB`: an IR library of that unit |
+| `$LINK` | 8086 PBU, PBL, OMF OBJ and LIB | IR units and libraries | IR units and libraries, `.OBJ`/`.LIB` included |
+
+**Units on the IR platforms** hold the unit's lowered IR, before any optimization
+(`IrUnitFile`: a versioned binary encoding every instruction, attribute and exact constant, which
+`IrUnitFileTests` round-trips over the whole battery). `$LINK` reads them back and
+`IrModuleLinker` joins them to the program right after lowering - procedures by name,
+case-insensitively and with their signatures checked; the runtime's `rt_*` cells as the one cell
+each is - so the middle end optimizes program and units as one module, and one unit links into any
+of the three platforms. As on DOS a unit is procedures only, and it may import a procedure the
+program supplies. The magic tells an IR unit from an 8086 one, and each platform refuses the
+other's with the reason. `FlatTargetUnitTests` compiles a unit and a program linking it - directly,
+through a library, and as the 6502's object and library - on x86-32, x64, the 6502 and DOS, and
+wants DOS's output from all of them.
 
 `PlatformTests` builds, runs and links all three artifacts for both machines - the host C compiler,
 or the bare `ld` where there is no 32-bit C library, is the oracle that the objects link, never part

@@ -441,13 +441,20 @@ public sealed class Mos6502ProgramTests {
     });
   }
 
-  [TestCase("--emit-com")]
+  [Test]
+  public void Build_GivenACom_ThenThe6502RefusesItAsDosOwnContainer() {
+    var (code, error, _) = this.Build("PRINT 1\n", "--emit-com");
+
+    Assert.That(code, Is.Not.Zero);
+    Assert.That(error, Does.Contain("COM image is a DOS container"));
+  }
+
   [TestCase("--emit-obj")]
   [TestCase("--emit-lib")]
-  public void Build_GivenADosOrObjectFormat_ThenThe6502RefusesIt(string option) {
+  public void Build_GivenAnObjectOrLibraryOfModuleCode_ThenItIsRefusedAsAUnitWouldBe(string option) {
     var (code, error, _) = this.Build("PRINT 1\n", option);
 
     Assert.That(code, Is.Not.Zero);
-    Assert.That(error, Does.Contain("C64 .PRG only"));
+    Assert.That(error, Does.Contain("module-level code"));
   }
 }

@@ -39,6 +39,14 @@ public sealed class IrBackendModule {
     var module = IrLowering.TryLowerModule(model, out declinedBecause);
     if (module is null)
       return null;
+    if (options.LinkedModules.Count > 0) {
+      try {
+        module = IrModuleLinker.Link(module, options.LinkedModules);
+      } catch (IrLinkException exception) {
+        declinedBecause = $"$LINK: {exception.Message}";
+        return null;
+      }
+    }
 
     module.AsciiOnly = model.AsciiOnly;
     if (options.PortableRuntimeHeapBytes is { } heap)
