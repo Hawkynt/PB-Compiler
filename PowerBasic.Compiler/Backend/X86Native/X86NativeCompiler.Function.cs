@@ -782,8 +782,8 @@ public static partial class X86NativeCompiler {
 
       /// <summary>Where a load or store goes: a fixed place, or through the pointer loaded into ECX/RCX.</summary>
       private X86Mem Target(IrValue pointer) {
-        if (pointer.Type.IsFarPointer || pointer is IrFarPtr)
-          throw Decline("far pointers have no meaning on a flat target");
+        if (pointer is IrFarPtr)
+          throw Decline("a segment:offset address (DIM AT, DEF SEG) has no meaning on a flat target");
         switch (this.Of(pointer)) {
           case AddressOperand address:
             return address.Place;

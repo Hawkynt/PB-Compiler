@@ -487,8 +487,8 @@ public static partial class Mos6502Compiler {
 
       /// <summary>Where a load or store goes: a fixed address, or through <see cref="Zp.Ptr"/>.</summary>
       private M6502Address? Target(IrValue pointer) {
-        if (pointer.Type.IsFarPointer || pointer is IrFarPtr)
-          throw Decline("far pointers have no 6502 meaning");
+        if (pointer is IrFarPtr)
+          throw Decline("a segment:offset address (DIM AT, DEF SEG) has no 6502 meaning");
         switch (this.Of(pointer)) {
           case AddressOperand address:
             return address.Address;

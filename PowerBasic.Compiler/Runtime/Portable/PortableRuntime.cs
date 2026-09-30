@@ -66,7 +66,8 @@ public static partial class PortableRuntime {
         ?? module.AddFunction(new IrFunction(name, returnType, parameters.Select((type, i) => new IrArgument(type, i))));
 
     private void DefineIfKnown(IrFunction function) {
-      var body = this.StringRoutine(function.Name) ?? this.NumberRoutine(function.Name) ?? (Action<IrWriter>?)(function.Name switch {
+      var body = this.StringRoutine(function.Name) ?? this.NumberRoutine(function.Name) ?? this.ArrayRoutine(function.Name)
+        ?? (Action<IrWriter>?)(function.Name switch {
         "rt_print_str" => w => {
           w.B.Call(IrType.Void, this.Out, w.Function.Parameters[0], w.Function.Parameters[1]);
           w.B.Ret();

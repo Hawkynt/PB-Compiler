@@ -17,7 +17,7 @@ public sealed class NativeBatteryTests {
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
   /// <summary>How many battery programs each machine compiled when this floor was last raised.</summary>
-  private const int CompiledFloor = 11;
+  private const int CompiledFloor = 13;
 
   private static readonly string[] _machines = ["x86-32", "x64"];
 

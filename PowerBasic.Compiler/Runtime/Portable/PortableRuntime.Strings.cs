@@ -42,8 +42,11 @@ public static partial class PortableRuntime {
 
     private IrValue FreeList(IrWriter w, IrValue sizeClass) => w.B.Gep(this.FreeLists, sizeClass, IrType.Ptr);
 
-    /// <summary><c>rt.allocate(bytes)</c>: a block of at least that many bytes, from its class's free list or fresh.</summary>
-    private IrFunction Allocate => this._allocate ??= this.Internal("rt.allocate", IrType.Ptr, [IrType.I32], w => {
+    /// <summary>
+    /// <c>rt.allocate(bytes, error)</c>: a block of at least that many bytes, from its class's free
+    /// list or fresh; running out raises <c>error</c> - 14 for a string, 7 for an array.
+    /// </summary>
+    private IrFunction Allocate => this._allocate ??= this.Internal("rt.allocate", IrType.Ptr, [IrType.I32, IrType.I32], w => {
       var needed = w.B.Add(w.Function.Parameters[0], w.I32(BlockHeader));
       var sizeClass = w.Variable(IrType.I32, w.I32(0));
       var block = w.Variable(IrType.I32, w.I32(16));
@@ -59,7 +62,7 @@ public static partial class PortableRuntime {
       });
       var top = w.B.Load(IrType.I32, this.HeapTop);
       w.If(w.Cmp(IrCmpPred.Sgt, w.B.Add(top, block.Get()), w.I32(heapBytes)),
-        () => w.B.Call(IrType.Void, this.ErrorFunction, w.I32(14)));
+        () => w.B.Call(IrType.Void, this.ErrorFunction, w.Function.Parameters[1]));
       w.B.Store(w.B.Add(top, block.Get()), this.HeapTop);
       var payload = w.B.Gep(this.Heap, w.B.Add(top, w.I32(BlockHeader)));
       w.B.Store(sizeClass.Get(), w.B.Gep(payload, w.I32(-BlockHeader)));
@@ -91,7 +94,7 @@ public static partial class PortableRuntime {
     private IrFunction NewString => this._newString ??= this.Internal("rt.newString", IrType.Ptr, [IrType.I32], w => {
       var length = w.Variable(IrType.I32, w.Function.Parameters[0]);
       w.If(w.Cmp(IrCmpPred.Slt, length.Get(), w.I32(0)), () => length.Set(w.I32(0)));
-      var handle = w.B.Call(IrType.Ptr, this.Allocate, w.B.Add(length.Get(), w.I32(4)));
+      var handle = w.B.Call(IrType.Ptr, this.Allocate, w.B.Add(length.Get(), w.I32(4)), w.I32(14));
       w.B.Store(length.Get(), handle);
       w.B.Ret(handle);
     });

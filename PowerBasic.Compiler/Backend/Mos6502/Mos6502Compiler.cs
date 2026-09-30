@@ -63,8 +63,7 @@ public static partial class Mos6502Compiler {
         throw Decline("Microsoft Binary Format floats have no 6502 lowering yet");
       return type.Bits switch { 32 => 4, 64 => 8, 80 => 10, _ => throw Decline($"{type} has no 6502 lowering") };
     }
-    if (type.IsFarPointer)
-      throw Decline("far pointers have no 6502 meaning");
+    // a far-heap pointer is DOS's; the 6502 has one 64 KB space
     if (type.IsPointer)
       return 2;
     if (type.IsInteger)

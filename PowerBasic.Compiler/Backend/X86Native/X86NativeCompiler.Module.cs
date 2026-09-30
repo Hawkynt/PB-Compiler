@@ -107,8 +107,7 @@ public static partial class X86NativeCompiler {
           throw Decline("Microsoft Binary Format floats have no native lowering yet");
         return type.Bits switch { 32 => 4, 64 => 8, 80 => 10, _ => throw Decline($"{type} has no native lowering") };
       }
-      if (type.IsFarPointer)
-        throw Decline("far pointers have no meaning on a flat 32- or 64-bit target");
+      // a far-heap pointer is DOS's; on a flat machine every pointer is the same width
       if (type.IsPointer)
         return this.WordBytes;
       if (type.IsInteger)
