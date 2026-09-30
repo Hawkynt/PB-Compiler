@@ -37,7 +37,7 @@ binaries you can run on actual DOS or in DOSBox:
   (`--platform x86-32|x64`), compiled from the same optimized IR by pbc's own x86 back end
   and portable runtime — no C compiler, assembler or linker.
 - **6502** — Commodore 64 `.PRG` programs (`--platform 6502`), compiled from the same
-  optimized IR by a native 6502 back end (no files or math functions yet).
+  optimized IR by a native 6502 back end (no files yet).
 
 Two things make it interesting. First, **fidelity**: for the historic dialects
 it doesn't merely *resemble* the genuine compilers — it is driven against the

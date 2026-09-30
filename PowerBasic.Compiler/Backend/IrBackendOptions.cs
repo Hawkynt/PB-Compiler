@@ -22,4 +22,7 @@ public sealed record IrBackendOptions {
 
   /// <summary>The portable runtime's index width: 16 for a target whose pointers are 16 bits, else 32.</summary>
   public int PortableRuntimeIndexBits { get; init; } = 32;
+
+  /// <summary>Whether the portable runtime also supplies the math intrinsics, for a target with no floating-point hardware.</summary>
+  public bool PortableRuntimeSoftMath { get; init; }
 }

@@ -243,6 +243,13 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   nearest-even once, when it is packed back into the format its IR type names. There are no
   infinities: overflow is error 6, a zero divisor error 11. `Mos6502FloatTests` hold add, subtract,
   multiply, divide and compare to .NET's IEEE results bit for bit over random operands.
+- **Math functions are portable IR** (`PortableRuntime.Math.cs`, switched on by
+  `PortableRuntimeSoftMath`): the `llvm.sqrt`/`sin`/`cos`/`tan`/`atan`/`log`/`exp`/`pow` family,
+  each computed in EXTENDED on the soft float. A whole exponent multiplies by repeated squaring, so
+  `2 ^ 10` is exactly 1024; the rest reduce the argument - Cody and Waite's two-part `ln 2` and
+  `π/2`, a power-of-two split for `ln` and `√` - and sum a short series. Any target without
+  floating-point hardware can switch them on; `Mos6502ProgramTests` holds them to .NET's answers to
+  fourteen digits.
 - **Size comes first.** A C64 leaves 38 KB for program and data, so the build optimizes for size
   unless `$OPTIMIZE SPEED` asks otherwise, the string heap is 4 KB, and the portable runtime keeps
   its lengths, positions and counters in 16 bits (`IrWriter.Index`) - the `rt_*` ABI keeps its
@@ -254,7 +261,7 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
 - **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
   the code.
 
-What it does not lower yet it declines by name - math functions, files, `TRY`, inline assembly,
+What it does not lower yet it declines by name - files, `TRY`, inline assembly,
 calls through pointers - rather than compiling it into something else.
 `Mos6502ProgramTests` run compiled programs on `Cpu6502` (a hand-decoded interpreter in the test
 project, independent of the compiler's opcode table); `Mos6502BatteryTests` run every DOS battery

@@ -172,6 +172,68 @@ public sealed class Mos6502ProgramTests {
     Assert.That(output, Is.EqualTo(" .3333333  .666666666666667 -2.5  1.5E-07  .0001 \n 8  2 -2 -3  4 "));
   }
 
+  private static readonly double[] MathArguments = [0.5, 1, 2, 3, 10, 0.001, 123.456, 1000, 7.25, 0.1];
+
+  /// <summary>Math functions in groups small enough for a C64 each: the BASIC, and .NET's answers.</summary>
+  private static readonly (string Basic, Func<double, double>[] Expected)[] MathGroups = [
+    ("SQR(x#); LOG(x#); EXP(x# / 100); LOG(x# * 1D+40); SQR(x# * 1D-40)",
+      [Math.Sqrt, Math.Log, x => Math.Exp(x / 100), x => Math.Log(x * 1E+40), x => Math.Sqrt(x * 1E-40)]),
+    ("SIN(x#); COS(x#); TAN(x#); SIN(x# * 128)", [Math.Sin, Math.Cos, Math.Tan, x => Math.Sin(x * 128)]),
+    ("ATN(x#); ATN(-x#)", [Math.Atan, x => Math.Atan(-x)]),
+    ("x# ^ 1.5; (-x#) ^ 3; x# ^ -2", [x => Math.Pow(x, 1.5), x => Math.Pow(-x, 3), x => Math.Pow(x, -2)]),
+  ];
+
+  [TestCase(0), TestCase(1), TestCase(2), TestCase(3)]
+  public void Run_GivenMathFunctions_ThenSoftFloatAgreesWithThePcToFourteenDigits(int group) {
+    var (basic, functions) = MathGroups[group];
+    var data = string.Join(", ", MathArguments.Select(value => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
+    var output = this.Run($"""
+      k = INP(&H60)
+      FOR i = 1 TO {MathArguments.Length}
+        READ x#
+        x# = x# + k
+        PRINT {basic}
+      NEXT
+      DATA {data}
+      """);
+
+    var lines = output.Split('\n');
+    Assert.That(lines, Has.Length.EqualTo(MathArguments.Length));
+    for (var i = 0; i < MathArguments.Length; ++i) {
+      var x = MathArguments[i];
+      var printed = lines[i].Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        .Select(text => double.Parse(text.Replace("D", "E"), System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+      Assert.That(printed, Has.Length.EqualTo(functions.Length), lines[i]);
+      for (var j = 0; j < functions.Length; ++j) {
+        var expected = functions[j](x);
+        Assert.That(printed[j], Is.EqualTo(expected).Within(Math.Abs(expected) * 1e-14 + 1e-300),
+          $"function {j} of {x}: printed {lines[i]}");
+      }
+    }
+  }
+
+  [Test]
+  public void Run_GivenAWholePower_ThenItIsExact() {
+    var output = this.Run("""
+      k = INP(&H60)
+      PRINT (k + 2) ^ 10; (k + 3) ^ 20; (k - 2) ^ 5; (k + 10) ^ -3; (k + 0) ^ 0; (k + 0) ^ 3; (k + 7) ^ 0
+      """);
+
+    Assert.That(output, Is.EqualTo(" 1024  3486784401 -32  .001  1  0  1 "));
+  }
+
+  [Test]
+  public void Run_GivenAMathDomainError_ThenErrorFiveEndsTheProgram() {
+    var output = this.Run("""
+      k = INP(&H60)
+      PRINT "before"
+      PRINT SQR(k - 1)
+      PRINT "after"
+      """);
+
+    Assert.That(output, Does.StartWith("before\n").And.Contains("5").And.Not.Contains("after"));
+  }
+
   [Test]
   public void Run_GivenStrings_ThenThePortableRuntimeBuildsThemOnTheC64() {
     var output = this.Run("""

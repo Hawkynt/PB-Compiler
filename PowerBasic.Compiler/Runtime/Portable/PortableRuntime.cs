@@ -32,17 +32,18 @@ public static partial class PortableRuntime {
   /// Defines, in <paramref name="module"/>, every runtime function it declares that this runtime
   /// implements; strings live in a heap of <paramref name="heapBytes"/>. Before the middle end the
   /// new functions are left in alloca form for it to promote; after it, <paramref name="cleanUp"/>
-  /// promotes and tidies them here.
+  /// promotes and tidies them here. <paramref name="softMath"/> also defines the math intrinsics
+  /// (<c>llvm.sqrt.f64</c> and its kin) for a target with no floating-point hardware to lower them to.
   /// </summary>
-  public static void Define(IrModule module, int heapBytes, bool cleanUp = true, int indexBits = 32) {
+  public static void Define(IrModule module, int heapBytes, bool cleanUp = true, int indexBits = 32, bool softMath = false) {
     ArgumentNullException.ThrowIfNull(module);
     ArgumentOutOfRangeException.ThrowIfLessThan(heapBytes, 256);
     if (indexBits is not (16 or 32))
       throw new ArgumentOutOfRangeException(nameof(indexBits), indexBits, "the runtime's index is 16 or 32 bits");
-    new Definer(module, heapBytes, cleanUp, indexBits == 16 ? IrType.I16 : IrType.I32).Run();
+    new Definer(module, heapBytes, cleanUp, indexBits == 16 ? IrType.I16 : IrType.I32, softMath).Run();
   }
 
-  private sealed partial class Definer(IrModule module, int heapBytes, bool cleanUp, IrType index) {
+  private sealed partial class Definer(IrModule module, int heapBytes, bool cleanUp, IrType index, bool softMath) {
 
     /// <summary>The runtime's integer for lengths, sizes and counters; see <see cref="IrWriter.Index"/>.</summary>
     private IrType Index => index;
@@ -86,7 +87,7 @@ public static partial class PortableRuntime {
 
     private void DefineIfKnown(IrFunction function) {
       var body = this.StringRoutine(function.Name) ?? this.NumberRoutine(function.Name) ?? this.ArrayRoutine(function.Name)
-        ?? this.FileRoutine(function.Name)
+        ?? this.FileRoutine(function.Name) ?? this.MathRoutine(function.Name)
         ?? (Action<IrWriter>?)(function.Name switch {
         "rt_print_str" => w => {
           w.B.Call(IrType.Void, this.Out, w.Function.Parameters[0], w.ToIndex(w.Function.Parameters[1]));
