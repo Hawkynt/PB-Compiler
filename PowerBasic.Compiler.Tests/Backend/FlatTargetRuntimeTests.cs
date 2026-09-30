@@ -28,16 +28,19 @@ public sealed class FlatTargetRuntimeTests {
       e = 1 / 7
       OPEN "T.TXT" FOR OUTPUT AS #1
       PRINT #1, "a"; TAB(6); "b"; e
-      PRINT #1, 42
+      PRINT #1, "c"; SPC(3); "d"
+      PRINT #1, "word,"; 42
       CLOSE #1
       OPEN "T.TXT" FOR INPUT AS #1
       LINE INPUT #1, s$
-      INPUT #1, n%
+      LINE INPUT #1, t$
+      INPUT #1, w$, n%
       CLOSE #1
       KILL "T.TXT"
       PRINT s$
-      PRINT n% + 1
-      """, "a    b .142857142857143\n 43"),
+      PRINT t$
+      PRINT w$; n% + 1
+      """, "a    b .142857142857143\nc   d\nword 43"),
   ];
 
   private static IEnumerable<TestCaseData> Cases()

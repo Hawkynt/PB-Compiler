@@ -702,7 +702,7 @@ public static partial class X86NativeCompiler {
       /// <summary>Pushes a float value onto the x87 stack.</summary>
       private void LoadFloat(IrValue value) {
         if (this.Of(value) is not MemoryOperand memory)
-          throw Decline($"a float in '{function.Name}' is not in memory");
+          throw Decline($"a float in '{function.Name}' ({value.GetType().Name}) is not in memory");
         this._asm.Fld(FormatOf(value.Type), memory.Place);
       }
 

@@ -5163,12 +5163,17 @@ public sealed partial class IrLowering {
       return this.Coerce(this.LowerExpr(fromEnd), this._model.TypeOf(fromEnd), this._model.TypeOf(expr));
     if (this._model.ResolvedConstants.TryGetValue(expr, out var resolved)
         && this._model.TypeOf(expr) is ScalarType constantType)
-      return this.Coerce(
-        new IrConstantInt(MapType(constantType), CodeGen.CodeGenerator.WrapToType(resolved, constantType)),
+      return this.Coerce(MapType(constantType) is { IsFloat: true } floatType
+          ? new IrConstantFloat(floatType, resolved)
+          : new IrConstantInt(MapType(constantType), CodeGen.CodeGenerator.WrapToType(resolved, constantType)),
         constantType, this._model.TypeOf(expr));
     switch (expr) {
       case IntegerLiteralExpr lit when this._model.TypeOf(lit) is BcdType bcdInt:
         return this.Coerce(new IrConstantFloat(IrType.F80, lit.Value), PbType.Ext, bcdInt);
+      // a whole-number literal the dialect types as a float - Turbo BASIC's 2147483648 is a DOUBLE -
+      // is a float constant; an integer constant carrying a float type is no value any back end can read
+      case IntegerLiteralExpr lit when MapType(this._model.TypeOf(lit)) is { IsFloat: true } floatType:
+        return new IrConstantFloat(floatType, lit.Value);
       case IntegerLiteralExpr lit:
         return new IrConstantInt(MapType(this._model.TypeOf(lit)), lit.Value);
       case FloatLiteralExpr lit: {

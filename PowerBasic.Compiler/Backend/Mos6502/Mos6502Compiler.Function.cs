@@ -447,7 +447,7 @@ public static partial class Mos6502Compiler {
       /// <summary>Points <c>Ptr</c> at a float and unpacks it into accumulator A or B.</summary>
       private void Unpack(IrValue value, bool intoB) {
         if (this.Of(value) is not MemoryOperand { Address: var address })
-          throw Decline($"a float in '{function.Name}' is not in memory");
+          throw Decline($"a float in '{function.Name}' ({value.GetType().Name}) is not in memory");
         this.Copy(new AddressOperand(address), 2, Zp.Ptr, 2);
         this._asm.Call(this._runtime.Routine(Mos6502Runtime.Unpack(FormatOf(value.Type), intoB)));
       }

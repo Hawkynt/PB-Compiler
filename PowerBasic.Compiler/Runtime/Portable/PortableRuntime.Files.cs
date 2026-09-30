@@ -127,6 +127,11 @@ public static partial class PortableRuntime {
       // an EXT prints as a DOUBLE does: the DOS runtime has one formatter for both
       "rt_fprint_ext" => w => this.FilePrintNumber(w, w.Function.Parameters[1], this.FormatFloat(15)),
       "rt_fprint_tab" => this.FilePrintTab,
+      "rt_fprint_spc" => this.FilePrintSpaces,
+      "rt_finput_str" => w => {
+        var slot = w.ToIndex(w.Function.Parameters[0]);
+        w.B.Ret(w.B.Call(IrType.Ptr, this.GetField, slot, w.B.Call(w.Index, this.FileDescriptor, slot), IrBuilder.ConstBool(false)));
+      },
       "rt_finput_line" => w => {
         var slot = w.ToIndex(w.Function.Parameters[0]);
         w.B.Ret(w.B.Call(IrType.Ptr, this.GetField, slot, w.B.Call(w.Index, this.FileDescriptor, slot), IrBuilder.ConstBool(true)));
@@ -323,6 +328,19 @@ public static partial class PortableRuntime {
       w.B.Store(w.I8(' '), character);
       w.While(() => w.Cmp(IrCmpPred.Slt, w.B.Load(w.Index, column), w.B.Sub(target.Get(), w.Ix(1))),
         () => w.B.Call(IrType.Void, this.FileOut, n, character, w.Ix(1)));
+      w.B.Ret();
+    }
+
+    /// <summary><c>SPC(n)</c> in a file: <c>n</c> spaces.</summary>
+    private void FilePrintSpaces(IrWriter w) {
+      var n = w.ToIndex(w.Function.Parameters[0]);
+      var count = w.Variable(w.Index, w.ToIndex(w.Function.Parameters[1]));
+      var space = w.Buffer(1);
+      w.B.Store(w.I8(' '), space);
+      w.While(() => w.Cmp(IrCmpPred.Sgt, count.Get(), w.Ix(0)), () => {
+        w.B.Call(IrType.Void, this.FileOut, n, space, w.Ix(1));
+        count.Set(w.B.Sub(count.Get(), w.Ix(1)));
+      });
       w.B.Ret();
     }
 
