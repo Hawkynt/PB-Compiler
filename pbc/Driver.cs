@@ -473,19 +473,15 @@ public static class Driver {
     }
     if (!TryResolveOptimize(model, optimize, optimizeSpeed, stderr, out var effectiveOptimize, out var effectiveSpeed))
       return 1;
-    var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
-      Target = IrBackendTarget.Mos6502,
-      Optimize = effectiveOptimize,
-      OptimizeForSpeed = effectiveSpeed,
-      // a C64 has 46 KB for program and data: unless SPEED is asked for, optimize for size
-      OptimizeForSize = !effectiveSpeed,
-      RecoverIntegerArithmetic = effectiveOptimize,
-      PortableRuntimeHeapBytes = C64HeapBytes,
-      PortableRuntimeIndexBits = 16,
-      PortableRuntimeSoftMath = true,
-    }, out var declined);
-    var image = compiled is null ? null
-      : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, C64Prg.MemoryTop, out declined);
+    // a C64 has 46 KB for program and data: unless SPEED is asked for, optimize for size - and a
+    // SPEED build that does not fit is built again for size, since a program that runs slower beats
+    // one that does not load
+    var image = CompileC64(model, effectiveOptimize, effectiveSpeed, out var declined);
+    if (image is null && effectiveSpeed && declined is { } tooLarge && IsC64SizeDecline(tooLarge)) {
+      image = CompileC64(model, effectiveOptimize, speed: false, out declined);
+      if (image is not null)
+        stderr.WriteLine($"warning: 6502: the $OPTIMIZE SPEED build does not fit a C64 ({tooLarge}); built for size instead");
+    }
     if (image is null) {
       stderr.WriteLine($"error: 6502: {declined ?? "unsupported construct"}");
       return 1;
@@ -496,6 +492,25 @@ public static class Driver {
     stdout.WriteLine($"{Path.GetFileName(output)}: {file.Length} bytes (6502, C64)");
     return 0;
   }
+
+  private static Mos6502Assembler.Image? CompileC64(SemanticModel model, bool optimize, bool speed, out string? declined) {
+    var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+      Target = IrBackendTarget.Mos6502,
+      Optimize = optimize,
+      OptimizeForSpeed = speed,
+      OptimizeForSize = !speed,
+      RecoverIntegerArithmetic = optimize,
+      PortableRuntimeHeapBytes = C64HeapBytes,
+      PortableRuntimeIndexBits = 16,
+      PortableRuntimeSoftMath = true,
+    }, out declined);
+    return compiled is null ? null
+      : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, C64Prg.MemoryTop, out declined);
+  }
+
+  /// <summary>Whether a 6502 decline is the image not fitting, rather than a construct it cannot lower.</summary>
+  private static bool IsC64SizeDecline(string declined)
+    => declined.StartsWith("the program needs ", StringComparison.Ordinal);
 
   private static bool IsUnitCompile(SemanticModel model)
     => model.MetaStatements.Any(m => m.Command == "COMPILE" && m.Arguments is [{ } target, ..] && target.Text.Equals("UNIT", StringComparison.OrdinalIgnoreCase));

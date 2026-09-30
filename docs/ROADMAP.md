@@ -229,7 +229,14 @@ floor under how many they accept - they are this section's to-do list.
 ### Must
 - **x86-32/x64 run every battery program that is not DOS by nature** (18 of 21: the other three
   call DOS interrupts, link a DOS object, or are 16-bit inline assembly). `TRY`/`CATCH` and
-  `EXIT FAR` are done. Left: math functions beyond the x87's, and whatever a wider corpus finds.
+  `EXIT FAR` are done.
+- **The differential battery on the flat targets.** Compiling `tests/diff/**/*.BAS` for x64 and the
+  6502 is the wider to-do list the 21-program battery is too small to be. What it declines, after
+  RND, ROUND, file TAB/INPUT/EXT and the 6502's SPEED-to-size fallback: runtime entries used by one
+  or two programs each (`rt_locate`, `rt_arr_desc`, `rt_str_scanset`, `rt_str_mki`,
+  `rt_stack_probe`, `rt_fix_up`, `rt_file_seteof`, `rt_file_put_raw`, `rt_codeseg`,
+  `rt_chain_open_read`, `rt_asciiz_store`), `segment:offset` pointers (`DIM AT`, huge arrays), and
+  BASICA's MBF floats.
 - **Smaller 6502 code.** The 6502 runs 18 of the 21 battery programs - every one that is not DOS by nature, as x86-32 and x64 do. Code is still dominated by
   `LDA`/`STA`: every SSA value has its own frame cell, so casts, returns, phi edges and arguments
   are byte-by-byte copies. Done: frames share memory through the call-graph overlay (the innermost

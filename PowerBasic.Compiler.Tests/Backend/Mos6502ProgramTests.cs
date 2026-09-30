@@ -226,7 +226,7 @@ public sealed class Mos6502ProgramTests {
       FOR i = 1 TO 3
         READ x#
         x# = x# + k
-        PRINT {string.Join("; ", MathGroups.Select(group => group.Basic))}
+        PRINT {string.Join("; ", ((int[])[0, 1, 3]).Select(group => MathGroups[group].Basic))}
       NEXT
       DATA {data}
       """);
@@ -398,6 +398,34 @@ public sealed class Mos6502ProgramTests {
       Assert.That(result.Output.TrimEnd('\n'), Is.EqualTo(" 1  2  513 \n 519 "), "DEF SEG selects nothing on a flat machine");
       Assert.That(result.Memory[0xD020], Is.EqualTo(2), "the VIC-II's border colour register");
     });
+  }
+
+  [Test]
+  public void Build_GivenASpeedBuildTooBigForAC64_ThenItIsBuiltForSizeWithAWarning() {
+    // unrolled and inlined for speed this needs some 64 KB; for size it fits and runs the same
+    var (code, error, prg) = this.Build("""
+      $OPTIMIZE SPEED
+      OPEN "RESULT.TXT" FOR OUTPUT AS #1
+      s% = 0
+      FOR i% = 1 TO 15
+        SELECT CASE i%
+          CASE 1, 3, 5, 7
+            s% = s% + i%
+          CASE 8 TO 11
+            s% = s% + 100
+          CASE ELSE
+            s% = s% - 1
+        END SELECT
+        PRINT #1, "i"; i%; s%
+      NEXT i%
+      PRINT #1, "sum"; s%
+      CLOSE #1
+      PRINT s%
+      """);
+
+    Assert.That(code, Is.Zero, error);
+    Assert.That(error, Does.Contain("warning: 6502: the $OPTIMIZE SPEED build does not fit a C64"));
+    Assert.That(Cpu6502.RunC64Program(prg).Output.TrimEnd('\n'), Is.EqualTo(" 409 "));
   }
 
   [Test]

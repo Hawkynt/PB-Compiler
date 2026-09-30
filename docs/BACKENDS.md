@@ -275,8 +275,10 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   return to BASIC maps back in - so the build optimizes for size
   unless `$OPTIMIZE SPEED` asks otherwise, the string heap is 4 KB, and the portable runtime keeps
   its lengths, positions and counters in 16 bits (`IrWriter.Index`) - the `rt_*` ABI keeps its
-  declared widths and each entry converts at that edge. A program that does not fit
-  is declined with how far past `$C000` it would reach.
+  declared widths and each entry converts at that edge. A `$OPTIMIZE SPEED` build that does not
+  fit is built again for size, with a warning - unrolled and inlined, the differential battery's
+  speed programs need up to 100 KB, and a slower program beats one that does not load. A program
+  that does not fit even then is declined with how far past `$C000` it would reach.
 - **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$8F`, BASIC's own),
   the processor port that maps the BASIC ROM and the stack pointer are saved on entry and restored
   on exit, so the final `RTS` - or `END`, or a

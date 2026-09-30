@@ -53,7 +53,12 @@ public static partial class PortableRuntime {
       "rt_input_str" => w => w.B.Ret(w.B.Call(IrType.Ptr, this.GetField, w.Ix(0), w.Ix(0), IrBuilder.ConstBool(false))),
       "rt_input_line" => w => w.B.Ret(w.B.Call(IrType.Ptr, this.GetField, w.Ix(0), w.Ix(0), IrBuilder.ConstBool(true))),
       "rt_input_i8" or "rt_input_u8" or "rt_input_i16" or "rt_input_u16" or "rt_input_i32" or "rt_input_u32" or "rt_input_i64"
-        or "rt_input_single" or "rt_input_double" or "rt_input_ext" => this.InputNumber,
+        or "rt_input_single" or "rt_input_double" or "rt_input_ext" => w => this.InputNumber(w, w.Ix(0), w.Ix(0)),
+      "rt_finput_i8" or "rt_finput_u8" or "rt_finput_i16" or "rt_finput_u16" or "rt_finput_i32" or "rt_finput_u32"
+        or "rt_finput_i64" or "rt_finput_single" or "rt_finput_double" or "rt_finput_ext" => w => {
+          var slot = w.ToIndex(w.Function.Parameters[0]);
+          this.InputNumber(w, slot, w.B.Call(w.Index, this.FileDescriptor, slot));
+        },
       "rt_file_open" => this.FileOpen,
       "rt_file_close" => w => {
         this.CloseSlot(w, w.ToIndex(w.Function.Parameters[0]));
@@ -119,6 +124,9 @@ public static partial class PortableRuntime {
       "rt_fprint_u8" or "rt_fprint_u16" or "rt_fprint_u32" => w => this.FilePrintNumber(w, this.FileWidened(w, signed: false), this.FormatUnsigned),
       "rt_fprint_single" => w => this.FilePrintNumber(w, w.Function.Parameters[1], this.FormatFloat(7)),
       "rt_fprint_double" => w => this.FilePrintNumber(w, w.Function.Parameters[1], this.FormatFloat(15)),
+      // an EXT prints as a DOUBLE does: the DOS runtime has one formatter for both
+      "rt_fprint_ext" => w => this.FilePrintNumber(w, w.Function.Parameters[1], this.FormatFloat(15)),
+      "rt_fprint_tab" => this.FilePrintTab,
       "rt_finput_line" => w => {
         var slot = w.ToIndex(w.Function.Parameters[0]);
         w.B.Ret(w.B.Call(IrType.Ptr, this.GetField, slot, w.B.Call(w.Index, this.FileDescriptor, slot), IrBuilder.ConstBool(true)));
@@ -214,13 +222,15 @@ public static partial class PortableRuntime {
     private IrFunction ValFunction => this._val ??= this.Internal("rt.val", IrType.F64, [IrType.Ptr], this.Val);
 
     /// <summary>INPUT of a number: one field, read as VAL reads it, converted as a C cast converts (truncating).</summary>
-    private void InputNumber(IrWriter w) {
-      var field = w.B.Call(IrType.Ptr, this.GetField, w.Ix(0), w.Ix(0), IrBuilder.ConstBool(false));
+    /// <summary>An INPUT field from <paramref name="slot"/>'s descriptor <paramref name="fd"/>, as the entry's number type.</summary>
+    private void InputNumber(IrWriter w, IrValue slot, IrValue fd) {
+      var field = w.B.Call(IrType.Ptr, this.GetField, slot, fd, IrBuilder.ConstBool(false));
       var value = w.B.Call(IrType.F64, this.ValFunction, field);
       var type = w.Function.ReturnType;
       IrValue result = type.IsFloat
         ? type.Bits == 64 ? value : w.B.Cast(type.Bits > 64 ? IrCastOp.FPExt : IrCastOp.FPTrunc, value, type)
-        : w.B.Cast(w.Function.Name.StartsWith("rt_input_u", StringComparison.Ordinal) ? IrCastOp.FPToUI : IrCastOp.FPToSI, value, type);
+        : w.B.Cast(w.Function.Name.StartsWith("rt_input_u", StringComparison.Ordinal)
+          || w.Function.Name.StartsWith("rt_finput_u", StringComparison.Ordinal) ? IrCastOp.FPToUI : IrCastOp.FPToSI, value, type);
       w.B.Ret(result);
     }
 
@@ -296,6 +306,23 @@ public static partial class PortableRuntime {
       var column = w.B.Load(w.Index, this.Cell(w, this.Columns, n));
       w.B.CondBr(w.Cmp(IrCmpPred.Ne, w.B.Binary(IrBinaryOp.SRem, column, w.Ix(ZoneWidth)), w.Ix(0)), loop, done);
       w.B.Position(done);
+      w.B.Ret();
+    }
+
+    /// <summary><c>TAB(n)</c> in a file: spaces up to column <c>n</c>, a new line first when the column is already past it.</summary>
+    private void FilePrintTab(IrWriter w) {
+      var n = w.ToIndex(w.Function.Parameters[0]);
+      var target = w.Variable(w.Index, w.ToIndex(w.Function.Parameters[1]));
+      w.If(w.Cmp(IrCmpPred.Slt, target.Get(), w.Ix(1)), () => target.Set(w.Ix(1)));
+      var column = this.Cell(w, this.Columns, n);
+      var character = w.Buffer(1);
+      w.If(w.Cmp(IrCmpPred.Sgt, w.B.Load(w.Index, column), w.B.Sub(target.Get(), w.Ix(1))), () => {
+        w.B.Store(w.I8('\n'), character);
+        w.B.Call(IrType.Void, this.FileOut, n, character, w.Ix(1));
+      });
+      w.B.Store(w.I8(' '), character);
+      w.While(() => w.Cmp(IrCmpPred.Slt, w.B.Load(w.Index, column), w.B.Sub(target.Get(), w.Ix(1))),
+        () => w.B.Call(IrType.Void, this.FileOut, n, character, w.Ix(1)));
       w.B.Ret();
     }
 

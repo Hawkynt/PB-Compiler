@@ -1,9 +1,3 @@
-using System.Diagnostics;
-using PowerBasic.Compiler.Cli;
-using PowerBasic.Compiler.CodeGen;
-using PowerBasic.Compiler.Semantics;
-using PowerBasic.Compiler.Syntax;
-using PowerBasic.Compiler.Tests.CodeGen;
 using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
@@ -149,7 +143,7 @@ public sealed class FlatTargetNonLocalJumpTests {
   ];
 
   private static IEnumerable<TestCaseData> Cases()
-    => from platform in (string[])["x86-32", "x64", "6502", "dos"]
+    => from platform in FlatTargets.Platforms
        from program in _programs
        select new TestCaseData(platform, program.Name).SetName($"Run_GivenANonLocalJump_ThenItMatchesDos({platform}, {program.Name})");
 
@@ -157,43 +151,8 @@ public sealed class FlatTargetNonLocalJumpTests {
   public void Run_GivenANonLocalJump_ThenItMatchesDos(string platform, string name) {
     var (_, source, expected) = _programs.Single(program => program.Name == name);
 
-    var output = platform == "dos" ? RunOnDos(source) : RunOn(platform, source);
+    var output = FlatTargets.Run(platform, source);
 
     Assert.That(Vice.Normalize(output), Is.EqualTo(expected));
-  }
-
-  private static string RunOn(string platform, string source) {
-    var work = Directory.CreateTempSubdirectory("pbc-nonlocal-");
-    try {
-      var path = Path.Combine(work.FullName, "PROG.BAS");
-      File.WriteAllText(path, source);
-      var stderr = new StringWriter();
-      var code = Driver.Run(["--dialect", "pb36", "--platform", platform, path], TextWriter.Null, stderr);
-      Assert.That(code, Is.Zero, stderr.ToString());
-      if (platform == "6502") {
-        var result = Cpu6502.RunC64Program(File.ReadAllBytes(Path.ChangeExtension(path, ".PRG")));
-        Assert.That(result.Returned, Is.True, "the program returns to BASIC");
-        return result.Output;
-      }
-      Assume.That(OperatingSystem.IsLinux(), "the executables are Linux programs");
-      using var process = Process.Start(new ProcessStartInfo(Path.ChangeExtension(path, null)) {
-        RedirectStandardOutput = true, UseShellExecute = false,
-      })!;
-      var output = process.StandardOutput.ReadToEnd();
-      process.WaitForExit();
-      return output;
-    } finally {
-      work.Delete(recursive: true);
-    }
-  }
-
-  private static string RunOnDos(string source) {
-    var tokens = Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36);
-    var model = Binder.Bind(Parser.Parse(tokens, "TEST.BAS", Dialect.Pb36), Dialect.Pb36);
-    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model);
-    var exe = generator.EmitExecutable();
-    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
-    return DosBoxRunner.Run(exe);
   }
 }

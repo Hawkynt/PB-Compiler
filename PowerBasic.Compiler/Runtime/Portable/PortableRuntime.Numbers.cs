@@ -28,7 +28,12 @@ public static partial class PortableRuntime {
       "rt_print_u8" or "rt_print_u16" or "rt_print_u32" => w => this.PrintNumber(w, this.Widened(w, signed: false), this.FormatUnsigned),
       "rt_print_single" => w => this.PrintNumber(w, w.Function.Parameters[0], this.FormatFloat(7)),
       "rt_print_double" => w => this.PrintNumber(w, w.Function.Parameters[0], this.FormatFloat(15)),
-      "rt_print_ext" => w => this.PrintNumber(w, w.Function.Parameters[0], this.FormatFloat(18)),
+      // an EXT prints as a DOUBLE does: the DOS runtime has one formatter for both
+      "rt_print_ext" => w => this.PrintNumber(w, w.Function.Parameters[0], this.FormatFloat(15)),
+      "rt_rnd" => w => w.B.Ret(w.B.Call(IrType.F64, this.Random)),
+      "rt_rnd_range" => this.RandomRange,
+      "rt_round_half_away" => this.RoundHalfAway,
+      "rt_round_places" => this.RoundPlaces,
       "rt_str_from_i8" or "rt_str_from_i16" or "rt_str_from_i32" or "rt_str_from_i64" => w => this.NumberString(w, this.Widened(w, signed: true), this.FormatSigned),
       "rt_str_from_u8" or "rt_str_from_u16" or "rt_str_from_u32" => w => this.NumberString(w, this.Widened(w, signed: false), this.FormatUnsigned),
       "rt_str_from_single" => w => this.NumberString(w, w.Function.Parameters[0], this.FormatFloat(7)),
