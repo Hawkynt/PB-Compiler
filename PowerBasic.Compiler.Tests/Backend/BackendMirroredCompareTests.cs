@@ -21,7 +21,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendMirroredCompareTests {
 
-  private static string Run(string body, bool routed) {
+  private static string Run(string body) {
     var source = body + "\nEND\n";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -32,13 +32,13 @@ public sealed class BackendMirroredCompareTests {
   }
 
   /// <summary>Signed INTEGER, every relation, with the constant on the left.</summary>
-  [TestCase("<")]
-  [TestCase("<=")]
-  [TestCase(">")]
-  [TestCase(">=")]
-  [TestCase("=")]
-  [TestCase("<>")]
-  public void Compare_GivenAConstantOnTheLeft_ThenTheRoutedPathBranchesTheSameWay(string relation) {
+  [TestCase("<", "FFT")]
+  [TestCase("<=", "FTT")]
+  [TestCase(">", "TFF")]
+  [TestCase(">=", "TTF")]
+  [TestCase("=", "FTF")]
+  [TestCase("<>", "TFT")]
+  public void Compare_GivenAConstantOnTheLeft_ThenItBranchesOnTheMirroredRelation(string relation, string expected) {
     var source = $"""
       FOR i% = 4 TO 6
         IF 5 {relation} i% THEN
@@ -49,15 +49,15 @@ public sealed class BackendMirroredCompareTests {
       NEXT i%
       PRINT
       """;
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    Assert.That(Run(source), Is.EqualTo(expected));
   }
 
   /// <summary>The unsigned relations map to different condition codes, so they mirror separately.</summary>
-  [TestCase("<")]
-  [TestCase("<=")]
-  [TestCase(">")]
-  [TestCase(">=")]
-  public void Compare_GivenAnUnsignedConstantOnTheLeft_ThenTheRoutedPathBranchesTheSameWay(string relation) {
+  [TestCase("<", "FFT")]
+  [TestCase("<=", "FTT")]
+  [TestCase(">", "TFF")]
+  [TestCase(">=", "TTF")]
+  public void Compare_GivenAnUnsignedConstantOnTheLeft_ThenItBranchesOnTheMirroredRelation(string relation, string expected) {
     var source = $"""
       DIM w AS WORD
       FOR i% = 4 TO 6
@@ -70,12 +70,12 @@ public sealed class BackendMirroredCompareTests {
       NEXT i%
       PRINT
       """;
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    Assert.That(Run(source), Is.EqualTo(expected));
   }
 
   /// <summary>
-  /// The answer itself, not just agreement between the two paths - so a mirror that is wrong in
-  /// BOTH cannot pass by agreeing with itself.
+  /// The answer itself, read at 4, 5 and 6 against the constant 5 - so a mirror that became the
+  /// negation shows at the equal point.
   /// </summary>
   [TestCase("<", "FFT")]
   [TestCase("<=", "FTT")]
@@ -94,6 +94,6 @@ public sealed class BackendMirroredCompareTests {
       NEXT i%
       PRINT
       """;
-    Assert.That(Run(source, routed: true), Is.EqualTo(expected));
+    Assert.That(Run(source), Is.EqualTo(expected));
   }
 }

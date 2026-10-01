@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Runtime.Portable;
 using static PowerBasic.Compiler.Backend.Mos6502.M6502Op;
 using Zp = PowerBasic.Compiler.Backend.Mos6502.Mos6502ZeroPage;
 
@@ -20,6 +21,7 @@ public static partial class Mos6502Compiler {
 
       public void Generate() {
         this._asm.Bind(module._entries[function]);
+        this.PreserveHandler(save: true);
         foreach (var block in function.Blocks)
           this._blocks.Add(block, this._asm.NewLabel($"{function.Name}.{block.Label}"));
         for (var i = 0; i < function.Blocks.Count; ++i) {
@@ -49,18 +51,27 @@ public static partial class Mos6502Compiler {
             return new ConstantOperand(constant.Value);
           case IrNullPtr or IrUndef:
             return new ConstantOperand(0);
+          // TRY's handler triple is ON ERROR's own state
+          case IrGlobalVariable { Name: "rt_onerr" }:
+            return new AddressOperand(module._errorHandler);
+          case IrGlobalVariable { Name: "rt_onerr_bp" }:
+            return new AddressOperand(module._errorSoftStack);
+          case IrGlobalVariable { Name: "rt_onerr_sp" }:
+            return new AddressOperand(module._errorStack);
           case IrGlobalVariable global:
             return new AddressOperand(module._globals[global]);
           case IrAlloca alloca:
             return new AddressOperand(this._frame.AddressOf(alloca));
           case IrGep gep when this.FoldedAddress(gep) is { } folded:
             return new AddressOperand(folded);
+          case IrBlockAddress address when this._blocks.TryGetValue(address.Block, out var label):
+            return new AddressOperand(label);
           case IrFunction:
             throw Decline($"'{function.Name}' takes a procedure's address, which has no 6502 lowering yet");
-          case IrConstantFloat:
-            throw Decline("floating point has no 6502 lowering yet");
+          case IrConstantFloat constant:
+            return new MemoryOperand(module.Constant(constant));
           default:
-            if (this._frame.Offsets.ContainsKey(value))
+            if (this._frame.Holds(value))
               return new MemoryOperand(this._frame.AddressOf(value));
             throw Decline($"'{function.Name}' uses a {value.GetType().Name}, which has no 6502 lowering");
         }
@@ -101,7 +112,7 @@ public static partial class Mos6502Compiler {
 
       private M6502Address Destination(IrValue value) => this._frame.AddressOf(value);
 
-      private bool Stored(IrInstruction instruction) => this._frame.Offsets.ContainsKey(instruction);
+      private bool Stored(IrInstruction instruction) => this._frame.Holds(instruction);
 
       /// <summary>Copies <paramref name="bytes"/> bytes of a value, zero- or sign-extending it past its own width.</summary>
       private void Copy(Operand source, int sourceSize, M6502Address destination, int bytes, bool signed = false) {
@@ -161,8 +172,18 @@ public static partial class Mos6502Compiler {
       }
 
       private void LowerBinary(IrBinary binary) {
-        if (binary.IsFloatOp)
-          throw Decline("floating point has no 6502 lowering yet");
+        if (binary.IsFloatOp) {
+          this.Unpack(binary.Lhs, intoB: false);
+          this.Unpack(binary.Rhs, intoB: true);
+          this._asm.Call(this._runtime.Routine(binary.Op switch {
+            IrBinaryOp.FAdd => M6502Routine.FloatAdd,
+            IrBinaryOp.FSub => M6502Routine.FloatSubtract,
+            IrBinaryOp.FMul => M6502Routine.FloatMultiply,
+            _ => M6502Routine.FloatDivide,
+          }));
+          this.Pack(binary.Type, this.Destination(binary));
+          return;
+        }
         var size = SizeOf(binary.Type);
         var lhs = this.Of(binary.Lhs);
         var rhs = this.Of(binary.Rhs);
@@ -186,15 +207,18 @@ public static partial class Mos6502Compiler {
             return;
           case IrBinaryOp.Mul:
             this.Arithmetic(lhs, rhs, size, signed: false,
-              size <= 2 ? M6502Routine.Multiply16 : M6502Routine.Multiply32, Zp.Ret, destination);
+              size switch { <= 2 => M6502Routine.Multiply16, 4 => M6502Routine.Multiply32, _ => M6502Routine.Multiply64 },
+              Zp.Ret, destination);
             return;
           case IrBinaryOp.SDiv or IrBinaryOp.SRem or IrBinaryOp.UDiv or IrBinaryOp.URem:
             var signed = binary.Op is IrBinaryOp.SDiv or IrBinaryOp.SRem;
-            var routine = (signed, size <= 2) switch {
-              (true, true) => M6502Routine.SignedDivide16,
-              (true, false) => M6502Routine.SignedDivide32,
-              (false, true) => M6502Routine.UnsignedDivide16,
-              _ => M6502Routine.UnsignedDivide32,
+            var routine = (signed, size) switch {
+              (true, <= 2) => M6502Routine.SignedDivide16,
+              (true, 4) => M6502Routine.SignedDivide32,
+              (true, _) => M6502Routine.SignedDivide64,
+              (false, <= 2) => M6502Routine.UnsignedDivide16,
+              (false, 4) => M6502Routine.UnsignedDivide32,
+              _ => M6502Routine.UnsignedDivide64,
             };
             var result = binary.Op is IrBinaryOp.SDiv or IrBinaryOp.UDiv ? Zp.Arg : Zp.Temp;
             this.Arithmetic(lhs, rhs, size, signed, routine, result, destination);
@@ -210,9 +234,7 @@ public static partial class Mos6502Compiler {
       /// <summary>A runtime multiply or divide: operands widened into Arg and ArgB, the result copied back.</summary>
       private void Arithmetic(Operand lhs, Operand rhs, int size, bool signed, M6502Routine routine,
           M6502Address result, M6502Address destination) {
-        if (size > 4)
-          throw Decline("64-bit multiplication and division have no 6502 lowering yet");
-        var width = size <= 2 ? 2 : 4;
+        var width = size <= 2 ? 2 : size <= 4 ? 4 : 8;
         this.Copy(lhs, size, Zp.Arg, width, signed);
         this.Copy(rhs, size, Zp.ArgB, width, signed);
         this._asm.Call(this._runtime.Routine(routine));
@@ -294,8 +316,24 @@ public static partial class Mos6502Compiler {
 
       /// <summary>Jumps to <paramref name="target"/> when the comparison holds; falls through when it does not.</summary>
       private void BranchIf(IrCmp compare, M6502Label target) {
-        if (compare.Lhs.Type.IsFloat)
-          throw Decline("floating point has no 6502 lowering yet");
+        if (compare.Lhs.Type.IsFloat) {
+          // FloatCompare answers $FF, 0 or 1 in A for less, equal and greater
+          this.Unpack(compare.Lhs, intoB: false);
+          this.Unpack(compare.Rhs, intoB: true);
+          this._asm.Call(this._runtime.Routine(M6502Routine.FloatCompare));
+          var (answer, holdsWhenEqual) = compare.Pred switch {
+            IrCmpPred.Foeq => (0, true),
+            IrCmpPred.Fone => (0, false),
+            IrCmpPred.Folt => (0xFF, true),
+            IrCmpPred.Foge => (0xFF, false),
+            IrCmpPred.Fogt => (1, true),
+            IrCmpPred.Fole => (1, false),
+            _ => throw Decline($"{compare.Pred} compares integers, not floats"),
+          };
+          this._asm.Immediate(Cmp, answer);
+          this._asm.Branch(holdsWhenEqual ? Beq : Bne, target);
+          return;
+        }
         var size = SizeOf(compare.Lhs.Type);
         var (lhs, rhs) = (this.Of(compare.Lhs), this.Of(compare.Rhs));
         switch (compare.Pred) {
@@ -361,6 +399,26 @@ public static partial class Mos6502Compiler {
         var size = SizeOf(cast.Type);
         var destination = this.Destination(cast);
         switch (cast.Op) {
+          case IrCastOp.FPExt or IrCastOp.FPTrunc:
+            this.Unpack(cast.Value, intoB: false);
+            this.Pack(cast.Type, destination);
+            return;
+          case IrCastOp.SIToFP or IrCastOp.UIToFP:
+            this.Copy(source, sourceSize, Zp.Arg, 8, signed: cast.Op == IrCastOp.SIToFP);
+            this._asm.Call(this._runtime.Routine(cast.Op == IrCastOp.SIToFP ? M6502Routine.FloatFromSigned : M6502Routine.FloatFromUnsigned));
+            this.Pack(cast.Type, destination);
+            return;
+          case IrCastOp.FPToSI or IrCastOp.FPToUI or IrCastOp.FPToSIRound or IrCastOp.FPToUIRound:
+            this.Unpack(cast.Value, intoB: false);
+            this._asm.Immediate(Ldx, size);
+            this._asm.Call(this._runtime.Routine(cast.Op switch {
+              IrCastOp.FPToSI => M6502Routine.FloatToSignedTruncate,
+              IrCastOp.FPToSIRound => M6502Routine.FloatToSignedRound,
+              IrCastOp.FPToUI => M6502Routine.FloatToUnsignedTruncate,
+              _ => M6502Routine.FloatToUnsignedRound,
+            }));
+            this.Copy(new MemoryOperand(Zp.Ret), size, destination, size);
+            return;
           case IrCastOp.Trunc or IrCastOp.ZExt or IrCastOp.PtrToInt or IrCastOp.IntToPtr or IrCastOp.BitCast:
             this.Copy(source, sourceSize, destination, size);
             return;
@@ -378,6 +436,26 @@ public static partial class Mos6502Compiler {
           default:
             throw Decline($"the {cast.Op} conversion has no 6502 lowering yet");
         }
+      }
+
+      private static M6502FloatFormat FormatOf(IrType type) => type.Bits switch {
+        32 => M6502FloatFormat.Single,
+        64 => M6502FloatFormat.Double,
+        _ => M6502FloatFormat.Extended,
+      };
+
+      /// <summary>Points <c>Ptr</c> at a float and unpacks it into accumulator A or B.</summary>
+      private void Unpack(IrValue value, bool intoB) {
+        if (this.Of(value) is not MemoryOperand { Address: var address })
+          throw Decline($"a float in '{function.Name}' ({value.GetType().Name}) is not in memory");
+        this.Copy(new AddressOperand(address), 2, Zp.Ptr, 2);
+        this._asm.Call(this._runtime.Routine(Mos6502Runtime.Unpack(FormatOf(value.Type), intoB)));
+      }
+
+      /// <summary>Rounds accumulator A into <paramref name="destination"/> in <paramref name="type"/>'s format.</summary>
+      private void Pack(IrType type, M6502Address destination) {
+        this.Copy(new AddressOperand(destination), 2, Zp.Ptr, 2);
+        this._asm.Call(this._runtime.Routine(Mos6502Runtime.Pack(FormatOf(type))));
       }
 
       private void LowerSelect(IrSelect select) {
@@ -419,8 +497,8 @@ public static partial class Mos6502Compiler {
 
       /// <summary>Where a load or store goes: a fixed address, or through <see cref="Zp.Ptr"/>.</summary>
       private M6502Address? Target(IrValue pointer) {
-        if (pointer.Type.IsFarPointer || pointer is IrFarPtr)
-          throw Decline("far pointers have no 6502 meaning");
+        if (pointer is IrFarPtr)
+          throw Decline("a segment:offset address (DIM AT, DEF SEG) has no 6502 meaning");
         switch (this.Of(pointer)) {
           case AddressOperand address:
             return address.Address;
@@ -443,7 +521,7 @@ public static partial class Mos6502Compiler {
             this._asm.Memory(Lda, fixedAddress.Plus(k));
           } else {
             this._asm.Immediate(Ldy, k);
-            this._asm.IndirectY(Lda, 0x02);
+            this._asm.IndirectY(Lda, Zp.Ptr);
           }
           this._asm.Memory(Sta, destination.Plus(k));
         }
@@ -459,7 +537,7 @@ public static partial class Mos6502Compiler {
             this._asm.Memory(Sta, fixedAddress.Plus(k));
           } else {
             this._asm.Immediate(Ldy, k);
-            this._asm.IndirectY(Sta, 0x02);
+            this._asm.IndirectY(Sta, Zp.Ptr);
           }
         }
       }
@@ -471,6 +549,15 @@ public static partial class Mos6502Compiler {
           throw Decline("delegates have no 6502 lowering yet");
         if (callee.IsDeclaration) {
           this.CallRuntime(call, callee);
+          return;
+        }
+        if (callee.Name == PortableRuntime.NativeCopy) {
+          // (dst, src, n) onto CopyMemory's (Ptr2, Ptr, Temp)
+          var args = call.Args.ToList();
+          this.Copy(this.Of(args[0]), 2, Zp.Ptr2, 2);
+          this.Copy(this.Of(args[1]), 2, Zp.Ptr, 2);
+          this.Copy(this.Of(args[2]), 4, Zp.Temp, 2);
+          this._asm.Call(this._runtime.Routine(M6502Routine.CopyMemory));
           return;
         }
 
@@ -513,40 +600,198 @@ public static partial class Mos6502Compiler {
         this._asm.Call(this._runtime.Routine(routine));
       }
 
+      /// <summary>
+      /// A call to a declaration: the portable runtime defines everything a program calls, so what is
+      /// left are its two system primitives - <c>sys_write</c> through the KERNAL, <c>sys_exit</c>
+      /// back to BASIC.
+      /// </summary>
       private void CallRuntime(IrCall call, IrFunction callee) {
-        if (callee.Name == "rt_unreachable") {
-          this.RaiseError(51);
+        switch (callee.Name) {
+          case "sys_write": {
+            // the screen, descriptor 1, is the common case and needs no file routines at all
+            var fd = call.Args.ElementAt(0);
+            this.Copy(this.Of(call.Args.ElementAt(1)), 2, Zp.Arg, 2);
+            this.Copy(this.Of(call.Args.ElementAt(2)), 4, Zp.Arg.Plus(2), 4);
+            if (fd is IrConstantInt { Value: 1 }) {
+              this._asm.Call(this._runtime.Routine(M6502Routine.SystemWrite));
+              return;
+            }
+            this.Copy(this.Of(fd), 1, Zp.Arg.Plus(6), 1);
+            this._asm.Call(this._runtime.Routine(M6502Routine.FileWrite));
+            return;
+          }
+          case "sys_exit":
+            this._asm.Jump(this._runtime.Routine(M6502Routine.Exit));
+            return;
+          case "sys_trap":
+            this.Trap(call.Args.ElementAt(0));
+            return;
+          case "rt_onerr_arm" or "rt_onerr_resume_next" or "rt_onerr_disarm" or "rt_resume_mark"
+              when !module._trapsErrors:
+            return;
+          case "rt_onerr_arm":
+            this.Arm(this.Of(call.Args.ElementAt(0)));
+            return;
+          case "rt_onerr_resume_next":
+            this.Arm(new AddressOperand(module._resumeNextStub));
+            return;
+          case "rt_onerr_disarm":
+            this.Copy(new ConstantOperand(0), 2, module._errorHandler, 2);
+            return;
+          case "rt_resume_mark":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, module._statementStart, 2);
+            this.Copy(this.Of(call.Args.ElementAt(1)), 2, module._statementNext, 2);
+            return;
+          case "rt_resume_same" or "rt_resume_next":
+            this.ClearError();
+            JumpThrough(this._asm, callee.Name == "rt_resume_same" ? module._faultStart : module._faultNext);
+            return;
+          case "rt_err_clear":
+            this.ClearError();
+            return;
+          // PEEK and POKE: on a flat 16-bit machine the offset IS the address - the VIC-II's border at
+          // 53280, the SID at 54272 - and DEF SEG's segment has nothing to select
+          case "rt_peek" or "rt_peeki" or "rt_peekl": {
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Ptr, 2);
+            var bytes = callee.Name switch { "rt_peek" => 1, "rt_peeki" => 2, _ => 4 };
+            if (!this.Stored(call))
+              return;
+            var destination = this.Destination(call);
+            for (var i = 0; i < SizeOf(call.Type); ++i) {
+              if (i < bytes) {
+                this._asm.Immediate(Ldy, i);
+                this._asm.IndirectY(Lda, Zp.Ptr);
+              } else {
+                this._asm.Immediate(Lda, 0);
+              }
+              this._asm.Memory(Sta, destination.Plus(i));
+            }
+            return;
+          }
+          case "rt_poke":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Ptr, 2);
+            this.Copy(this.Of(call.Args.ElementAt(1)), 1, Zp.Temp, 1);
+            this._asm.Memory(Lda, Zp.Temp);
+            this._asm.Immediate(Ldy, 0);
+            this._asm.IndirectY(Sta, Zp.Ptr);
+            return;
+          case "rt_defseg_reset":
+            return;
+          // EXIT FAR AT label: where to land, and the stacks to have back when it does
+          case "rt_efar_arm":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, module._exitFarTarget, 2);
+            this._asm.Emit(Tsx);
+            this._asm.Memory(Stx, module._exitFarStack);
+            this.Copy(new MemoryOperand(Zp.SoftStack), 2, module._exitFarSoftStack, 2);
+            return;
+          // a bare EXIT FAR: every frame between here and there is abandoned at once
+          case "rt_efar_go":
+            this._asm.Memory(Ldx, module._exitFarStack);
+            this._asm.Emit(Txs);
+            this.Copy(new MemoryOperand(module._exitFarSoftStack), 2, Zp.SoftStack, 2);
+            JumpThrough(this._asm, module._exitFarTarget);
+            return;
+          case "sys_read": {
+            var args = call.Args.ToList();
+            this.Copy(this.Of(args[0]), SizeOf(args[0].Type), Zp.Arg, 4, signed: true);
+            this.Copy(this.Of(args[1]), 2, Zp.Arg.Plus(4), 2);
+            this.Copy(this.Of(args[2]), SizeOf(args[2].Type), Zp.Arg.Plus(6), 4, signed: true);
+            this._asm.Call(this._runtime.Routine(module.UsesFiles ? M6502Routine.FileRead : M6502Routine.SystemRead));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          }
+          case "sys_open" or "sys_close" or "sys_unlink": {
+            // a path's address, or a descriptor - a logical file number, which fits a byte
+            var args = call.Args.ToList();
+            var width = args[0].Type.IsPointer ? 2 : 1;
+            this.Copy(this.Of(args[0]), width, Zp.Arg, width);
+            if (callee.Name == "sys_open")
+              this.Copy(this.Of(args[1]), 1, Zp.Arg.Plus(2), 1);
+            this._asm.Call(this._runtime.Routine(callee.Name switch {
+              "sys_open" => M6502Routine.FileOpen,
+              "sys_close" => M6502Routine.FileClose,
+              _ => M6502Routine.FileUnlink,
+            }));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          }
+          case "sys_seek": {
+            // a descriptor, the offset's low word - a cached file is 4 KB at most - and whence
+            var args = call.Args.ToList();
+            this.Copy(this.Of(args[0]), 1, Zp.Arg, 1);
+            this.Copy(this.Of(args[1]), 2, Zp.Arg.Plus(2), 2);
+            this.Copy(this.Of(args[2]), 1, Zp.Arg.Plus(4), 1);
+            this._asm.Call(this._runtime.Routine(M6502Routine.FileSeek));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          }
+          default:
+            throw Decline($"the 6502 runtime has no {callee.Name} yet");
+        }
+      }
+
+      private void ClearError() {
+        if (module.ErrorCode is { } err)
+          this.Copy(new ConstantOperand(0), 2, err, 2);
+      }
+
+      /// <summary>Arms <paramref name="handler"/> on the stacks as they are now, and clears ERR, as DOS does.</summary>
+      private void Arm(Operand handler) {
+        this.Copy(handler, 2, module._errorHandler, 2);
+        this._asm.Emit(Tsx);
+        this._asm.Memory(Stx, module._errorStack);
+        this.Copy(new MemoryOperand(Zp.SoftStack), 2, module._errorSoftStack, 2);
+        this.ClearError();
+      }
+
+      /// <summary>
+      /// <c>sys_trap(code)</c>, the portable runtime's first question in <c>rt_error</c>, and the DOS
+      /// runtime's <c>rt_raise</c>: ERR gets the code; with no handler armed it falls through and the
+      /// error is reported; with one it never returns - the statement that faulted is latched for
+      /// RESUME, the armed stacks come back, and the handler runs (a fault inside it enters it again).
+      /// </summary>
+      private void Trap(IrValue code) {
+        if (!module._trapsErrors)
           return;
-        }
-        var routine = callee.Name switch {
-          "rt_print_i8" => M6502Routine.PrintI8,
-          "rt_print_i16" => M6502Routine.PrintI16,
-          "rt_print_i32" => M6502Routine.PrintI32,
-          "rt_print_u8" => M6502Routine.PrintU8,
-          "rt_print_u16" => M6502Routine.PrintU16,
-          "rt_print_u32" => M6502Routine.PrintU32,
-          "rt_print_nl" => M6502Routine.PrintNewLine,
-          "rt_print_comma" or "rt_print_zone" => M6502Routine.PrintZone,
-          "rt_print_tab" => M6502Routine.PrintTab,
-          "rt_print_spc" => M6502Routine.PrintSpaces,
-          "rt_print_str" => M6502Routine.PrintString,
-          "rt_error" => M6502Routine.Error,
-          "rt_end" => M6502Routine.End,
-          "rt_inp" => M6502Routine.ReturnZero,
-          "rt_outp" => M6502Routine.Nothing,
-          _ => throw Decline($"the 6502 runtime has no {callee.Name} yet"),
-        };
+        var none = this.Local("noHandler");
+        if (module.ErrorCode is { } err)
+          this.Copy(this.Of(code), 2, err, 2);
+        this._asm.Memory(Lda, module._errorHandler);
+        this._asm.Memory(Ora, module._errorHandler.Plus(1));
+        this._asm.Branch(Beq, none);
+        this.LatchFault();
+        this._asm.Memory(Ldx, module._errorStack);
+        this._asm.Emit(Txs);
+        this.Copy(new MemoryOperand(module._errorSoftStack), 2, Zp.SoftStack, 2);
+        JumpThrough(this._asm, module._errorHandler);
+        this._asm.Bind(none);
+      }
+
+      /// <summary>
+      /// A procedure that arms a handler promises its caller the caller's handler back: the triple is
+      /// saved on entry and restored on every return, as the DOS back end does.
+      /// </summary>
+      private void PreserveHandler(bool save) {
+        if (!this._frame.Holds(this._frame.SavedHandler))
+          return;
+        var slot = this._frame.AddressOf(this._frame.SavedHandler);
         var offset = 0;
-        foreach (var argument in call.Args) {
-          var size = SizeOf(argument.Type);
-          if (offset + size > Zp.ArgumentBytes)
-            throw Decline($"{callee.Name} takes more argument bytes than the 6502 runtime passes");
-          this.Copy(this.Of(argument), size, Zp.Arg.Plus(offset), size);
-          offset += size;
+        foreach (var cell in (M6502Label[])[module._errorHandler, module._errorSoftStack, module._errorStack]) {
+          if (save)
+            this.Copy(new MemoryOperand(cell), 2, slot.Plus(offset), 2);
+          else
+            this.Copy(new MemoryOperand(slot.Plus(offset)), 2, cell, 2);
+          offset += 2;
         }
-        this._asm.Call(this._runtime.Routine(routine));
-        if (this.Stored(call))
-          this.Copy(new MemoryOperand(Zp.Ret), SizeOf(call.Type), this.Destination(call), SizeOf(call.Type));
+      }
+
+      /// <summary>The statement that faulted becomes the one RESUME returns to.</summary>
+      private void LatchFault() {
+        this.Copy(new MemoryOperand(module._statementStart), 2, module._faultStart, 2);
+        this.Copy(new MemoryOperand(module._statementNext), 2, module._faultNext, 2);
       }
 
       private void RaiseError(int code) {
@@ -559,6 +804,7 @@ public static partial class Mos6502Compiler {
           var size = SizeOf(value.Type);
           this.Copy(this.Of(value), size, Zp.Ret, size);
         }
+        this.PreserveHandler(save: false);
         this._asm.Emit(Rts);
       }
 

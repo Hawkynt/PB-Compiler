@@ -6,13 +6,11 @@ namespace PowerBasic.Compiler.Tests.Exec;
 /// <summary>
 /// A real-mode 8086 interpreter, enough of one to <b>run</b> the executables this compiler emits.
 ///
-/// It exists to answer one question the rest of the test suite cannot: does the retargetable IR path
-/// produce the same OBSERVABLE behaviour as the direct emitter? Byte-identity with PBC 3.50 is the
-/// direct emitter's job and the IR path will never match those bytes - it is a different code
-/// generator. What it must match is what the program PRINTS, and until something executes the image
-/// nobody can say whether it does. Every claim about the back end has rested on matched register
-/// conventions and static invariants; this turns them into a measurement
-/// (<see cref="Tests.Backend.BackendDifferentialTests"/>).
+/// It exists to answer one question the rest of the test suite cannot: does the emitted code compute
+/// what the program says? Static checks - matched register conventions, what selects, what
+/// allocates - say nothing about what the program PRINTS, and until something executes the image
+/// nobody can say whether it is right. This turns those claims into a measurement against the output
+/// the BASIC source calls for (<see cref="Tests.Backend.BackendDifferentialTests"/>).
 ///
 /// The design rule that matters more than coverage: <b>it fails loudly</b>. An unimplemented opcode,
 /// an unhandled DOS call, a runaway loop - all throw <see cref="Cpu8086Exception"/> naming what was

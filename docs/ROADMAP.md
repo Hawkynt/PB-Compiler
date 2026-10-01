@@ -220,32 +220,42 @@ front-ends:
   (empty BCLOG, no `T.OBJ`). Pre-existing, reproducible, environment-side; our codegen
   is unaffected. Needs the pds7x oracle invocation re-validated under DOSBox.
 
-## D. The 6502 platform (`--platform 6502`, `docs/BACKENDS.md`)
+## D. The platforms beyond DOS: 6502, x86-32, x64 (`docs/BACKENDS.md`)
 
-Integer programs compile to a C64 `.PRG` and run; `Mos6502BatteryTests` lists every battery program
-it still declines, with the reason, and holds a floor under how many it accepts.
+All three are emitted by pbc alone. x86-32 and x64 compile integer and floating-point programs to
+static Linux ELF files; the 6502 compiles integer and floating-point programs to a C64 `.PRG`. `NativeBatteryTests` and
+`Mos6502BatteryTests` list every battery program each still declines, with the reason, and hold a
+floor under how many they accept - they are this section's to-do list.
 
 ### Must
-- **Floating point.** BASIC reaches for it more often than the source shows: an untyped variable is
-  SINGLE, unary minus on an integer and wide integer arithmetic written straight into a `PRINT` are
-  evaluated in floating point. Needs a soft-float runtime for IEEE SINGLE and DOUBLE - add, subtract,
-  multiply, divide, compare, the integer conversions with BASIC's rounding - and `rt_print_single`/
-  `rt_print_double` formatting digit for digit as the DOS runtime does. The C64's BASIC ROM has a
-  40-bit float package, but its precision is not PowerBASIC's.
-- **Strings.** The `rt_str_*` ABI: a heap, descriptors, temporaries and their release - the same
-  contract `runtime/pbc_rt.c` implements for the hosted targets.
+- **x86-32/x64 run every battery program that is not DOS by nature** (18 of 21: the other three
+  call DOS interrupts, link a DOS object, or are 16-bit inline assembly). `TRY`/`CATCH` and
+  `EXIT FAR` are done.
+- **The differential battery on the flat targets.** Compiling `tests/diff/**/*.BAS` for x64 and the
+  6502 is the wider to-do list the 21-program battery is too small to be (2026-09-30: 126 and 120 of
+  162 compiled before RND, ROUND, file TAB/SPC/INPUT/EXT, float-typed integer literals and the
+  6502's SPEED-to-size fallback closed the largest groups). What is left is declined by name, one or
+  two programs each: runtime entries (`rt_locate`, `rt_arr_desc`, `rt_timer`, `rt_str_scanset`,
+  `rt_str_mki`, `rt_stack_probe`, `rt_fix_up`, `rt_file_seteof`, `rt_file_put_raw`, `rt_codeseg`,
+  `rt_chain_open_read`, `rt_asciiz_store`, `rt_consin`), `segment:offset` pointers (`DIM AT`, huge
+  arrays), BASICA's MBF floats, and five 6502 programs that do not fit a C64 even built for size.
+- **Smaller 6502 code.** The 6502 runs 18 of the 21 battery programs - every one that is not DOS by nature, as x86-32 and x64 do. Code is still dominated by
+  `LDA`/`STA`: every SSA value has its own frame cell, so casts, returns, phi edges and arguments
+  are byte-by-byte copies. Done: frames share memory through the call-graph overlay (the innermost
+  in page zero), and the portable runtime keeps its lengths and counters in 16 bits here, which cut
+  `STRINGS` from 36 KB to 30 KB. Next: aliasing a truncating cast to its source's cell, and
+  coalescing phi cells with their incoming values.
 
 ### Should
-- **`ON ERROR`, `INPUT`** (the KERNAL's `CHRIN`), and `PEEK`/`POKE`, which reach the IR as far
-  pointers; on a 6502 the segment has no meaning and the offset is the address.
-- **Smaller frames.** Every SSA value has its own cell today; values whose live ranges do not overlap
-  can share one, which also shrinks what a recursive call saves. Hot values belong in page zero.
-- **Narrower arithmetic.** The middle end keeps integers at least 16 bits wide for x86-16; a 6502
-  pays for every byte, so values proven to fit a byte should be computed in one.
+- **RANDOM and BINARY files past 4 KB on the 6502** - they live in a RAM cache while open; a larger
+  one would need the 1541's REL files, whose `P` command positions by record.
+- **Registers on x86.** Every x86 SSA value lives in a frame slot; a linear-scan allocator over the
+  32/64-bit register file is the obvious next step for speed.
 
 ### Could
 - **Other 6502 machines** - VIC-20, Apple II, Atari 8-bit: the code is the same, only the load
   address, the character output routine and the container differ.
+- **Other operating systems for x86-32/x64** - only `sys_write`, `sys_exit` and the container change.
 
 ## Won't (for now)
 - Win16 / protected-mode targets; 32-bit OMF.

@@ -22,7 +22,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// </list>
 ///
 /// Every value arrives through a two-call-site <c>NOINLINE</c> function: written down, the whole
-/// statement folds and the comparison is between two constants.
+/// statement folds and the test measures a constant rather than the formatter.
 /// </summary>
 [TestFixture]
 public sealed class BackendWriteTests {
@@ -53,29 +53,24 @@ public sealed class BackendWriteTests {
     return model;
   }
 
-  private static string Run(string source, bool routed, bool optimize) {
+  private static string Run(string source, bool optimize) {
     var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
-    if (routed)
-      Assert.That(generator.BackendRoutedNames, Does.Contain("main"),
-        "the back end did not take the module body under test");
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"),
+      "the back end did not take the module body under test");
     try {
       return Cpu8086.Run(image).Output.Replace("\r\n", "|").TrimEnd('|');
     } catch (Cpu8086Exception e) {
-      Assert.Ignore($"the interpreter cannot run the {(routed ? "routed" : "direct")} image: {e.Message}");
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
       return "";
     }
   }
 
   [TestCase(true)]
   [TestCase(false)]
-  public void Write_GivenEveryNumericWidth_ThenBothPathsRenderWhatPbDoes(bool optimize) {
-    var direct = Run(_widths, routed: false, optimize);
-    var routed = Run(_widths, routed: true, optimize);
-
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo(
+  public void Write_GivenEveryNumericWidth_ThenItRendersWhatPbDoes(bool optimize) {
+    Assert.That(Run(_widths, optimize), Is.EqualTo(
       "200,60000,3000000000|" +
       "-3000000,1.66666662693024,1.66666666666667|" +
       "\"a,b\",200"));
@@ -86,7 +81,7 @@ public sealed class BackendWriteTests {
   /// a divergence that only reaches a file is exactly the one a stdout comparison cannot see.
   /// </summary>
   [Test]
-  public void Write_GivenAFileNumber_ThenTheBytesInTheFileAreTheSameOnBothPaths() {
+  public void Write_GivenAFileNumber_ThenTheBytesInTheFileAreWhatPbWrites() {
     const string source = """
       DECLARE FUNCTION G%(BYVAL v%)
       DIM wo AS WORD, sg AS SINGLE
@@ -102,16 +97,12 @@ public sealed class BackendWriteTests {
       END FUNCTION
       """;
 
-    string Written(bool routed) {
-      var generator = new CodeGenerator(Bind(source)) { Optimize = true};
-      var image = generator.EmitExecutable();
-      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
-      if (routed)
-        Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
-      return Cpu8086.Run(image).FileContent("OUT.TXT") ?? "<no file>";
-    }
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
 
-    Assert.That(Written(routed: true), Is.EqualTo(Written(routed: false)));
-    Assert.That(Written(routed: false), Is.EqualTo("60000,1.66666662693024,\"t\"\r\n"));
+    Assert.That(Cpu8086.Run(image).FileContent("OUT.TXT") ?? "<no file>",
+      Is.EqualTo("60000,1.66666662693024,\"t\"\r\n"));
   }
 }

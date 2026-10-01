@@ -8,7 +8,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <summary>
 /// Executed dialect gate for the IR middle end and x86-16 back end. Parser acceptance is insufficient:
 /// every advertised dialect must survive lowering, route through the back end, assemble into an MZ
-/// executable and behave like the dialect-aware direct emitter.
+/// executable and print what the program computes: 2 * (1 + 2 + ... + 6) = 42.
 /// </summary>
 [TestFixture]
 public sealed class BackendDialectDifferentialTests {
@@ -34,28 +34,23 @@ public sealed class BackendDialectDifferentialTests {
   }
 
   /// <summary>
-  /// Given an advertised dialect, when the same program is compiled through both x86-16 paths and
-  /// executed, then the routed image must have used the back end and exhibit identical behaviour.
+  /// Given an advertised dialect, when the program is compiled and executed, then the image must have
+  /// used the back end, print the sum and exit cleanly.
   /// </summary>
   [TestCaseSource(nameof(_allDialects))]
-  public void Run_GivenAnyAdvertisedDialect_ThenTheBackEndProducesAnEquivalentExecutable(Dialect dialect) {
-    var direct = new CodeGenerator(Bind(dialect)) { Optimize = true};
+  public void Run_GivenAnyAdvertisedDialect_ThenTheBackEndProducesAnExecutablePrintingTheSum(Dialect dialect) {
     var routed = new CodeGenerator(Bind(dialect)) { Optimize = true};
 
-    var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
 
     Assert.Multiple(() => {
-      Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
       Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
       Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the back end declined the portable core");
     });
 
-    var directRun = Cpu8086.Run(directImage);
     var routedRun = Cpu8086.Run(routedImage);
     Assert.Multiple(() => {
-      Assert.That(routedRun.Output, Is.EqualTo(directRun.Output));
-      Assert.That(routedRun.ExitCode, Is.EqualTo(directRun.ExitCode));
+      Assert.That(routedRun.ExitCode, Is.Zero);
       Assert.That(routedRun.Output.Trim(), Is.EqualTo("42"));
     });
   }

@@ -5,7 +5,8 @@ namespace PowerBasic.Compiler.Tests.Exec;
 /// <summary>
 /// An NMOS 6502 interpreter for running the 6502 back end's programs in tests, with just enough of
 /// a Commodore 64 around it: 64 KB of RAM, the KERNAL's <c>CHROUT</c> at <c>$FFD2</c> answered by
-/// capturing the character, and a program that ends by returning from the <c>SYS</c> that started it.
+/// capturing the character, its channel I/O over a modelled 1541 (<c>Cpu6502.Kernal.cs</c>), and a
+/// program that ends by returning from the <c>SYS</c> that started it.
 ///
 /// <para>
 /// Its decoder is written out by hand from the data sheet rather than derived from the compiler's
@@ -14,9 +15,10 @@ namespace PowerBasic.Compiler.Tests.Exec;
 /// an undocumented opcode stops the run, because the compiler never emits one.
 /// </para>
 /// </summary>
-public sealed class Cpu6502 {
+public sealed partial class Cpu6502 {
 
   private const ushort Chrout = 0xFFD2;
+  private const ushort Chrin = 0xFFCF;
   private const ushort Sentinel = 0xFFF0;
 
   private readonly byte[] _memory = new byte[0x10000];
@@ -33,12 +35,34 @@ public sealed class Cpu6502 {
 
   /// <summary>
   /// Loads a <c>.PRG</c> and calls its machine code at <paramref name="start"/> as <c>SYS</c> would,
-  /// until it returns or <paramref name="maxSteps"/> instructions have run.
+  /// until it returns or <paramref name="maxSteps"/> instructions have run. <paramref name="input"/>
+  /// is what the keyboard types; <paramref name="disk"/>, the 1541's files, is read and written in place.
   /// </summary>
-  public static Result RunC64Program(byte[] prg, int start = 0x080D, long maxSteps = 50_000_000) {
-    var cpu = new Cpu6502();
+  public static Result RunC64Program(byte[] prg, int start = 0x080D, long maxSteps = 50_000_000, string? input = null,
+      Dictionary<string, List<byte>>? disk = null) {
+    var cpu = new Cpu6502 { _keyboard = input ?? "", _disk = disk ?? [] };
     var load = prg[0] | (prg[1] << 8);
     prg.AsSpan(2).CopyTo(cpu._memory.AsSpan(load));
+    cpu.Push((byte)((Sentinel - 1) >> 8));
+    cpu.Push((byte)((Sentinel - 1) & 0xFF));
+    cpu._pc = (ushort)start;
+    long steps = 0;
+    while (cpu._pc != Sentinel && steps < maxSteps) {
+      if (cpu._pc < 0xFF81 || !cpu.Kernal())
+        cpu.Step();
+      ++steps;
+    }
+    return new(cpu._output.ToString(), cpu._pc == Sentinel, steps, cpu._s, cpu._memory);
+  }
+
+  /// <summary>
+  /// Calls the machine code at <paramref name="start"/> in <paramref name="memory"/> (64 KB, used in
+  /// place) as a subroutine, until it returns or <paramref name="maxSteps"/> instructions have run.
+  /// </summary>
+  public static Result Call(byte[] memory, int start, long maxSteps = 50_000_000) {
+    ArgumentOutOfRangeException.ThrowIfNotEqual(memory.Length, 0x10000);
+    var cpu = new Cpu6502();
+    memory.CopyTo(cpu._memory, 0);
     cpu.Push((byte)((Sentinel - 1) >> 8));
     cpu.Push((byte)((Sentinel - 1) & 0xFF));
     cpu._pc = (ushort)start;
@@ -52,7 +76,29 @@ public sealed class Cpu6502 {
       }
       ++steps;
     }
-    return new(cpu._output.ToString(), cpu._pc == Sentinel, steps, cpu._s, cpu._memory);
+    cpu._memory.CopyTo(memory, 0);
+    return new(cpu._output.ToString(), cpu._pc == Sentinel, steps, cpu._s, memory);
+  }
+
+  private string _keyboard = "";
+  private int _keyboardAt;
+
+  /// <summary>
+  /// CHRIN: the next byte of the test's input, as PETSCII in the lower-case set - a carriage return
+  /// for a line end, and carriage returns once the input is used up, as an empty keyboard line gives.
+  /// </summary>
+  private byte NextInput() {
+    while (this._keyboardAt < this._keyboard.Length && this._keyboard[this._keyboardAt] == '\r')
+      ++this._keyboardAt;
+    if (this._keyboardAt >= this._keyboard.Length)
+      return 13;
+    var character = this._keyboard[this._keyboardAt++];
+    return character switch {
+      '\n' => 13,
+      >= 'a' and <= 'z' => (byte)(character - 0x20),
+      >= 'A' and <= 'Z' => (byte)(character + 0x80),
+      _ => (byte)character,
+    };
   }
 
   /// <summary>PETSCII, in the upper- and lower-case set the programs select, back to ASCII.</summary>

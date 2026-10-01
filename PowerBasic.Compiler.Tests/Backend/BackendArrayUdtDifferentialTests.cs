@@ -6,15 +6,15 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// Arrays and user-defined types through both back ends, run and compared - the shapes a sweep of the
-/// domain found the routed path disagreeing with the direct emitter on.
+/// Arrays and user-defined types through the x86-16 back end, run and read against the answer the
+/// source gives - the shapes a sweep of the domain found the back end getting wrong.
 ///
 /// <para>
 /// Every subject here is opaque on purpose. An index, a bound or a value written down as a literal is
 /// answered by SCCP before selection ever sees it, and a <c>NOINLINE</c> helper called from ONE site
 /// is answered by interprocedural constant propagation instead - so each helper below is called with
 /// at least two different arguments, and the assertions are about a value no pass can prove.
-/// <see cref="Cpu8086"/> throws on anything it cannot execute, so a green case here means both images
+/// <see cref="Cpu8086"/> throws on anything it cannot execute, so a green case here means the image
 /// really ran.
 /// </para>
 /// </summary>
@@ -27,24 +27,17 @@ public sealed class BackendArrayUdtDifferentialTests {
     return model;
   }
 
-  private static (string Direct, string Routed, IEnumerable<string> RoutedNames) RunBothWays(string source, bool optimize = true) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var directImage = direct.EmitExecutable();
-    var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+  private static (string Output, IEnumerable<string> RoutedNames) Run(string source, bool optimize = true) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output.Replace("\r\n", "\n").TrimEnd();
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return (Cpu8086.Run(image).Output.Replace("\r\n", "\n").TrimEnd(), generator.BackendRoutedNames);
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return ("", generator.BackendRoutedNames);
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"), routed.BackendRoutedNames);
   }
 
   /// <summary>The two-call-site opacity barrier every program below takes its subjects from.</summary>
@@ -59,11 +52,11 @@ public sealed class BackendArrayUdtDifferentialTests {
   /// A record MEMBER passed BYREF. The lowering knew how to hand over a variable's slot and an array
   /// element's address and had no case for a field, so it fell through to the temp-copy fallback that
   /// a constant argument uses - which is BYVAL wearing BYREF's spelling. The callee negated a copy and
-  /// <c>r.A</c> came back untouched, against the direct emitter and against genuine PBC 3.5.
+  /// <c>r.A</c> came back untouched, against genuine PBC 3.5.
   /// </summary>
   [Test]
   public void Run_GivenARecordMemberPassedByRef_ThenTheCalleeWritesThroughIt() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE FUNCTION Op%(BYVAL v%)
       TYPE Rec
         A AS INTEGER
@@ -86,8 +79,7 @@ public sealed class BackendArrayUdtDifferentialTests {
     Assert.Multiple(() => {
       Assert.That(names, Does.Contain("main"));
       Assert.That(names, Does.Contain("Neg"), "the near numeric BYREF callee must route");
-      Assert.That(routed, Is.EqualTo(direct));
-      Assert.That(direct, Is.EqualTo("-5 -1 -2"));
+      Assert.That(output, Is.EqualTo("-5 -1 -2"));
     });
   }
 
@@ -99,8 +91,8 @@ public sealed class BackendArrayUdtDifferentialTests {
   /// unhandled exception rather than compiling or declining.
   /// </summary>
   [Test]
-  public void Run_GivenAByteFieldOfARecordArrayElement_ThenTheImageBuildsAndAgrees() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenAByteFieldOfARecordArrayElement_ThenTheImageBuildsAndEveryFieldReadsBack() {
+    var (output, names) = Run("""
       DECLARE FUNCTION Op%(BYVAL v%)
       TYPE Five
         A AS BYTE
@@ -116,8 +108,7 @@ public sealed class BackendArrayUdtDifferentialTests {
       """ + _OPAQUE, optimize: false);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo(" 0  3  333333  444444  5"));
+    Assert.That(output, Is.EqualTo(" 0  3  333333  444444  5"));
   }
 
   /// <summary>
@@ -135,7 +126,7 @@ public sealed class BackendArrayUdtDifferentialTests {
   /// </summary>
   [Test]
   public void Run_GivenAnElementAddressWhoseIndexTheLoopRewrites_ThenEveryElementLandsAtItsOwnIndex() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       $OPTIMIZE SPEED
       DECLARE FUNCTION Op%(BYVAL v%)
       DIM b(0 TO 999) AS BYTE
@@ -147,8 +138,7 @@ public sealed class BackendArrayUdtDifferentialTests {
       """ + _OPAQUE);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo(" 0  1  255  0  231"));
+    Assert.That(output, Is.EqualTo(" 0  1  255  0  231"));
   }
 
   /// <summary>
@@ -158,7 +148,7 @@ public sealed class BackendArrayUdtDifferentialTests {
   /// </summary>
   [Test]
   public void Run_GivenCopyAndTwoDimensionalStoreLoops_ThenEveryElementLandsAtItsOwnIndex() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       $OPTIMIZE SPEED
       DECLARE FUNCTION Op%(BYVAL v%)
       DIM src(0 TO 50) AS INTEGER
@@ -181,8 +171,7 @@ public sealed class BackendArrayUdtDifferentialTests {
       """ + _OPAQUE);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo(" 0  5  110  0 \n 11  67  42"));
+    Assert.That(output, Is.EqualTo(" 0  5  110  0 \n 11  67  42"));
   }
 
   /// <summary>
@@ -200,8 +189,8 @@ public sealed class BackendArrayUdtDifferentialTests {
   /// </para>
   /// </summary>
   [Test]
-  public void Run_GivenAModuleDynamicArrayRedimmedInASub_ThenBothPathsSeeTheSameArray() {
-    var (direct, routed, _) = RunBothWays("""
+  public void Run_GivenAModuleDynamicArrayRedimmedInASub_ThenTheModuleSeesTheGrownArray() {
+    var (output, _) = Run("""
       DECLARE FUNCTION Op%(BYVAL v%)
       DIM a() AS SHARED INTEGER
       REDIM a(1 TO Op%(3))
@@ -216,8 +205,7 @@ public sealed class BackendArrayUdtDifferentialTests {
       END SUB
       """ + _OPAQUE);
 
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo(" 1  3  6 \n 1  3  8"));
+    Assert.That(output, Is.EqualTo(" 1  3  6 \n 1  3  8"));
   }
 
   /// <summary>
@@ -241,7 +229,7 @@ public sealed class BackendArrayUdtDifferentialTests {
   /// </para>
   /// </summary>
   [Test]
-  public void Run_GivenAMemberOfAnIndexedUdtArrayField_ThenBothPathsAddressTheSameElement() {
+  public void Run_GivenAMemberOfAnIndexedUdtArrayField_ThenEachSubscriptAddressesItsOwnElement() {
     const string source = """
       TYPE Slot
         Id AS INTEGER
@@ -266,11 +254,10 @@ public sealed class BackendArrayUdtDifferentialTests {
       PRINT b.Head; b.Tail
       """;
 
-    var (direct, routed, names) = RunBothWays(source);
+    var (output, names) = Run(source);
 
-    Assert.That(names, Does.Contain("main").IgnoreCase, "an agreeing comparison proves nothing if it declined");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo(" 1  4 \n 2000  3000 \n 11  22"));
+    Assert.That(names, Does.Contain("main").IgnoreCase, "the procedure under test must not decline");
+    Assert.That(output, Is.EqualTo(" 1  4 \n 2000  3000 \n 11  22"));
   }
 
   /// <summary>
@@ -286,7 +273,7 @@ public sealed class BackendArrayUdtDifferentialTests {
   /// </para>
   /// </summary>
   [Test]
-  public void Run_GivenGetIntoADynamicArrayElement_ThenBothPathsAddressTheFarHeap() {
+  public void Run_GivenGetIntoADynamicArrayElement_ThenTheRecordLandsInTheFarHeap() {
     const string source = """
       DECLARE FUNCTION Op%(BYVAL v%)
       DIM Store() AS SHARED LONG
@@ -306,11 +293,10 @@ public sealed class BackendArrayUdtDifferentialTests {
       PRINT Store(0); Store(1)
       """ + _OPAQUE;
 
-    var (direct, routed, names) = RunBothWays(source);
+    var (output, names) = Run(source);
 
-    Assert.That(names, Does.Contain("main").IgnoreCase, "an agreeing comparison proves nothing if it declined");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo(" 222222  111111"), "the two records come back swapped, which is what was asked");
+    Assert.That(names, Does.Contain("main").IgnoreCase, "the procedure under test must not decline");
+    Assert.That(output, Is.EqualTo(" 222222  111111"), "the two records come back swapped, which is what was asked");
   }
 
   /// <summary>
@@ -321,7 +307,7 @@ public sealed class BackendArrayUdtDifferentialTests {
   /// bluntly: <c>DS</c> for every place that is not FAR.
   /// </summary>
   [Test]
-  public void Run_GivenGetIntoAByRefRecordParameter_ThenBothPathsWriteTheCallersRecord() {
+  public void Run_GivenGetIntoAByRefRecordParameter_ThenTheCallersRecordIsWritten() {
     const string source = """
       TYPE Ent
         A AS INTEGER
@@ -346,11 +332,10 @@ public sealed class BackendArrayUdtDifferentialTests {
       END SUB
       """;
 
-    var (direct, routed, names) = RunBothWays(source);
+    var (output, names) = Run(source);
 
-    Assert.That(names, Does.Contain("ReadEntry").IgnoreCase, "an agreeing comparison proves nothing if it declined");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo(" 7  999999"), "written through the caller's record, not a copy");
+    Assert.That(names, Does.Contain("ReadEntry").IgnoreCase, "the procedure under test must not decline");
+    Assert.That(output, Is.EqualTo(" 7  999999"), "written through the caller's record, not a copy");
   }
 
   /// <summary>
@@ -397,10 +382,9 @@ public sealed class BackendArrayUdtDifferentialTests {
       END SUB
       """ + _OPAQUE;
 
-    var (direct, routed, names) = RunBothWays(source);
+    var (output, names) = Run(source);
 
-    Assert.That(names, Does.Contain("ReadAll").IgnoreCase, "an agreeing comparison proves nothing if it declined");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Is.EqualTo(" 111111  222222  333333"), "read back in order through the far heap");
+    Assert.That(names, Does.Contain("ReadAll").IgnoreCase, "the procedure under test must not decline");
+    Assert.That(output, Is.EqualTo(" 111111  222222  333333"), "read back in order through the far heap");
   }
 }

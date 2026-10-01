@@ -58,8 +58,8 @@ public sealed class BackendChainTests {
     return model;
   }
 
-  private static (byte[] Image, IEnumerable<string> Routed) Compile(string source, bool backend) {
-    var codegen = new CodeGenerator(Bind(source)) { Optimize = true};
+  private static (byte[] Image, IEnumerable<string> Routed) Compile(string source, bool optimize = true) {
+    var codegen = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var image = codegen.EmitExecutable();
     Assert.That(codegen.Errors, Is.Empty, string.Join("; ", codegen.Errors));
     return (image, codegen.BackendRoutedNames.ToList());
@@ -94,21 +94,20 @@ public sealed class BackendChainTests {
 
   [Test]
   public void Run_GivenARoutedChainToItself_ThenTheSecondPassSeesTheFirstPassCommonValues() {
-    var (image, routed) = Compile(_chainToSelf, backend: true);
+    var (image, routed) = Compile(_chainToSelf);
     Assert.That(routed, Does.Contain("main"), "the back end did not take the module body under test");
 
     var (first, handoff, second) = ChainToSelf(image);
 
     Assert.That(first.Trim(), Is.EqualTo("first pass"));
     Assert.That(handoff, Is.EqualTo(ExpectedHandoff()), "the COMMON block, in declaration order");
-    // the values themselves, not merely "the same as the other back end": an INTEGER, a LONG, a
-    // DOUBLE and a STRING all survived the handoff
+    // the values themselves: an INTEGER, a LONG, a DOUBLE and a STRING all survived the handoff
     Assert.That(Lines(second), Is.EqualTo(new[] { "second pass", "1  123456  2.5", "hello chain" }));
   }
 
   [Test]
   public void Run_GivenTheSelfTargetIsAvailable_ThenExecCompletesBothChainPasses() {
-    var (image, routed) = Compile(_chainToSelf, backend: true);
+    var (image, routed) = Compile(_chainToSelf);
     Assert.That(routed, Does.Contain("main"));
 
     var cpu = Cpu8086.Run(image);
@@ -121,18 +120,20 @@ public sealed class BackendChainTests {
     });
   }
 
+  /// <summary>
+  /// The same chain with the optimizer off: the handoff is a layout contract, not something the
+  /// optimizer is allowed to reshape, so the unoptimized build must write and read the same bytes.
+  /// </summary>
   [Test]
-  public void Run_GivenAChainToItself_ThenTheRoutedPathAgreesWithTheDirectEmitter() {
-    var (routedImage, routed) = Compile(_chainToSelf, backend: true);
-    var (directImage, _) = Compile(_chainToSelf, backend: false);
+  public void Run_GivenAChainToItself_WhenUnoptimized_ThenTheHandoffAndBothPassesAreUnchanged() {
+    var (image, routed) = Compile(_chainToSelf, optimize: false);
     Assert.That(routed, Does.Contain("main"));
 
-    var (directFirst, directHandoff, directSecond) = ChainToSelf(directImage);
-    var (routedFirst, routedHandoff, routedSecond) = ChainToSelf(routedImage);
+    var (first, handoff, second) = ChainToSelf(image);
 
-    Assert.That(routedHandoff, Is.EqualTo(directHandoff), "the two back ends wrote different handoffs");
-    Assert.That(routedFirst, Is.EqualTo(directFirst));
-    Assert.That(routedSecond, Is.EqualTo(directSecond));
+    Assert.That(first.Trim(), Is.EqualTo("first pass"));
+    Assert.That(handoff, Is.EqualTo(ExpectedHandoff()), "the COMMON block, in declaration order");
+    Assert.That(Lines(second), Is.EqualTo(new[] { "second pass", "1  123456  2.5", "hello chain" }));
   }
 
   /// <summary>
@@ -142,7 +143,7 @@ public sealed class BackendChainTests {
   /// </summary>
   [Test]
   public void Run_GivenNoHandoffFile_ThenTheRoutedPrologueLeavesTheCommonBlockAlone() {
-    var (image, routed) = Compile(_chainToSelf, backend: true);
+    var (image, routed) = Compile(_chainToSelf);
     Assert.That(routed, Does.Contain("main"));
 
     var cpu = Cpu8086.Run(image, new Dictionary<string, byte[]>(), out var fault);
@@ -155,7 +156,7 @@ public sealed class BackendChainTests {
   /// A COMMON variable has to live in a DATA cell, not in the frame. <c>rt_chwrite</c> takes its
   /// buffer as a bare offset with DS assumed, so a frame slot would have been streamed out of the
   /// wrong segment - and the IR names that cell <c>g.&lt;name&gt;</c>, which is how the codegen
-  /// resolves it to the very cell the direct emitter uses.
+  /// resolves it to the cell the handoff streams.
   /// </summary>
   [Test]
   public void Lower_GivenCommonVariables_ThenTheyBecomeModuleGlobalsRatherThanFrameSlots() {
@@ -274,20 +275,17 @@ public sealed class BackendChainTests {
     """;
 
   [Test]
-  public void Run_GivenATopLevelChain_ThenTheModuleBodyStillRoutesAndAgreesWithTheDirectEmitter() {
-    var (routedImage, routed) = Compile(_topLevelChain, backend: true);
-    var (directImage, _) = Compile(_topLevelChain, backend: false);
-    Assert.That(routed, Does.Contain("main"),
-      "a top-level CHAIN must not disqualify the module body - the comparison below would otherwise "
-        + "be the direct image against itself");
+  public void Run_GivenATopLevelChain_ThenTheModuleBodyStillRoutesAndHandsItsCommonValuesOver() {
+    var (routedImage, routed) = Compile(_topLevelChain);
+    Assert.That(routed, Does.Contain("main"), "a top-level CHAIN must not disqualify the module body");
 
     var (routedFirst, routedHandoff, routedSecond) = ChainToSelf(routedImage);
-    var (directFirst, directHandoff, directSecond) = ChainToSelf(directImage);
 
     Assert.Multiple(() => {
-      Assert.That(routedFirst, Is.EqualTo(directFirst));
-      Assert.That(routedHandoff, Is.EqualTo(directHandoff), "the COMMON block, in declaration order");
-      Assert.That(routedSecond, Is.EqualTo(directSecond));
+      Assert.That(routedFirst.Trim(), Is.EqualTo("first pass"));
+      // stage% as an INTEGER, then n& as a LONG
+      Assert.That(routedHandoff, Is.EqualTo(BitConverter.GetBytes((short)1).Concat(BitConverter.GetBytes(4242)).ToArray()),
+        "the COMMON block, in declaration order");
       Assert.That(Lines(routedSecond), Is.EqualTo(new[] { "second pass", "1  4242" }));
     });
   }

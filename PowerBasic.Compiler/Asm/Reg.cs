@@ -30,6 +30,12 @@ public static class RegExtensions {
   public static int Index(this Reg register) => (int)register & 0x0F;
 
   public static bool IsByte(this Reg register) => ((int)register & 0xF0) == 0x00;
+
+  /// <summary>
+  /// The general-purpose word register a register is part of, 0 (AX) to 7 (DI): AL and AH are both
+  /// AX's, EAX is AX's. What a dependency scheduler tracks, since writing any part touches the whole.
+  /// </summary>
+  public static int WordSlot(this Reg register) => register.IsByte() ? register.Index() & 3 : register.Index();
   public static bool IsWord(this Reg register) => ((int)register & 0xF0) == 0x10;
   public static bool IsDword(this Reg register) => ((int)register & 0xF0) == 0x20;
   public static bool IsSegment(this Reg register) => ((int)register & 0xF0) == 0x30;

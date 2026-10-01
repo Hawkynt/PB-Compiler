@@ -75,7 +75,7 @@ public sealed class UnitLinkTests {
   }
 
   private static byte[] CompileMain(string source, IReadOnlyList<PbuFile> units,
-      IReadOnlyList<PblFile> libraries, out List<Diagnostic> errors, bool routed = false) {
+      IReadOnlyList<PblFile> libraries, out List<Diagnostic> errors) {
     var generator = new CodeGenerator(Bind(source, "MAIN.BAS"));
     var exe = generator.EmitExecutable(units, libraries);
     errors = generator.Errors;
@@ -176,7 +176,7 @@ public sealed class UnitLinkTests {
       """;
 
     var unit = CompileUnit(_MATH_UNIT_SOURCE, "MATHUNIT");
-    CompileMain(mismatched, [unit], [], out var errors, routed: true);
+    CompileMain(mismatched, [unit], [], out var errors);
 
     Assert.That(errors.Select(e => e.Message), Has.Some.Contains("signature mismatch"));
   }
@@ -190,7 +190,7 @@ public sealed class UnitLinkTests {
       """;
 
     var unit = CompileUnit(_MATH_UNIT_SOURCE, "MATHUNIT");
-    CompileMain(callsMissing, [unit], [], out var errors, routed: true);
+    CompileMain(callsMissing, [unit], [], out var errors);
 
     Assert.That(errors.Select(e => e.Message), Has.Some.Contains("unresolved symbol"));
   }

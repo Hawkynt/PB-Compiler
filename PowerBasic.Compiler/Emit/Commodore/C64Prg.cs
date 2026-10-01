@@ -16,8 +16,12 @@ public static class C64Prg {
   /// <summary>The first byte after the BASIC line: where the machine code starts, and what SYS names.</summary>
   public const int CodeOrigin = 0x080D;
 
-  /// <summary>The first address the program cannot use: the BASIC ROM is mapped in from here.</summary>
-  public const int MemoryTop = 0xA000;
+  /// <summary>
+  /// The first address the program cannot use: the soft stack's (<see cref="Mos6502Runtime.SoftStackBottom"/>).
+  /// The 8 KB below it lie under the BASIC ROM, which start-up maps out for as long as the program
+  /// runs - it calls the KERNAL, never BASIC - and <c>LOAD</c> writes RAM under a ROM regardless.
+  /// </summary>
+  public const int MemoryTop = Mos6502Runtime.SoftStackBottom;
 
   /// <summary>
   /// <c>10 SYS 2061</c>: the link to the next line, the line number, the SYS token, the address in

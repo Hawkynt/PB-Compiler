@@ -11,11 +11,11 @@ namespace PowerBasic.Compiler.Tests.Ir;
 /// Error 201 without it.
 ///
 /// <para>
-/// The direct emitter writes the probe inline as <c>CMP SP, [rt_stackmin]</c>, and <c>SP</c> is not a
-/// value the IR has any way to name - so the comparison moved into a routine. The two therefore
-/// cannot probe at the same instant and do not try to: the frames differ in shape between the paths
-/// and no adjustment would make the moment identical. What is identical is the contract, which is
-/// what these tests assert.
+/// The direct emitter wrote the probe inline as <c>CMP SP, [rt_stackmin]</c>, and <c>SP</c> is not a
+/// value the IR has any way to name - so the comparison moved into a routine. It therefore does not
+/// probe at the same instant the inline form did, and does not try to: the frames differ in shape
+/// and no adjustment would make the moment identical. What is kept is the contract, which is what
+/// these tests assert.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -27,7 +27,7 @@ public sealed class StackProbeLoweringTests {
     return model;
   }
 
-  private static string Run(string source, bool routed) {
+  private static string Run(string source) {
     var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
@@ -36,10 +36,10 @@ public sealed class StackProbeLoweringTests {
 
   /// <summary>
   /// Runaway recursion, which is what the probe exists to stop - and deliberately NOT tail
-  /// recursion. The direct emitter turns a self-call in tail position into a frame-reusing jump
-  /// (pb36 O14), so <c>CALL Deep(n + 1)</c> as the last statement never consumes a stack at all: it
-  /// becomes a loop and runs until the emulator's step limit. The trailing PRINT is what keeps this
-  /// a real recursion on BOTH paths, which is the only way the two can be compared here.
+  /// recursion. A self-call in tail position becomes a frame-reusing jump (pb36 O14), so
+  /// <c>CALL Deep(n + 1)</c> as the last statement never consumes a stack at all: it becomes a loop
+  /// and runs until the emulator's step limit. The trailing PRINT is what keeps this a real
+  /// recursion.
   /// </summary>
   private const string _RUNAWAY = """
     $ERROR STACK ON
@@ -83,8 +83,8 @@ public sealed class StackProbeLoweringTests {
   /// </summary>
   [Test]
   public void Runaway_GivenTheStackCheck_ThenErrorTwoHundredAndOneIsRaised() {
-    Assert.That(Run(_RUNAWAY, routed: true), Does.Contain("caught"));
-    Assert.That(Run(_RUNAWAY, routed: true), Does.Contain("201"));
+    Assert.That(Run(_RUNAWAY), Does.Contain("caught"));
+    Assert.That(Run(_RUNAWAY), Does.Contain("201"));
   }
 
   /// <summary>
@@ -93,12 +93,18 @@ public sealed class StackProbeLoweringTests {
   /// </summary>
   [Test]
   public void Shallow_GivenTheStackCheck_ThenNothingIsRaised()
-    => Assert.That(Run(_SHALLOW, routed: true).Trim(), Is.EqualTo("done"));
+    => Assert.That(Run(_SHALLOW).Trim(), Is.EqualTo("done"));
 
+  /// <summary>
+  /// The whole of each program's output, not just a fragment of it: the runaway recursion never
+  /// reaches its PRINT, so the handler's line is all there is, and the shallow one prints only its
+  /// last line.
+  /// </summary>
   [Test]
-  public void Routed_GivenTheStackCheck_ThenItBehavesAsTheDirectEmitterDoes() {
-    foreach (var (name, source) in new[] { ("runaway", _RUNAWAY), ("shallow", _SHALLOW) })
-      Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)), $"program '{name}'");
+  public void Routed_GivenTheStackCheck_ThenEachProgramPrintsExactlyItsOutcome() {
+    foreach (var (name, source, expected) in new[] {
+        ("runaway", _RUNAWAY, "caught 201 \r\n"), ("shallow", _SHALLOW, "done\r\n") })
+      Assert.That(Run(source), Is.EqualTo(expected), $"program '{name}'");
   }
 
   /// <summary>
@@ -118,6 +124,6 @@ public sealed class StackProbeLoweringTests {
   public void Runaway_WithoutTheDirective_ThenNothingCatchesIt() {
     var unguarded = _RUNAWAY.Replace("$ERROR STACK ON", "");
     Assert.That(unguarded, Does.Not.Contain("$ERROR"), "the directive must actually be gone");
-    Assert.That(() => Run(unguarded, routed: true), Throws.TypeOf<Cpu8086Exception>());
+    Assert.That(() => Run(unguarded), Throws.TypeOf<Cpu8086Exception>());
   }
 }

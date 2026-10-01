@@ -6,7 +6,7 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// <c>FOR i = a TO b STEP s</c> where <b>s is a runtime value</b>, compiled both ways and executed.
+/// <c>FOR i = a TO b STEP s</c> where <b>s is a runtime value</b>, compiled with the optimizer on and off and executed.
 ///
 /// <para>
 /// A constant step settles the loop's direction at compile time and gets one comparison. A runtime
@@ -22,10 +22,10 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// every counted loop in the corpus has a constant step - which is the whole reason this survived.
 /// </para>
 /// <para>
-/// <b>The interpreter's verdict is folded into the compared output, never thrown.</b> A loop that
+/// <b>The interpreter's verdict is folded into the checked output, never thrown.</b> A loop that
 /// does not terminate makes <see cref="Cpu8086"/> give up, and the usual <c>Assert.Ignore</c> idiom
 /// would report that as "the interpreter cannot run this image" - the defect wearing an excuse. Here
-/// it is a difference from the direct build like any other.
+/// it is a difference from the expected text like any other.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -38,7 +38,7 @@ public sealed class BackendLoopStepTests {
   }
 
   /// <summary>The program's output, with whatever stopped the machine appended rather than thrown.</summary>
-  private static string Run(string source, bool routed, bool optimize, out IReadOnlyList<string> routedNames) {
+  private static string Run(string source, bool optimize, out IReadOnlyList<string> routedNames) {
     var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
@@ -47,14 +47,12 @@ public sealed class BackendLoopStepTests {
     return (fault is null ? cpu.Output : cpu.Output + "\n[stopped: " + fault.Message + "]").Replace("\r\n", "\n");
   }
 
-  private static void BothPathsAgree(string source, string expected) {
+  private static void Prints(string source, string expected) {
     foreach (var optimize in new[] { true, false }) {
-      var direct = Run(source, routed: false, optimize, out _);
-      var routed = Run(source, routed: true, optimize, out var names);
-      Assert.That(names, Is.Not.Empty, $"nothing routed at optimize={optimize}, so this compares the direct emitter with itself");
-      Assert.That(routed, Is.EqualTo(direct), $"the two back ends disagree at optimize={optimize}");
+      var output = Run(source, optimize, out var names);
+      Assert.That(names, Is.Not.Empty, $"nothing routed at optimize={optimize}");
       // PB gives every printed numeric a trailing space; the shape under test is the trip counts
-      Assert.That(string.Join("|", routed.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0)),
+      Assert.That(string.Join("|", output.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0)),
         Is.EqualTo(expected), $"at optimize={optimize}");
     }
   }
@@ -93,7 +91,7 @@ public sealed class BackendLoopStepTests {
   /// </summary>
   [Test]
   public void Execute_GivenARuntimeStep_WhenRouted_ThenEveryLoopTerminatesWhereItShould() =>
-    BothPathsAgree(_RUNTIME_STEP, "n 3 i 13|n 4 i-2|n 1 i 6|n 0 i 5");
+    Prints(_RUNTIME_STEP, "n 3 i 13|n 4 i-2|n 1 i 6|n 0 i 5");
 
   /// <summary>
   /// The same question over a LONG counter, where the compare is a register pair rather than one
@@ -101,7 +99,7 @@ public sealed class BackendLoopStepTests {
   /// </summary>
   [Test]
   public void Execute_GivenARuntimeStepOverALongCounter_WhenRouted_ThenTheLoopTerminates() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE FUNCTION Opl&(BYVAL v&)
       DECLARE SUB Walk(BYVAL a&, BYVAL b&, BYVAL s&)
       Walk Opl&(70000), Opl&(70003), Opl&(1)
@@ -128,7 +126,7 @@ public sealed class BackendLoopStepTests {
   /// </summary>
   [Test]
   public void Execute_GivenARuntimeStepInTheModuleBody_WhenRouted_ThenTheLoopTerminates() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE FUNCTION Op%(BYVAL v%)
       DIM i AS INTEGER
       DIM n AS INTEGER

@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Asm;
+
 namespace PowerBasic.Compiler.CodeGen;
 
 /// <summary>
@@ -214,28 +216,20 @@ public static class InlineAsmScheduler {
     ["XCHG"] = new(2, false, false, _rwXchg),
   };
 
-  // register name -> word slot 0..7, -1 for a non-GP (segment/FPU/SIMD) register, null when not a register
+  /// <summary>
+  /// A register operand's word slot 0..7 (AL, AH and EAX are all AX's), -1 for a register that is not
+  /// general-purpose (segment, x87, MMX, SSE, AVX), or null when the operand is not a register.
+  /// </summary>
   private static int? RegSlot(string op) {
-    var u = op.ToUpperInvariant();
-    return u switch {
-      "AL" or "AH" or "AX" or "EAX" => 0,
-      "CL" or "CH" or "CX" or "ECX" => 1,
-      "DL" or "DH" or "DX" or "EDX" => 2,
-      "BL" or "BH" or "BX" or "EBX" => 3,
-      "SP" or "ESP" => 4,
-      "BP" or "EBP" => 5,
-      "SI" or "ESI" => 6,
-      "DI" or "EDI" => 7,
-      "CS" or "DS" or "ES" or "SS" or "FS" or "GS" => -1,
-      _ when u.StartsWith("ST") || u.StartsWith("MM") || u.StartsWith("XMM") || u.StartsWith("YMM") || u.StartsWith("ZMM") => -1,
-      _ => null,
-    };
+    if (Enum.TryParse<Reg>(op, ignoreCase: true, out var register) && !int.TryParse(op, out _))
+      return register.IsGeneralPurpose() ? register.WordSlot() : -1;
+    // the x87 stack registers are named ST, ST0..ST7 or ST(0)..ST(7), none of which Reg spells
+    return op.StartsWith("ST", StringComparison.OrdinalIgnoreCase)
+      && (op.Length == 2 || op[2] == '(' || char.IsAsciiDigit(op[2])) ? -1 : null;
   }
 
-  private static bool IsByteReg(string op) {
-    var u = op.ToUpperInvariant();
-    return u is "AL" or "AH" or "CL" or "CH" or "DL" or "DH" or "BL" or "BH";
-  }
+  private static bool IsByteReg(string op)
+    => Enum.TryParse<Reg>(op, ignoreCase: true, out var register) && !int.TryParse(op, out _) && register.IsByte();
 
   private static bool IsImmediate(string op) {
     if (op.Length == 0)

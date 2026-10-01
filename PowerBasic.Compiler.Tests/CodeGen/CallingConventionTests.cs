@@ -135,7 +135,7 @@ public sealed class CallingConventionTests {
     Assert.That(RunOptSpeed(source), Is.EqualTo(" 35\n"));
   }
 
-  private static (CodeGenerator Generator, byte[] Image) Compile(string source, bool routed) {
+  private static (CodeGenerator Generator, byte[] Image) Compile(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -143,13 +143,10 @@ public sealed class CallingConventionTests {
     return (generator, generator.EmitExecutable());
   }
 
-  // Pinned for BOTH emission paths on purpose. The check used to live in the direct emitter's
-  // EmitProcedure, so with the x86-16 back end routing enabled (PBC_X_BACKEND / --x-backend) this
-  // program compiled clean - a rejected program silently accepted. It now sits in LayoutFrame, which
-  // both paths call.
-  [TestCase(true)]
-  [TestCase(false)]
-  public void Compile_GivenFastcallWithLongParam_ThenDiagnostic(bool routed) {
+  // The check used to live in the retired emitter's procedure path, so the x86-16 back end could
+  // silently accept a shape it did not implement. It now sits in shared frame layout.
+  [Test]
+  public void Compile_GivenFastcallWithLongParam_ThenDiagnostic() {
     // FASTCALL still combines incompatible vendor identities; reject LONG until those are split.
     const string source = """
       DECLARE FUNCTION f FASTCALL (BYVAL x AS LONG) AS LONG
@@ -158,7 +155,7 @@ public sealed class CallingConventionTests {
         f = x
       END FUNCTION
       """;
-    Assert.That(Compile(source, routed).Generator.Errors.Select(e => e.Message), Has.Some.Contains("word-sized"),
+    Assert.That(Compile(source).Generator.Errors.Select(e => e.Message), Has.Some.Contains("word-sized"),
       "expected a diagnostic rejecting the non-word register-convention parameter");
   }
 
@@ -167,9 +164,8 @@ public sealed class CallingConventionTests {
   /// CX:BX (high:low), and the next word uses the still-free DX. The following LONG cannot fit either
   /// legal pair, so it and every later argument travel right-to-left on the stack.
   /// </summary>
-  [TestCase(true)]
-  [TestCase(false)]
-  public void Execute_GivenWatcallLongPairs_WhenRoutedOrDirect_ThenMatchesDocumentedAllocation(bool routed) {
+  [Test]
+  public void Execute_GivenWatcallLongPairs_WhenProduced_ThenMatchesDocumentedAllocation() {
     const string source = """
       DECLARE FUNCTION mix WATCALL (BYVAL a AS INTEGER, BYVAL b AS LONG, BYVAL c AS INTEGER, BYVAL d AS LONG, BYVAL e AS INTEGER) AS LONG
       PRINT mix(3, 70000, 5, 900000, 7)
@@ -178,13 +174,14 @@ public sealed class CallingConventionTests {
       END FUNCTION
       """;
 
-    var (generator, image) = Compile(source, routed);
+    var (generator, image) = Compile(source);
 
-    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
-    if (routed)
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
       Assert.That(generator.BackendRoutedNames, Does.Contain("mix"),
-        "the routed half of the test must not pass through direct-emitter fallback");
-    Assert.That(Exec.Cpu8086.Run(image).Output.Trim(), Is.EqualTo("973507"));
+        "the WATCALL body must reach the mandatory x86-16 route");
+      Assert.That(Exec.Cpu8086.Run(image).Output.Trim(), Is.EqualTo("973507"));
+    });
   }
 
   /// <summary>
@@ -195,8 +192,7 @@ public sealed class CallingConventionTests {
   ///
   /// <para>
   /// This replaces a test that asserted the opposite. WATCALL/FASTCALL lay their leading arguments at
-  /// negative offsets, and those are now filled by the routed prologue's own push sequence rather
-  /// than only by the direct emitter's.
+  /// negative offsets, and those are filled by the production prologue's own push sequence.
   /// </para>
   /// </summary>
   [TestCase("WATCALL")]
@@ -213,7 +209,7 @@ public sealed class CallingConventionTests {
         END IF
       END FUNCTION
       """;
-    var (routed, _) = Compile(source, routed: true);
+    var (routed, _) = Compile(source);
     Assert.That(routed.Errors, Is.Empty, "codegen: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("sub2"),
       $"{convention} must route now that the prologue spills its register arguments");
@@ -221,8 +217,7 @@ public sealed class CallingConventionTests {
 
   /// <summary>
   /// The other half of the same rule: the stack-only conventions do route. Pinning this keeps the
-  /// routing from silently regressing to the direct emitter, which would still pass the behavioural
-  /// test below while quietly leaving the class unrouted.
+  /// class from silently declining, which would still pass the behavioural test below.
   /// </summary>
   [TestCase("CDECL")]
   [TestCase("STDCALL")]
@@ -238,7 +233,7 @@ public sealed class CallingConventionTests {
         END IF
       END FUNCTION
       """;
-    var (routed, _) = Compile(source, routed: true);
+    var (routed, _) = Compile(source);
     Assert.That(routed.Errors, Is.Empty, "codegen: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("sub2"),
       $"{convention} is a stack-only convention the back end emits, so it must route");
@@ -247,16 +242,16 @@ public sealed class CallingConventionTests {
   /// <summary>
   /// The behavioural half of the routing rule, run on the in-process 8086 interpreter so it needs no
   /// emulator: the recursion makes the self-call survive inlining, and every convention must answer
-  /// 13 whether routing is on or off. Before the fix the routed builds printed 0 (WATCALL/FASTCALL -
-  /// arguments read out of an unfilled frame) and 12 (CDECL/STDCALL - arguments swapped by the
-  /// reversed push order).
+  /// 13 - sub2(20, 7) steps both arguments down seven times. Before the fix the routed builds printed
+  /// 0 (WATCALL/FASTCALL - arguments read out of an unfilled frame) and 12 (CDECL/STDCALL - arguments
+  /// swapped by the reversed push order).
   /// </summary>
   [TestCase("WATCALL")]
   [TestCase("FASTCALL")]
   [TestCase("CDECL")]
   [TestCase("STDCALL")]
   [TestCase("")]
-  public void Execute_GivenRecursiveConventionFunction_WhenRoutedOrDirect_ThenSameResult(string convention) {
+  public void Execute_GivenRecursiveConventionFunction_ThenItAnswersThirteen(string convention) {
     var source = $"""
       DECLARE FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
       PRINT sub2(20, 7)
@@ -268,12 +263,8 @@ public sealed class CallingConventionTests {
         END IF
       END FUNCTION
       """;
-    var (routedGenerator, routedImage) = Compile(source, routed: true);
-    var (_, directImage) = Compile(source, routed: false);
-    Assert.That(routedGenerator.Errors, Is.Empty, "codegen: " + string.Join("; ", routedGenerator.Errors));
-    Assert.Multiple(() => {
-      Assert.That(Exec.Cpu8086.Run(directImage).Output.Trim(), Is.EqualTo("13"), "direct");
-      Assert.That(Exec.Cpu8086.Run(routedImage).Output.Trim(), Is.EqualTo("13"), "routed");
-    });
+    var (generator, image) = Compile(source);
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    Assert.That(Exec.Cpu8086.Run(image).Output.Trim(), Is.EqualTo("13"));
   }
 }

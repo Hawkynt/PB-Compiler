@@ -14,7 +14,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// The lowering therefore emits intrinsics and the selector expands them inline, and a handler is
 /// named by the offset of its own basic block (the machine form of LLVM's <c>blockaddress</c>).
 ///
-/// Everything here compares the routed program against the directly-emitted one by RUNNING both. A
+/// Everything here RUNS the program and reads what it printed against the expected text. A
 /// handler is entered by a jump the CFG does not show, from a point no instruction here chose, and
 /// static inspection cannot tell you whether that landed anywhere sensible.
 ///
@@ -27,7 +27,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 public sealed class BackendErrorHandlerTests {
 
   private static (string Output, IEnumerable<string> Routed) Run(
-      string source, bool routed, bool optimize = true) {
+      string source, bool optimize = true) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = optimize};
@@ -36,17 +36,16 @@ public sealed class BackendErrorHandlerTests {
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
   }
 
-  private static void BothPathsAgree(string source, string expected, bool optimize = true) {
-    var (routed, names) = Run(source, routed: true, optimize);
+  private static void Prints(string source, string expected, bool optimize = true) {
+    var (output, names) = Run(source, optimize);
     Assert.That(names, Does.Contain("main"), "the back end has to have taken the module body");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false, optimize).Output), "the two emitters disagree");
-    Assert.That(routed, Is.EqualTo(expected));
+    Assert.That(output, Is.EqualTo(expected));
   }
 
   /// <summary>A raise reaches the handler, and RESUME to a label carries on from there.</summary>
   [Test]
   public void Route_GivenOnErrorGotoAndResumeLabel_ThenTheHandlerRunsAndControlContinues() =>
-    BothPathsAgree("""
+    Prints("""
       ON ERROR GOTO Trap
       PRINT "before"
       ERROR 7
@@ -62,7 +61,7 @@ public sealed class BackendErrorHandlerTests {
   /// <summary>ERR is a runtime cell, and the routed code has to read the same one the raise wrote.</summary>
   [Test]
   public void Route_GivenAHandlerReadingErr_ThenItSeesTheRaisedCode() =>
-    BothPathsAgree("""
+    Prints("""
       ON ERROR GOTO Trap
       ERROR 11
       Trap:
@@ -75,7 +74,7 @@ public sealed class BackendErrorHandlerTests {
   /// <summary>Disarming means the next fault is fatal rather than caught - so nothing after it runs.</summary>
   [Test]
   public void Route_GivenOnErrorGotoZero_ThenTheHandlerIsNoLongerArmed() =>
-    BothPathsAgree("""
+    Prints("""
       ON ERROR GOTO Trap
       ERROR 5
       PRINT "unreachable"
@@ -94,7 +93,7 @@ public sealed class BackendErrorHandlerTests {
   /// </summary>
   [Test]
   public void Route_GivenResumeNext_ThenExecutionContinuesAfterTheFaultingStatement() =>
-    BothPathsAgree("""
+    Prints("""
       ON ERROR GOTO Trap
       PRINT "one"
       ERROR 6
@@ -106,7 +105,7 @@ public sealed class BackendErrorHandlerTests {
 
   [Test]
   public void Route_GivenOnErrorResumeNext_ThenTheInlineModeSkipsTheFaultingStatement() =>
-    BothPathsAgree("""
+    Prints("""
       ON ERROR RESUME NEXT
       PRINT "one"
       ERROR 6
@@ -117,7 +116,7 @@ public sealed class BackendErrorHandlerTests {
 
   [Test]
   public void Route_GivenUnoptimizedHandlerAndDirectCalleeRaise_ThenUnwindsToRoutedMain() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Boom(v%)
       ON ERROR GOTO Trap
       DIM value AS INTEGER
@@ -139,7 +138,7 @@ public sealed class BackendErrorHandlerTests {
 
   [Test]
   public void Route_GivenUnoptimizedDirectCalleeStackTrap_ThenUnwindsToRoutedMain() =>
-    BothPathsAgree("""
+    Prints("""
       $ERROR STACK ON
       DECLARE SUB Recurse(d%)
       ON ERROR GOTO Trap
@@ -162,7 +161,7 @@ public sealed class BackendErrorHandlerTests {
   /// <summary>Two handlers in sequence: the second arming has to replace the first, not stack on it.</summary>
   [Test]
   public void Route_GivenAReArmedHandler_ThenTheLatestOneTakesTheFault() =>
-    BothPathsAgree("""
+    Prints("""
       ON ERROR GOTO First
       ON ERROR GOTO Second
       ERROR 9
@@ -186,7 +185,7 @@ public sealed class BackendErrorHandlerTests {
   /// </summary>
   [Test]
   public void Route_GivenNumericLineLabels_ThenErlReportsTheLastOneBeforeTheFault() =>
-    BothPathsAgree("""
+    Prints("""
       ON ERROR GOTO Trap
       100 PRINT "one"
       Middle:

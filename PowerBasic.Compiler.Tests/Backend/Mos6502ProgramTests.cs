@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Backend.Mos6502;
 using PowerBasic.Compiler.Cli;
 using PowerBasic.Compiler.Emit.Commodore;
 using PowerBasic.Compiler.Tests.Exec;
@@ -12,9 +13,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <para>
 /// The inputs are opaque: <c>INP</c> reads a port the C64 does not have, which answers 0, and the
 /// optimizer cannot know that - so the arithmetic below is done by the 6502 at run time rather than
-/// by the compiler folding it away. Unary minus on a variable, and wide arithmetic written straight
-/// into a PRINT, are avoided: BASIC evaluates both in floating point, which this back end declines
-/// for now. Assigned to an integer variable first, the same arithmetic stays integral.
+/// by the compiler folding it away.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -37,14 +36,16 @@ public sealed class Mos6502ProgramTests {
     return (code, stderr.ToString(), File.Exists(prg) ? File.ReadAllBytes(prg) : []);
   }
 
-  private string Run(string source, params string[] options) {
+  private string Run(string source, params string[] options) => this.Run(source, [], options);
+
+  private string Run(string source, Dictionary<string, List<byte>> disk, params string[] options) {
     var (code, error, prg) = this.Build(source, options);
     Assert.That(code, Is.Zero, error);
-    var result = Cpu6502.RunC64Program(prg);
+    var result = Cpu6502.RunC64Program(prg, disk: disk);
     Assert.Multiple(() => {
       Assert.That(result.Returned, Is.True, "the program returns to BASIC");
       Assert.That(result.StackPointer, Is.EqualTo(0xFF), "and leaves the hardware stack as it found it");
-      Assert.That(result.Memory[0x02..0x30], Is.All.Zero, "and BASIC's page zero as it found it");
+      Assert.That(result.Memory[Mos6502ZeroPage.First..(Mos6502ZeroPage.Last + 1)], Is.All.Zero, "and BASIC's page zero as it found it");
     });
     return result.Output.TrimEnd('\n');
   }
@@ -159,14 +160,272 @@ public sealed class Mos6502ProgramTests {
   }
 
   [Test]
-  public void Build_GivenFloatingPoint_ThenItIsDeclinedByName() {
-    var (code, error, prg) = this.Build("x! = INP(&H60) / 3\nPRINT x!\n");
+  public void Run_GivenFloatingPoint_ThenSoftFloatComputesWhatThePcPrints() {
+    var output = this.Run("""
+      k = INP(&H60)
+      a! = (k + 1) / 3
+      b# = (k + 2) / 3#
+      PRINT a!; b#; (k - 5) / 2; (k + 1.5) * 1E-7; (k + 1) / 10000
+      x& = (k + 7.5)
+      y% = (k + 2.5)
+      PRINT x&; y%; FIX(k - 2.7); INT(k - 2.7); CINT(k + 3.5)
+      """);
+
+    Assert.That(output, Is.EqualTo(" .3333333  .666666666666667 -2.5  1.5E-07  .0001 \n 8  2 -2 -3  4 "));
+  }
+
+  private static readonly double[] MathArguments = [0.5, 1, 2, 3, 10, 0.001, 123.456, 1000, 7.25, 0.1];
+
+  /// <summary>Math functions in groups small enough for a C64 each: the BASIC, and .NET's answers.</summary>
+  private static readonly (string Basic, Func<double, double>[] Expected)[] MathGroups = [
+    ("SQR(x#); LOG(x#); EXP(x# / 100); LOG(x# * 1D+40); SQR(x# * 1D-40)",
+      [Math.Sqrt, Math.Log, x => Math.Exp(x / 100), x => Math.Log(x * 1E+40), x => Math.Sqrt(x * 1E-40)]),
+    ("SIN(x#); COS(x#); TAN(x#); SIN(x# * 128)", [Math.Sin, Math.Cos, Math.Tan, x => Math.Sin(x * 128)]),
+    ("ATN(x#); ATN(-x#)", [Math.Atan, x => Math.Atan(-x)]),
+    ("x# ^ 1.5; (-x#) ^ 3; x# ^ -2", [x => Math.Pow(x, 1.5), x => Math.Pow(-x, 3), x => Math.Pow(x, -2)]),
+  ];
+
+  [TestCase(0), TestCase(1), TestCase(2), TestCase(3)]
+  public void Run_GivenMathFunctions_ThenSoftFloatAgreesWithThePcToFourteenDigits(int group) {
+    var (basic, functions) = MathGroups[group];
+    var data = string.Join(", ", MathArguments.Select(value => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
+    var output = this.Run($"""
+      k = INP(&H60)
+      FOR i = 1 TO {MathArguments.Length}
+        READ x#
+        x# = x# + k
+        PRINT {basic}
+      NEXT
+      DATA {data}
+      """);
+
+    var lines = output.Split('\n');
+    Assert.That(lines, Has.Length.EqualTo(MathArguments.Length));
+    for (var i = 0; i < MathArguments.Length; ++i) {
+      var x = MathArguments[i];
+      var printed = lines[i].Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        .Select(text => double.Parse(text.Replace("D", "E"), System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+      Assert.That(printed, Has.Length.EqualTo(functions.Length), lines[i]);
+      for (var j = 0; j < functions.Length; ++j) {
+        var expected = functions[j](x);
+        Assert.That(printed[j], Is.EqualTo(expected).Within(Math.Abs(expected) * 1e-14 + 1e-300),
+          $"function {j} of {x}: printed {lines[i]}");
+      }
+    }
+  }
+
+  /// <summary>
+  /// A program too big for the RAM below the BASIC ROM: it runs only because start-up maps the ROM
+  /// out, and VICE - where the ROM is real - proves the code past <c>$A000</c> is what executes.
+  /// </summary>
+  [Test]
+  public void Run_GivenAProgramReachingPastTheBasicRom_ThenTheRamUnderItHoldsTheCode() {
+    var data = string.Join(", ", MathArguments.Select(value => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
+    var (code, error, prg) = this.Build($"""
+      k = INP(&H60)
+      FOR i = 1 TO 3
+        READ x#
+        x# = x# + k
+        PRINT {string.Join("; ", ((int[])[0, 1, 3]).Select(group => MathGroups[group].Basic))}
+      NEXT
+      DATA {data}
+      """);
+    Assert.That(code, Is.Zero, error);
+    Assert.That(C64Prg.LoadAddress + prg.Length - 2, Is.GreaterThan(0xA000), "the program should reach past the BASIC ROM's start");
+
+    var interpreted = Cpu6502.RunC64Program(prg);
+    Assert.That(interpreted.Returned, Is.True);
+    Assert.That(interpreted.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries), Has.Length.EqualTo(3), interpreted.Output);
+    Assume.That(Vice.IsAvailable, "VICE or Xvfb is not installed");
+    Assert.That(Vice.Run(prg), Is.EqualTo(Vice.Normalize(interpreted.Output)));
+  }
+
+  [Test]
+  public void Run_GivenAWholePower_ThenItIsExact() {
+    var output = this.Run("""
+      k = INP(&H60)
+      PRINT (k + 2) ^ 10; (k + 3) ^ 20; (k - 2) ^ 5; (k + 10) ^ -3; (k + 0) ^ 0; (k + 0) ^ 3; (k + 7) ^ 0
+      """);
+
+    Assert.That(output, Is.EqualTo(" 1024  3486784401 -32  .001  1  0  1 "));
+  }
+
+  [Test]
+  public void Run_GivenAMathDomainError_ThenErrorFiveEndsTheProgram() {
+    var output = this.Run("""
+      k = INP(&H60)
+      PRINT "before"
+      PRINT SQR(k - 1)
+      PRINT "after"
+      """);
+
+    Assert.That(output, Does.StartWith("before\n").And.Contains("5").And.Not.Contains("after"));
+  }
+
+  [Test]
+  public void Run_GivenStrings_ThenThePortableRuntimeBuildsThemOnTheC64() {
+    var output = this.Run("""
+      k = INP(&H60)
+      a$ = "Hello" + STR$(k + 42)
+      b$ = MID$(a$, 2, 3) + LEFT$(a$, 1) + RIGHT$(a$, 2)
+      MID$(b$, 1, 1) = "E"
+      PRINT a$; LEN(a$); b$; INSTR(a$, "lo"); UCASE$("mixed Case")
+      """);
+
+    Assert.That(output, Is.EqualTo("Hello 42 8 EllH42 4 MIXED CASE"));
+  }
+
+  [Test]
+  public void Run_GivenStringChurn_ThenTheHeapReusesWhatIsFreed() {
+    // two hundred concatenations through a 4 KB heap: only reuse keeps it from running out
+    var output = this.Run("""
+      FOR i = 1 TO 200
+        c$ = c$ + CHR$(65 + i MOD 26)
+        IF LEN(c$) > 30 THEN c$ = MID$(c$, 10)
+      NEXT
+      PRINT c$; LEN(c$)
+      """);
+
+    Assert.That(output, Is.EqualTo("QRSTUVWXYZABCDEFGHIJKLMNOPQRS 29 "));
+  }
+
+  [Test]
+  public void Run_GivenAFileLeftOpenAtEnd_ThenTheReturnToBasicClosesItOntoTheDisk() {
+    var disk = new Dictionary<string, List<byte>>();
+    this.Run("""
+      OPEN "notes.txt" FOR OUTPUT AS #1
+      PRINT #1, "kept"
+      END
+      """, disk);
+
+    // a lower-case name reaches the drive in PETSCII capitals, as DOS names are case-blind
+    Assert.That(disk.Keys, Is.EquivalentTo(new[] { "NOTES.TXT" }));
+    Assert.That(disk["NOTES.TXT"], Is.EqualTo("kept\n"u8.ToArray()));
+  }
+
+  [Test]
+  public void Run_GivenAppendToAMissingFile_ThenItIsCreatedAsDosWould() {
+    var disk = new Dictionary<string, List<byte>>();
+    var output = this.Run("""
+      OPEN "LOG.TXT" FOR APPEND AS #1
+      PRINT #1, "one"
+      CLOSE #1
+      OPEN "log.txt" FOR APPEND AS #1
+      PRINT #1, "two"
+      CLOSE #1
+      OPEN "LOG.TXT" FOR INPUT AS #1
+      DIM s AS STRING
+      DO UNTIL EOF(1)
+        LINE INPUT #1, s
+        PRINT s
+      LOOP
+      CLOSE #1
+      """, disk);
+
+    Assert.That(output, Is.EqualTo("one\ntwo"));
+    Assert.That(disk["LOG.TXT"], Is.EqualTo("one\ntwo\n"u8.ToArray()));
+  }
+
+  [Test]
+  public void Run_GivenARandomFile_ThenItsRecordsReachTheDiskWhenItCloses() {
+    var disk = new Dictionary<string, List<byte>>();
+    var output = this.Run("""
+      TYPE Pair
+        A AS INTEGER
+        B AS STRING * 2
+      END TYPE
+      DIM p AS Pair
+      OPEN "PAIRS" FOR RANDOM AS #1 LEN = 4
+      p.A = 258: p.B = "hi": PUT #1, 2, p
+      p.A = 3: p.B = "yo": PUT #1, 1, p
+      PRINT LOF(1)
+      CLOSE #1
+      OPEN "PAIRS" FOR RANDOM AS #1 LEN = 4
+      GET #1, 2, p
+      PRINT p.A; p.B
+      CLOSE #1
+      """, disk);
+
+    Assert.That(output, Is.EqualTo(" 8 \n 258 hi"));
+    Assert.That(disk["PAIRS"], Is.EqualTo(new byte[] { 3, 0, (byte)'y', (byte)'o', 2, 1, (byte)'h', (byte)'i' }));
+  }
+
+  [Test]
+  public void Run_GivenABinaryFileOnTheDisk_ThenItReadsWhatIsThere() {
+    var disk = new Dictionary<string, List<byte>> { ["DATA.BIN"] = [.. "ABCDEFGH"u8.ToArray()] };
+    var output = this.Run("""
+      DIM s AS STRING
+      OPEN "data.bin" FOR BINARY AS #1
+      SEEK #1, 3
+      GET$ #1, 4, s
+      PRINT s; LOF(1)
+      CLOSE #1
+      """, disk);
+
+    Assert.That(output, Is.EqualTo("DEFG 8 "));
+    Assert.That(disk["DATA.BIN"], Is.EqualTo("ABCDEFGH"u8.ToArray()), "a file only read is not written back");
+  }
+
+  [Test]
+  public void Run_GivenABinaryFileLongerThanTheCache_ThenErrorSixtyOneEndsTheProgram() {
+    var output = this.Run($"""
+      OPEN "BIG.BIN" FOR BINARY AS #1
+      FOR i = 1 TO {Mos6502Runtime.FileCacheBytes / 64 + 1}
+        PUT$ #1, STRING$(64, "x")
+      NEXT
+      PRINT "never"
+      """);
+
+    Assert.That(output, Does.Contain("61").And.Not.Contains("never"));
+  }
+
+  [Test]
+  public void Run_GivenPeekAndPoke_ThenTheOffsetIsTheC64sOwnAddress() {
+    var (code, error, prg) = this.Build("""
+      POKE 53280, 2
+      a% = 513
+      p% = VARPTR(a%)
+      PRINT PEEK(p%); PEEK(p% + 1); PEEKI(p%)
+      DEF SEG = 1234
+      POKE p%, 7
+      PRINT a%
+      """);
+    Assert.That(code, Is.Zero, error);
+
+    var result = Cpu6502.RunC64Program(prg);
 
     Assert.Multiple(() => {
-      Assert.That(code, Is.Not.Zero);
-      Assert.That(error, Does.Contain("floating point"));
-      Assert.That(prg, Is.Empty);
+      Assert.That(result.Output.TrimEnd('\n'), Is.EqualTo(" 1  2  513 \n 519 "), "DEF SEG selects nothing on a flat machine");
+      Assert.That(result.Memory[0xD020], Is.EqualTo(2), "the VIC-II's border colour register");
     });
+  }
+
+  [Test]
+  public void Build_GivenASpeedBuildTooBigForAC64_ThenItIsBuiltForSizeWithAWarning() {
+    // unrolled and inlined for speed this needs some 64 KB; for size it fits and runs the same
+    var (code, error, prg) = this.Build("""
+      $OPTIMIZE SPEED
+      OPEN "RESULT.TXT" FOR OUTPUT AS #1
+      s% = 0
+      FOR i% = 1 TO 15
+        SELECT CASE i%
+          CASE 1, 3, 5, 7
+            s% = s% + i%
+          CASE 8 TO 11
+            s% = s% + 100
+          CASE ELSE
+            s% = s% - 1
+        END SELECT
+        PRINT #1, "i"; i%; s%
+      NEXT i%
+      PRINT #1, "sum"; s%
+      CLOSE #1
+      PRINT s%
+      """);
+
+    Assert.That(code, Is.Zero, error);
+    Assert.That(error, Does.Contain("warning: 6502: the $OPTIMIZE SPEED build does not fit a C64"));
+    Assert.That(Cpu6502.RunC64Program(prg).Output.TrimEnd('\n'), Is.EqualTo(" 409 "));
   }
 
   [Test]
@@ -182,13 +441,20 @@ public sealed class Mos6502ProgramTests {
     });
   }
 
-  [TestCase("--emit-com")]
+  [Test]
+  public void Build_GivenACom_ThenThe6502RefusesItAsDosOwnContainer() {
+    var (code, error, _) = this.Build("PRINT 1\n", "--emit-com");
+
+    Assert.That(code, Is.Not.Zero);
+    Assert.That(error, Does.Contain("COM image is a DOS container"));
+  }
+
   [TestCase("--emit-obj")]
   [TestCase("--emit-lib")]
-  public void Build_GivenADosOrObjectFormat_ThenThe6502RefusesIt(string option) {
+  public void Build_GivenAnObjectOrLibraryOfModuleCode_ThenItIsRefusedAsAUnitWouldBe(string option) {
     var (code, error, _) = this.Build("PRINT 1\n", option);
 
     Assert.That(code, Is.Not.Zero);
-    Assert.That(error, Does.Contain("C64 .PRG only"));
+    Assert.That(error, Does.Contain("module-level code"));
   }
 }

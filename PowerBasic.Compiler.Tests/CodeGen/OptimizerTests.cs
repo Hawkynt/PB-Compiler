@@ -169,12 +169,11 @@ public sealed class OptimizerTests {
     Assert.That(sized.Length, Is.LessThan(plain.Length), $"SIZE image ({sized.Length}) must undercut the default ({plain.Length})");
   }
 
-  [TestCase(false)]
-  [TestCase(true)]
-  public void Emit_GivenOptimizeOff_WhenComparedWithDisabledOptimizer_ThenImagesMatch(bool useBackend) {
+  [Test]
+  public void Emit_GivenOptimizeOff_WhenComparedWithDisabledOptimizer_ThenImagesMatch() {
     const string body = "DIM total AS INTEGER\nFOR i% = 1 TO 4\n  total = total + i%\nNEXT i%\nPRINT total\nEND";
 
-    static byte[] CompileCase(string source, bool useBackend, bool? optimize, out IReadOnlyList<string> routed) {
+    static byte[] CompileCase(string source, bool? optimize, out IReadOnlyList<string> routed) {
       var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
       var model = Binder.Bind(unit, Dialect.Pb36);
       Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -187,12 +186,11 @@ public sealed class OptimizerTests {
       return image;
     }
 
-    var fromDirective = CompileCase("$OPTIMIZE OFF\n" + body, useBackend, null, out var directiveRoutes);
-    var fromProperty = CompileCase(body, useBackend, false, out var propertyRoutes);
+    var fromDirective = CompileCase("$OPTIMIZE OFF\n" + body, null, out var directiveRoutes);
+    var fromProperty = CompileCase(body, false, out var propertyRoutes);
 
     Assert.That(fromDirective, Is.EqualTo(fromProperty), "$OPTIMIZE OFF must disable every optimization stage");
-    if (useBackend)
-      Assert.That(directiveRoutes, Is.EquivalentTo(propertyRoutes), "the directive must not change backend eligibility");
+    Assert.That(directiveRoutes, Is.EquivalentTo(propertyRoutes), "the directive must not change backend eligibility");
   }
 
   [Test]

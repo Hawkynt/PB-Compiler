@@ -29,9 +29,10 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// </para>
 ///
 /// <para>
-/// Every case asserts the VALUES as well as agreement with the direct emitter, because agreement alone
-/// would pass on a mistake the two paths shared: they share the runtime, the descriptor and the data
-/// layout, and a stride that is wrong in the same direction twice reads back consistently wrong.
+/// Every case asserts the VALUES as well as agreement between the optimized and unoptimized builds,
+/// because agreement alone would pass on a mistake the two shared: they share the runtime, the
+/// descriptor and the data layout, and a stride that is wrong in the same direction twice reads back
+/// consistently wrong.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -43,27 +44,20 @@ public sealed class BackendArrayElementTests {
     return model;
   }
 
-  /// <summary>Runs the program both ways, insisting the back end really took the code under test.</summary>
-  private static (string Direct, string Routed) RunBothWays(string source, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var directImage = direct.EmitExecutable();
-    var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
-      "the back end did not take the module body, so this compares the direct emitter with itself");
+  /// <summary>Compiles and runs the program, insisting the back end really took the code under test.</summary>
+  private static string Run(string source, bool optimize) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"),
+      "the back end did not take the module body");
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output;
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return Cpu8086.Run(image).Output;
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return "";
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"));
   }
 
   /// <summary>PB pads printed numbers with sign and trailing blanks; the VALUES are what these tests are about.</summary>
@@ -73,14 +67,16 @@ public sealed class BackendArrayElementTests {
     .Select(line => string.Join(" ", line.Split(' ', StringSplitOptions.RemoveEmptyEntries)))
     .ToArray();
 
-  /// <summary>Both optimization settings, for the reason the corpus differential runs both: they are different emitters.</summary>
+  /// <summary>
+  /// Both optimization settings, because they lower differently: each must print the expected values,
+  /// and the two outputs must agree in full, beyond the lines the case names.
+  /// </summary>
   private static void AssertAgreeAndRead(string source, params string[] expected) {
-    foreach (var optimize in new[] { true, false }) {
-      var (direct, routed) = RunBothWays(source, optimize);
-      Assert.That(routed, Is.EqualTo(direct), $"the two back ends disagree (optimize={optimize})");
-      Assert.That(Lines(routed).Take(expected.Length), Is.EqualTo(expected).AsCollection,
-        $"...and the answer both give is not the one BASIC gives (optimize={optimize})");
-    }
+    var optimized = Run(source, optimize: true);
+    var unoptimized = Run(source, optimize: false);
+    Assert.That(optimized, Is.EqualTo(unoptimized), "the optimized and unoptimized builds disagree");
+    Assert.That(Lines(optimized).Take(expected.Length), Is.EqualTo(expected).AsCollection,
+      "the answer is not the one BASIC gives");
   }
 
   /// <summary>

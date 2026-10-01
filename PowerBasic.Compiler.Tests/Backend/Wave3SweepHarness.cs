@@ -7,8 +7,8 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// Scratch sweep driver: every .BAS under $PBC_PROBE_DIR compiled both ways, both images run, and the
-/// WHOLE observation compared - stdout, the text screen, the cursor, the printer, every file on the
+/// Scratch sweep driver: every .BAS under $PBC_PROBE_DIR compiled with the optimizer off and on, both
+/// images run, and the WHOLE observation compared - stdout, the text screen, the cursor, the printer, every file on the
 /// disk, and the exit code. Not part of the suite; it exists to drive a hunt.
 /// </summary>
 [TestFixture, Category("Probe")]
@@ -80,34 +80,33 @@ public sealed class Wave3SweepHarness {
       var text = File.ReadAllText(file);
       // the whole front end, not just the lexer: Preprocessor.Expand is its own entry point and is
       // what resolves $INCLUDE and selects a $IF branch. Tokenizing directly splices EVERY branch in,
-      // so a probe written to compare the two paths on conditional compilation compared two builds of
-      // a program neither compiler would ever produce - and both agreed, because both were wrong.
+      // so a probe written to exercise conditional compilation compared two builds of a program the
+      // compiler would never produce - and both agreed, because both were wrong.
 
       // any *.DAT sitting beside the probe is seeded on the disk under its own name
       var disk = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
       foreach (var seed in Directory.EnumerateFiles(Path.GetDirectoryName(file)!, Path.GetFileNameWithoutExtension(file) + ".*.SEED"))
         disk[Path.GetFileName(seed)[(Path.GetFileNameWithoutExtension(file).Length + 1)..^5]] = File.ReadAllBytes(seed);
 
-      foreach (var dialect in DialectsOf(text))
-      foreach (var optimize in new[] { true, false }) {
+      foreach (var dialect in DialectsOf(text)) {
         SemanticModel Bind() => Binder.Bind(
           Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), dialect), name, dialect), dialect);
-        var tag = $"{name} {dialect} {(optimize ? "O" : "-")}";
+        var tag = $"{name} {dialect}";
         ++ran;
-        byte[] directImage, routedImage;
+        byte[] plainImage, optimizedImage;
         List<string> routedNames;
         var declines = "";
         try {
           var bound = Bind();
           if (bound.Errors.Count > 0) { report.AppendLine($"BIND-ERROR {tag}: {string.Join("; ", bound.Errors)}"); continue; }
-          var direct = new CodeGenerator(Bind()) { Optimize = optimize};
-          var routed = new CodeGenerator(Bind()) { Optimize = optimize};
-          directImage = direct.EmitExecutable();
-          routedImage = routed.EmitExecutable();
-          routedNames = routed.BackendRoutedNames.ToList();
-          declines = string.Join("; ", routed.BackendDeclines.Select(d => d.Name + ": " + d.Reason));
-          if (direct.Errors.Count > 0) { report.AppendLine($"DIRECT-ERROR {tag}: {string.Join("; ", direct.Errors)}"); continue; }
-          if (routed.Errors.Count > 0) { report.AppendLine($"ROUTED-ERROR {tag}: {string.Join("; ", routed.Errors)}"); continue; }
+          var plain = new CodeGenerator(Bind()) { Optimize = false };
+          var optimized = new CodeGenerator(Bind()) { Optimize = true };
+          plainImage = plain.EmitExecutable();
+          optimizedImage = optimized.EmitExecutable();
+          routedNames = optimized.BackendRoutedNames.ToList();
+          declines = string.Join("; ", optimized.BackendDeclines.Select(d => d.Name + ": " + d.Reason));
+          if (plain.Errors.Count > 0) { report.AppendLine($"PLAIN-ERROR {tag}: {string.Join("; ", plain.Errors)}"); continue; }
+          if (optimized.Errors.Count > 0) { report.AppendLine($"OPTIMIZED-ERROR {tag}: {string.Join("; ", optimized.Errors)}"); continue; }
         } catch (Exception e) {
           report.AppendLine($"THREW {tag}: {e.GetType().Name}: {e.Message}");
           continue;
@@ -116,32 +115,32 @@ public sealed class Wave3SweepHarness {
         if (routedNames.Count == 0) { ++declined; report.AppendLine($"DECLINED {tag}: {declines}"); continue; }
         ++routedCount;
 
-        var directRun = Observe(directImage, disk, out var directWhy);
-        var routedRun = Observe(routedImage, disk, out var routedWhy);
-        if (directRun is null || routedRun is null) {
+        var plainRun = Observe(plainImage, disk, out var plainWhy);
+        var optimizedRun = Observe(optimizedImage, disk, out var optimizedWhy);
+        if (plainRun is null || optimizedRun is null) {
           ++unmeasured;
           report.AppendLine($"UNMEASURED {tag} [{string.Join(",", routedNames)}]: " +
-            (directRun is null ? "direct: " + directWhy : "routed: " + routedWhy));
+            (plainRun is null ? "plain: " + plainWhy : "optimized: " + optimizedWhy));
           continue;
         }
 
-        if (directRun == routedRun) {
+        if (plainRun == optimizedRun) {
           ++agreed;
           report.AppendLine($"AGREE {tag} [{string.Join(",", routedNames)}]" +
-            (declines.Length == 0 ? "" : " !{" + declines + "}") + $" out={Flat(directRun.Output, 90)}");
+            (declines.Length == 0 ? "" : " !{" + declines + "}") + $" out={Flat(plainRun.Output, 90)}");
           continue;
         }
 
         ++disagreed;
         report.AppendLine($"DISAGREE {tag} [{string.Join(",", routedNames)}]");
-        Show(report, "output", directRun.Output, routedRun.Output);
-        Show(report, "screen", directRun.Screen, routedRun.Screen);
-        Show(report, "attrib", directRun.Attributes, routedRun.Attributes);
-        Show(report, "cursor", directRun.Cursor, routedRun.Cursor);
-        Show(report, "printer", directRun.Printer, routedRun.Printer);
-        Show(report, "files", directRun.Files, routedRun.Files);
-        if (directRun.ExitCode != routedRun.ExitCode)
-          report.AppendLine($"    exit  direct={directRun.ExitCode} routed={routedRun.ExitCode}");
+        Show(report, "output", plainRun.Output, optimizedRun.Output);
+        Show(report, "screen", plainRun.Screen, optimizedRun.Screen);
+        Show(report, "attrib", plainRun.Attributes, optimizedRun.Attributes);
+        Show(report, "cursor", plainRun.Cursor, optimizedRun.Cursor);
+        Show(report, "printer", plainRun.Printer, optimizedRun.Printer);
+        Show(report, "files", plainRun.Files, optimizedRun.Files);
+        if (plainRun.ExitCode != optimizedRun.ExitCode)
+          report.AppendLine($"    exit  plain={plainRun.ExitCode} optimized={optimizedRun.ExitCode}");
       }
     }
 
@@ -161,7 +160,7 @@ public sealed class Wave3SweepHarness {
   private static void Show(StringBuilder report, string what, string a, string b) {
     if (a == b)
       return;
-    report.AppendLine($"    {what}  direct={Flat(a, 400)}");
-    report.AppendLine($"    {what}  routed={Flat(b, 400)}");
+    report.AppendLine($"    {what}  plain={Flat(a, 400)}");
+    report.AppendLine($"    {what}  optimized={Flat(b, 400)}");
   }
 }

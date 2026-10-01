@@ -49,18 +49,18 @@ public sealed class BackendFieldTests {
     return model;
   }
 
-  private static (byte[] Image, IEnumerable<string> Routed) Compile(string source, bool backend) {
-    var codegen = new CodeGenerator(Bind(source)) { Optimize = true};
+  private static (byte[] Image, IEnumerable<string> Routed) Compile(string source, bool optimize = true) {
+    var codegen = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var image = codegen.EmitExecutable();
     Assert.That(codegen.Errors, Is.Empty, string.Join("; ", codegen.Errors));
     return (image, codegen.BackendRoutedNames.ToList());
   }
 
-  private static string Execute(byte[] image, string which) {
+  private static string Execute(byte[] image) {
     try {
       return Cpu8086.Run(image).Output;
     } catch (Cpu8086Exception e) {
-      Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
       return "";
     }
   }
@@ -73,10 +73,10 @@ public sealed class BackendFieldTests {
   /// </summary>
   [Test]
   public void Run_GivenARoutedFieldRoundTrip_ThenABareGetRefillsTheFieldVariables() {
-    var (image, routed) = Compile(_fieldRoundTrip, backend: true);
+    var (image, routed) = Compile(_fieldRoundTrip);
     Assert.That(routed, Does.Contain("main"), "the back end did not take the module body under test");
 
-    var output = Execute(image, "routed");
+    var output = Execute(image);
 
     Assert.That(Lines(output), Is.EqualTo(new[] {
       "[abc   ][        42]",     // LSET left-justifies in six, RSET right-justifies in ten
@@ -85,12 +85,14 @@ public sealed class BackendFieldTests {
   }
 
   [Test]
-  public void Run_GivenAFieldRoundTrip_ThenTheRoutedPathAgreesWithTheDirectEmitter() {
-    var (routedImage, routed) = Compile(_fieldRoundTrip, backend: true);
-    var (directImage, _) = Compile(_fieldRoundTrip, backend: false);
+  public void Run_GivenAFieldRoundTrip_WhenUnoptimized_ThenABareGetStillRefillsTheFieldVariables() {
+    var (image, routed) = Compile(_fieldRoundTrip, optimize: false);
     Assert.That(routed, Does.Contain("main"));
 
-    Assert.That(Execute(routedImage, "routed"), Is.EqualTo(Execute(directImage, "direct")));
+    Assert.That(Lines(Execute(image)), Is.EqualTo(new[] {
+      "[abc   ][        42]",
+      "[zzzzzz][wiped     ]",
+    }));
   }
 
   /// <summary>
@@ -101,7 +103,7 @@ public sealed class BackendFieldTests {
   /// </summary>
   [Test]
   public void Run_GivenARoutedFieldPut_ThenTheRecordBytesAreTheFieldsSideBySide() {
-    var (image, _) = Compile(_fieldRoundTrip, backend: true);
+    var (image, _) = Compile(_fieldRoundTrip);
 
     var cpu = Cpu8086.Run(image);
 
@@ -216,10 +218,10 @@ public sealed class BackendFieldTests {
 
   [Test]
   public void Run_GivenRoutedLsetRsetIntoAFixedString_ThenTheValueIsJustifiedAndBlankPaddedToTheWidth() {
-    var (image, routed) = Compile(_fixedJustify, backend: true);
+    var (image, routed) = Compile(_fixedJustify);
     Assert.That(routed, Does.Contain("main"), "the back end did not take the module body under test");
 
-    var output = Execute(image, "routed");
+    var output = Execute(image);
 
     Assert.That(Lines(output), Is.EqualTo(new[] {
       "[xy      ]",     // LSET: left, blank-padded to the declared eight
@@ -232,12 +234,13 @@ public sealed class BackendFieldTests {
   }
 
   [Test]
-  public void Run_GivenLsetRsetIntoAFixedString_ThenTheRoutedPathAgreesWithTheDirectEmitter() {
-    var (routedImage, routed) = Compile(_fixedJustify, backend: true);
-    var (directImage, _) = Compile(_fixedJustify, backend: false);
+  public void Run_GivenLsetRsetIntoAFixedString_WhenUnoptimized_ThenTheValueIsStillJustifiedAndPadded() {
+    var (image, routed) = Compile(_fixedJustify, optimize: false);
     Assert.That(routed, Does.Contain("main"));
 
-    Assert.That(Execute(routedImage, "routed"), Is.EqualTo(Execute(directImage, "direct")));
+    Assert.That(Lines(Execute(image)), Is.EqualTo(new[] {
+      "[xy      ]", "[      xy]", "[12345678]", "[12345678]", "[abcdefgh]", "[abcdefgh]",
+    }));
   }
 
   private static string[] Lines(string text)

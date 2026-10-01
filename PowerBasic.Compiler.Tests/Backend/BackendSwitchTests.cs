@@ -262,25 +262,19 @@ public sealed class BackendSwitchTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenOnGotoBoundaries_ThenTheRoutedEmitterMatchesFallthroughAndEveryArm(bool optimize) {
-    var direct = new CodeGenerator(Bind(_onGotoProgram)) {
-      Optimize = optimize,
-    };
-    var routed = new CodeGenerator(Bind(_onGotoProgram)) {
+  public void Execute_GivenOnGotoBoundaries_ThenTheRoutedEmitterTakesFallthroughAndEveryArm(bool optimize) {
+    var generator = new CodeGenerator(Bind(_onGotoProgram)) {
       Optimize = optimize,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("Dispatch"),
-      "the ON GOTO procedure must not pass through the direct-emitter fallback");
-    Assert.That(routed.BackendRoutedNames, Does.Contain("DispatchLong"),
-      "the LONG-source ON GOTO procedure must not pass through the direct-emitter fallback");
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-    Assert.That(directCpu.Output.Trim().Replace("\r\n", "|"),
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("Dispatch"),
+      "the ON GOTO procedure must be taken by the back end");
+    Assert.That(generator.BackendRoutedNames, Does.Contain("DispatchLong"),
+      "the LONG-source ON GOTO procedure must be taken by the back end");
+    Assert.That(cpu.Output.Trim().Replace("\r\n", "|"),
       Is.EqualTo("default|default|one|two|three|default|" +
         "longDefault|longDefault|longOne|longTwo|longDefault|longOne"));
   }

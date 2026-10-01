@@ -6,15 +6,14 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// The measurement the retargetable path has been missing: the same program compiled BOTH ways, both
-/// images <b>executed</b>, and their output compared.
+/// Programs compiled through the x86-16 back end, the images <b>executed</b>, and their output read
+/// against the answer the BASIC source gives.
 ///
 /// Everything else about the x86-16 back end is checked statically - what selects, what allocates,
 /// which registers an ABI names, whether an image assembles. None of that says the emitted code
 /// computes the right thing. This does, and it needs no vintage oracle to do it: byte-identity with
-/// PBC 3.50 is the direct emitter's job, and the IR path will never match those bytes because it is a
-/// different code generator. What it must match is what the program PRINTS, and the direct emitter -
-/// which the golden battery holds to the genuine compiler - is the reference for that.
+/// PBC 3.50 is the golden battery's job. What is checked here is what the program PRINTS, and each
+/// expected line is worked out from the source.
 ///
 /// A program <see cref="Cpu8086"/> cannot run is skipped, never passed: the interpreter throws on any
 /// opcode or DOS call it does not implement, so a green test here means the code really ran.
@@ -28,29 +27,22 @@ public sealed class BackendDifferentialTests {
     return model;
   }
 
-  private static (string Output, string Routed, IEnumerable<string> RoutedNames) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
-    var directImage = direct.EmitExecutable();
-    var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+  private static (string Output, IEnumerable<string> RoutedNames) Run(string source) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output;
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return (Cpu8086.Run(image).Output, generator.BackendRoutedNames);
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return ("", generator.BackendRoutedNames);
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"), routed.BackendRoutedNames);
   }
 
   [Test]
-  public void Run_GivenAnIntegerFunction_ThenBothPathsPrintTheSameThing() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenAnIntegerFunction_ThenItPrintsTheSum() {
+    var (output, names) = Run("""
       FUNCTION Twice%(BYVAL v%) NOINLINE
         Twice% = v% + v%
       END FUNCTION
@@ -59,13 +51,12 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("Twice"), "the back end did not take the function under test");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("42"), "and the answer is the one BASIC gives");
+    Assert.That(output.Trim(), Is.EqualTo("42"), "and the answer is the one BASIC gives");
   }
 
   [Test]
-  public void Run_GivenAConstantDivide_ThenBothPathsAgree() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenAConstantDivide_ThenTheQuotientTruncatesTowardZero() {
+    var (output, names) = Run("""
       FUNCTION Tenth%(BYVAL v%) NOINLINE
         Tenth% = v% \ 10
       END FUNCTION
@@ -75,12 +66,12 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("Tenth"));
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output.Replace("\r", "").Trim(), Is.EqualTo("25 \n 0"), "-7 \\ 10 truncates toward zero");
   }
 
   [Test]
-  public void Run_GivenAModuleBodyTheBackEndOwns_ThenTheWholeProgramAgrees() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenAModuleBodyTheBackEndOwns_ThenTheWholeProgramPrints() {
+    var (output, names) = Run("""
       DIM n AS INTEGER
       n = 42
       PRINT "n="
@@ -88,14 +79,14 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"), "this is the whole-program case, not the per-function one");
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output.Replace("\r", "").Trim(), Is.EqualTo("n=\n 42"));
   }
 
   [Test]
   public void Run_GivenAValueLiveAcrossACall_ThenTheSpilledFormComputesTheSameAnswer() {
     // the parameter is live across a PRINT, so the back end spills it into the caller's own word -
     // this is the first check that the spill actually preserves the value rather than merely allocating
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       FUNCTION Twice%(BYVAL v%) NOINLINE
         PRINT "in"
         Twice% = v% + v%
@@ -105,13 +96,12 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("Twice"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(routed, Does.Contain("42"));
+    Assert.That(output, Does.Contain("42"));
   }
 
   [Test]
-  public void Run_GivenALoopAndAControlFlowMerge_ThenBothPathsAgree() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenALoopAndAControlFlowMerge_ThenEachArmContributes() {
+    var (output, names) = Run("""
       FUNCTION SumTo%(BYVAL n%) NOINLINE
         DIM i AS INTEGER
         DIM total AS INTEGER
@@ -130,7 +120,8 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("SumTo"));
-    Assert.That(routed, Is.EqualTo(direct));
+    // the even i add 2+4+6+8+10 = 30, the five odd ones take 1 each
+    Assert.That(output.Trim(), Is.EqualTo("25"));
   }
 
   /// <summary>
@@ -147,8 +138,8 @@ public sealed class BackendDifferentialTests {
   /// </para>
   /// </summary>
   [Test]
-  public void Run_GivenAShiftByAComputedCount_ThenBothPathsShiftByTheSameAmount() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenAShiftByAComputedCount_ThenEachWidthShiftsByThatAmount() {
+    var (output, names) = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
 
       DIM a AS INTEGER, w AS WORD, n AS INTEGER
@@ -167,8 +158,7 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("8037 -9872  2500  3"),
+    Assert.That(output.Trim(), Is.EqualTo("8037 -9872  2500  3"),
       "the right shift is logical, the count survives the shift, and both widths agree");
   }
 
@@ -176,11 +166,12 @@ public sealed class BackendDifferentialTests {
   /// The same statement with a LITERAL count the immediate encoding cannot carry. <c>SHL r16, imm8</c>
   /// exists only for 1..31, so a count of 32 or 40 threw out of the assembler; the direct emitter puts
   /// every narrow count in <c>CL</c> and never meets the limit. What the part then does with a count it
-  /// did not mask is a property of the part, so the assertion is only that the two paths agree.
+  /// did not mask is a property of the part; the reading here is the 8086's, which applies the whole
+  /// count, so both oversized shifts - the right one logical - leave zero.
   /// </summary>
   [Test]
-  public void Run_GivenAShiftByALiteralOutsideTheImmediateWindow_ThenBothPathsAgree() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenAShiftByALiteralOutsideTheImmediateWindow_ThenTheWholeCountIsApplied() {
+    var (output, names) = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
 
       DIM a AS INTEGER
@@ -198,7 +189,8 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output.Trim(), Is.EqualTo("0  0 -1234"),
+      "32 and 40 shift every bit out of the word, and a count of 0 leaves it alone");
   }
 
   /// <summary>
@@ -213,12 +205,12 @@ public sealed class BackendDifferentialTests {
   /// <para>
   /// Two call sites with different arguments, through a <c>NOINLINE</c> function, because one would let
   /// interprocedural propagation fold the divide away entirely. The optimizer must be ON - the fold is
-  /// gated on it - which is what <see cref="RunBothWays"/> already does.
+  /// gated on it - which is what <see cref="Run"/> already does.
   /// </para>
   /// </summary>
   [Test]
   public void Run_GivenAResultReturnedThroughARuntimeRegisterPair_ThenTheAnswerSurvivesTheReturn() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
       DECLARE FUNCTION Half%(BYVAL a AS WORD)
 
@@ -234,8 +226,7 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("Half"), "the back end did not take the function under test");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("32767  2"), "the divide is unsigned, so 65535 \\ 2 is 32767");
+    Assert.That(output.Trim(), Is.EqualTo("32767  2"), "the divide is unsigned, so 65535 \\ 2 is 32767");
   }
 
   /// <summary>
@@ -253,7 +244,7 @@ public sealed class BackendDifferentialTests {
   /// </summary>
   [Test]
   public void Run_GivenALongResultSetBeforeTheLastStatement_ThenTheWholeValueComesBack() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
       DECLARE FUNCTION Bumped&(BYVAL a&)
 
@@ -271,13 +262,12 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("Bumped"), "the back end did not take the function under test");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Replace("\r", "").Trim(), Is.EqualTo("out 1001 \nout 4"));
+    Assert.That(output.Replace("\r", "").Trim(), Is.EqualTo("out 1001 \nout 4"));
   }
 
   [Test]
-  public void Run_GivenASharedGlobal_ThenBothPathsAddressTheSameStorage() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenASharedGlobal_ThenTheFunctionReadsTheModulesStore() {
+    var (output, names) = Run("""
       DIM g AS SHARED INTEGER
 
       FUNCTION AddG%(BYVAL v%) NOINLINE
@@ -289,8 +279,7 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("AddG"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(routed, Does.Contain("42"), "the routed function read the global the direct path wrote");
+    Assert.That(output, Does.Contain("42"), "the function read the global the module body wrote");
   }
 
   // ---- dynamic arrays -------------------------------------------------------
@@ -304,10 +293,10 @@ public sealed class BackendDifferentialTests {
   // overwriting the program's own code with them.
 
   [Test]
-  public void Run_GivenADynamicArrayFillingTheHeap_ThenValuesReadBackAndBothPathsAgree() {
+  public void Run_GivenADynamicArrayFillingTheHeap_ThenValuesReadBack() {
     // 32760 INTEGERs is 65520 bytes - the largest block the bump allocator will hand out (it refuses
     // anything that would carry the top past 0xFFF0). The exact-fit boundary, from below.
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       REDIM a(1 TO 32760) AS INTEGER
       a(1) = 11
       a(32760) = 99
@@ -315,31 +304,29 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("11  99  0"), "both ends of a full segment survive, and the middle starts zeroed");
+    Assert.That(output.Trim(), Is.EqualTo("11  99  0"), "both ends of a full segment survive, and the middle starts zeroed");
   }
 
   [Test]
-  public void Run_GivenADynamicArrayPastASegment_ThenBothPathsRefuseItRatherThanWrapping() {
+  public void Run_GivenADynamicArrayPastASegment_ThenItIsRefusedRatherThanWrapping() {
     // 20000 LONGs is 80000 bytes. The count fits a word and the element size fits a word, but the
     // PRODUCT does not - and 80000 mod 65536 is 14464, so a 16-bit multiply would allocate 14464 bytes
     // and let a(20000) write 65 KB past the end of it. Computing the byte count at 32 bits is what
     // turns that into the runtime's own refusal, which is also what the direct emitter does.
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       REDIM a(1 TO 20000) AS LONG
       a(20000) = 7
       PRINT a(20000)
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Does.Contain("OUT OF ARRAY SPACE"), "the oversized allocation is refused");
-    Assert.That(direct, Does.Not.Contain("7"), "and nothing after it runs");
+    Assert.That(output, Does.Contain("OUT OF ARRAY SPACE"), "the oversized allocation is refused");
+    Assert.That(output, Does.Not.Contain("7"), "and nothing after it runs");
   }
 
   [Test]
   public void Run_GivenARedimPreserveThatGrows_ThenTheOldContentsSurviveAndTheTailIsZero() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM i AS INTEGER
       REDIM a(1 TO 5) AS LONG
       FOR i = 1 TO 5
@@ -351,8 +338,7 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("1000  5000  0 -1"),
+    Assert.That(output.Trim(), Is.EqualTo("1000  5000  0 -1"),
       "the prefix carries over, the grown tail reads as zero, and the new top element is writable");
   }
 
@@ -360,7 +346,7 @@ public sealed class BackendDifferentialTests {
   public void Run_GivenARedimPreserveThatShrinks_ThenOnlyWhatFitsIsCopied() {
     // PB lets the outer bound shrink, and the copy is min(old, new) - copying the old length into the
     // shorter block would run past the end of it.
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM i AS INTEGER
       REDIM a(1 TO 6) AS INTEGER
       FOR i = 1 TO 6
@@ -371,8 +357,7 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("11  22  2"));
+    Assert.That(output.Trim(), Is.EqualTo("11  22  2"));
   }
 
   /// <summary>
@@ -383,20 +368,19 @@ public sealed class BackendDifferentialTests {
   /// </summary>
   [Test]
   public void Run_GivenARedimPreserveOfANeverAllocatedArray_ThenItSimplyAllocates() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       REDIM PRESERVE a(1 TO 3) AS INTEGER
       a(2) = 5
       PRINT a(1); a(2); UBOUND(a)
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("0  5  3"));
+    Assert.That(output.Trim(), Is.EqualTo("0  5  3"));
   }
 
   [Test]
   public void Run_GivenEraseThenRedim_ThenTheFreshArrayReadsZero() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM i AS INTEGER
       REDIM a(1 TO 4) AS INTEGER
       FOR i = 1 TO 4
@@ -408,8 +392,7 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("0  0  4"), "ERASE gives the block back and the next REDIM starts zeroed");
+    Assert.That(output.Trim(), Is.EqualTo("0  0  4"), "ERASE gives the block back and the next REDIM starts zeroed");
   }
 
   /// <summary>
@@ -419,8 +402,8 @@ public sealed class BackendDifferentialTests {
   /// index has to be scaled into a register of its own - the 8086 has no scaled index.
   /// </summary>
   [Test]
-  public void Run_GivenADynamicStringArrayWithAVariableIndex_ThenBothPathsAgree() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenADynamicStringArrayWithAVariableIndex_ThenEveryElementReadsBack() {
+    var (output, names) = Run("""
       DIM i AS INTEGER
       REDIM s(1 TO 4) AS STRING
       FOR i = 1 TO 4
@@ -433,13 +416,12 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("v4v3v2v1"));
+    Assert.That(output.Trim(), Is.EqualTo("v4v3v2v1"));
   }
 
   [Test]
-  public void Run_GivenAStringArrayGrownAndErased_ThenBothPathsAgree() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenAStringArrayGrownAndErased_ThenThePrefixSurvivesAndTheTailIsEmpty() {
+    var (output, names) = Run("""
       REDIM s(1 TO 2) AS STRING
       s(1) = "A"
       s(2) = "B"
@@ -452,14 +434,13 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Replace("\r", "").Trim(), Is.EqualTo("AB[]D\n[]"),
+    Assert.That(output.Replace("\r", "").Trim(), Is.EqualTo("AB[]D\n[]"),
       "the prefix survives, the grown tail is the empty string");
   }
 
   [Test]
   public void Run_GivenATwoDimensionalDynamicArray_ThenEveryElementReadsBack() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM r AS INTEGER, c AS INTEGER
       REDIM g(1 TO 3, 1 TO 4) AS INTEGER
       FOR r = 1 TO 3
@@ -471,16 +452,14 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Trim(), Is.EqualTo("11  23  34  4"),
+    Assert.That(output.Trim(), Is.EqualTo("11  23  34  4"),
       "the row-major flattening reaches every element of the far-heap block");
   }
 
   /// <summary>
-  /// A trap the program must take, taken. Everything else in this fixture compares two answers; this
-  /// one compares two NON-answers, and it is the case where agreeing by accident is easiest - a path
-  /// that drops the check prints the same nothing as a path that never armed it, and only running the
-  /// thing tells them apart.
+  /// A trap the program must take, taken. Everything else in this fixture reads an answer; this one
+  /// reads a NON-answer - a program that dropped the check runs on to the PRINT the trap must keep it
+  /// from reaching, and only running the thing tells the two apart.
   ///
   /// <para>
   /// The overflow check on <c>k% + 1</c> does not depend on the counter, so the middle end hoists it
@@ -496,8 +475,8 @@ public sealed class BackendDifferentialTests {
   /// </para>
   /// </summary>
   [Test]
-  public void Run_GivenAnOverflowTrapInsideALoop_ThenBothPathsRaiseIt() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenAnOverflowTrapInsideALoop_ThenItIsRaised() {
+    var (output, names) = Run("""
       $ERROR OVERFLOW ON
       $OPTIMIZE SPEED
       DECLARE FUNCTION Given%(BYVAL v%)
@@ -515,8 +494,7 @@ public sealed class BackendDifferentialTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Does.Not.Contain("not reached"),
+    Assert.That(output, Does.Not.Contain("not reached"),
       "32767 + 1 under $ERROR OVERFLOW ON must stop the program");
   }
 }

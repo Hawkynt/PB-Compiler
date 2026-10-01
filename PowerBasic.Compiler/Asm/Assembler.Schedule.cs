@@ -20,8 +20,18 @@ public sealed partial class Assembler {
   /// </summary>
   private readonly record struct SchedInstr(
     int Start, int Length, ushort Reads, ushort Writes, bool ReadsFlags, bool WritesFlags,
-    bool MemRead, bool MemWrite, object? MemBase, int MemDisp, int MemBytes) {
+    bool MemRead, bool MemWrite, MemoryCell? MemBase, int MemDisp, int MemBytes) {
     public bool TouchesMemory => this.MemRead || this.MemWrite;
+  }
+
+  /// <summary>
+  /// What a memory operand is known to address, for aliasing: a labelled cell or a frame slot
+  /// (<c>[BP+disp]</c>). An operand that is neither - indexed, or through BX/SI/DI - has no identity
+  /// (null), and may alias anything.
+  /// </summary>
+  private readonly record struct MemoryCell(Label? Label, bool IsFrame) {
+    public static MemoryCell Frame => new(null, true);
+    public static MemoryCell At(Label label) => new(label, false);
   }
 
   private List<SchedInstr>? _schedInstrs;
@@ -31,9 +41,7 @@ public sealed partial class Assembler {
   // among themselves while letting integer work interleave around them
   private const ushort _FPUSTACK = 0x8000;
 
-  // word-register slot 0..7 (AX..DI); a byte half maps to its word slot, a 32-bit name to the same slot
-  private static int RegSlot(Reg r) => r.IsByte() ? (r.Index() & 3) : r.Index();
-  private static ushort RegBit(Reg r) => (ushort)(1 << RegSlot(r));
+  private static ushort RegBit(Reg r) => (ushort)(1 << r.WordSlot());
 
   /// <summary>True when an instruction stream consumer needs the def/use records.</summary>
   private bool RecordingSched => this.EnableSchedule || this.EnableLoadForwarding;
@@ -54,8 +62,8 @@ public sealed partial class Assembler {
     if (mem.Index is { } x)
       reads |= RegBit(x);
     // aliasing identity: a direct [label] or a [BP+disp] stack slot is a distinct cell; anything indexed is unknown
-    object? memBase = mem.Index is null
-      ? (mem.Label is { } l ? l : mem.Base is { } bb && bb is Reg.BP ? "BP" : (object?)null)
+    MemoryCell? memBase = mem.Index is null
+      ? (mem.Label is { } l ? MemoryCell.At(l) : mem.Base is Reg.BP ? MemoryCell.Frame : null)
       : null;
     if (mem.Index is null && mem.Base is { } onlyBase && onlyBase is not Reg.BP)
       memBase = null;        // [BX]/[SI]/[DI] without a label: unknown
@@ -162,7 +170,7 @@ public sealed partial class Assembler {
   private static bool MemMayAlias(SchedInstr a, SchedInstr b) {
     if (a.MemBase is null || b.MemBase is null)
       return true;                                  // an indexed/unknown reference aliases everything
-    if (!ReferenceEquals(a.MemBase, b.MemBase) && !a.MemBase.Equals(b.MemBase))
+    if (a.MemBase != b.MemBase)
       return false;                                 // distinct cells (different label / stack base)
     var aStart = (long)a.MemDisp;
     var bStart = (long)b.MemDisp;

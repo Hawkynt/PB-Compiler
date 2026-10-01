@@ -13,8 +13,8 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// Floating point on the x86-16 back end. x87 computes on a <b>stack</b>, not in a register file, so
 /// it does not fit the linear-scan allocator at all - and the answer is not to make it fit. Every
 /// float SSA value lives in a frame cell, and each operation is bracketed <c>FLD ... FSTP</c>, which
-/// leaves the x87 stack empty at every instruction boundary. That is also what the direct emitter
-/// does with ST0, so the two paths agree on where a float is between operations.
+/// leaves the x87 stack empty at every instruction boundary, so where a float is between operations
+/// is never in question.
 ///
 /// The operand order matters and is easy to get backwards: pushing the left operand first leaves it
 /// in ST(1), and the popping arithmetic computes ST(1) op ST(0) - so <c>FSUBP</c> after
@@ -112,16 +112,14 @@ public sealed class BackendFloatTests {
 
       PRINT Walk%
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("Walk"), "the comparison must not silently fall back");
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("Walk"), "the function under test must not decline");
+    Assert.That(cpu.Output, Is.EqualTo(" 1.20000004023314 \r\n 0 \r\n"),
+      "0.1 and 0.3 keep their SINGLE bits, so the three trips sum to a hair over 1.2 rather than to 1.2");
   }
 
   [Test]
@@ -231,7 +229,7 @@ public sealed class BackendFloatTests {
   }
 
   [Test]
-  public void Execute_GivenFloatParametersAndResults_ThenTheRoutedStackAbiMatchesTheDirectEmitter() {
+  public void Execute_GivenFloatParametersAndResults_ThenTheStackAbiCarriesEachWidth() {
     const string source = """
       DECLARE FUNCTION Weighted#(BYVAL a#, BYVAL b!)
       DECLARE FUNCTION Echo!(BYVAL value!)
@@ -247,18 +245,16 @@ public sealed class BackendFloatTests {
         Echo! = value!
       END FUNCTION
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = false};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
+    var generator = new CodeGenerator(Bind(source)) { Optimize = false};
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("Weighted"));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("Echo"));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("Weighted"));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("Echo"));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    Assert.That(cpu.Output, Is.EqualTo(" 6.25  1.677722E+7 \r\n"),
+      "1.25 + 0.5 * 10, and 16777217 rounded to the nearest SINGLE on the way into Echo!");
   }
 
   [Test]
@@ -320,7 +316,7 @@ public sealed class BackendFloatTests {
   /// </summary>
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenMinMaxOverSingles_WhenRouted_ThenTheFloatSelectAgreesWithTheDirectBuild(bool optimize) {
+  public void Execute_GivenMinMaxOverSingles_WhenRouted_ThenTheFloatSelectPicksTheRightOperand(bool optimize) {
     const string source = """
       DIM a AS SINGLE, b AS SINGLE
       READ a
@@ -336,18 +332,14 @@ public sealed class BackendFloatTests {
     Assert.That(module!.Functions.SelectMany(f => f.AllInstructions).OfType<IrSelect>().Any(s => s.Type.IsFloat),
       "the program has to have produced a float select for this to be measuring one");
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize};
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
     Assert.Multiple(() => {
-      Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-      Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
-      Assert.That(routed.BackendRoutedNames, Does.Contain("main"), $"the module body did not route (optimize={optimize})");
-      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-      // MAX of equal operands keeps the FIRST, which is the tie rule both paths fold by
-      Assert.That(string.Join(" ", routedCpu.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)),
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("main"), $"the module body did not route (optimize={optimize})");
+      // MAX of equal operands keeps the FIRST, which is the tie rule the fold and the select share
+      Assert.That(string.Join(" ", cpu.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)),
         Is.EqualTo("8.25 3.5 3.5"));
     });
   }

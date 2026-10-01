@@ -9,7 +9,7 @@ namespace PowerBasic.Compiler.Tests.Ir;
 
 /// <summary>
 /// <c>NOINLINE</c> is a contract with the programmer - "this stays a real call" - and the IR pipeline
-/// has to honour it for the same reason the direct emitter does.
+/// has to honour it for the same reason the direct emitter did.
 ///
 /// The shape it guards is a procedure that exists only to be an optimization barrier: an empty
 /// <c>SUB</c> taking a variable BYREF, so the optimizer cannot know what the variable holds afterwards.

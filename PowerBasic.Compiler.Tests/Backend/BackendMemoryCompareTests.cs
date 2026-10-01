@@ -28,7 +28,7 @@ public sealed class BackendMemoryCompareTests {
     return model;
   }
 
-  private static string Run(string source, bool routed) {
+  private static string Run(string source) {
     var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
@@ -73,8 +73,8 @@ public sealed class BackendMemoryCompareTests {
     """;
 
   [Test]
-  public void Compare_GivenTwoMemoryOperands_ThenTheRoutedProgramMatchesTheDirectEmitter()
-    => Assert.That(Run(_SOURCE, routed: true), Is.EqualTo(Run(_SOURCE, routed: false)));
+  public void Compare_GivenTwoMemoryOperands_ThenTheProgramPrintsExactlyThreeReports()
+    => Assert.That(Run(_SOURCE), Is.EqualTo("ltlene\r\ngtgene\r\nlegeeq\r\n"));
 
   /// <summary>
   /// And stated outright, so a shared misreading of the predicate cannot pass: 3 against 7 is less,
@@ -82,7 +82,7 @@ public sealed class BackendMemoryCompareTests {
   /// </summary>
   [Test]
   public void Compare_GivenTwoMemoryOperands_ThenEachPredicateAnswersCorrectly() {
-    var lines = Run(_SOURCE, routed: true).Replace("\r\n", "\n").Trim().Split('\n');
+    var lines = Run(_SOURCE).Replace("\r\n", "\n").Trim().Split('\n');
     Assert.That(lines, Has.Length.EqualTo(3));
     Assert.That(lines[0].Trim(), Is.EqualTo("ltlene"), "3 < 7");
     Assert.That(lines[1].Trim(), Is.EqualTo("gtgene"), "7 > 3");

@@ -19,9 +19,9 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendInlineAsmTests {
 
-  private static string Run(string source, bool routed) => Run(source, routed, out _);
+  private static string Run(string source) => Run(source, out _);
 
-  private static string Run(string source, bool routed, out bool ownsMain) {
+  private static string Run(string source, out bool ownsMain) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = true};
@@ -32,8 +32,8 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
-  /// Without this, every test below could pass by falling back: when selection declines, the direct
-  /// emitter takes the function and both sides of the comparison are the same compiler.
+  /// Without this, every test below could pass on a function the selector had declined: the asm has
+  /// to reach the machine IR for the answers below to be the back end's.
   /// </summary>
   [Test]
   public void InlineAsm_GivenABoundName_ThenTheFunctionActuallySelects() {
@@ -132,7 +132,7 @@ public sealed class BackendInlineAsmTests {
 
   /// <summary>The asm writes a BASIC local, and BASIC reads what it wrote - through the routed path.</summary>
   [Test]
-  public void InlineAsm_GivenItWritesALocal_ThenTheRoutedProgramBehavesLikeTheDirectOne() {
+  public void InlineAsm_GivenItWritesALocal_ThenBasicReadsTheValueTheAsmWrote() {
     const string source = """
       DIM n AS INTEGER
       n = 1
@@ -141,12 +141,12 @@ public sealed class BackendInlineAsmTests {
       PRINT n
       """;
 
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    Assert.That(Run(source), Is.EqualTo("5"));
   }
 
   /// <summary>A read in the other direction: BASIC sets the variable, the asm loads from it.</summary>
   [Test]
-  public void InlineAsm_GivenItReadsALocal_ThenBothPathsAgree() {
+  public void InlineAsm_GivenItReadsALocal_ThenTheAsmDoublesTheValueBasicSet() {
     const string source = """
       DIM a AS INTEGER
       DIM b AS INTEGER
@@ -157,15 +157,15 @@ public sealed class BackendInlineAsmTests {
       PRINT b
       """;
 
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    Assert.That(Run(source), Is.EqualTo("14"), "7 added to itself");
   }
 
   /// <summary>
-  /// A module-level variable is storage too, and the routed path addresses the SAME data cell the
-  /// direct emitter does - the back end does not lay data out, the whole-program codegen does.
+  /// A module-level variable is storage too, and the routed path addresses the SAME data cell BASIC
+  /// does - the back end does not lay data out, the whole-program codegen does.
   /// </summary>
   [Test]
-  public void InlineAsm_GivenItTouchesAModuleVariable_ThenBothPathsAgree() {
+  public void InlineAsm_GivenItTouchesAModuleVariable_ThenBasicSeesTheAsmUpdate() {
     const string source = """
       DIM total AS SHARED INTEGER
       total = 3
@@ -175,15 +175,14 @@ public sealed class BackendInlineAsmTests {
       PRINT total
       """;
 
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    Assert.That(Run(source), Is.EqualTo("7"), "3 + 4");
   }
 
   /// <summary>
   /// The documented string-manager ABI, called by name: push the handle, <c>CALL GetStrLoc</c>, and
   /// the routine answers DX:AX = a far pointer at the characters and CX = the length. The name is
   /// CODE, so nothing about it belongs to a frame - the emitter resolves it to the runtime's own
-  /// label, and the exact first character and length are asserted rather than only agreement, since
-  /// two paths that both got a null pointer would agree too.
+  /// label, and the exact first character and length are asserted.
   /// </summary>
   [Test]
   public void InlineAsm_GivenTheStringManagerAbiCalledByName_ThenTheHandleResolvesToItsCharacters() {
@@ -202,8 +201,7 @@ public sealed class BackendInlineAsmTests {
       PRINT r%; c%
       """;
 
-    Assert.That(Run(source, routed: true), Is.EqualTo("88  5"), "'X' is 88, and the string is five long");
-    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+    Assert.That(Run(source), Is.EqualTo("88  5"), "'X' is 88, and the string is five long");
   }
 
   /// <summary>
@@ -232,8 +230,7 @@ public sealed class BackendInlineAsmTests {
       PRINT n
       """;
 
-    Assert.That(Run(source, routed: true), Is.EqualTo("5"), "the asm branch drove five BASIC iterations");
-    Assert.That(Run(source, routed: false), Is.EqualTo(Run(source, routed: true)));
+    Assert.That(Run(source), Is.EqualTo("5"), "the asm branch drove five BASIC iterations");
   }
 
   /// <summary>
@@ -242,11 +239,9 @@ public sealed class BackendInlineAsmTests {
   /// and for how long.
   ///
   /// <para>
-  /// The two paths agree, and what matters is WHY. They used to agree because the routed side declined
-  /// the whole function, so both numbers came from the same compiler; now the module body really is
-  /// the back end's - asserted here, or this would go on passing the day something quietly took the
-  /// routing away - and it keeps <c>CX</c> because the allocator was told the text is holding it,
-  /// rather than because the direct emitter happens to compute through AX.
+  /// The module body really is the back end's - asserted here, or this would go on passing the day
+  /// something quietly took the routing away - and it keeps <c>CX</c> because the allocator was told
+  /// the text is holding it.
   /// </para>
   /// </summary>
   [Test]
@@ -261,18 +256,17 @@ public sealed class BackendInlineAsmTests {
       PRINT n; r
       """;
 
-    var routed = Run(source, routed: true, out var ownsMain);
+    var routed = Run(source, out var ownsMain);
 
     Assert.That(ownsMain, Is.True, "the back end compiled the module body, so the answer below is its own");
     Assert.That(routed, Is.EqualTo("1  5"), "the 5 the asm put in CX survived n = n + 1");
-    Assert.That(Run(source, routed: false), Is.EqualTo(routed));
   }
 
   /// <summary>
   /// ...and what still declines: a register carried across something that DESTROYS it. A runtime call
   /// owns the whole caller-saved file, so no allocation can keep the 5 in <c>CX</c> over the
-  /// <c>PRINT</c> - there is nothing to choose, and the function goes back to the direct emitter whole
-  /// rather than being compiled to a guess.
+  /// <c>PRINT</c> - there is nothing to choose, and the function declines whole rather than being
+  /// compiled to a guess.
   /// </summary>
   [Test]
   public void InlineAsm_GivenARegisterHeldAcrossACall_ThenAllocationDeclines() {
@@ -357,7 +351,7 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
-  /// The corpus program the whole promise was written for, compiled and run end to end on both paths.
+  /// The corpus program the whole promise was written for, compiled and run end to end.
   /// LOWLEVEL.BAS counts <c>CX</c> down across <c>n = n + 1</c> and prints the iteration count, so its
   /// second line reads 5 only if the countdown survived the BASIC statement - the routed path printed
   /// 1 for it, which is what a register the allocator felt free to reuse looks like from the outside.
@@ -369,11 +363,10 @@ public sealed class BackendInlineAsmTests {
     Assume.That(File.Exists(file), $"no corpus program at {file}");
     var source = File.ReadAllText(file);
 
-    var routed = Run(source, routed: true, out var ownsMain);
+    var routed = Run(source, out var ownsMain);
 
     Assert.That(ownsMain, Is.True, "the module body routes rather than falling back");
     Assert.That(routed.Split('|')[1].Trim(), Is.EqualTo("5"), "the asm countdown drove five BASIC iterations");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
     Assert.That(routed.Replace("|", "\n").Replace(" ", ""),
       Is.EqualTo(File.ReadAllText(Path.Combine(root, "tests", "LOWLEVEL.expected"))
         .Trim().Replace("\r\n", "\n").Replace(" ", "")),
@@ -449,8 +442,8 @@ public sealed class BackendInlineAsmTests {
   }
 
   /// <summary>
-  /// The call target really does route rather than fall back to the direct emitter - which is the
-  /// only thing that makes the assertion above about the ROUTED path mean anything.
+  /// The call target really does route rather than decline - which is the only thing that makes the
+  /// assertion above about the ROUTED path mean anything.
   /// </summary>
   [Test]
   public void InlineAsm_GivenAnExportCalledByName_ThenTheBlockIsRoutableWithNoCellForIt() {
@@ -501,9 +494,8 @@ public sealed class BackendInlineAsmTests {
       PRINT total
       """;
 
-    var routed = Run(source, routed: true, out var ownsMain);
+    var routed = Run(source, out var ownsMain);
     Assert.That(ownsMain, Is.True, "the saved register must not decline the function");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
     Assert.That(routed, Is.EqualTo("201"), "66 + 67 + 68");
   }
 
@@ -541,9 +533,8 @@ public sealed class BackendInlineAsmTests {
       END FUNCTION
       """;
 
-    var routed = Run(source, routed: true, out var ownsMain);
+    var routed = Run(source, out var ownsMain);
     Assert.That(ownsMain, Is.True, "the zeroing idiom consumes nothing, so nothing crosses the call");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
     Assert.That(routed, Is.EqualTo("13  13"), "6 doubled plus one, then zero plus that");
   }
 
@@ -581,8 +572,7 @@ public sealed class BackendInlineAsmTests {
 
     Assert.That(cg.BackendRoutedNames, Does.Contain("GetPix").IgnoreCase,
       "the reload of the BYREF pointer must not claim the registers the asm block declares");
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
-    Assert.That(Run(source, routed: true), Is.EqualTo("30"), "10 + 20, read back through the pointer");
+    Assert.That(Run(source), Is.EqualTo("30"), "10 + 20, read back through the pointer");
   }
 
   /// <summary>
@@ -608,9 +598,8 @@ public sealed class BackendInlineAsmTests {
       PRINT v; w
       """;
 
-    var routed = Run(source, routed: true, out var ownsMain);
+    var routed = Run(source, out var ownsMain);
     Assert.That(ownsMain, Is.True, "the two halves define the word between them");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
     Assert.That(routed, Is.EqualTo("85  4"), "65 + 20, then the word the two halves built");
   }
 
@@ -642,9 +631,8 @@ public sealed class BackendInlineAsmTests {
       PRINT total
       """;
 
-    var routed = Run(source, routed: true, out var ownsMain);
+    var routed = Run(source, out var ownsMain);
     Assert.That(ownsMain, Is.True, "the run spans a label, and is still one run");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false)));
     Assert.That(routed, Is.EqualTo("202"), "66, then 67 rounded up to 68, then 68");
   }
   /// <summary>
@@ -652,7 +640,7 @@ public sealed class BackendInlineAsmTests {
   /// what hid the defect below for as long as it did: the optimizer's own rewriting happened to move
   /// the block boundary out from between the save and its restore.
   /// </summary>
-  private static (string Output, bool Routed) RunProcedure(string source, string procedure, bool routed) {
+  private static (string Output, bool Routed) RunProcedure(string source, string procedure) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = false};
@@ -730,9 +718,8 @@ public sealed class BackendInlineAsmTests {
       END SUB
       """;
 
-    var (routed, tookIt) = RunProcedure(source, "Fill", routed: true);
+    var (routed, tookIt) = RunProcedure(source, "Fill");
     Assert.That(tookIt, Is.True, "a label inside the run must not end it");
-    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Fill", routed: false).Output));
     Assert.That(routed, Is.EqualTo("7  7  0  9  9  9  1"));
   }
   /// <summary>
@@ -780,9 +767,8 @@ public sealed class BackendInlineAsmTests {
       END SUB
       """;
 
-    var (routed, tookIt) = RunProcedure(source, "Slide", routed: true);
+    var (routed, tookIt) = RunProcedure(source, "Slide");
     Assert.That(tookIt, Is.True, "a repeated move in a loop must not read the increment's flags");
-    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Slide", routed: false).Output));
     Assert.That(routed, Is.EqualTo("0  3  5  9"));
   }
   /// <summary>
@@ -823,9 +809,8 @@ public sealed class BackendInlineAsmTests {
       END SUB
       """;
 
-    var (routed, tookIt) = RunProcedure(source, "Borrow", routed: true);
+    var (routed, tookIt) = RunProcedure(source, "Borrow");
     Assert.That(tookIt, Is.True, "a saved and restored frame pointer must not decline the function");
-    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Borrow", routed: false).Output));
     Assert.That(routed, Is.EqualTo("8"), "v is still reachable through BP after the pair");
   }
 
@@ -882,9 +867,8 @@ public sealed class BackendInlineAsmTests {
       END SUB
       """;
 
-    var (routed, tookIt) = RunProcedure(source, "Relay", routed: true);
+    var (routed, tookIt) = RunProcedure(source, "Relay");
     Assert.That(tookIt, Is.True, "an inferred read of the whole file must not refuse the function");
-    Assert.That(routed, Is.EqualTo(RunProcedure(source, "Relay", routed: false).Output));
     Assert.That(routed, Is.EqualTo("42"), "the statement between the two runs still computed");
   }
 }

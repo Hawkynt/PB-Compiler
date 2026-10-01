@@ -9,6 +9,74 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class SimplifyCfgTests {
 
+  /// <summary>
+  /// A loop guarded by a flag phi that one latch edge carries unchanged (<c>[%flag, keep]</c>) and
+  /// the other clears. Threading the entry edge - whose flag is the constant 1 - straight into the
+  /// body removed that 1 from the header phi, which then looked trivial and folded to 0: the loop's
+  /// back edge went to the exit and the counter phi was merged into its own increment. The portable
+  /// runtime's INPUT field reader has exactly this shape (<c>WHILE reading</c>).
+  /// </summary>
+  [Test]
+  public void Run_GivenALoopFlagCarriedUnchangedOnALatchEdge_ThenTheLoopSurvivesThreading() {
+    var fn = new IrFunction("f", IrType.I32);
+    var stopHere = new IrFunction("stop_here", IrType.I1);
+    var entry = fn.CreateBlock("entry");
+    var header = fn.CreateBlock("header");
+    var body = fn.CreateBlock("body");
+    var stop = fn.CreateBlock("stop");
+    var keep = fn.CreateBlock("keep");
+    var latch = fn.CreateBlock("latch");
+    var exit = fn.CreateBlock("exit");
+    new IrBuilder(entry).Br(header);
+    var h = new IrBuilder(header);
+    var flag = h.Phi(IrType.I1);
+    var count = h.Phi(IrType.I32);
+    h.CondBr(flag, body, exit);
+    var b = new IrBuilder(body);
+    b.CondBr(b.Call(IrType.I1, stopHere), stop, keep);
+    new IrBuilder(stop).Br(latch);
+    var k = new IrBuilder(keep);
+    var incremented = k.Add(count, IrBuilder.ConstI32(1));
+    k.Br(latch);
+    var l = new IrBuilder(latch);
+    var nextFlag = l.Phi(IrType.I1);
+    nextFlag.AddIncoming(IrBuilder.ConstBool(false), stop);
+    nextFlag.AddIncoming(flag, keep);
+    var nextCount = l.Phi(IrType.I32);
+    nextCount.AddIncoming(count, stop);
+    nextCount.AddIncoming(incremented, keep);
+    l.Br(header);
+    flag.AddIncoming(IrBuilder.ConstBool(true), entry);
+    flag.AddIncoming(nextFlag, latch);
+    count.AddIncoming(IrBuilder.ConstI32(0), entry);
+    count.AddIncoming(nextCount, latch);
+    new IrBuilder(exit).Ret(count);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty, "the input is valid SSA");
+
+    SimplifyCfg.Run(fn);
+
+    Assert.Multiple(() => {
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+      var call = fn.AllInstructions.OfType<IrCall>().Single();
+      Assert.That(Reaches(call.Parent!, call.Parent!), Is.True, "the call is still inside a loop");
+      Assert.That(fn.AllInstructions.OfType<IrBinary>().Single().Lhs, Is.InstanceOf<IrPhi>(),
+        "the count is still a loop-carried phi, not its own increment");
+    });
+  }
+
+  private static bool Reaches(IrBasicBlock from, IrBasicBlock to) {
+    var seen = new HashSet<IrBasicBlock>();
+    var work = new Stack<IrBasicBlock>(from.Successors);
+    while (work.TryPop(out var block)) {
+      if (ReferenceEquals(block, to))
+        return true;
+      if (seen.Add(block))
+        foreach (var successor in block.Successors)
+          work.Push(successor);
+    }
+    return false;
+  }
+
   [Test]
   public void Run_MergesAChainOfSinglePredecessorBlocks() {
     // entry -> a -> b -> exit, all unconditional: collapses into one block

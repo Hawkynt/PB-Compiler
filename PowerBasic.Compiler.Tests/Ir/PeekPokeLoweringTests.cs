@@ -10,11 +10,8 @@ namespace PowerBasic.Compiler.Tests.Ir;
 /// PEEK and POKE on the IR path.
 ///
 /// <para>
-/// The direct emitter writes both inline - <c>MOV ES, [rt_defseg]</c> and a segment-overridden byte
-/// access - and a segment override is not something the IR can say. They become runtime routines for
-/// the same reason CSRLIN and CONSIN did, and reading the SAME <c>rt_defseg</c> cell the inline form
-/// reads is what lets a program set DEF SEG in a directly-emitted statement and read it in a routed
-/// one without noticing which is which.
+/// A segment override is not something the IR can say, so both become runtime routines for the same
+/// reason CSRLIN and CONSIN did, reading the <c>rt_defseg</c> cell DEF SEG writes.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -26,7 +23,7 @@ public sealed class PeekPokeLoweringTests {
     return model;
   }
 
-  private static string Run(string source, bool routed) {
+  private static string Run(string source) {
     var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
@@ -38,20 +35,20 @@ public sealed class PeekPokeLoweringTests {
   /// the pair reads and writes bytes in it. A000 is the VGA graphics window - present, writable, and
   /// not somewhere the runtime keeps anything, so the byte that comes back is the byte that went in.
   /// </summary>
-  private static readonly (string Name, string Source)[] _programs = [
+  private static readonly (string Name, string Source, string Expected)[] _programs = [
     ("round trip", """
       DEF SEG = &HA000
       POKE 100, 77
       PRINT PEEK(100)
       DEF SEG
       END
-      """),
+      """, "77"),
     ("segmented form", """
       POKE &HA000:200, 90
       PRINT PEEK(&HA000:200)
       DEF SEG
       END
-      """),
+      """, "90"),
     ("in a loop", """
       DIM i AS INTEGER
       DIM t AS INTEGER
@@ -65,7 +62,7 @@ public sealed class PeekPokeLoweringTests {
       DEF SEG
       PRINT t
       END
-      """),
+      """, "303"),
     ("segment outlives the statement", """
       DEF SEG = &HA000
       POKE 400, 12
@@ -75,27 +72,27 @@ public sealed class PeekPokeLoweringTests {
       PRINT PEEK(400)
       DEF SEG
       END
-      """),
+      """, "12"),
   ];
 
   /// <summary>The IR must accept the program at all - before this, POKE took the whole program off the path.</summary>
   [Test]
   public void Lowering_GivenPeekAndPoke_ThenTheModuleLowers() {
-    foreach (var (name, source) in _programs) {
+    foreach (var (name, source, _) in _programs) {
       var module = IrLowering.TryLowerModule(Bind(source), out var why);
       Assert.That(module, Is.Not.Null, $"'{name}' declined: {why}");
     }
   }
 
   /// <summary>
-  /// And the routed program must behave as the directly-emitted one does. This is the assertion that
-  /// matters: a runtime routine that read a different segment, or reported the byte signed, would
-  /// lower perfectly well and answer wrongly.
+  /// And the program must print the bytes that went in. This is the assertion that matters: a runtime
+  /// routine that read a different segment, or reported the byte signed, would lower perfectly well
+  /// and answer wrongly.
   /// </summary>
   [Test]
-  public void Routed_GivenPeekAndPoke_ThenItBehavesAsTheDirectEmitterDoes() {
-    foreach (var (name, source) in _programs)
-      Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)), $"program '{name}'");
+  public void Run_GivenPeekAndPoke_ThenEachProgramReadsBackTheBytesItWrote() {
+    foreach (var (name, source, expected) in _programs)
+      Assert.That(Run(source).Trim(), Is.EqualTo(expected), $"program '{name}'");
   }
 
   /// <summary>
@@ -112,7 +109,6 @@ public sealed class PeekPokeLoweringTests {
       DEF SEG
       END
       """;
-    Assert.That(Run(source, routed: true).Trim(), Is.EqualTo("200"));
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    Assert.That(Run(source).Trim(), Is.EqualTo("200"));
   }
 }

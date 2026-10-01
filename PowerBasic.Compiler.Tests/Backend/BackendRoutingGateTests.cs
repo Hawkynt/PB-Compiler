@@ -193,7 +193,7 @@ public sealed class BackendRoutingGateTests {
       """, "S"),
     // A BYREF record is one near pointer on this ABI; the layout never crosses the boundary, so member
     // uses lower to ordinary typed GEP/load/store against the caller's storage. BackendRecordParameter-
-    // RoutingTests executes the routed image against the direct one, offsets and write-back included.
+    // RoutingTests executes the routed image and reads what it prints, offsets and write-back included.
     new("BYREF record parameter", """
       TYPE T
         a AS INTEGER

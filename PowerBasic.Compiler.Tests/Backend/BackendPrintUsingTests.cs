@@ -10,22 +10,16 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <c>PRINT USING</c> and <c>LPRINT</c> through the retargetable path, executed and read.
 ///
 /// <para>
-/// Every case here asserts TWICE: that the routed image behaves exactly as the direct emitter's
-/// does, and separately that the text is the text PowerBASIC's formatter produces. The first check
-/// alone would pass for two back ends sharing one misunderstanding of the format - which is a real
-/// risk here, because they now share the format PARSER
-/// (<see cref="PowerBasic.Compiler.Runtime.UsingFormat"/>) - and the second alone would not notice
-/// the routed path taking a different road to the same string on one input and a different string
-/// on the next. Field widths, digit positions, decimal alignment, sign, grouping and a value too
-/// wide for its field each get their own reading.
+/// Every case here asserts that the text is the text PowerBASIC's formatter produces, with the
+/// optimizer on and with it off. Field widths, digit positions, decimal alignment, sign, grouping
+/// and a value too wide for its field each get their own reading.
 /// </para>
 ///
 /// <para>
 /// The format surface is the DOS runtime's, which is narrower than genuine PowerBASIC's: only
 /// <c>#</c> digit runs, an optional <c>.</c> fraction and commas inside the digit run mean anything.
-/// <c>$$</c>, <c>**</c>, <c>+</c>, <c>^^^^</c> and the string fields are literal text on BOTH paths,
-/// and there are cases below pinning that, because "the two emitters agree" has to include agreeing
-/// about what they do not implement.
+/// <c>$$</c>, <c>**</c>, <c>+</c>, <c>^^^^</c> and the string fields are literal text, and there are
+/// cases below pinning that, because what is not implemented has to be a stated answer too.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -40,34 +34,26 @@ public sealed class BackendPrintUsingTests {
   /// <summary>What one run was observed to do: the screen, the printer, and any file it wrote.</summary>
   private sealed record Behaviour(string Screen, string Printer, string? File);
 
-  /// <summary>Compiles both ways, runs both images, and asserts the module body really was routed.</summary>
-  private static (Behaviour Direct, Behaviour Routed) RunBothWays(string source, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize};
+  /// <summary>Compiles and runs the image, and asserts the module body really was routed.</summary>
+  private static Behaviour Run(string source, bool optimize) {
     var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
-    var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
-      "the back end did not take the module body, so this compares the direct emitter with itself");
+    Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the back end did not take the module body");
 
-    Behaviour Execute(byte[] image, string which) {
-      try {
-        var cpu = Cpu8086.Run(image);
-        return new(cpu.Output, cpu.PrinterOutput, cpu.FileContent("OUT.TXT"));
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return new("", "", null);
-      }
+    try {
+      var cpu = Cpu8086.Run(routedImage);
+      return new(cpu.Output, cpu.PrinterOutput, cpu.FileContent("OUT.TXT"));
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return new("", "", null);
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"));
   }
 
   /// <summary>
-  /// One statement, both optimization settings. They are different emitters - with the optimizer off
+  /// One statement, both optimization settings. They take different roads - with the optimizer off
   /// there is no constant folding, so a USING field's scale-and-round happens at RUNTIME on the x87
-  /// rather than in <c>IrConstFold</c>, and only running both says the two agree about it.
+  /// rather than in <c>IrConstFold</c>, and only running both says each gives the expected text.
   /// </summary>
   private static void Prints(string statements, string expected)
     => Behaves(statements, expected, null, null);
@@ -75,8 +61,7 @@ public sealed class BackendPrintUsingTests {
   /// <summary>...and the same for a program whose destination is the printer or a file.</summary>
   private static void Behaves(string statements, string screen, string? printer, string? file) {
     foreach (var optimize in new[] { true, false }) {
-      var (direct, routed) = RunBothWays(statements, optimize);
-      Assert.That(routed, Is.EqualTo(direct), $"the two back ends disagree (optimize={optimize})");
+      var routed = Run(statements, optimize);
       Assert.That(Normalize(routed.Screen), Is.EqualTo(screen), $"screen (optimize={optimize})");
       if (printer is not null)
         Assert.That(Normalize(routed.Printer), Is.EqualTo(printer), $"printer (optimize={optimize})");
@@ -148,7 +133,7 @@ public sealed class BackendPrintUsingTests {
   [Test]
   public void Using_GivenAValueTooWideForItsField_ThenItOverflowsTheFieldRatherThanBeingTruncated()
     // PowerBASIC proper marks an overflowing field with a leading '%'. The DOS runtime does not, and
-    // this pins the answer both back ends actually give rather than the one the manual describes -
+    // this pins the answer the runtime actually gives rather than the one the manual describes -
     // the digits are all there, the column alignment is what is lost
     => Prints("""PRINT USING "##"; 12345""", "12345\n");
 
@@ -167,10 +152,10 @@ public sealed class BackendPrintUsingTests {
 
   [Test]
   public void Using_GivenTheLargestValueTheFormatterCanHold_ThenItStillRenders() {
-    // rt_usefmt takes the SCALED value in DX:AX, so a two-decimal field tops out at 21474836.47 on
-    // both paths. This pins the ceiling from below - a change that lowered it would break here
-    // rather than in whatever program first exceeded it. Above it the two back ends produce
-    // different wrong answers; see LowerPrintUsing for why there is no rule that fixes both.
+    // rt_usefmt takes the SCALED value in DX:AX, so a two-decimal field tops out at 21474836.47.
+    // This pins the ceiling from below - a change that lowered it would break here rather than in
+    // whatever program first exceeded it. Above it the answer is wrong; see LowerPrintUsing for why
+    // there is no rule that fixes it.
     Prints("""PRINT USING "###,###,###.##"; 21474836.47#""", " 21,474,836.47\n");
   }
 
@@ -195,29 +180,28 @@ public sealed class BackendPrintUsingTests {
   [Test]
   public void Using_GivenACommaBetweenValues_ThenItIsNotAPrintZone()
     // outside USING a comma advances to the next 14-column zone. Inside one the format decides the
-    // spacing and the separator only says where one value ends, which is what both paths do with it
+    // spacing and the separator only says where one value ends
     => Prints("""PRINT USING "## ##"; 1, 2""", " 1  2\n");
 
   [Test]
   public void Using_GivenAStringValueInANumericField_ThenItPrintsAsItselfUnpadded()
     // PB's '&' approximation: the runtime's numeric formatter has nothing to do with a string, so
-    // the direct emitter prints it verbatim and this path does the same
+    // it prints verbatim
     => Prints("""PRINT USING "###"; "ab" """, "ab\n");
 
   [Test]
-  public void Using_GivenACurrencyOrFillPrefix_ThenItIsLiteralTextOnBothPaths() {
+  public void Using_GivenACurrencyOrFillPrefix_ThenItIsLiteralText() {
     // $$ and ** are floating-currency and asterisk-fill in genuine PB and are NOT implemented by the
-    // DOS runtime's formatter. Both back ends print them as the characters they are; this fixes that
-    // agreed answer so a future implementation has to change it deliberately.
+    // DOS runtime's formatter. They print as the characters they are; this fixes that answer so a
+    // future implementation has to change it deliberately.
     Prints("""PRINT USING "$$##.##"; 1.5""", "$$ 1.50\n");
     Prints("""PRINT USING "**##"; 7""", "** 7\n");
   }
 
   [Test]
   public void Using_GivenAFileNumber_ThenTheFormattedTextGoesToTheFileAndTheScreenIsRestored() {
-    // the select/restore is per CALL on this path and per STATEMENT on the other, so both halves are
-    // read: the literal and the field both land in the file, and the PRINT after still reaches the
-    // screen
+    // the select/restore is per CALL on this path, so both halves are read: the literal and the
+    // field both land in the file, and the PRINT after still reaches the screen
     Behaves("""
       OPEN "OUT.TXT" FOR OUTPUT AS #1
       PRINT #1, USING "pi=##.##"; 3.14159
@@ -346,7 +330,7 @@ public sealed class BackendPrintUsingTests {
 
   [Test]
   public void Using_GivenANonLiteralFormat_ThenTheLoweringDeclines() {
-    // there is nothing to read at compile time, and the direct emitter refuses it too
+    // there is nothing to read at compile time
     var module = IrLowering.TryLowerModule(Bind("""
       f$ = "##.##"
       PRINT USING f$; 3.14159

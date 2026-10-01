@@ -102,23 +102,8 @@ pbc --emit-c PROG.BAS -O prog.c
 cc -std=c99 -O2 -I runtime -o prog prog.c runtime/pbc_rt.c -lm
 ```
 
-`--platform x86-32|x64` does both steps itself: it writes the translation unit and the
-embedded runtime to a temporary directory and drives the host compiler (`$CC`, else `cc`,
-`gcc` or `clang`) with `-m32`/`-m64`. What comes out depends on the emit option:
-
-| Option | x86-16 (DOS, default) | x86-32 / x64 | 6502 |
-|---|---|---|---|
-| *(none)* | MZ `.EXE` | ELF executable | C64 `.PRG` |
-| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a DOS container | refused |
-| `$COMPILE UNIT` | `.PBU` | refused: use `--emit-obj` or `--emit-lib` | refused |
-| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o` (the program only) | refused |
-| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `.a` archive: the program and the runtime | refused |
-
-Before any build, `HostToolchain` asks the compiler to link a one-line program for the
-requested machine. A 64-bit Linux host usually has a compiler that accepts `-m32` but no
-32-bit C library behind it; that is reported as such, not as the compiler's
-`gnu/stubs-32.h` complaint. `PlatformTests` builds, links and runs all three artifacts per
-platform, and skips a platform the host cannot target.
+The C back end is a rendering, for reading or for a C toolchain someone else runs; no `pbc`
+build goes through it. Native Linux programs come from the native x86 back end below.
 
 C99, no compiler extensions. Two details are load-bearing:
 
@@ -158,6 +143,88 @@ this path with the host C compiler and diffs the result against that golden — 
 same file the DOSBox battery checks the 16-bit executable against. A program outside
 the lowering's subset is reported and skipped, never quietly passed.
 
+## The native x86-32 / x64 back end (`--platform x86-32|x64`)
+
+```bash
+pbc --platform x64 PROG.BAS           # -> PROG, a static Linux executable
+pbc --platform x86-32 --emit-obj P.BAS  # -> P.o, exporting pb_main and pb_start
+```
+
+Nothing but `pbc` is involved: no C compiler, assembler or linker. The IR goes through the hosted
+middle end (`RunHostedModule`, the one `--emit-c` uses), `Runtime/Portable/PortableRuntime` defines
+the `rt_*` functions the module calls into it - before the middle end, so the optimizer sees runtime
+and program together, and again after it for the calls it introduced - and `Backend/X86Native`
+compiles the lot.
+
+- **`X86Assembler`** is the instruction set as types, for both modes: `X86Reg`, `X86Width`,
+  `X86Mem`, the ALU/shift/x87 groups as enums, immediates under their own method names (a literal `0`
+  converts silently to a register enum, so `Mov(w, reg, 0)` would be ambiguous). It keeps text, data
+  and bss sections; a label reference is a fixup - RIP-relative on x64, absolute on i386 - resolved
+  at layout for an executable and turned into a relocation for an object.
+- **`X86NativeCompiler`** gives every SSA value and local a slot below the frame pointer, passes
+  arguments in a caller-reserved stack area above it and returns through one static area, so
+  recursion needs nothing special. Integers are worked in `eax`/`rax`; on i386 a 64-bit value is
+  worked in halves, with multiply, divide and shifts written out (`WideMultiply`, `WideDivide`,
+  `WideShift`). Floats are x87 in their IEEE memory formats - SINGLE, DOUBLE and the 80-bit EXT -
+  so they get the same 80-bit arithmetic the DOS programs do; SQR, SIN, LOG, `^` and the rest are
+  the x87's own instructions. Division by zero and BASIC's domain errors raise through `rt_error`
+  instead of faulting.
+- **`PortableRuntime`** is the runtime written once, as IR built with a small structured writer
+  (`IrWriter`: locals, `If`, `While`), split by concern: `PRINT` with BASIC's sign slot, zones,
+  `TAB` and `SPC`; numbers as text both ways - the `%G`-shaped float formatting at 7, 15 or 18
+  digits (scaled by correctly rounded powers of ten kept as EXT constants) shared by `PRINT` and
+  `STR$`, `HEX$`/`OCT$`/`BIN$` with the DOS 16-bit fold, and a BASIC-shaped `VAL`; strings - a
+  power-of-two size-class heap (error 14 when it runs out), handles pointing at `[length][bytes]`,
+  a null handle as `""`, and every `rt_str_*` routine the battery uses, CONSUMING the handles it is
+  given as the DOS runtime does (`RuntimeAbi.cs` names the few that borrow) - `runtime/pbc_rt.c`
+  never frees, which only a host with memory to spare can afford; dynamic arrays on the same heap
+  (error 7); sequential and record files and `INPUT`; `rt_error`, `rt_end`. A varargs
+  `rt_str_concat_n` is rewritten into the pairwise chain it stands for, since IR cannot read C
+  varargs. Its whole contact with the operating system is a handful of primitives each back end
+  emits - `sys_write`, `sys_read`, `sys_open`, `sys_close`, `sys_seek`, `sys_unlink`, `sys_exit` -
+  here Linux system calls (`syscall` on x64, `int 0x80` on i386, which is why an i386 program runs
+  on an x64 kernel with no 32-bit library installed), and `sys_trap`, the question `rt_error` asks
+  first.
+- **`ON ERROR`, `TRY` and `EXIT FAR`** are the back end's, because arming captures the current
+  frame and a call would capture its own. The state is the DOS runtime's: a handler cell - nought
+  when disarmed, a RESUME NEXT stub for `ON ERROR RESUME NEXT` - with the frame and stack it runs
+  in, which is exactly the triple `TRY` saves and restores (`rt_onerr`, `rt_onerr_bp`,
+  `rt_onerr_sp`, pointer-sized in the IR, map onto the three cells). `sys_trap`, like `rt_raise`,
+  sets `ERR` and, with a handler armed, latches the faulting statement for RESUME, restores the
+  frame and stack and jumps through the handler. A procedure that arms a handler keeps its caller's
+  in its frame and puts it back on return, as the DOS back end does; `EXIT FAR` has a triple of its
+  own. `FlatTargetNonLocalJumpTests` runs the same programs here, on the 6502 and on DOS, and wants
+  DOS's output from all of them.
+- **`Emit/Elf/ElfWriter`** writes the ELF containers, and **`Ir/IrUnitFile`** the units of the
+  three IR platforms. What every platform builds:
+
+| Option | x86-16 (DOS, default) | x86-32 / x64 | 6502 |
+|---|---|---|---|
+| *(none)* | MZ `.EXE` | static ELF executable | C64 `.PRG` |
+| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a COM image is DOS's own container (a PSP, an entry at `0100h`) | refused, likewise |
+| `$COMPILE UNIT` | `.PBU` of 8086 code | `.PBU` of IR | `.PBU` of IR |
+| `pbc lib build` | `.PBL` / OMF `.LIB` | `.PBL` of IR units | `.PBL` of IR units |
+| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o`: `pb_main` for a C caller, `pb_start` to link alone | `.OBJ`: an IR unit |
+| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `ar` archive of that object, with the GNU symbol index | `.LIB`: an IR library of that unit |
+| `$LINK` | 8086 PBU, PBL, OMF OBJ and LIB | IR units and libraries | IR units and libraries, `.OBJ`/`.LIB` included |
+
+**Units on the IR platforms** hold the unit's lowered IR, before any optimization
+(`IrUnitFile`: a versioned binary encoding every instruction, attribute and exact constant, which
+`IrUnitFileTests` round-trips over the whole battery). `$LINK` reads them back and
+`IrModuleLinker` joins them to the program right after lowering - procedures by name,
+case-insensitively and with their signatures checked; the runtime's `rt_*` cells as the one cell
+each is - so the middle end optimizes program and units as one module, and one unit links into any
+of the three platforms. As on DOS a unit is procedures only, and it may import a procedure the
+program supplies. The magic tells an IR unit from an 8086 one, and each platform refuses the
+other's with the reason. `FlatTargetUnitTests` compiles a unit and a program linking it - directly,
+through a library, and as the 6502's object and library - on x86-32, x64, the 6502 and DOS, and
+wants DOS's output from all of them.
+
+`PlatformTests` builds, runs and links all three artifacts for both machines - the host C compiler,
+or the bare `ld` where there is no 32-bit C library, is the oracle that the objects link, never part
+of the build. `NativeBatteryTests` run every DOS battery program the back end accepts against its
+DOS golden output, per machine, with a floor under how many that is.
+
 ## The 6502 back end (`--platform 6502`)
 
 ```bash
@@ -173,28 +240,73 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   `M6502Mode` the chip has, or an exception where it is written. The assembler resolves labels and
   relaxes a conditional branch that cannot reach its target into the inverse branch over a `JMP`.
 - **Values live in static frames.** Every function gets one fixed address per argument, SSA value
-  and local, addressed absolutely - the fastest access the 6502 has. Recursion is the one thing that
+  and local, addressed absolutely - the fastest access the 6502 has. Frames share memory through a
+  call-graph overlay: a function's frame sits above those of everything it calls, so functions on
+  different branches of the call tree reuse the same bytes, and the innermost functions - the
+  tightest loops - land in the page-zero window left over below `$90`, where every access is a
+  two-byte instruction. Recursion is the one thing that
   makes a static frame wrong, and the call graph says where it can happen: a function in a cycle
   (Tarjan's SCCs over direct calls) saves its own frame to a soft stack at `$C000`-`$CFFF` before a
   call back into the cycle and restores it after. A call out of the cycle, and every call in a program
   without recursion, pays nothing for it.
-- **`Mos6502Runtime`** is assembled into the program routine by routine as the code asks for them:
-  `PRINT` with BASIC's sign slot, zones, `TAB` and `SPC`; 16- and 32-bit multiply and signed and
-  unsigned divide (error 11 on a zero divisor); frame save and restore; `rt_error`/`rt_end`.
-  Output goes through the KERNAL's `CHROUT` after start-up selects the lower-case character set,
-  and ASCII is mapped onto its PETSCII.
-- **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$2F`, BASIC's own)
-  and the stack pointer are saved on entry and restored on exit, so the final `RTS` - or `END`, or a
+- **The runtime is the portable one** (`Runtime/Portable`, the same IR x86-32 and x64 compile):
+  `PRINT`, `INPUT`, strings, `VAL`/`STR$` and BASIC's errors; `ON ERROR`, `TRY` and `EXIT FAR` are
+  the compiler's, in the DOS runtime's shape as on x86-32 and x64. What the 6502 supplies itself is
+  `Mos6502Runtime`, assembled routine by routine as the code asks for them: `sys_write` through the
+  KERNAL's `CHROUT` (ASCII mapped onto PETSCII after start-up selects the lower-case character set,
+  a new line as a carriage return), `sys_read` on the console through `CHRIN` (PETSCII back to
+  ASCII, the carriage return as a new line), a run-time error that unwinds to the armed handler
+  with the stack pointers saved when it was armed, 16-, 32- and 64-bit multiply and divide (error 11 on a zero
+  divisor), frame save and restore, and the runtime's own block copy in place of `rt.copy`'s IR body.
+- **Floating point is soft float** (`Mos6502Runtime.Float.cs`). A SINGLE, DOUBLE or EXT is stored in
+  its IEEE format and unpacked into page-zero accumulators with a 72-bit mantissa - 64 bits and a
+  guard byte whose bit 0 is sticky - so an operation is exact up to that bit and rounds to
+  nearest-even once, when it is packed back into the format its IR type names. There are no
+  infinities: overflow is error 6, a zero divisor error 11. `Mos6502FloatTests` hold add, subtract,
+  multiply, divide and compare to .NET's IEEE results bit for bit over random operands.
+- **Files are the 1541's** (`Mos6502Runtime.Files.cs`): `sys_open`, `sys_read`, `sys_write`,
+  `sys_close` and `sys_unlink` go through the KERNAL's channel I/O to device 8, one logical file
+  per BASIC file with its own secondary address. `OPEN` sends `name,S,R`, `@0:name,S,W` or
+  `name,S,A` in PETSCII capitals and reads the drive's status back off channel 15, since a 1541
+  reports a missing file there rather than failing the `OPEN`; `KILL` sends `S0:name`. APPEND to a
+  missing file creates it, as DOS does, and the return to BASIC closes what the program left open,
+  because a 1541 file never closed is a splat file. Sequential files cannot seek, so a RANDOM or
+  BINARY file lives in a 4 KB RAM cache while it is open (`Mos6502Runtime.FileCache.cs`): read whole
+  at `OPEN`, written back whole with `@0:` at `CLOSE` if it changed - one such file at a time, and
+  the cache reserved only in a program that opens one. `Cpu6502` models the KERNAL calls and the
+  drive, and the VICE test runs the file programs against a host directory as drive 8.
+- **`PEEK` and `POKE` take the offset as the address** - the machine is flat and 16-bit, so
+  `POKE 53280, 0` sets the border colour as it does in C64 BASIC - and `DEF SEG` selects nothing.
+  (x86-32 and x64 decline them: a 16-bit DOS offset names nothing in a Linux process.)
+- **Math functions are portable IR** (`PortableRuntime.Math.cs`, switched on by
+  `PortableRuntimeSoftMath`): the `llvm.sqrt`/`sin`/`cos`/`tan`/`atan`/`log`/`exp`/`pow` family,
+  each computed in EXTENDED on the soft float. A whole exponent multiplies by repeated squaring, so
+  `2 ^ 10` is exactly 1024; the rest reduce the argument - Cody and Waite's two-part `ln 2` and
+  `π/2`, a power-of-two split for `ln` and `√` - and sum a short series. Any target without
+  floating-point hardware can switch them on; `Mos6502ProgramTests` holds them to .NET's answers to
+  fourteen digits.
+- **Size comes first.** A C64 leaves 46 KB for program and data - `$0801` up to the soft stack at
+  `$C000`, the top 8 KB under the BASIC ROM, which start-up maps out while the program runs and the
+  return to BASIC maps back in - so the build optimizes for size
+  unless `$OPTIMIZE SPEED` asks otherwise, the string heap is 4 KB, and the portable runtime keeps
+  its lengths, positions and counters in 16 bits (`IrWriter.Index`) - the `rt_*` ABI keeps its
+  declared widths and each entry converts at that edge. A `$OPTIMIZE SPEED` build that does not
+  fit is built again for size, with a warning - unrolled and inlined, the differential battery's
+  speed programs need up to 100 KB, and a slower program beats one that does not load. A program
+  that does not fit even then is declined with how far past `$C000` it would reach.
+- **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$8F`, BASIC's own),
+  the processor port that maps the BASIC ROM and the stack pointer are saved on entry and restored
+  on exit, so the final `RTS` - or `END`, or a
   run-time error, from any depth - lands at `READY.` with BASIC intact.
 - **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
   the code.
 
-What it does not lower yet it declines by name - floating point, dynamic strings, `ON ERROR`, inline
-assembly, `INPUT`, calls through pointers - rather than compiling it into something else.
+What it does not lower yet it declines by name - inline assembly,
+calls through pointers - rather than compiling it into something else.
 `Mos6502ProgramTests` run compiled programs on `Cpu6502` (a hand-decoded interpreter in the test
 project, independent of the compiler's opcode table); `Mos6502BatteryTests` run every DOS battery
 program the back end accepts against its DOS golden output, keep a floor under how many that is, and
-cross-check one on VICE with the real KERNAL when `x64sc` and `xvfb-run` are installed.
+cross-check four - among them the sequential and the RANDOM/BINARY file programs - on VICE with the real KERNAL when `x64sc` and `xvfb-run` are installed.
 
 ## The seam is a test, not an interface
 

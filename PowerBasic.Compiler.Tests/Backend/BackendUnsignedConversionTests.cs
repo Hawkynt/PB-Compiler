@@ -21,7 +21,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendUnsignedConversionTests {
 
-  private static string Run(string body, bool routed) {
+  private static string Run(string body) {
     var source = body + "\nEND\n";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -31,11 +31,11 @@ public sealed class BackendUnsignedConversionTests {
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
   }
 
-  private static void Agrees(string body) =>
-    Assert.That(Run(body, routed: true), Is.EqualTo(Run(body, routed: false)));
+  private static void Prints(string body, string expected) =>
+    Assert.That(Run(body), Is.EqualTo(expected));
 
   [Test]
-  public void Byte_GivenAFloatAcrossItsRange_ThenTheRoutedPathAgreesWithTheDirectOne() => Agrees("""
+  public void Byte_GivenAFloatAcrossItsRange_ThenEachValueComesBackRounded() => Prints("""
     DIM b AS BYTE, d AS DOUBLE
     DIM v(1 TO 4) AS DOUBLE
     v(1) = 0 : v(2) = 1.5 : v(3) = 200.4 : v(4) = 255
@@ -45,10 +45,10 @@ public sealed class BackendUnsignedConversionTests {
       PRINT b;
     NEXT i%
     PRINT
-    """);
+    """, "0  2  200  255");   // 1.5 rounds to even, 200.4 to the nearest
 
   [Test]
-  public void Word_GivenAFloatAboveTheSignedMaximum_ThenTheRoutedPathAgreesWithTheDirectOne() => Agrees("""
+  public void Word_GivenAFloatAboveTheSignedMaximum_ThenEachValueComesBackUnsigned() => Prints("""
     DIM w AS WORD, d AS DOUBLE
     DIM v(1 TO 4) AS DOUBLE
     v(1) = 0 : v(2) = 32767 : v(3) = 40000.4 : v(4) = 65535
@@ -58,10 +58,10 @@ public sealed class BackendUnsignedConversionTests {
       PRINT w;
     NEXT i%
     PRINT
-    """);
+    """, "0  32767  40000  65535");
 
   [Test]
-  public void Dword_GivenAFloatAboveTheSignedMaximum_ThenTheRoutedPathAgreesWithTheDirectOne() => Agrees("""
+  public void Dword_GivenAFloatAboveTheSignedMaximum_ThenEachValueComesBackUnsigned() => Prints("""
     DIM u AS DWORD, d AS DOUBLE
     DIM v(1 TO 4) AS DOUBLE
     v(1) = 0 : v(2) = 2147483647 : v(3) = 3000000000# : v(4) = 4294967295#
@@ -71,14 +71,14 @@ public sealed class BackendUnsignedConversionTests {
       PRINT u;
     NEXT i%
     PRINT
-    """);
+    """, "0  2147483647  3000000000  4294967295");
 
   /// <summary>A SINGLE source as well as a DOUBLE one - the staging width is about the destination.</summary>
   [Test]
-  public void Dword_GivenASingleSource_ThenTheRoutedPathAgreesWithTheDirectOne() => Agrees("""
+  public void Dword_GivenASingleSource_ThenTheValueComesBackRounded() => Prints("""
     DIM u AS DWORD, s AS SINGLE
     s = 70000.5
     u = s
     PRINT u
-    """);
+    """, "70000");
 }

@@ -29,7 +29,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendTailRecursionTests {
 
-  private static string Run(string source, bool routed) {
+  private static string Run(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model);
@@ -48,7 +48,7 @@ public sealed class BackendTailRecursionTests {
     SUB CountDown(BYVAL n&)
       IF n& > 0 THEN CountDown n& - 1
     END SUB
-    """, routed: true), Is.EqualTo("DONE\n"));
+    """), Is.EqualTo("DONE\n"));
 
   /// <summary>
   /// And the mutual form, which this pass does not handle and does not need to: the inliner turns
@@ -69,7 +69,7 @@ public sealed class BackendTailRecursionTests {
     SUB Pong(BYVAL n&)
       IF n& > 0 THEN Ping n& - 1
     END SUB
-    """, routed: true), Is.EqualTo("DONE\n"));
+    """), Is.EqualTo("DONE\n"));
 
   /// <summary>
   /// The shape the pass has to find, read off the IR rather than inferred from the program finishing:

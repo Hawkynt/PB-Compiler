@@ -24,7 +24,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendFlexStringTests {
 
-  private static (string Output, IEnumerable<string> Routed) Run(string source, bool optimize, bool routed) {
+  private static (string Output, IEnumerable<string> Routed) Run(string source, bool optimize) {
     var model = Binder.Bind(
       Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -60,12 +60,9 @@ public sealed class BackendFlexStringTests {
       PRINT zv
       """;
 
-    var (output, routed) = Run(source, optimize, routed: true);
+    var (output, routed) = Run(source, optimize);
     Assert.That(routed, Does.Contain("main"), "a body naming a FLEX variable must route now");
-    Assert.Multiple(() => {
-      Assert.That(output, Is.EqualTo(Run(source, optimize, routed: false).Output));
-      Assert.That(output, Is.EqualTo("abcd|abcd| 4  4 |-1 |bc"),
-        "the FLEX answered what the STRING beside it answered, at every step");
-    });
+    Assert.That(output, Is.EqualTo("abcd|abcd| 4  4 |-1 |bc"),
+      "the FLEX answered what the STRING beside it answered, at every step");
   }
 }

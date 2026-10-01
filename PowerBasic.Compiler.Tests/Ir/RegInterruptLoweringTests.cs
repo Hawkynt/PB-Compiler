@@ -11,9 +11,8 @@ namespace PowerBasic.Compiler.Tests.Ir;
 ///
 /// <para>
 /// They are one facility and had to arrive together: REG fills the buffer, INTERRUPT executes with it,
-/// and either alone is unusable. Both reach the SAME <c>rt_regs</c> buffer the direct emitter indexes
-/// inline, which is what lets a routed REG set up a directly-emitted INTERRUPT and the other way
-/// round - the two paths share the state, not just the answer.
+/// and either alone is unusable. Both reach the SAME <c>rt_regs</c> buffer, so a REG in one procedure
+/// sets up an INTERRUPT in another - the two share the state, not just the answer.
 /// </para>
 /// <para>
 /// The scaling moved into the routines because the IR has no way to name a scaled index into a
@@ -29,24 +28,25 @@ public sealed class RegInterruptLoweringTests {
     return model;
   }
 
-  private static string Run(string source, bool routed) {
+  private static string Run(string source) {
     var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output;
   }
 
-  private static readonly (string Name, string Source)[] _programs = [
+  // each program with what it prints
+  private static readonly (string Name, string Source, string Expected)[] _programs = [
     // PB numbers the buffer 0=FLAGS 1=AX 2=BX 3=CX 4=DX 5=SI 6=DI 7=BP 8=DS 9=ES
     ("write then read back", """
       REG 1, 1234
       REG 4, 5678
       PRINT REG(1); REG(4)
       END
-      """),
+      """, " 1234  5678 \r\n"),
     // DOS get-version (AH=30h) - the interrupt INTREG.BAS uses, and one the test CPU implements.
     // Its whole observable effect is what comes BACK in the buffer, which is the half of the
-    // contract a write-only test would miss.
+    // contract a write-only test would miss. The test CPU reports DOS 6.
     ("interrupt returns through the buffer", """
       REG 1, &H3000
       CALL INTERRUPT &H21
@@ -54,7 +54,7 @@ public sealed class RegInterruptLoweringTests {
       ver = REG(1) AND &HFF
       PRINT ver
       END
-      """),
+      """, " 6 \r\n"),
     ("indices through a variable", """
       DIM i AS INTEGER
       FOR i = 1 TO 6
@@ -65,33 +65,33 @@ public sealed class RegInterruptLoweringTests {
       NEXT i
       PRINT
       END
-      """),
+      """, " 100  200  300  400  500  600 \r\n"),
   ];
 
   [Test]
   public void Lowering_GivenRegAndInterrupt_ThenTheModuleLowers() {
-    foreach (var (name, source) in _programs) {
+    foreach (var (name, source, _) in _programs) {
       var module = IrLowering.TryLowerModule(Bind(source), out var why);
       Assert.That(module, Is.Not.Null, $"'{name}' declined: {why}");
     }
   }
 
   [Test]
-  public void Routed_GivenRegAndInterrupt_ThenItBehavesAsTheDirectEmitterDoes() {
-    foreach (var (name, source) in _programs)
-      Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)), $"program '{name}'");
+  public void Routed_GivenRegAndInterrupt_ThenEachProgramPrintsItsBufferValues() {
+    foreach (var (name, source, expected) in _programs)
+      Assert.That(Run(source), Is.EqualTo(expected), $"program '{name}'");
   }
 
   /// <summary>
-  /// Stated rather than only compared: the buffer holds what was put in it, at the index it was put
+  /// Stated against a second program: the buffer holds what was put in it, at the index it was put
   /// at. A routine that scaled the index differently from the direct emitter's <c>SHL BX, 1</c> would
   /// still round-trip - it would just be reading and writing the wrong cell consistently, which only
   /// an INTERRUPT would notice.
   /// </summary>
   [Test]
   public void Reg_GivenAWriteAndARead_ThenTheValueIsAtThatIndex()
-    => Assert.That(Run("REG 1, 1234\nREG 4, 5678\nPRINT REG(1); REG(4)\nEND", routed: true),
-        Is.EqualTo(Run("PRINT 1234; 5678\nEND", routed: true)));
+    => Assert.That(Run("REG 1, 1234\nREG 4, 5678\nPRINT REG(1); REG(4)\nEND"),
+        Is.EqualTo(Run("PRINT 1234; 5678\nEND")));
 
   /// <summary>
   /// And the index really is the one the interrupt uses. DOS get-version answers in AX, which is
@@ -106,8 +106,8 @@ public sealed class RegInterruptLoweringTests {
       PRINT REG(1) AND &HFF
       END
       """;
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
-    Assert.That(Run(source, routed: true).Trim(), Is.Not.EqualTo("0"),
+    Assert.That(Run(source), Is.EqualTo(" 6 \r\n"), "the test CPU reports DOS 6");
+    Assert.That(Run(source).Trim(), Is.Not.EqualTo("0"),
       "a version of zero means the buffer never came back");
   }
 }

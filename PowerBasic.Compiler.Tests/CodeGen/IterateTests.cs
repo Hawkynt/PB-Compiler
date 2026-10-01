@@ -82,12 +82,12 @@ public sealed class IterateTests {
       NEXT
       PRINT "end"
       """;
-    var direct = Run(source, Dialect.Pb36);
+    var original = Run(source, Dialect.Pb36);
 
     var unit = Parser.Parse(Lexer.Tokenize(source, "TEST.BAS", Dialect.Pb36), "TEST.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty);
     var basic = PowerBasic35Emitter.Render(model, unit);
-    Assert.That(Run(basic), Is.EqualTo(direct), $"decompiled:\n{basic}");
+    Assert.That(Run(basic), Is.EqualTo(original), $"decompiled:\n{basic}");
   }
 }

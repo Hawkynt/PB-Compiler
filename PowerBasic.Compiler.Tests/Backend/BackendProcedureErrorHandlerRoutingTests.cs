@@ -8,7 +8,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <summary>
 /// Procedure-local error traps need one ABI behavior the module body does not: a callee may replace
 /// the process-global handler triple while it runs, but its caller's triple must be back on every
-/// ordinary return. These cases execute both emitters and pin that boundary with a real nested trap.
+/// ordinary return. These cases execute the image and pin that boundary with a real nested trap.
 /// </summary>
 [TestFixture]
 public sealed class BackendProcedureErrorHandlerRoutingTests {
@@ -16,7 +16,7 @@ public sealed class BackendProcedureErrorHandlerRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Procedure_GivenHandlerAndNormalReturn_ThenCallerHandlerIsRestored(bool optimize) =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Inner()
       ON ERROR GOTO OuterTrap
       Inner
@@ -42,7 +42,7 @@ public sealed class BackendProcedureErrorHandlerRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Procedure_GivenHandledInnerFault_ThenCallerHandlerIsRestoredAfterResume(bool optimize) =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Inner()
       ON ERROR GOTO OuterTrap
       Inner
@@ -70,7 +70,7 @@ public sealed class BackendProcedureErrorHandlerRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Function_GivenHandlerAndIntegerResult_ThenRestoreDoesNotClobberReturnRegister(bool optimize) =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE FUNCTION Inner%()
       ON ERROR GOTO OuterTrap
       IF Inner%() = 42 THEN PRINT "result"
@@ -93,21 +93,19 @@ public sealed class BackendProcedureErrorHandlerRoutingTests {
       END FUNCTION
       """, "result|outer", optimize);
 
-  private static void BothPathsAgree(string source, string expected, bool optimize) {
-    var routed = CompileAndRun(source, optimize, routed: true);
-    var direct = CompileAndRun(source, optimize, routed: false);
+  private static void Prints(string source, string expected, bool optimize) {
+    var routed = CompileAndRun(source, optimize);
 
     Assert.Multiple(() => {
       Assert.That(routed.Routed, Does.Contain("Inner"), "the handler-bearing procedure did not route");
       Assert.That(routed.Routed, Does.Contain("main"), "the caller did not route");
-      Assert.That(routed.Output, Is.EqualTo(direct.Output), "routed and direct execution disagree");
       Assert.That(routed.Output, Is.EqualTo(expected));
-      Assert.That(routed.ExitCode, Is.EqualTo(direct.ExitCode));
+      Assert.That(routed.ExitCode, Is.Zero, "every path ends at END once the outer trap has resumed");
     });
   }
 
   private static (string Output, int ExitCode, IReadOnlyList<string> Routed) CompileAndRun(
-      string source, bool optimize, bool routed) {
+      string source, bool optimize) {
     var model = Binder.Bind(
       Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));

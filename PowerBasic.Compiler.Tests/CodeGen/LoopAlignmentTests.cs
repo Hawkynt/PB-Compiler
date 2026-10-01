@@ -13,15 +13,14 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 [TestFixture]
 public sealed class LoopAlignmentTests {
 
-  private static byte[] Compile(string source, bool useBackend) {
+  private static byte[] Compile(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model);
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
-    if (useBackend)
-      Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the alignment test must exercise routed code");
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the alignment test must exercise routed code");
     return exe;
   }
 
@@ -43,24 +42,22 @@ public sealed class LoopAlignmentTests {
 
   private static int NopCount(byte[] image) => image.Count(b => b == 0x90);
 
-  [TestCase(false)]
-  [TestCase(true)]
-  public void Compile_GivenLoopWithCpu586AndSpeed_ThenLoopTopNopPadded(bool useBackend) {
+  [Test]
+  public void Compile_GivenLoopWithCpu586AndSpeed_ThenLoopTopNopPadded() {
     // $CPU 80586 has no procedure-entry alignment (that is 486-only), so this isolates the loop-top pad
-    var aligned = Compile("$CPU 80586\n$OPTIMIZE SPEED\n" + _LOOP, useBackend);
-    var noSpeed = Compile("$CPU 80586\n" + _LOOP, useBackend);
+    var aligned = Compile("$CPU 80586\n$OPTIMIZE SPEED\n" + _LOOP);
+    var noSpeed = Compile("$CPU 80586\n" + _LOOP);
     Assert.Multiple(() => {
       Assert.That(MaxNopRun(aligned), Is.GreaterThan(0), "the loop top is NOP-padded under 586 + SPEED");
       Assert.That(NopCount(aligned), Is.GreaterThan(NopCount(noSpeed)), "alignment is a SPEED-gated tradeoff");
     });
   }
 
-  [TestCase(false)]
-  [TestCase(true)]
-  public void Compile_GivenLoopWithCpu386_ThenNoLoopAlignment(bool useBackend) {
+  [Test]
+  public void Compile_GivenLoopWithCpu386_ThenNoLoopAlignment() {
     // alignment is a 486+/586+ cache-line optimization; a 386 target keeps the loop unpadded
-    var asm386 = Compile("$CPU 80386\n$OPTIMIZE SPEED\n" + _LOOP, useBackend);
-    var noCpu = Compile("$OPTIMIZE SPEED\n" + _LOOP, useBackend);
+    var asm386 = Compile("$CPU 80386\n$OPTIMIZE SPEED\n" + _LOOP);
+    var noCpu = Compile("$OPTIMIZE SPEED\n" + _LOOP);
     Assert.That(NopCount(asm386), Is.EqualTo(NopCount(noCpu)), "no 486/586 -> no alignment pad");
   }
 }

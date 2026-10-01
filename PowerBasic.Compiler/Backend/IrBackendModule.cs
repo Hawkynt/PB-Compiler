@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
+using PowerBasic.Compiler.Runtime.Portable;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Backend.Targets;
 
@@ -38,9 +39,20 @@ public sealed class IrBackendModule {
     var module = IrLowering.TryLowerModule(model, out declinedBecause);
     if (module is null)
       return null;
+    if (options.LinkedModules.Count > 0) {
+      try {
+        module = IrModuleLinker.Link(module, options.LinkedModules);
+      } catch (IrLinkException exception) {
+        declinedBecause = $"$LINK: {exception.Message}";
+        return null;
+      }
+    }
 
     module.AsciiOnly = model.AsciiOnly;
-    if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35)
+    if (options.PortableRuntimeHeapBytes is { } heap)
+      PortableRuntime.Define(module, heap, cleanUp: false, options.PortableRuntimeIndexBits, options.PortableRuntimeSoftMath);
+    if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35
+        or IrBackendTarget.X86_32 or IrBackendTarget.X64)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
         options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops);
     else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.Mos6502)
@@ -51,6 +63,9 @@ public sealed class IrBackendModule {
       declinedBecause = $"target '{options.Target}' has no emitter yet";
       return null;
     }
+
+    if (options.PortableRuntimeHeapBytes is { } lateHeap)
+      PortableRuntime.Define(module, lateHeap, cleanUp: true, options.PortableRuntimeIndexBits, options.PortableRuntimeSoftMath);
 
     var errors = IrVerifier.Verify(module);
     if (errors.Count != 0) {

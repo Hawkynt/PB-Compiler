@@ -3,7 +3,8 @@ using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.Backend.Mos6502;
 using PowerBasic.Compiler.Emit;
 using PowerBasic.Compiler.Emit.Commodore;
-using PowerBasic.Compiler.Emit.Hosted;
+using PowerBasic.Compiler.Backend.X86Native;
+using PowerBasic.Compiler.Emit.Elf;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -193,11 +194,11 @@ public static class Driver {
 
       switch (platform) {
         case Platform.X86_32:
-          return BuildHosted(model, source, HostedPlatform.X86_32, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+          return BuildNative(model, source, X86Machine.I386, dumpStage, output, optimize, optimizeSpeed, [.. linkPaths, sourceDir], stdout, stderr);
         case Platform.X64:
-          return BuildHosted(model, source, HostedPlatform.X64, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+          return BuildNative(model, source, X86Machine.Amd64, dumpStage, output, optimize, optimizeSpeed, [.. linkPaths, sourceDir], stdout, stderr);
         case Platform.Mos6502:
-          return BuildC64(model, source, dumpStage, output, optimize, optimizeSpeed, stdout, stderr);
+          return BuildC64(model, source, dumpStage, output, optimize, optimizeSpeed, [.. linkPaths, sourceDir], stdout, stderr);
       }
 
       if (dumpStage == "--emit-lib") {
@@ -322,20 +323,49 @@ public static class Driver {
   }
 
   /// <summary>
+  /// The optimizer setting an IR-built platform compiles with: the command line's, unless the source
+  /// says otherwise with its one <c>$OPTIMIZE</c> - OFF turns it off, SPEED or SIZE picks the goal -
+  /// exactly as the DOS build reads it.
+  /// </summary>
+  private static bool TryResolveOptimize(SemanticModel model, bool? optimize, bool optimizeSpeed, TextWriter stderr,
+      out bool effectiveOptimize, out bool effectiveSpeed) {
+    effectiveOptimize = optimize ?? true;
+    effectiveSpeed = optimizeSpeed;
+    var metas = model.MetaStatements
+      .Where(meta => meta.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase))
+      .ToList();
+    if (metas.Count > 1) {
+      stderr.WriteLine($"error: {metas[1].Position}: only one $OPTIMIZE per module");
+      return false;
+    }
+    if (metas.FirstOrDefault()?.Arguments is [{ } mode, ..]) {
+      if (mode.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase))
+        effectiveOptimize = false;
+      effectiveSpeed = mode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
+    }
+    return true;
+  }
+
+  /// <summary>
   /// The IR, through the hosted middle end, rendered as C99 or LLVM text - what <c>--emit-c</c> and
-  /// <c>--emit-llvm</c> print and what a hosted <c>--platform</c> build compiles. The source's own
-  /// <c>$OPTIMIZE</c> is honoured the way the DOS build honours it.
+  /// <c>--emit-llvm</c> print. The source's own <c>$OPTIMIZE</c> is honoured the way the DOS build
+  /// honours it.
   /// </summary>
   private static bool TryEmitHostedSource(SemanticModel model, bool emitC, bool? optimize, bool optimizeSpeed,
       bool parallelLoops, string label, TextWriter stderr, out string text) {
     text = "";
-    var target = emitC ? IrBackendTarget.C : IrBackendTarget.Llvm;
+    if (!TryResolveOptimize(model, optimize, optimizeSpeed, stderr, out var effectiveOptimize, out var effectiveSpeed))
+      return false;
+    if (parallelLoops && !effectiveOptimize) {
+      stderr.WriteLine("pbc: --parallel-loops requires optimization; remove --no-optimize / $OPTIMIZE OFF");
+      return false;
+    }
     var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
-      Target = target,
-      Optimize = optimize ?? true,
-      OptimizeForSpeed = optimizeSpeed,
+      Target = emitC ? IrBackendTarget.C : IrBackendTarget.Llvm,
+      Optimize = effectiveOptimize,
+      OptimizeForSpeed = effectiveSpeed,
       EnableFpLookupTables = !emitC,
-      RecoverIntegerArithmetic = optimize ?? true,
+      RecoverIntegerArithmetic = effectiveOptimize,
       PrepareParallelLoops = parallelLoops,
     }, out var declined);
     if (compiled is null) {
@@ -344,41 +374,6 @@ public static class Driver {
     }
     var module = compiled.Module;
     module.AsciiOnly = model.AsciiOnly;
-
-    var optimizeMetas = model.MetaStatements
-      .Where(meta => meta.Command.Equals("OPTIMIZE", StringComparison.OrdinalIgnoreCase))
-      .ToList();
-    if (optimizeMetas.Count > 1) {
-      stderr.WriteLine($"error: {optimizeMetas[1].Position}: only one $OPTIMIZE per module");
-      return false;
-    }
-    var hostedOptimize = optimize ?? true;
-    var hostedSpeed = optimizeSpeed;
-    if (optimizeMetas.FirstOrDefault()?.Arguments is [{ } mode, ..]) {
-      if (mode.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase))
-        hostedOptimize = false;
-      hostedSpeed = mode.Text.Equals("SPEED", StringComparison.OrdinalIgnoreCase);
-    }
-    if (parallelLoops && !hostedOptimize) {
-      stderr.WriteLine("pbc: --parallel-loops requires optimization; remove --no-optimize / $OPTIMIZE OFF");
-      return false;
-    }
-
-    if (hostedOptimize != (optimize ?? true) || hostedSpeed != optimizeSpeed) {
-      compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
-        Target = target,
-        Optimize = hostedOptimize,
-        OptimizeForSpeed = hostedSpeed,
-        EnableFpLookupTables = !emitC,
-        RecoverIntegerArithmetic = hostedOptimize,
-        PrepareParallelLoops = parallelLoops,
-      }, out declined);
-      if (compiled is null) {
-        stderr.WriteLine($"pbc: {label}: {declined ?? "unsupported construct"}");
-        return false;
-      }
-      module = compiled.Module;
-    }
 
     var verifyErrors = IrVerifier.Verify(module);
     if (verifyErrors.Count > 0) {
@@ -400,36 +395,58 @@ public static class Driver {
   }
 
   /// <summary>
-  /// A program for x86-32 or x64: the C back end's translation unit, built by the host toolchain
-  /// against the portable runtime. An executable by default, the program's object with
-  /// <c>--emit-obj</c>, or an archive of it and the runtime with <c>--emit-lib</c>. COM images and
-  /// PBU/PBL units are DOS containers and have no hosted form.
+  /// A program for x86-32 or x64 Linux: the IR, through the hosted middle end, with the portable
+  /// runtime defined into it and compiled by the native x86 back end - no C compiler, assembler or
+  /// linker. A static executable by default; with <c>--emit-obj</c> an ELF object exporting
+  /// <c>pb_main</c>, with <c>--emit-lib</c> an archive of it. <c>$COMPILE UNIT</c> writes an IR unit
+  /// (<see cref="IrUnitFile"/>) and <c>$LINK</c> links IR units and libraries. A COM image is DOS's
+  /// own container - a PSP and an entry at 0100h - and has no Linux form.
   /// </summary>
-  private static int BuildHosted(SemanticModel model, string source, HostedPlatform platform, string dumpStage,
-      string? output, bool? optimize, bool optimizeSpeed, TextWriter stdout, TextWriter stderr) {
+  private static int BuildNative(SemanticModel model, string source, X86Machine machine, string dumpStage,
+      string? output, bool? optimize, bool optimizeSpeed, IReadOnlyList<string> linkDirs, TextWriter stdout, TextWriter stderr) {
+    var name = machine == X86Machine.Amd64 ? "x64" : "x86-32";
     if (dumpStage == "--emit-com" || IsComCompile(model)) {
       stderr.WriteLine("error: a COM image is a DOS container; build it with --platform x86-16");
       return 1;
     }
-    if (IsUnitCompile(model)) {
-      stderr.WriteLine("error: a PBU unit is a DOS container; for a hosted platform use --emit-obj or --emit-lib");
+    if (IsUnitCompile(model))
+      return CompileIrUnit(model, source, output, name, library: false, stdout, stderr);
+    if (!TryLoadIrLinkTargets(model, linkDirs, name, stderr, out var linked))
+      return 1;
+    if (!TryResolveOptimize(model, optimize, optimizeSpeed, stderr, out var effectiveOptimize, out var effectiveSpeed))
+      return 1;
+    var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+      Target = machine == X86Machine.Amd64 ? IrBackendTarget.X64 : IrBackendTarget.X86_32,
+      Optimize = effectiveOptimize,
+      OptimizeForSpeed = effectiveSpeed,
+      RecoverIntegerArithmetic = effectiveOptimize,
+      PortableRuntimeHeapBytes = NativeHeapBytes,
+      LinkedModules = linked,
+    }, out var declined);
+    var program = compiled is null ? null : X86NativeCompiler.TryCompile(compiled.Module, machine, out declined);
+    if (program is null) {
+      stderr.WriteLine($"error: {name}: {declined ?? "unsupported construct"}");
       return 1;
     }
-    var (artifact, extension) = dumpStage switch {
-      "--emit-obj" => (HostedArtifact.Object, ".o"),
-      "--emit-lib" => (HostedArtifact.Library, ".a"),
-      _ => (HostedArtifact.Executable, ""),
+    var (bytes, extension) = dumpStage switch {
+      "--emit-obj" => (ElfWriter.Object(program), ".o"),
+      "--emit-lib" => (ElfWriter.Archive([(Path.GetFileNameWithoutExtension(source).ToLowerInvariant() + ".o",
+        ElfWriter.Object(program), ["pb_main", "pb_start"])]), ".a"),
+      _ => (ElfWriter.Executable(program), ""),
     };
-    if (!TryEmitHostedSource(model, emitC: true, optimize, optimizeSpeed, parallelLoops: false, "--platform", stderr, out var text))
-      return 1;
     output ??= Path.ChangeExtension(source, extension == "" ? null : extension);
-    if (!HostToolchain.TryBuild(text, platform, artifact, output, out var error)) {
-      stderr.WriteLine($"error: {error}");
-      return 1;
-    }
-    stdout.WriteLine($"{Path.GetFileName(output)}: {new FileInfo(output).Length} bytes ({HostToolchain.Describe(platform)})");
+    File.WriteAllBytes(output, bytes);
+    if (extension == "" && !OperatingSystem.IsWindows())
+      File.SetUnixFileMode(output, File.GetUnixFileMode(output) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+    stdout.WriteLine($"{Path.GetFileName(output)}: {bytes.Length} bytes ({name})");
     return 0;
   }
+
+  /// <summary>The string heap of a C64 program: a slice of the 46 KB a program has.</summary>
+  private const int C64HeapBytes = 4096;
+
+  /// <summary>The string heap of a native Linux program: uninitialised storage, so it costs no file space.</summary>
+  private const int NativeHeapBytes = 16 << 20;
 
   /// <summary>The machines <c>--platform</c> selects.</summary>
   private enum Platform { X86_16, X86_32, X64, Mos6502 }
@@ -447,23 +464,34 @@ public static class Driver {
 
   /// <summary>
   /// A program for the 6502: the IR, through the native middle end, compiled by the 6502 back end
-  /// into a Commodore 64 <c>.PRG</c>. The C64 has one executable format, so the DOS containers and
-  /// the object formats are refused rather than approximated.
+  /// into a Commodore 64 <c>.PRG</c>. Its object and library formats are the IR unit and library
+  /// (<see cref="IrUnitFile"/>): <c>$COMPILE UNIT</c> or <c>--emit-obj</c> writes a unit,
+  /// <c>--emit-lib</c> a library holding it, and <c>$LINK</c> links either. A COM image is DOS's own
+  /// container and has no C64 form.
   /// </summary>
   private static int BuildC64(SemanticModel model, string source, string dumpStage, string? output, bool? optimize,
-      bool optimizeSpeed, TextWriter stdout, TextWriter stderr) {
-    if (dumpStage is "--emit-com" or "--emit-obj" or "--emit-lib" || IsComCompile(model) || IsUnitCompile(model)) {
-      stderr.WriteLine("error: the 6502 platform builds a C64 .PRG only; COM, units, objects and libraries are DOS or hosted formats");
+      bool optimizeSpeed, IReadOnlyList<string> linkDirs, TextWriter stdout, TextWriter stderr) {
+    if (dumpStage == "--emit-com" || IsComCompile(model)) {
+      stderr.WriteLine("error: a COM image is a DOS container; the 6502 builds a C64 .PRG, and units, objects and libraries of IR");
       return 1;
     }
-    var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
-      Target = IrBackendTarget.Mos6502,
-      Optimize = optimize ?? true,
-      OptimizeForSpeed = optimizeSpeed,
-      RecoverIntegerArithmetic = optimize ?? true,
-    }, out var declined);
-    var image = compiled is null ? null
-      : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, C64Prg.MemoryTop, out declined);
+    if (IsUnitCompile(model) || dumpStage == "--emit-obj")
+      return CompileIrUnit(model, source, output, "6502", library: false, stdout, stderr);
+    if (dumpStage == "--emit-lib")
+      return CompileIrUnit(model, source, output, "6502", library: true, stdout, stderr);
+    if (!TryLoadIrLinkTargets(model, linkDirs, "6502", stderr, out var linked))
+      return 1;
+    if (!TryResolveOptimize(model, optimize, optimizeSpeed, stderr, out var effectiveOptimize, out var effectiveSpeed))
+      return 1;
+    // a C64 has 46 KB for program and data: unless SPEED is asked for, optimize for size - and a
+    // SPEED build that does not fit is built again for size, since a program that runs slower beats
+    // one that does not load
+    var image = CompileC64(model, effectiveOptimize, effectiveSpeed, linked, out var declined);
+    if (image is null && effectiveSpeed && declined is { } tooLarge && IsC64SizeDecline(tooLarge)) {
+      image = CompileC64(model, effectiveOptimize, speed: false, linked, out declined);
+      if (image is not null)
+        stderr.WriteLine($"warning: 6502: the $OPTIMIZE SPEED build does not fit a C64 ({tooLarge}); built for size instead");
+    }
     if (image is null) {
       stderr.WriteLine($"error: 6502: {declined ?? "unsupported construct"}");
       return 1;
@@ -473,6 +501,96 @@ public static class Driver {
     File.WriteAllBytes(output, file);
     stdout.WriteLine($"{Path.GetFileName(output)}: {file.Length} bytes (6502, C64)");
     return 0;
+  }
+
+  private static Mos6502Assembler.Image? CompileC64(SemanticModel model, bool optimize, bool speed,
+      IReadOnlyList<IrModule> linked, out string? declined) {
+    var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
+      Target = IrBackendTarget.Mos6502,
+      Optimize = optimize,
+      OptimizeForSpeed = speed,
+      OptimizeForSize = !speed,
+      RecoverIntegerArithmetic = optimize,
+      PortableRuntimeHeapBytes = C64HeapBytes,
+      PortableRuntimeIndexBits = 16,
+      PortableRuntimeSoftMath = true,
+      LinkedModules = linked,
+    }, out declined);
+    return compiled is null ? null
+      : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, C64Prg.MemoryTop, out declined);
+  }
+
+  /// <summary>Whether a 6502 decline is the image not fitting, rather than a construct it cannot lower.</summary>
+  private static bool IsC64SizeDecline(string declined)
+    => declined.StartsWith("the program needs ", StringComparison.Ordinal);
+
+  /// <summary>
+  /// A unit for a platform compiled from IR: the lowered module, without its (empty) <c>main</c>, as
+  /// an IR unit - or, with <paramref name="library"/>, a library holding that one unit. As on DOS, a
+  /// unit is procedures only: module-level code has no caller to run it.
+  /// </summary>
+  private static int CompileIrUnit(SemanticModel model, string source, string? output, string platform, bool library,
+      TextWriter stdout, TextWriter stderr) {
+    var module = IrLowering.TryLowerModule(model, out var declined);
+    if (module is null) {
+      stderr.WriteLine($"error: {platform}: {declined ?? "the unit does not lower"}");
+      return 1;
+    }
+    module.AsciiOnly = model.AsciiOnly;
+    if (module.FindFunction("main") is { } main) {
+      if (main.AllInstructions.Any(instruction => instruction is not (IrRet or IrAlloca))) {
+        stderr.WriteLine($"error: {platform}: a unit cannot contain module-level code (only SUBs and FUNCTIONs)");
+        return 1;
+      }
+      module.RemoveFunction(main);
+    }
+    var unit = IrUnitFile.Write(module);
+    var name = Path.GetFileNameWithoutExtension(source).ToUpperInvariant();
+    var bytes = library ? IrUnitFile.WriteLibrary([(name, unit)]) : unit;
+    output ??= Path.ChangeExtension(source, library ? ".PBL" : ".PBU");
+    File.WriteAllBytes(output, bytes);
+    var procedures = module.Functions.Count(function => !function.IsDeclaration);
+    stdout.WriteLine($"{Path.GetFileName(output)}: {bytes.Length} bytes, {procedures} procedure(s) as IR ({platform})");
+    return 0;
+  }
+
+  /// <summary>
+  /// The IR units and libraries a program for an IR platform <c>$LINK</c>s, told apart by their magic
+  /// rather than their extension - on these platforms <c>.OBJ</c> and <c>.LIB</c> are IR too. A DOS
+  /// unit or OMF object holds 8086 code and is refused with the reason.
+  /// </summary>
+  private static bool TryLoadIrLinkTargets(SemanticModel model, IReadOnlyList<string> searchDirs, string platform,
+      TextWriter stderr, out List<IrModule> modules) {
+    modules = [];
+    foreach (var meta in model.MetaStatements.Where(m => m.Command == "LINK")) {
+      if (meta.Arguments is not [{ Kind: Syntax.TokenKind.StringLiteral } file]) {
+        stderr.WriteLine($"error: {meta.Position}: $LINK expects a quoted file name");
+        return false;
+      }
+      var path = Path.IsPathRooted(file.Text)
+        ? file.Text
+        : searchDirs.Select(dir => Path.Combine(dir, file.Text)).FirstOrDefault(File.Exists);
+      if (path == null || !File.Exists(path)) {
+        stderr.WriteLine($"error: {meta.Position}: $LINK file '{file.Text}' not found");
+        return false;
+      }
+      var bytes = File.ReadAllBytes(path);
+      try {
+        if (IrUnitFile.IsIrUnit(bytes))
+          modules.Add(IrUnitFile.Read(bytes));
+        else if (IrUnitFile.IsIrLibrary(bytes))
+          modules.AddRange(IrUnitFile.ReadLibrary(bytes).Select(member => IrUnitFile.Read(member.Unit)));
+        else {
+          stderr.WriteLine($"error: {meta.Position}: $LINK '{file.Text}' holds 8086 code (a DOS unit, library or object); "
+            + $"a program for {platform} links units compiled with --platform {platform}");
+          return false;
+        }
+      } catch (InvalidDataException e) {
+        stderr.WriteLine($"error: {meta.Position}: $LINK '{file.Text}': {e.Message}");
+        return false;
+      }
+    }
+    return true;
   }
 
   private static bool IsUnitCompile(SemanticModel model)
@@ -495,6 +613,12 @@ public static class Driver {
         : searchDirs.Select(dir => Path.Combine(dir, file.Text)).FirstOrDefault(File.Exists);
       if (path == null || !File.Exists(path)) {
         stderr.WriteLine($"error: {meta.Position}: $LINK file '{file.Text}' not found");
+        return false;
+      }
+      var head = File.ReadAllBytes(path);
+      if (IrUnitFile.IsIrUnit(head) || IrUnitFile.IsIrLibrary(head)) {
+        stderr.WriteLine($"error: {meta.Position}: $LINK '{file.Text}' holds IR for x86-32, x64 or the 6502; "
+          + "a DOS program links units compiled with --platform x86-16");
         return false;
       }
       try {
@@ -527,6 +651,23 @@ public static class Driver {
 
   private static int RunLib(string[] args, TextWriter stdout, TextWriter stderr) {
     switch (args) {
+      case ["build", var output, .. var unitFiles] when unitFiles.Length > 0
+          && unitFiles.All(File.Exists) && unitFiles.Any(file => IrUnitFile.IsIrUnit(File.ReadAllBytes(file))): {
+        // units for an IR platform: a library of IR units, whatever the extension asked for
+        var members = new List<(string, byte[])>();
+        foreach (var file in unitFiles) {
+          var bytes = File.ReadAllBytes(file);
+          if (!IrUnitFile.IsIrUnit(bytes)) {
+            stderr.WriteLine($"pbc lib: '{file}' is not an IR unit, and one library cannot mix DOS and IR units");
+            return 1;
+          }
+          members.Add((Path.GetFileNameWithoutExtension(file).ToUpperInvariant(), bytes));
+        }
+        File.WriteAllBytes(output, IrUnitFile.WriteLibrary(members));
+        stdout.WriteLine($"{Path.GetFileName(output)}: {members.Count} IR unit(s)");
+        return 0;
+      }
+
       case ["build", var output, .. var unitFiles] when unitFiles.Length > 0: {
         var units = new List<PbuFile>();
         foreach (var file in unitFiles) {
@@ -549,6 +690,16 @@ public static class Driver {
         return 0;
       }
 
+      case ["list", var file] when File.Exists(file) && File.ReadAllBytes(file) is var bytes
+          && (IrUnitFile.IsIrUnit(bytes) || IrUnitFile.IsIrLibrary(bytes)): {
+        var members = IrUnitFile.IsIrUnit(bytes)
+          ? [(Path.GetFileNameWithoutExtension(file).ToUpperInvariant(), bytes)]
+          : IrUnitFile.ReadLibrary(bytes);
+        foreach (var (name, unit) in members)
+          DescribeIrUnit(name, IrUnitFile.Read(unit), stdout);
+        return 0;
+      }
+
       case ["list", var file] when File.Exists(file): {
         using var stream = File.OpenRead(file);
         if (file.EndsWith(".PBU", StringComparison.OrdinalIgnoreCase)) {
@@ -567,6 +718,14 @@ public static class Driver {
     }
   }
 
+  private static void DescribeIrUnit(string name, IrModule unit, TextWriter stdout) {
+    stdout.WriteLine($"{name}: IR unit, {unit.EffectiveDialect}, {unit.Globals.Count} global(s)");
+    foreach (var function in unit.Functions.Where(function => !function.IsDeclaration))
+      stdout.WriteLine($"  exports {function.Name}({string.Join(", ", function.Parameters.Select(parameter => parameter.Type))}) -> {function.ReturnType}");
+    foreach (var function in unit.Functions.Where(function => function.IsDeclaration))
+      stdout.WriteLine($"  imports {function.Name}");
+  }
+
   private static void DescribeUnit(PbuFile unit, TextWriter stdout) {
     stdout.WriteLine($"{unit.Name}: code={unit.Code.Length} data={unit.Data.Length} bss={unit.BssSize} cpu={unit.CpuFlags}");
     foreach (var e in unit.Exports)
@@ -582,7 +741,8 @@ public static class Driver {
     w.WriteLine("       pbc lib build <out.PBL|out.LIB> <unit.PBU>...");
     w.WriteLine("       pbc lib list <file.PBL|file.PBU>");
     w.WriteLine();
-    w.WriteLine("A source with $COMPILE UNIT produces .PBU; $COMPILE COM produces flat .COM,");
+    w.WriteLine("A source with $COMPILE UNIT produces .PBU (of IR for x86-32, x64 and 6502);");
+    w.WriteLine("$COMPILE COM produces flat .COM,");
     w.WriteLine("as does any optimized program without $LINK ($COMPILE EXE keeps the .EXE);");
     w.WriteLine("$LINK \"X.PBU\" / $LINK \"Y.PBL\" directives (relative to the source");
     w.WriteLine("directory) are linked into the executable.");
@@ -599,11 +759,12 @@ public static class Driver {
     w.WriteLine("  --dump-tokens  stop after lexing/preprocessing and list tokens");
     w.WriteLine("  --dump-ast     stop after parsing");
     w.WriteLine("  --dump-bind    stop after semantic analysis");
-    w.WriteLine("  --emit-obj     compile to a linkable OMF .OBJ object instead of an EXE");
+    w.WriteLine("  --emit-obj     compile to a linkable object: OMF .OBJ on DOS, ELF .o on x86-32|x64,");
+    w.WriteLine("                 an IR unit .OBJ on the 6502");
     w.WriteLine("  --emit-com     compile to a flat DOS .COM image (no $LINK/segment relocations)");
-    w.WriteLine("  --platform <p> x86-16 (DOS, default) | x86-32 | x64 | 6502: x86-32 and x64 build a native");
-    w.WriteLine("                 executable through the C back end and the host C compiler; 6502 a C64 .PRG");
-    w.WriteLine("  --emit-lib     with a hosted --platform: an archive of the program and its runtime");
+    w.WriteLine("  --platform <p> x86-16 (DOS, default) | x86-32 | x64 | 6502: x86-32 and x64 build a static");
+    w.WriteLine("                 Linux ELF executable, 6502 a C64 .PRG - all emitted by pbc itself");
+    w.WriteLine("  --emit-lib     x86-32|x64: an ELF archive of the program and its runtime; 6502: an IR library");
     w.WriteLine("  --emit-basic   render optimized IR back to readable PowerBASIC");
     w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");
     w.WriteLine("  --emit-c       optimize through the IR middle end and emit portable C99");

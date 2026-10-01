@@ -1,7 +1,13 @@
 namespace PowerBasic.Compiler.Backend.Mos6502;
 
+/// <summary>A program that does not fit the 6502's 64 KB address space.</summary>
+public sealed class M6502ImageTooLargeException(string message) : InvalidOperationException(message);
+
 /// <summary>A position in the program, bound once with <see cref="Mos6502Assembler.Bind"/>.</summary>
-public readonly record struct M6502Label(int Id);
+public readonly record struct M6502Label(int Id) {
+  /// <summary>The address <paramref name="bytes"/> past the label.</summary>
+  public M6502Address Plus(int bytes) => new(this, bytes);
+}
 
 /// <summary>An address: a label plus a displacement, or a plain number when <see cref="Label"/> is null.</summary>
 public readonly record struct M6502Address(M6502Label? Label, int Offset) {
@@ -98,8 +104,12 @@ public sealed class Mos6502Assembler {
     this.Add(op, address.IsZeroPage && M6502Isa.Exists(op, zeroPage) ? zeroPage : absolute, address);
   }
 
-  /// <summary><c>op (zp),Y</c>.</summary>
-  public void IndirectY(M6502Op op, byte zeroPage) => this.Add(op, M6502Mode.IndirectIndexedY, M6502Address.Absolute(zeroPage));
+  /// <summary><c>op (pointer),Y</c>: the pointer is a page-zero cell pair.</summary>
+  public void IndirectY(M6502Op op, M6502Address pointer) {
+    if (!pointer.IsZeroPage || pointer.Offset == 0xFF)
+      throw new ArgumentException($"(pointer),Y needs a page-zero pointer, not ${pointer.Offset:X}", nameof(pointer));
+    this.Add(op, M6502Mode.IndirectIndexedY, pointer);
+  }
 
   /// <summary><c>JMP (address)</c>.</summary>
   public void JumpIndirect(M6502Address address) => this.Add(M6502Op.Jmp, M6502Mode.Indirect, address);
@@ -159,8 +169,33 @@ public sealed class Mos6502Assembler {
     public int UninitializedStart => this.Origin + this.Bytes.Length;
   }
 
+  /// <summary>
+  /// Drops a <c>LDA x</c> that directly follows <c>STA x</c>: A already holds the value. The two must be
+  /// adjacent - no label between them, so nothing jumps in to the load - and what follows the load
+  /// must not be a branch, which would read the flags only the load sets.
+  /// </summary>
+  private int RemoveRedundantReloads() {
+    var removed = 0;
+    var end = this._uninitializedStart < 0 ? this._items.Count : this._uninitializedStart;
+    for (var i = 0; i + 1 < end; ++i) {
+      var (store, load) = (this._items[i], this._items[i + 1]);
+      if (store is not { Kind: ItemKind.Instruction, Op: M6502Op.Sta }
+          || load is not { Kind: ItemKind.Instruction, Op: M6502Op.Lda, Select: ByteSelect.Whole }
+          || load.Mode != store.Mode || load.Operand != store.Operand
+          || (i + 2 < end && this._items[i + 2] is { Kind: ItemKind.Branch } or { Op: M6502Op.Php, Kind: ItemKind.Instruction }))
+        continue;
+      this._items.RemoveAt(i + 1);
+      --end;
+      if (this._uninitializedStart >= 0)
+        --this._uninitializedStart;
+      ++removed;
+    }
+    return removed;
+  }
+
   /// <summary>Lays the program out at <paramref name="origin"/> and encodes it.</summary>
   public Image Assemble(int origin) {
+    this.RemoveRedundantReloads();
     var addresses = new Dictionary<M6502Label, int>();
     int[] offsets;
     bool relaxed;
@@ -227,7 +262,7 @@ public sealed class Mos6502Assembler {
     }
     var last = this._items.Count == 0 ? origin : offsets[^1] + Size(this._items[^1]);
     if (last > 0x10000)
-      throw new InvalidOperationException($"the program needs {last - origin} bytes and runs past the top of memory");
+      throw new M6502ImageTooLargeException($"the program needs {last - origin} bytes and runs past the top of memory");
     return new(origin, [.. bytes], last, addresses);
   }
 

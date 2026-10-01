@@ -255,7 +255,7 @@ public sealed class DeadLoopEliminationTests {
       END SUB
       """;
 
-    Assert.That(RunBothWays(source), Is.EqualTo("done 2"),
+    Assert.That(RunWalk(source), Is.EqualTo("done 2"),
       "n = 7 leaves on the first iteration, so only the n = 2 call may print");
   }
 
@@ -293,25 +293,20 @@ public sealed class DeadLoopEliminationTests {
       END SUB
       """;
 
-    Assert.That(RunBothWays(source), Is.EqualTo("done 2  10 |done 7  1"),
+    Assert.That(RunWalk(source), Is.EqualTo("done 2  10 |done 7  1"),
       "the loop runs out for n = 2 and breaks on the first iteration for n = 7");
   }
 
   /// <summary>
-  /// Runs the program through BOTH back ends and asserts they agree, answering with what they printed.
-  /// The routed path is where these two defects lived; the direct emitter is the reference.
+  /// Compiles and runs the program, answering with what it printed. The routed path is where these
+  /// two defects lived, so the procedure under test must have gone through it.
   /// </summary>
-  private static string RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true};
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
-    var directImage = direct.EmitExecutable();
-    var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("Walk"), "the back end did not take the procedure under test");
-    var directOutput = Cpu8086.Run(directImage).Output.Trim().Replace("\r\n", "|");
-    Assert.That(Cpu8086.Run(routedImage).Output.Trim().Replace("\r\n", "|"), Is.EqualTo(directOutput));
-    return directOutput;
+  private static string RunWalk(string source) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("Walk"), "the back end did not take the procedure under test");
+    return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
   }
 
   /// <summary>

@@ -1,6 +1,7 @@
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
@@ -46,10 +47,10 @@ public sealed class BackendInlineAsmVirtualizationTests {
   }
 
   /// <summary>
-  /// The values are the point. A target without MMX must not receive the MMX encoding, whichever
-  /// emitter produced the image - and <c>$CPU SSE2</c> is in the list on purpose: SSE2 does not bring
-  /// the MMX register file with it here, so it emulates too. A guard keyed on "is this 8086" rather
-  /// than on the instruction's actual feature requirement would pass the first two and miss this one.
+  /// The values are the point. A target without MMX must not receive the MMX encoding - and
+  /// <c>$CPU SSE2</c> is in the list on purpose: SSE2 does not bring the MMX register file
+  /// with it here, so it emulates too. A guard keyed on "is this 8086" rather than on the
+  /// instruction's actual feature requirement would pass the first two and miss this one.
   /// </summary>
   [TestCase("8086")]
   [TestCase("80386")]
@@ -92,5 +93,19 @@ public sealed class BackendInlineAsmVirtualizationTests {
       Assert.That(ContainsPaddw(Compile(cpu).Image), Is.False, $"first build, $CPU {cpu}");
       Assert.That(ContainsPaddw(Compile(cpu).Image), Is.False, $"second build, $CPU {cpu}");
     });
+  }
+
+  /// <summary>
+  /// And the emulated image runs. Leaving the encoding out is only half the promise; the other half
+  /// is that what replaced it executes on the declared target and leaves the program's own state
+  /// alone - the PADDW touches only MM0, so AX still carries a%'s 3 into b%. SSE2's emulation is
+  /// written in SSE, which the interpreter does not execute, so that target is left to the test above.
+  /// </summary>
+  [TestCase("8086")]
+  [TestCase("80386")]
+  public void Run_GivenInlineAsmAboveTheDeclaredCpu_ThenTheEmulatedProgramPrintsTheUntouchedWord(string cpu) {
+    var (image, _) = Compile(cpu);
+
+    Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("3"), $"$CPU {cpu}");
   }
 }

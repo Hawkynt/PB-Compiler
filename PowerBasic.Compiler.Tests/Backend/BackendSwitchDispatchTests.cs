@@ -40,7 +40,7 @@ public sealed class BackendSwitchDispatchTests {
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     Assert.That(generator.BackendRoutedNames, Does.Contain("main"),
-      "the module body must be ROUTED, or this fixture is measuring the direct emitter");
+      "the module body must be ROUTED, or this fixture is not measuring the back end's dispatch");
     return image;
   }
 
