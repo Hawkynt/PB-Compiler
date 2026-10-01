@@ -77,12 +77,15 @@ public sealed class PlatformTests {
 
   /// <summary>Links <paramref name="inputs"/> into a C program whose <c>main</c> calls <c>pb_main</c>.</summary>
   private string LinkWithC(string machineFlag, params string[] inputs) {
+    Assume.That(OperatingSystem.IsLinux(), "linking ELF objects requires a Linux host toolchain");
+
     var compiler = Environment.GetEnvironmentVariable("CC") is { Length: > 0 } cc ? cc : "cc";
     var main = Path.Combine(_work, "main.c");
     File.WriteAllText(main, "void pb_main(void);\nint main(void) { pb_main(); return 0; }\n");
     var output = Path.Combine(_work, "linked");
     ProcessStartInfo start = new(compiler, [machineFlag, "-o", output, main, .. inputs]) {
-      RedirectStandardError = true, UseShellExecute = false,
+      RedirectStandardError = true,
+      UseShellExecute = false,
     };
     Process? process;
     try {

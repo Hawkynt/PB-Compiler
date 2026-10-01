@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Tests.CodeGen;
 using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
@@ -50,6 +51,9 @@ public sealed class FlatTargetRuntimeTests {
 
   [TestCaseSource(nameof(Cases))]
   public void Run_GivenARuntimeEntry_ThenItMatchesDos(string platform, string name) {
+    if (platform == "dos" && name == "round-and-ext")
+      FpuAssume.RequireExtendedPrecision();
+
     var (_, source, expected) = _programs.Single(program => program.Name == name);
 
     Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)), Is.EqualTo(expected));
