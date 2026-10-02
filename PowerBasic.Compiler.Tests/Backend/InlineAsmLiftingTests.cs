@@ -198,6 +198,30 @@ public sealed class InlineAsmLiftingTests {
       ! MOV y&, EDX
       PRINT lo&; hi&; p&; q%; z&; s&; y&; HEX$(x&)
       """),
+    ("stack", """
+      DIM a&, b%, c&, f1%, f2%, v&
+      v& = 99
+      ! MOV EAX, &H12345678
+      ! MOV BX, -3
+      ! PUSH EAX
+      ! PUSH BX
+      ! PUSH v&
+      ! POP ECX
+      ! MOV c&, ECX
+      ! POP DX
+      ! MOV b%, DX
+      ! POP a&
+      ! MOV AX, 5
+      ! CMP AX, 7
+      ! PUSHF
+      ! POP f1%
+      ! MOV AX, &H08C1
+      ! PUSH AX
+      ! POPF
+      ! PUSHF
+      ! POP f2%
+      PRINT HEX$(a&); b%; c&; HEX$(f1% AND &H08C1); " "; HEX$(f2% AND &H08C1)
+      """),
     ("flags-and-conditions", """
       DIM lo&, hi&, m&, c&, k%
       ! MOV EAX, -1
@@ -596,13 +620,13 @@ public sealed class InlineAsmLiftingTests {
     var work = Directory.CreateTempSubdirectory("pbc-lift-");
     try {
       var path = Path.Combine(work.FullName, "PROG.BAS");
-      File.WriteAllText(path, "DIM a&\n! MOV EAX, 1\n! PUSH EAX\n! POP EBX\n! MOV a&, EBX\nPRINT a&\n");
+      File.WriteAllText(path, "DIM a&\n! MOV EAX, 1\n! MOV ECX, 2\n! DIV ECX\n! MOV a&, EAX\nPRINT a&\n");
       var stderr = new StringWriter();
       var code = PowerBasic.Compiler.Cli.Driver.Run(["--dialect", "pb36", "--platform", "x64", path], TextWriter.Null, stderr);
 
       Assert.Multiple(() => {
         Assert.That(code, Is.Not.Zero);
-        Assert.That(stderr.ToString(), Does.Contain("'PUSH' has no IR lifting yet"));
+        Assert.That(stderr.ToString(), Does.Contain("'DIV' has no IR lifting yet"));
       });
     } finally {
       work.Delete(recursive: true);

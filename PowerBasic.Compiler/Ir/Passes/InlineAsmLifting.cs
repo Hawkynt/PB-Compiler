@@ -26,13 +26,16 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// BASIC label: the block is split at the assembly and ends in a branch to the label's block.
 /// </para>
 /// <para>
-/// The stack and addressing through registers are not modelled: an instruction that needs either is
+/// <c>PUSH</c> and <c>POP</c> work on a stack of the assembly's own (<c>asm.stack</c>, 256 bytes that
+/// wrap, with <c>asm.sp</c>), never the compiled code's, so a block may push and pop as it likes and
+/// a value pushed in one block may be popped in the next; <c>PUSHF</c>/<c>POPF</c> carry the four
+/// modelled flags. Addressing through registers is not modelled: an instruction that needs it is
 /// declined by name, never compiled into something else. The set lifted so far: <c>MOV</c>,
 /// <c>ADD</c>, <c>ADC</c>, <c>SUB</c>, <c>SBB</c>, <c>CMP</c>, <c>AND</c>, <c>OR</c>, <c>XOR</c>,
 /// <c>TEST</c>, <c>NOT</c>, <c>NEG</c>, <c>INC</c>, <c>DEC</c>, <c>SHL</c>/<c>SAL</c>, <c>SHR</c>,
 /// <c>SAR</c>, <c>MUL</c>, <c>IMUL</c> (one, two and three operands), <c>MOVZX</c>, <c>MOVSX</c>,
 /// <c>XCHG</c>, <c>BSWAP</c>, <c>BSF</c>, <c>BSR</c>, <c>CLC</c>, <c>STC</c>, <c>CMC</c>, <c>JMP</c>,
-/// <c>Jcc</c>, <c>SETcc</c>, <c>CMOVcc</c>,
+/// <c>Jcc</c>, <c>SETcc</c>, <c>CMOVcc</c>, <c>PUSH</c>, <c>POP</c>, <c>PUSHF(D)</c>, <c>POPF(D)</c>,
 /// <c>NOP</c>; MMX
 /// <c>MOVD</c>, <c>MOVQ</c>, <c>PADDB/W/D/Q</c>, <c>PSUBB/W/D/Q</c>, <c>PAND</c>, <c>PANDN</c>, <c>POR</c>,
 /// <c>PXOR</c>, <c>PCMPEQB/W/D</c>, <c>PCMPGTB/W/D</c>, <c>PMULLW</c>, <c>PMULHW</c>, <c>PMADDWD</c>,
@@ -88,6 +91,9 @@ public static class InlineAsmLifting {
     return true;
   }
 
+  /// <summary>The bytes of the stack PUSH and POP work on - the assembly's own, apart from the compiled code's, wrapping at its end.</summary>
+  private const int StackBytes = 256;
+
   /// <summary>The register statics, made on first use.</summary>
   private sealed class Registers(IrModule module) {
     private readonly Dictionary<string, IrGlobalVariable> _cells = [];
@@ -98,6 +104,8 @@ public static class InlineAsmLifting {
     public IrGlobalVariable Mmx(Reg register) => this.Cell($"asm.mm{register.Index() & 7}", IrType.I8, 8);
     public IrGlobalVariable Vector(Reg register) => this.Cell($"asm.v{register.Index() & 7}", IrType.I8, 64);
     public IrGlobalVariable Flag(char flag) => this.Cell($"asm.{char.ToLowerInvariant(flag)}f", IrType.I1, 1);
+    public IrGlobalVariable Stack() => this.Cell("asm.stack", IrType.I8, StackBytes);
+    public IrGlobalVariable StackPointer() => this.Cell("asm.sp", IrType.I32, 1);
 
     private IrGlobalVariable Cell(string name, IrType type, int count) {
       if (!this._cells.TryGetValue(name, out var cell))
@@ -194,6 +202,12 @@ public static class InlineAsmLifting {
         case "IMUL": return this.TruncatingMultiply(operands);
         case "BSF": return this.BitScan(operands, forward: true);
         case "BSR": return this.BitScan(operands, forward: false);
+        case "PUSH": return this.Push(operands);
+        case "POP": return this.Pop(operands);
+        case "PUSHF": this.PushValue(this.PackFlags(IrType.I16)); return true;
+        case "PUSHFD": this.PushValue(this.PackFlags(IrType.I32)); return true;
+        case "POPF": this.UnpackFlags(this.PopValue(IrType.I16)); return true;
+        case "POPFD": this.UnpackFlags(this.PopValue(IrType.I32)); return true;
         case "CLC": this.SetFlag('C', IrBuilder.ConstBool(false)); return true;
         case "STC": this.SetFlag('C', IrBuilder.ConstBool(true)); return true;
         case "CMC": this.SetFlag('C', this.Add(new IrBinary(IrBinaryOp.Xor, this.GetFlag('C'), IrBuilder.ConstBool(true)))); return true;
@@ -589,6 +603,82 @@ public static class InlineAsmLifting {
       this.Write(destination, index);
       this.SetFlag('Z', zero);
       return true;
+    }
+
+    // --- the stack ------------------------------------------------------------------------------
+
+    /// <summary>The stack slot <paramref name="pointer"/> addresses.</summary>
+    private IrValue StackSlot(IrValue pointer) => this.Add(new IrGep(registers.Stack(), pointer));
+
+    private void PushValue(IrValue value) {
+      var old = this.Add(new IrLoad(IrType.I32, registers.StackPointer()));
+      var moved = this.Add(new IrBinary(IrBinaryOp.And,
+        this.Add(new IrBinary(IrBinaryOp.Sub, old, new IrConstantInt(IrType.I32, value.Type.Bits / 8))),
+        new IrConstantInt(IrType.I32, StackBytes - 1)));
+      this.Add(new IrStore(moved, registers.StackPointer()));
+      // a value straddling the wrap is stored byte by byte, so the stack never writes past its end
+      for (var i = 0; i < value.Type.Bits / 8; ++i) {
+        var octet = this.Narrow(i == 0 ? value : this.Add(new IrBinary(IrBinaryOp.LShr, value, new IrConstantInt(value.Type, 8 * i))), IrType.I8);
+        var at = this.Add(new IrBinary(IrBinaryOp.And, this.Add(new IrBinary(IrBinaryOp.Add, moved, new IrConstantInt(IrType.I32, i))),
+          new IrConstantInt(IrType.I32, StackBytes - 1)));
+        this.Add(new IrStore(octet, this.StackSlot(at)));
+      }
+    }
+
+    private IrValue PopValue(IrType type) {
+      var pointer = this.Add(new IrLoad(IrType.I32, registers.StackPointer()));
+      IrValue value = new IrConstantInt(type, 0);
+      for (var i = 0; i < type.Bits / 8; ++i) {
+        var at = this.Add(new IrBinary(IrBinaryOp.And, this.Add(new IrBinary(IrBinaryOp.Add, pointer, new IrConstantInt(IrType.I32, i))),
+          new IrConstantInt(IrType.I32, StackBytes - 1)));
+        var octet = this.Widen(this.Add(new IrLoad(IrType.I8, this.StackSlot(at))), IrCastOp.ZExt, type);
+        value = this.Add(new IrBinary(IrBinaryOp.Or, value, i == 0 ? octet : this.Add(new IrBinary(IrBinaryOp.Shl, octet, new IrConstantInt(type, 8 * i)))));
+      }
+      this.Add(new IrStore(this.Add(new IrBinary(IrBinaryOp.And,
+        this.Add(new IrBinary(IrBinaryOp.Add, pointer, new IrConstantInt(IrType.I32, type.Bits / 8))),
+        new IrConstantInt(IrType.I32, StackBytes - 1))), registers.StackPointer()));
+      return value;
+    }
+
+    private bool Push(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 1)
+        throw new NotLiftableException("expects one operand");
+      var place = this.PlaceOf(operands[0], 0);
+      // an immediate is pushed as a doubleword, as a 32-bit assembler encodes it
+      var bytes = place switch { ImmediatePlace => 4, { Bytes: 2 or 4 } => place.Bytes, _ => 0 };
+      if (bytes == 0 || place is VectorPlace)
+        throw new NotLiftableException("pushes a 16- or 32-bit register, variable or immediate");
+      this.PushValue(this.Read(place, bytes));
+      return true;
+    }
+
+    private bool Pop(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 1)
+        throw new NotLiftableException("expects one operand");
+      var place = this.PlaceOf(operands[0], 0);
+      if (place is VectorPlace or ImmediatePlace || place.Bytes is not (2 or 4))
+        throw new NotLiftableException("pops into a 16- or 32-bit register or variable");
+      this.Write(place, this.PopValue(Integer(place.Bytes)));
+      return true;
+    }
+
+    /// <summary>
+    /// The FLAGS image PUSHF writes: CF, ZF, SF and OF from their statics, bit 1 set as it always is and
+    /// IF set as it is in a running program; PF and AF, which are not modelled, read as clear.
+    /// </summary>
+    private IrValue PackFlags(IrType type) {
+      IrValue image = new IrConstantInt(type, 0x0202);
+      foreach (var (flag, bit) in new[] { ('C', 0), ('Z', 6), ('S', 7), ('O', 11) }) {
+        var set = this.Widen(this.GetFlag(flag), IrCastOp.ZExt, type);
+        image = this.Add(new IrBinary(IrBinaryOp.Or, image, this.Add(new IrBinary(IrBinaryOp.Shl, set, new IrConstantInt(type, bit)))));
+      }
+      return image;
+    }
+
+    private void UnpackFlags(IrValue image) {
+      foreach (var (flag, bit) in new[] { ('C', 0), ('Z', 6), ('S', 7), ('O', 11) })
+        this.SetFlag(flag, this.Compare(IrCmpPred.Ne,
+          this.Add(new IrBinary(IrBinaryOp.And, image, new IrConstantInt(image.Type, 1L << bit))), new IrConstantInt(image.Type, 0)));
     }
 
     // --- flags ----------------------------------------------------------------------------------
