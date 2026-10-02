@@ -218,6 +218,7 @@ public static partial class X86NativeCompiler {
             return;
           case IrCondBr branch: this.LowerConditionalBranch(block, branch); return;
           case IrSwitch @switch: this.LowerSwitch(block, @switch); return;
+          case IrUnreachable unreachable when IrRaise.FollowsRaise(unreachable): return;
           case IrUnreachable: this.RaiseError(51); return;
           default:
             throw Decline($"'{function.Name}' uses {instruction.GetType().Name}, which has no native lowering yet");
