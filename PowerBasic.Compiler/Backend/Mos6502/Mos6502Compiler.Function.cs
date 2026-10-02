@@ -163,6 +163,8 @@ public static partial class Mos6502Compiler {
             return;
           case IrCondBr branch: this.LowerConditionalBranch(block, branch); return;
           case IrSwitch @switch: this.LowerSwitch(block, @switch); return;
+          case IrUnreachable unreachable when IrRaise.FollowsRaise(unreachable):
+            return;
           case IrUnreachable:
             this.RaiseError(51);
             return;

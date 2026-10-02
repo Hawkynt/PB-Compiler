@@ -1031,9 +1031,11 @@ public sealed partial class IrLowering {
   /// <c>$ERROR … ON</c> trap takes in the IR. The direct emitter spells this as a conditional jump
   /// over a call; with no flags register in a target-independent IR it is an ordinary branch instead.
   ///
-  /// <c>rt_raise</c> does not come back - it dispatches through the armed ON ERROR handler or ends the
-  /// program - but the IR still needs a terminator on the block that called it, so that block branches
-  /// to the continuation it never actually reaches.
+  /// <c>rt_error</c> does not come back - every runtime dispatches through the armed ON ERROR handler,
+  /// whose RESUME continues at a statement boundary rather than here, or ends the program - so the
+  /// block that calls it ends in <c>unreachable</c>. That is what makes the condition a fact on the
+  /// continuation: past one divisor check the divisor is known nonzero, and a second check of it
+  /// folds away, which a branch back into the continuation would forbid.
   /// </summary>
   private void RaiseWhen(IrValue condition, int code, string what) {
     var bad = this.NewBlock(what + ".trap");
@@ -1041,9 +1043,14 @@ public sealed partial class IrLowering {
     this._b.CondBr(condition, bad, ok);
 
     this._b.Position(bad);
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), new IrConstantInt(IrType.I32, code));
-    this._b.Br(ok);
+    this.Raise(new IrConstantInt(IrType.I32, code));
     this._b.Position(ok);
+  }
+
+  /// <summary>Raises BASIC error <paramref name="code"/>, which never returns (see <see cref="RaiseWhen"/>).</summary>
+  private void Raise(IrValue code) {
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), code);
+    this._b.Unreachable();
   }
 
   /// <summary>
@@ -3500,9 +3507,7 @@ public sealed partial class IrLowering {
     var code = this._b.Load(IrType.I16, pending);
     this._b.CondBr(this._b.Cmp(IrCmpPred.Ne, code, new IrConstantInt(IrType.I16, 0)), reraise, end);
     this._b.Position(reraise);
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32),
-      this._b.ZExt(code, IrType.I32));
-    this._b.Br(end);
+    this.Raise(this._b.ZExt(code, IrType.I32));
     this._b.Position(end);
   }
 
@@ -4980,8 +4985,7 @@ public sealed partial class IrLowering {
         this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
       this.EmitIo(null, "print", "nl", IrType.Void, []);
     }
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), new IrConstantInt(IrType.I32, 5));
-    this._b.Br(ok);
+    this.Raise(new IrConstantInt(IrType.I32, 5));
     this._b.Position(ok);
   }
 
