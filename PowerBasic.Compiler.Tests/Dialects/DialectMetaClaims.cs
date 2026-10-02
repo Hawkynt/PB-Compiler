@@ -101,19 +101,20 @@ internal static class DialectMetaClaims {
       "the string heap's allocation granularity, and with it the maximum string length"),
 
     // Inline assembly is where the CPU tier stops being an optimizer hint and becomes a correctness
-    // question. PUSH with an immediate operand does not exist on the 8086 - it arrived with the 286 -
+    // question. PUSH with an immediate operand does not exist on the 8086 - it arrived with the 186 -
     // so a program that writes one and targets an 8086 asks for an instruction the target cannot
     // execute. Accepting it produces an image that faults on the machine it named.
     new("asm.cpu.push-imm", "$CPU 8086", "$CPU 80286",
       _pushImmediate,
-      "PUSH with an immediate is 80286 and later; on an 8086 target it must be refused",
+      "PUSH with an immediate is 80186 and later; on an 8086 target it must be refused",
       Kind.RefusedUnderDirective, d => d >= Dialect.Pb30 && d.Family() == DialectFamily.Borland),
 
-    // The same for a shift by an immediate count other than 1, which the 8086 spells only through CL.
+    // A shift by an immediate count other than 1 is also 80186+, but the inline-asm policy safely
+    // expands it into repeated count-one 8086 shifts. Both images must compile and differ in encoding.
     new("asm.cpu.shift-imm", "$CPU 8086", "$CPU 80286",
       _shiftImmediate,
-      "a shift by an immediate count above 1 is 80286 and later; the 8086 has only SHL r, CL",
-      Kind.RefusedUnderDirective, d => d >= Dialect.Pb30 && d.Family() == DialectFamily.Borland),
+      "an 8086 target expands the 80186 shift-by-immediate into count-one instructions",
+      Applies: d => d >= Dialect.Pb30 && d.Family() == DialectFamily.Borland),
   ];
 
   /// <summary>
