@@ -33,6 +33,28 @@ public sealed class FlatTargetRuntimeTests {
       NEXT
       DATA 17, 5, -17, 5, 17, -5, -2147483647, -1
       """, "q 3  2\nq-3 -2\nq-3  2\nq 2147483647  0"),
+    ("empty-string-identities", """
+      READ t$
+      u$ = t$ + ""
+      v$ = "" + t$
+      w$ = SPACE$(0) + STRING$(0, 65)
+      PRINT u$; v$; LEN(w$); "|"; w$; "|"
+      FOR i% = 1 TO 300
+        u$ = u$ + ""
+      NEXT
+      PRINT u$
+      DATA abc
+      """, "abcabc 0 ||\nabc"),
+    ("known-bits", """
+      FOR i% = 1 TO 3
+        READ n%
+        PRINT (n% * 4) AND 3; (n% AND 7) AND 15; (n% AND 7) MOD 16; (n% * 3) AND 1;
+        IF (n% AND 12) = 5 THEN PRINT "never";
+        IF (n% AND 12) = 4 THEN PRINT "four";
+        PRINT
+      NEXT
+      DATA 13, -6, 4
+      """, " 0  5  5  1\n 0  2  2  0\n 0  4  4  0 four"),
     ("file-ext-tab-input", """
       DIM e AS EXT, n%
       e = 1 / 7
