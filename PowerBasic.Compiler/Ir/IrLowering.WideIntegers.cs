@@ -84,7 +84,7 @@ public sealed partial class IrLowering {
       return;
     }
 
-    if (this._model.TypeOf(a.Value) is ScalarType { IsFloat: false, ByteSize: <= 4 } narrow) {
+    if (this._model.TypeOf(a.Value) is ScalarType { IsFloat: false, ByteSize: <= 8 } narrow) {
       this.ExtendIntoWide(destination, wt, narrow, this.LowerExpr(a.Value));
       return;
     }
@@ -146,21 +146,28 @@ public sealed partial class IrLowering {
 
   /// <summary>
   /// <c>wide = narrowExpr</c>: the native value's own words, then the extension. <c>WORD</c> and the
-  /// other unsigned spellings fill with zeros where <c>INTEGER</c> and <c>LONG</c> fill with their sign,
-  /// which is the whole difference between the two and is read off the SOURCE type rather than the
-  /// destination's.
+  /// other unsigned spellings fill with zeros where <c>INTEGER</c>, <c>LONG</c> and <c>QUAD</c> fill
+  /// with their sign, which is the whole difference between the two and is read off the SOURCE type
+  /// rather than the destination's. A <c>QUAD</c> brings four words.
   /// </summary>
   private void ExtendIntoWide(IrValue destination, WideIntType wt, ScalarType narrow, IrValue value) {
-    var words = narrow.ByteSize <= 2 ? 1 : 2;
+    var words = narrow.ByteSize switch { <= 2 => 1, <= 4 => 2, _ => 4 };
     if (words == 1) {
       this._b.Store(this.NarrowToWord(value, narrow), this.WideWordAddress(destination, 0));
-    } else {
+    } else if (words == 2) {
       var asLong = value.Type.Bits == 32
         ? value
         : this._b.Cast(narrow.Signed ? IrCastOp.SExt : IrCastOp.ZExt, value, IrType.I32);
       this._b.Store(this._b.Trunc(asLong, IrType.I16), this.WideWordAddress(destination, 0));
       this._b.Store(this._b.Trunc(this._b.Binary(IrBinaryOp.LShr, asLong, new IrConstantInt(IrType.I32, 16)), IrType.I16),
         this.WideWordAddress(destination, 1));
+    } else {
+      // a QUAD's words are moved through memory: a 64-bit value is a cell on a 16-bit target, not
+      // something it can shift, and the four words are where the cell already keeps them
+      var cell = this.QuadCell();
+      this._b.Store(value, cell);
+      for (var k = 0; k < words && k < wt.Words; ++k)
+        this._b.Store(this._b.Load(IrType.I16, this.OffsetWithin(cell, k * 2)), this.WideWordAddress(destination, k));
     }
     if (wt.Words <= words)
       return;
@@ -172,6 +179,10 @@ public sealed partial class IrLowering {
     for (var k = words; k < wt.Words; ++k)
       this._b.Store(fill, this.WideWordAddress(destination, k));
   }
+
+  /// <summary>An eight-byte frame cell a QUAD's words pass through.</summary>
+  private IrAlloca QuadCell()
+    => this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I64) { Name = "wide.quad" });
 
   /// <summary>The low word of a native value, whatever width the expression arrived in.</summary>
   private IrValue NarrowToWord(IrValue value, ScalarType narrow) {
@@ -193,10 +204,17 @@ public sealed partial class IrLowering {
     if (narrow.ByteSize <= 2)
       return narrow.ByteSize == 1 ? this._b.Trunc(low, IrType.I8) : low;
 
+    if (narrow.ByteSize == 8) {
+      // a QUAD takes four words, assembled in a cell for the reason ExtendIntoWide gives
+      var cell = this.QuadCell();
+      for (var k = 0; k < 4; ++k)
+        this._b.Store(this._b.Load(IrType.I16, this.WideWordAddress(source, k)), this.OffsetWithin(cell, k * 2));
+      return this._b.Load(IrType.Integer(64, narrow.Signed), cell);
+    }
+
     var high = this._b.Load(IrType.I16, this.WideWordAddress(source, 1));
-    var combined = this._b.Or(
+    return this._b.Or(
       this._b.ZExt(low, IrType.I32),
       this._b.Binary(IrBinaryOp.Shl, this._b.ZExt(high, IrType.I32), new IrConstantInt(IrType.I32, 16)));
-    return narrow.ByteSize == 4 ? combined : this._b.SExt(combined, IrType.Integer(narrow.ByteSize * 8, narrow.Signed));
   }
 }
