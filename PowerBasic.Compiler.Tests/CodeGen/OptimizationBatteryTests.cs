@@ -69,6 +69,7 @@ public sealed class OptimizationBatteryTests {
     ["cmp-ax-imm"] = [0x83, 0xF8],       // CMP AX,imm8 - a comparison against a small constant
     ["cmp-frame-imm"] = [0x83, 0x7E],    // CMP WORD PTR [BP+disp8],imm8 - the same against a frame
                                          // cell, without loading it into the accumulator first
+    ["cmp-si-imm"] = [0x83, 0xFE],       // CMP SI,imm8 - the same with the value resident in SI
     ["and-ax-imm8"] = [0x83, 0xE0],      // AND AX,imm8 - a bit mask materialized (the bit test avoids it)
     ["sub-ax-bx"] = [0x29, 0xD8],        // SUB AX,BX
     ["sbb-dx-cx"] = [0x19, 0xCA],        // SBB DX,CX - the 2nd instruction of every 32-bit compare/subtract

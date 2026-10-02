@@ -8,6 +8,13 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// the region T dominates. Since x is an SSA value, every non-phi use of x in that
 /// region can be replaced by the constant C, which then folds. This propagates facts
 /// learned from a branch into the code guarded by it.
+///
+/// <para>
+/// The branch condition itself is the simplest such fact, and it holds on both edges: true where the
+/// true successor dominates, false where the false one does. That is what folds a check repeated
+/// further down - the second divisor test after <c>q = n \ d</c>, an array bound tested twice -
+/// once the first check's failure path ends in a raise that never returns.
+/// </para>
 /// </summary>
 public static class CorrelatedValueProp {
 
@@ -28,6 +35,13 @@ public static class CorrelatedValueProp {
 
     var dom = analyses.Get(IrAnalyses.Dominators)!;
     var changed = 0;
+
+    foreach (var block in fn.Blocks)
+      if (block.Terminator is IrCondBr { Condition: IrInstruction condition } branch
+          && !ReferenceEquals(branch.IfTrue, branch.IfFalse)) {
+        changed += ReplaceDominatedUses(dom, block, condition, branch.IfTrue, IrBuilder.ConstBool(true));
+        changed += ReplaceDominatedUses(dom, block, condition, branch.IfFalse, IrBuilder.ConstBool(false));
+      }
 
     foreach (var block in fn.Blocks) {
       if (block.Terminator is not IrCondBr cb || cb.Condition is not IrCmp { Pred: IrCmpPred.Eq } cmp)
@@ -54,6 +68,7 @@ public static class CorrelatedValueProp {
     }
 
     // Operand substitution cannot change CFG topology; every CFG-only analysis remains valid.
+    // (A branch whose condition became a constant is left for SimplifyCfg to fold.)
     return changed == 0
       ? IrPassResult.Unchanged
       : IrPassResult.ChangedPreservingSets(changed, IrAnalysisSets.Cfg);
@@ -67,5 +82,22 @@ public static class CorrelatedValueProp {
         any = true;
       }
     return any;
+  }
+
+  /// <summary>
+  /// Replaces the uses of <paramref name="value"/> in the region <paramref name="successor"/> dominates
+  /// with <paramref name="known"/>, when <paramref name="successor"/> is entered only from
+  /// <paramref name="from"/>. A phi use is edge-based and is left alone.
+  /// </summary>
+  private static int ReplaceDominatedUses(IrDominators dom, IrBasicBlock from, IrValue value, IrBasicBlock successor, IrConstant known) {
+    var preds = successor.Predecessors.ToList();
+    if (preds.Count != 1 || !ReferenceEquals(preds[0], from))
+      return 0;
+    var changed = 0;
+    foreach (var user in value.Users.ToList())
+      if (user is not IrPhi && user.Parent is { } where && dom.Dominates(successor, where)
+          && ReplaceOperandIn(user, value, known))
+        ++changed;
+    return changed;
   }
 }

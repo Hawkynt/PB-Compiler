@@ -197,9 +197,9 @@ END SUB
 '           is gone. The present half only confirms a compare still happens, so it
 '           accepts whichever operand form the emitter picked - the direct path
 '           stages both sides through registers, the routed one compares the frame
-'           cell against the immediate in place.
+'           cell against the immediate in place, or the counter resident in SI.
 ' @assert   absent sbb-dx-cx
-' @assert   present cmp-ax-bx|cmp-ax-frame|cmp-ax-imm|cmp-frame-imm
+' @assert   present cmp-ax-bx|cmp-ax-frame|cmp-ax-imm|cmp-frame-imm|cmp-si-imm
 ' @status   done
 ' ---------------------------------------------------------------------------
 SUB LongCompareNarrowedToWord() NOINLINE

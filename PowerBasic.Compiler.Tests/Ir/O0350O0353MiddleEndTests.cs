@@ -23,13 +23,13 @@ public sealed class O0350O0353MiddleEndTests {
     new IrBuilder(entry).CondBr(first, trap1, middle);
     var bt1 = new IrBuilder(trap1);
     bt1.Call(IrType.Void, error, IrBuilder.ConstI32(6));
-    bt1.Br(middle);
+    bt1.Unreachable();
     var bm = new IrBuilder(middle);
     bm.Add(x, new IrConstantInt(IrType.I16, 1));
     bm.CondBr(second, trap2, exit);
     var bt2 = new IrBuilder(trap2);
     bt2.Call(IrType.Void, error, IrBuilder.ConstI32(6));
-    bt2.Br(exit);
+    bt2.Unreachable();
     new IrBuilder(exit).Ret();
 
     var changed = OverflowCheckCoalescing.Run(fn);
@@ -58,13 +58,13 @@ public sealed class O0350O0353MiddleEndTests {
     new IrBuilder(entry).CondBr(first, trap1, middle);
     var bt1 = new IrBuilder(trap1);
     bt1.Call(IrType.Void, error, IrBuilder.ConstI32(6));
-    bt1.Br(middle);
+    bt1.Unreachable();
     var bm = new IrBuilder(middle);
     bm.Call(IrType.Void, sideEffect);
     bm.CondBr(second, trap2, exit);
     var bt2 = new IrBuilder(trap2);
     bt2.Call(IrType.Void, error, IrBuilder.ConstI32(6));
-    bt2.Br(exit);
+    bt2.Unreachable();
     new IrBuilder(exit).Ret();
 
     Assert.That(OverflowCheckCoalescing.Run(fn), Is.Zero);

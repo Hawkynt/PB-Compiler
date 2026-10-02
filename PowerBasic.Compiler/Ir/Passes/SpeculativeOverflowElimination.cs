@@ -136,18 +136,8 @@ public static class SpeculativeOverflowElimination {
     return true;
   }
 
-  private static int? ErrorCode(IrBasicBlock trap, IrBasicBlock continuation) {
-    if (trap.Terminator is not IrBr tail || !ReferenceEquals(tail.Target, continuation))
-      return null;
-    var body = trap.Instructions.Where(i => !i.IsTerminator).ToArray();
-    return body is [IrCall {
-        Callee: IrFunction { Name: "rt_error" },
-        ArgCount: 1,
-      } call]
-      && call.GetOperand(1) is IrConstantInt code
-        ? checked((int)code.Value)
-        : null;
-  }
+  private static int? ErrorCode(IrBasicBlock trap, IrBasicBlock continuation)
+    => ReferenceEquals(trap, continuation) ? null : IrRaise.Code(trap);
 
   /// <summary>
   /// Matches the signed add/sub overflow identity emitted by lowering:
