@@ -769,13 +769,15 @@ public sealed partial class IrLowering {
     // the resolver before it decides it has no entry for the mnemonic, so a variable in one is
     // collected exactly as it would be in a MOV. Scanning the text for identifiers instead is the
     // guess this node exists to avoid - it cannot tell a register from a variable.
-    if (!parsed && PolicyEmitsEveryLine(stmt.Text)) {
+    //
+    // A block neither of them can emit still binds its names: x86-16 declines it, but the lifter that
+    // turns x86 text into IR for every other machine knows instructions the table does not (SETcc).
+    var policyEmits = !parsed && PolicyEmitsEveryLine(stmt.Text);
+    if (!parsed)
       foreach (var line in stmt.Text.Split('\n'))
         Asm.TextAssembler.Analyze(line, seen);
-      parsed = true;
-    }
 
-    var routable = parsed;
+    var routable = parsed || policyEmits;
     foreach (var name in seen.Collected)
       // a VARIABLE first, exactly as the direct emitter's resolver orders it: a label sharing a
       // variable's spelling is the variable, on both paths

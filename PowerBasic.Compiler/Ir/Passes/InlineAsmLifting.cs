@@ -18,10 +18,20 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// destination lane is written, which is the snapshot semantics the hardware has.
 /// </para>
 /// <para>
-/// Flags are not modelled yet, and neither are jumps, the stack or addressing through registers: an
-/// instruction that needs any of them is declined by name, never compiled into something else. The
-/// set lifted so far: <c>MOV</c>, <c>ADD</c>, <c>SUB</c>, <c>AND</c>, <c>OR</c>, <c>XOR</c>, <c>NOT</c>,
-/// <c>NEG</c>, <c>INC</c>, <c>DEC</c>, <c>SHL</c>/<c>SAL</c>, <c>SHR</c>, <c>SAR</c>, <c>NOP</c>; MMX
+/// The flags are statics too, one <c>i1</c> each: <c>asm.cf</c>, <c>asm.zf</c>, <c>asm.sf</c> and
+/// <c>asm.of</c>, written by the arithmetic and logic instructions and read by <c>Jcc</c>,
+/// <c>SETcc</c>, <c>CMOVcc</c>, <c>ADC</c> and <c>SBB</c>. A flag nothing reads is a dead store the
+/// middle end removes, so modelling them costs nothing where they are not used. The parity and
+/// auxiliary flags are not modelled, and a condition that reads parity is declined. A jump goes to a
+/// BASIC label: the block is split at the assembly and ends in a branch to the label's block.
+/// </para>
+/// <para>
+/// The stack and addressing through registers are not modelled: an instruction that needs either is
+/// declined by name, never compiled into something else. The set lifted so far: <c>MOV</c>,
+/// <c>ADD</c>, <c>ADC</c>, <c>SUB</c>, <c>SBB</c>, <c>CMP</c>, <c>AND</c>, <c>OR</c>, <c>XOR</c>,
+/// <c>TEST</c>, <c>NOT</c>, <c>NEG</c>, <c>INC</c>, <c>DEC</c>, <c>SHL</c>/<c>SAL</c>, <c>SHR</c>,
+/// <c>SAR</c>, <c>CLC</c>, <c>STC</c>, <c>CMC</c>, <c>JMP</c>, <c>Jcc</c>, <c>SETcc</c>, <c>CMOVcc</c>,
+/// <c>NOP</c>; MMX
 /// <c>MOVD</c>, <c>MOVQ</c>, <c>PADDB/W/D/Q</c>, <c>PSUBB/W/D/Q</c>, <c>PAND</c>, <c>PANDN</c>, <c>POR</c>,
 /// <c>PXOR</c>, <c>EMMS</c>; SSE2 <c>MOVDQA</c>/<c>MOVDQU</c> and the same packed operations on
 /// <c>XMM</c>; SSSE3 <c>PSHUFB</c>.
@@ -40,10 +50,6 @@ public static class InlineAsmLifting {
     var registers = new Registers(module);
     foreach (var function in module.Functions.Where(function => function.HasInlineAsm && !function.IsDeclaration).ToList()) {
       foreach (var node in function.AllInstructions.OfType<IrInlineAsm>().ToList()) {
-        if (!node.Routable) {
-          declined = $"'{function.Name}': inline assembly naming something that is not a variable: {node.Text.Trim()}";
-          return false;
-        }
         var lifter = new BlockLifter(registers, node);
         foreach (var raw in node.Text.Split('\n')) {
           if (!lifter.TryLift(raw, out var why)) {
@@ -65,6 +71,7 @@ public static class InlineAsmLifting {
     public IrGlobalVariable General(Reg register) => this.Cell($"asm.r{register.WordSlot() & 7}", IrType.I32, 1);
     public IrGlobalVariable Mmx(Reg register) => this.Cell($"asm.mm{register.Index() & 7}", IrType.I8, 8);
     public IrGlobalVariable Vector(Reg register) => this.Cell($"asm.v{register.Index() & 7}", IrType.I8, 64);
+    public IrGlobalVariable Flag(char flag) => this.Cell($"asm.{char.ToLowerInvariant(flag)}f", IrType.I1, 1);
 
     private IrGlobalVariable Cell(string name, IrType type, int count) {
       if (!this._cells.TryGetValue(name, out var cell))
@@ -94,7 +101,8 @@ public static class InlineAsmLifting {
       }
       var label = this._labels.FirstOrDefault(pair => pair.Value == index).Key ?? this._probe.DefineLabel();
       this._labels[label] = index;
-      symbol = AsmSymbol.OfMemory(Mem.At(label));
+      // a BASIC label is a jump target, everything else a variable's storage
+      symbol = node.GetOperand(index) is IrBlockAddress ? AsmSymbol.OfLabel(label) : AsmSymbol.OfMemory(Mem.At(label));
       return true;
     }
 
@@ -140,10 +148,23 @@ public static class InlineAsmLifting {
         case "AND": return this.Scalar(operands, IrBinaryOp.And);
         case "OR": return this.Scalar(operands, IrBinaryOp.Or);
         case "XOR": return this.Scalar(operands, IrBinaryOp.Xor);
-        case "NOT": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Xor, v, new IrConstantInt(type, -1)));
-        case "NEG": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Sub, new IrConstantInt(type, 0), v));
-        case "INC": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Add, v, new IrConstantInt(type, 1)));
-        case "DEC": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Sub, v, new IrConstantInt(type, 1)));
+        case "CMP": return this.Scalar(operands, IrBinaryOp.Sub, write: false);
+        case "TEST": return this.Scalar(operands, IrBinaryOp.And, write: false);
+        case "ADC": return this.WithCarry(operands, IrBinaryOp.Add);
+        case "SBB": return this.WithCarry(operands, IrBinaryOp.Sub);
+        case "NOT": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Xor, v, new IrConstantInt(type, -1)), null);
+        case "NEG": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Sub, new IrConstantInt(type, 0), v), FlagRule.Negate);
+        case "INC": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Add, v, new IrConstantInt(type, 1)), FlagRule.Increment);
+        case "DEC": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Sub, v, new IrConstantInt(type, 1)), FlagRule.Decrement);
+        case "CLC": this.SetFlag('C', IrBuilder.ConstBool(false)); return true;
+        case "STC": this.SetFlag('C', IrBuilder.ConstBool(true)); return true;
+        case "CMC": this.SetFlag('C', this.Add(new IrBinary(IrBinaryOp.Xor, this.GetFlag('C'), IrBuilder.ConstBool(true)))); return true;
+        case "JMP": return this.Jump(operands, null);
+        case var jcc when jcc.StartsWith('J') && ConditionOf(jcc[1..]) is { } condition: return this.Jump(operands, condition);
+        case var set when set.StartsWith("SET", StringComparison.Ordinal) && ConditionOf(set[3..]) is { } condition:
+          return this.SetCondition(operands, condition);
+        case var cmov when cmov.StartsWith("CMOV", StringComparison.Ordinal) && ConditionOf(cmov[4..]) is { } condition:
+          return this.MoveIf(operands, condition);
         case "SHL" or "SAL": return this.Shift(operands, IrBinaryOp.Shl);
         case "SHR": return this.Shift(operands, IrBinaryOp.LShr);
         case "SAR": return this.Shift(operands, IrBinaryOp.AShr);
@@ -258,7 +279,7 @@ public static class InlineAsmLifting {
     /// <c>destination = destination op source</c>. The width is the register's, or a variable's stated
     /// size, or - for an unsized variable - the other operand's.
     /// </summary>
-    private bool Scalar(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrBinaryOp? op) {
+    private bool Scalar(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrBinaryOp? op, bool write = true) {
       if (operands.Count != 2)
         throw new NotLiftableException("expects two operands");
       var destination = this.PlaceOf(operands[0], 0);
@@ -273,20 +294,201 @@ public static class InlineAsmLifting {
       if (destination is MemoryPlace memory)
         destination = memory with { Bytes = bytes };
       var value = this.Read(source, bytes);
-      var result = op is { } binary
-        ? this.Add(new IrBinary(binary, this.Read(destination, bytes), value))
-        : value;
+      if (op is not { } binary) {
+        this.Write(destination, value);
+        return true;
+      }
+      var current = this.Read(destination, bytes);
+      var result = this.Add(new IrBinary(binary, current, value));
+      this.SetFlags(binary switch {
+        IrBinaryOp.Add => FlagRule.Add,
+        IrBinaryOp.Sub => FlagRule.Subtract,
+        _ => FlagRule.Logic,
+      }, current, value, result);
+      if (write)
+        this.Write(destination, result);
+      return true;
+    }
+
+    // --- flags ----------------------------------------------------------------------------------
+
+    private enum FlagRule { Add, Subtract, Logic, Increment, Decrement, Negate }
+
+    private IrValue GetFlag(char flag) => this.Add(new IrLoad(IrType.I1, registers.Flag(flag)));
+    private void SetFlag(char flag, IrValue value) => this.Add(new IrStore(value, registers.Flag(flag)));
+
+    private IrValue Compare(IrCmpPred predicate, IrValue a, IrValue b) => this.Add(new IrCmp(predicate, a, b));
+
+    /// <summary>ZF, SF, CF and OF of <c>a op b = result</c>, by x86's rules (PF and AF are not modelled).</summary>
+    private void SetFlags(FlagRule rule, IrValue a, IrValue b, IrValue result) {
+      var type = result.Type;
+      var zero = new IrConstantInt(type, 0);
+      this.SetFlag('Z', this.Compare(IrCmpPred.Eq, result, zero));
+      this.SetFlag('S', this.Compare(IrCmpPred.Slt, result, zero));
+      IrValue SignOf(IrValue v) => this.Compare(IrCmpPred.Slt, v, zero);
+      IrValue Xor(IrValue x, IrValue y) => this.Add(new IrBinary(IrBinaryOp.Xor, x, y));
+      IrValue And(IrValue x, IrValue y) => this.Add(new IrBinary(IrBinaryOp.And, x, y));
+      switch (rule) {
+        case FlagRule.Add:
+          this.SetFlag('C', this.Compare(IrCmpPred.Ult, result, a));
+          this.SetFlag('O', SignOf(And(Xor(a, result), Xor(b, result))));
+          break;
+        case FlagRule.Subtract:
+          this.SetFlag('C', this.Compare(IrCmpPred.Ult, a, b));
+          this.SetFlag('O', SignOf(And(Xor(a, b), Xor(a, result))));
+          break;
+        case FlagRule.Logic:
+          this.SetFlag('C', IrBuilder.ConstBool(false));
+          this.SetFlag('O', IrBuilder.ConstBool(false));
+          break;
+        case FlagRule.Increment:           // CF is left as it was
+          this.SetFlag('O', this.Compare(IrCmpPred.Eq, result, new IrConstantInt(type, MinOf(type))));
+          break;
+        case FlagRule.Decrement:
+          this.SetFlag('O', this.Compare(IrCmpPred.Eq, a, new IrConstantInt(type, MinOf(type))));
+          break;
+        case FlagRule.Negate:
+          this.SetFlag('C', this.Compare(IrCmpPred.Ne, a, zero));
+          this.SetFlag('O', this.Compare(IrCmpPred.Eq, a, new IrConstantInt(type, MinOf(type))));
+          break;
+      }
+    }
+
+    private static long MinOf(IrType type) => type.Bits >= 64 ? long.MinValue : -(1L << (type.Bits - 1));
+
+    /// <summary>The x86 condition a <c>Jcc</c>/<c>SETcc</c>/<c>CMOVcc</c> suffix names, or null for an unknown one.</summary>
+    private static Condition? ConditionOf(string suffix) => suffix switch {
+      "O" => Condition.Overflow, "NO" => Condition.NotOverflow,
+      "B" or "C" or "NAE" => Condition.Below, "AE" or "NB" or "NC" => Condition.AboveOrEqual,
+      "E" or "Z" => Condition.Equal, "NE" or "NZ" => Condition.NotEqual,
+      "BE" or "NA" => Condition.BelowOrEqual, "A" or "NBE" => Condition.Above,
+      "S" => Condition.Sign, "NS" => Condition.NotSign,
+      "P" or "PE" => Condition.Parity, "NP" or "PO" => Condition.NotParity,
+      "L" or "NGE" => Condition.Less, "GE" or "NL" => Condition.GreaterOrEqual,
+      "LE" or "NG" => Condition.LessOrEqual, "G" or "NLE" => Condition.Greater,
+      _ => null,
+    };
+
+    /// <summary>The truth of <paramref name="condition"/> over the modelled flags.</summary>
+    private IrValue Holds(Condition condition) {
+      IrValue Not(IrValue v) => this.Add(new IrBinary(IrBinaryOp.Xor, v, IrBuilder.ConstBool(true)));
+      IrValue Or(IrValue x, IrValue y) => this.Add(new IrBinary(IrBinaryOp.Or, x, y));
+      IrValue SignNotOverflow() => this.Add(new IrBinary(IrBinaryOp.Xor, this.GetFlag('S'), this.GetFlag('O')));
+      return condition switch {
+        Condition.Overflow => this.GetFlag('O'),
+        Condition.NotOverflow => Not(this.GetFlag('O')),
+        Condition.Below => this.GetFlag('C'),
+        Condition.AboveOrEqual => Not(this.GetFlag('C')),
+        Condition.Equal => this.GetFlag('Z'),
+        Condition.NotEqual => Not(this.GetFlag('Z')),
+        Condition.BelowOrEqual => Or(this.GetFlag('C'), this.GetFlag('Z')),
+        Condition.Above => Not(Or(this.GetFlag('C'), this.GetFlag('Z'))),
+        Condition.Sign => this.GetFlag('S'),
+        Condition.NotSign => Not(this.GetFlag('S')),
+        Condition.Less => SignNotOverflow(),
+        Condition.GreaterOrEqual => Not(SignNotOverflow()),
+        Condition.LessOrEqual => Or(this.GetFlag('Z'), SignNotOverflow()),
+        Condition.Greater => Not(Or(this.GetFlag('Z'), SignNotOverflow())),
+        _ => throw new NotLiftableException("the parity flag is not modelled"),
+      };
+    }
+
+    /// <summary>ADC/SBB: the operation with the carry flag folded in, its carry out computed one size wider.</summary>
+    private bool WithCarry(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrBinaryOp op) {
+      if (operands.Count != 2)
+        throw new NotLiftableException("expects two operands");
+      var destination = this.PlaceOf(operands[0], 0);
+      var source = this.PlaceOf(operands[1], destination.Bytes);
+      if (destination is VectorPlace || source is VectorPlace)
+        return false;
+      var bytes = destination.Bytes != 0 ? destination.Bytes : source.Bytes;
+      if (bytes == 0 || bytes > 4)
+        throw new NotLiftableException("the operand size is not stated");
+      if (destination is MemoryPlace memory)
+        destination = memory with { Bytes = bytes };
+      var type = Integer(bytes);
+      var wide = IrType.I64;
+      var a = this.Read(destination, bytes);
+      var b = this.Read(source, bytes);
+      var carry = this.Add(new IrCast(IrCastOp.ZExt, this.GetFlag('C'), type));
+      var result = this.Add(new IrBinary(op, this.Add(new IrBinary(op, a, b)), carry));
+      // the carry out: the unsigned sum or difference, taken in 64 bits, leaves the operand's width
+      var ua = this.Add(new IrCast(IrCastOp.ZExt, a, wide));
+      var ub = this.Add(new IrCast(IrCastOp.ZExt, b, wide));
+      var uc = this.Add(new IrCast(IrCastOp.ZExt, carry, wide));
+      var exact = this.Add(new IrBinary(op, this.Add(new IrBinary(op, ua, ub)), uc));
+      var limit = new IrConstantInt(wide, 1L << (bytes * 8));
+      var carried = op == IrBinaryOp.Add
+        ? this.Compare(IrCmpPred.Uge, exact, limit)
+        : this.Compare(IrCmpPred.Slt, exact, new IrConstantInt(wide, 0));
+      this.SetFlags(op == IrBinaryOp.Add ? FlagRule.Add : FlagRule.Subtract, a, b, result);
+      this.SetFlag('C', carried);
       this.Write(destination, result);
       return true;
     }
 
-    private bool Unary(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, Func<IrValue, IrType, IrInstruction> apply) {
+    private bool SetCondition(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, Condition condition) {
+      if (operands.Count != 1)
+        throw new NotLiftableException("expects one operand");
+      var place = this.PlaceOf(operands[0], 1);
+      if (place is VectorPlace or ImmediatePlace)
+        throw new NotLiftableException("SETcc writes a byte register or variable");
+      this.Write(place is MemoryPlace memory ? memory with { Bytes = 1 } : place,
+        this.Add(new IrCast(IrCastOp.ZExt, this.Holds(condition), IrType.I8)));
+      return true;
+    }
+
+    private bool MoveIf(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, Condition condition) {
+      if (operands.Count != 2)
+        throw new NotLiftableException("expects two operands");
+      var destination = this.PlaceOf(operands[0], 0);
+      if (destination is not GeneralPlace { Bytes: 2 or 4 } general)
+        throw new NotLiftableException("CMOVcc writes a 16- or 32-bit register");
+      var source = this.PlaceOf(operands[1], general.Bytes);
+      var chosen = this.Add(new IrSelect(this.Holds(condition), this.Read(source, general.Bytes), this.Read(destination, general.Bytes)));
+      // a 32-bit CMOV writes its register whether or not it moves, as the hardware does
+      this.Write(destination, chosen);
+      return true;
+    }
+
+    /// <summary>
+    /// JMP/Jcc to a BASIC label: the block ends here with a branch, and what followed the assembly
+    /// continues in a block of its own, entered when a conditional jump is not taken.
+    /// </summary>
+    private bool Jump(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, Condition? condition) {
+      if (operands is not [TextAssembler.ParsedAsmLabel { Label: var label }] || !this._labels.TryGetValue(label, out var index)
+          || node.GetOperand(index) is not IrBlockAddress { Block: var target })
+        throw new NotLiftableException("a jump is lifted only to a BASIC label");
+      var taken = condition is { } c ? this.Holds(c) : null;
+      var block = node.Parent!;
+      var function = block.Parent!;
+      var rest = function.CreateBlock(block.Label + ".asm");
+      var moving = block.Instructions.SkipWhile(instruction => !ReferenceEquals(instruction, node)).ToList();
+      foreach (var instruction in moving) {
+        block.Remove(instruction);
+        rest.Append(instruction);
+      }
+      // the successors' phis now see the moved terminator's new block
+      foreach (var successor in rest.Successors.Distinct())
+        foreach (var phi in successor.Phis)
+          phi.RenameIncomingBlock(block, rest);
+      if (taken is null)
+        block.Append(new IrBr(target));
+      else
+        block.Append(new IrCondBr(taken, target, rest));
+      return true;
+    }
+
+    private bool Unary(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, Func<IrValue, IrType, IrInstruction> apply, FlagRule? flags) {
       if (operands.Count != 1)
         throw new NotLiftableException("expects one operand");
       var place = this.PlaceOf(operands[0], 0);
       if (place.Bytes == 0 || place is VectorPlace)
         throw new NotLiftableException("the operand size is not stated");
-      var result = this.Add(apply(this.Read(place, place.Bytes), Integer(place.Bytes)));
+      var value = this.Read(place, place.Bytes);
+      var result = this.Add(apply(value, Integer(place.Bytes)));
+      if (flags is { } rule)            // NOT changes no flag
+        this.SetFlags(rule, value, value, result);
       this.Write(place, result);
       return true;
     }

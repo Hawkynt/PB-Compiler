@@ -301,8 +301,13 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
 - **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
   the code.
 
-What it does not lower yet it declines by name - inline assembly,
-calls through pointers - rather than compiling it into something else.
+What it does not lower yet it declines by name - calls through pointers, an inline-assembly
+instruction the lifter does not know - rather than compiling it into something else. x86 inline
+assembly itself compiles here, as it does on x86-32 and x64: `Ir/Passes/InlineAsmLifting` turns each
+instruction into IR before the middle end runs, with the x86 registers and flags as module statics
+that become SSA wherever one procedure owns them, SIMD registers as byte lanes, and a jump to a BASIC
+label as a branch. `InlineAsmLiftingTests` hold every lifted program to what the same text prints on
+the 8086 under `$CPU 8086`, where the existing ISA emulation runs it on `Cpu8086`.
 `Mos6502ProgramTests` run compiled programs on `Cpu6502` (a hand-decoded interpreter in the test
 project, independent of the compiler's opcode table); `Mos6502BatteryTests` run every DOS battery
 program the back end accepts against its DOS golden output, keep a floor under how many that is, and
@@ -1952,8 +1957,9 @@ observational, so EXE byte-identity is an aim rather than a gate.
 
 The lowering's supported subset is listed in [IR.md](IR.md); everything outside it
 makes `TryLowerModule` return null rather than miscompile. The largest gaps today
-are `ARRAY SORT`, the FIELD form of random I/O and inline assembly (which is
-target-specific by definition and will never lower).
+are `ARRAY SORT` and the FIELD form of random I/O. Inline assembly is x86 text, and the C and LLVM
+emitters see it only once `InlineAsmLifting` has turned it into IR; what the lifter does not know
+yet is declined by instruction name.
 
 `PRINT USING` lowers, but the **C** emitter declines it, for the reason `ON ERROR`
 does below: `runtime/pbc_rt.c` has no `rt_using_field`, and the DOS runtime's
