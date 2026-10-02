@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter + string runtime |
-| **Source** | runtime `rt_strcatlit` |
+| **Stage** | IR middle end + string runtime |
+| **Source** | `Ir/Passes/StringAppendInPlace.cs` → `rt_str_append_lit` → `rt_strcatlit` |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF94.BAS` |
+| **Verified by** | IR tests use it as a fixture |
 | **Split from** | [O0009](O0009-string-temp-economy.md) |
 
 ## What it is

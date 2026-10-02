@@ -3,8 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.cs` (the `INCR`/`DECR` statement path) |
+| **Stage** | x86-16 back end |
+| **Verified by** | `PeepholeTests.Fold_GivenLoadIncrementStoreOfTheSameCell_*` |
+| **Source** | `Backend/Peephole.cs` — read-modify-write folding (load/add/store → `INC [a]` / `ADD [a],k`) |
 | **Gate** | `--optimize` |
 | **Split from** | [O0008](O0008-peephole-zero-idiom.md) |
 

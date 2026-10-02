@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (constant counts 1..31) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen` — `EmitShiftRotate` |
+| **Stage** | x86-16 back end |
+| **Source** | `Backend/InstructionSelector.cs` — `SelectNativeWideShift` (a ROTATE is two shifts ORed, not one `ROL`) |
 | **Gate** | `--optimize` + `$CPU 80386` |
-| **Verified by** | `tests/diff/DIFF70.BAS` (byte-identical to genuine PBC 3.50, which accepts `$CPU 80386`) |
+| **Verified by** | `BackendCpuTargetTests.LongShift_GivenA386Target_*`, `LongRotate_*` |
 | **Split from** | [C0001](C0001-386-codegen.md) |
 
 ## What it is

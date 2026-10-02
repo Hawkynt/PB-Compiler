@@ -3,7 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Done (as a general lowering rule; only the left-operand-position cost model remains) |
-| **Stage** | Emitter |
+| **Stage** | x86-16 back end |
+| **Verified by** | `PeepholeTests.Fold_GivenLoadReadOnlyByAnAluOp_*` |
+| **Source** | `Backend/Peephole.cs` — memory-operand folding |
 | **Related** | [O0005](O0005-register-residency.md), [O0030](O0030-induction-variable-strength-reduction.md), [O0034](O0034-redundant-load-elimination.md) |
 
 ## The idea

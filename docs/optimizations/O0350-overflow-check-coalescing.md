@@ -3,7 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (IR straight-line Error 6 chains) |
-| **Stage** | Emitter |
+| **Stage** | IR middle end |
+| **Verified by** | `O0350OverflowCheckCoalescingTests` |
+| **Source** | `Ir/Passes/OverflowCheckCoalescing.cs` |
 | **IR** | `PowerBasic.Compiler/Ir/Passes/OverflowCheckCoalescing.cs` |
 | **Related** | [O0219](O0219-overflow-check-elimination.md), [O0308](O0308-speculative-overflow-elimination.md), [O0117](O0117-bounds-check-merging.md) |
 

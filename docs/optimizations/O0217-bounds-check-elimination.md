@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter, on the value lattice |
-| **Source** | `CodeGen/CodeGenerator.cs` — `IndexRangeOf` |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/RangeCheckElim.cs` (`rangefold`): folds every compare `IrRangeAnalysis.Decide` settles; `SimplifyCfg` then drops the trap |
 | **Gate** | `--optimize` + `$ERROR BOUNDS ON` |
-| **Verified by** | `tests/diff/DIFF37/77/89/92/93.BAS` |
+| **Verified by** | `RangeCheckElimTests` (counter and masked subscripts) |
 | **Split from** | [O0016](O0016-value-fact-analysis.md) (which is now the three-domain lattice itself) |
 
 ## What it is

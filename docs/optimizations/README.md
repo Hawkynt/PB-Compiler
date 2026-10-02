@@ -147,7 +147,7 @@ Conventions used on every page:
 | 🟡 | [O0077](O0077-negation-idioms.md) | Negation idioms |
 | 🟡 | [O0078](O0078-multiply-decomposition.md) | General multiply decomposition |
 | ✅ | [O0079](O0079-shared-divide.md) | Shared divide (quotient + remainder) |
-| ✅ | [O0080](O0080-division-special-cases.md) | Division special cases |
+| 🟡 | [O0080](O0080-division-special-cases.md) | Division special cases |
 | 🟡 | [O0081](O0081-flag-reuse.md) | Flag reuse / `TEST` for zero compare |
 | ✅ | [O0082](O0082-memory-operand-folding.md) | Memory operand folding |
 | ⬜ | [O0083](O0083-store-to-load-forwarding.md) | Store-to-load forwarding |
@@ -179,7 +179,7 @@ Conventions used on every page:
 | ⬜ | [O0109](O0109-macro-fusion-placement.md) | Macro-fusion placement |
 | ⬜ | [O0110](O0110-general-induction-variables.md) | General induction variables |
 | ⬜ | [O0111](O0111-redundant-induction-variables.md) | Redundant IV elimination |
-| ✅ | [O0112](O0112-countdown-loop.md) | Countdown loops |
+| ⬜ | [O0112](O0112-countdown-loop.md) | Countdown loops |
 | 🟡 | [O0113](O0113-loop-bounds-hoisted.md) | Loop bounds in registers |
 | ⬜ | [O0114](O0114-loop-unswitching.md) | Loop unswitching |
 | ⬜ | [O0115](O0115-loop-peeling.md) | Loop peeling |
@@ -197,7 +197,7 @@ Conventions used on every page:
 | ⬜ | [O0127](O0127-loop-interleaving.md) | Loop interleaving |
 | ⬜ | [O0128](O0128-software-pipelining.md) | Software pipelining |
 | 🟡 | [O0129](O0129-unroll-factor-cost-model.md) | Unroll factor by cost model |
-| ⬜ | [O0130](O0130-trip-count-versioning.md) | Trip-count versioning |
+| 🟡 | [O0130](O0130-trip-count-versioning.md) | Trip-count versioning |
 | ⬜ | [O0131](O0131-exact-trip-count.md) | Exact trip count |
 | ⬜ | [O0132](O0132-compile-time-loop-evaluation.md) | Compile-time loop evaluation |
 | ⬜ | [O0133](O0133-loop-prefix-evaluation.md) | Loop prefix evaluation |
@@ -290,12 +290,12 @@ Conventions used on every page:
 | ⬜ | [O0215](O0215-udt-self-copy-elision.md) | UDT self-copy elision |
 | ⬜ | [O0216](O0216-udt-self-compare-fold.md) | UDT self-compare folding |
 | ✅ | [O0217](O0217-bounds-check-elimination.md) | Bounds-check elimination by range |
-| ✅ | [O0218](O0218-range-comparison-folding.md) | Range-invariant comparison folding |
+| 🟡 | [O0218](O0218-range-comparison-folding.md) | Range-invariant comparison folding |
 | ✅ | [O0219](O0219-overflow-check-elimination.md) | Overflow-check elimination |
 | ✅ | [O0220](O0220-divide-guard-elimination.md) | Divide-by-zero guard elimination |
 | ✅ | [O0221](O0221-operation-narrowing.md) | 32-bit operation narrowing |
-| ✅ | [O0222](O0222-identity-operation-removal.md) | Fact-proven identity removal |
-| ✅ | [O0223](O0223-constant-result-folding.md) | Fact-proven constant result |
+| 🟡 | [O0222](O0222-identity-operation-removal.md) | Fact-proven identity removal |
+| 🟡 | [O0223](O0223-constant-result-folding.md) | Fact-proven constant result |
 | ✅ | [O0224](O0224-bounded-multiply-off-fpu.md) | Bounded multiply stays off the FPU |
 | ✅ | [O0225](O0225-ssa-construction.md) | SSA construction (CFG, dominators, phi placement) |
 | ✅ | [O0226](O0226-proven-constant-reads.md) | Cross-block proven-constant reads |
@@ -343,7 +343,7 @@ Conventions used on every page:
 | ⬜ | [O0263](O0263-allocation-site-alias.md) | Allocation-site alias analysis |
 | ⬜ | [O0264](O0264-live-range-splitting.md) | Live-range splitting around calls |
 | ⬜ | [O0265](O0265-vector-lane-coalescing.md) | Vector lane register coalescing |
-| ✅ | [O0266](O0266-zero-length-intrinsic-folding.md) | Zero-length string intrinsic folding |
+| 🟡 | [O0266](O0266-zero-length-intrinsic-folding.md) | Zero-length string intrinsic folding |
 | ⬜ | [O0267](O0267-modulo-scheduling.md) | Modulo scheduling |
 
 ### O — profile-guided optimization
@@ -572,7 +572,7 @@ Conventions used on every page:
 | | # | Pass |
 |---|---|---|
 | ✅ | [C0001](C0001-386-codegen.md) | `$CPU 80386` codegen |
-| ✅ | [C0002](C0002-486-codegen.md) | `$CPU 80486` gate |
+| 🟡 | [C0002](C0002-486-codegen.md) | `$CPU 80486` gate |
 | ✅ | [C0003](C0003-x87-scheduling.md) | x87 scheduling |
 
 ## Where the passes run

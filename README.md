@@ -373,11 +373,11 @@ status column below cannot drift apart:
 
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
-| C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 177 | 78 | 152 | 407 |
+| C — target-CPU code generation | 2 | 1 | 0 | 3 |
+| O — optimization passes | 170 | 84 | 153 | 407 |
 | P — lean output | 7 | 0 | 0 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **191** | **78** | **152** | **421** |
+| **all** | **183** | **85** | **153** | **421** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -469,7 +469,7 @@ next free number rather than displacing anything.
 | 🟡 | [O0077](docs/optimizations/O0077-negation-idioms.md) | Negation idioms | `0-x` and `x*-1` become `NEG`, `-(-x)` disappears — with the `-32768` semantics preserved. |
 | 🟡 | [O0078](docs/optimizations/O0078-multiply-decomposition.md) | General multiply decomposition | Any small constant multiplier lowers to a shift/add chain chosen by the target cost model. |
 | ✅ | [O0079](docs/optimizations/O0079-shared-divide.md) | Shared divide | `n \ d` and `n MOD d` come from one `IDIV`'s AX and DX instead of two divides. |
-| ✅ | [O0080](docs/optimizations/O0080-division-special-cases.md) | Division special cases | `\ 1`, `MOD 1`, `\ -1`, and divisors beyond the proven dividend range fold away; `MOD 2^n` masks for any provably non-negative value. |
+| 🟡 | [O0080](docs/optimizations/O0080-division-special-cases.md) | Division special cases | `\ 1`, `MOD 1`, `\ -1`, and divisors beyond the proven dividend range fold away; `MOD 2^n` masks for any provably non-negative value. |
 | ✅ | [O0081](docs/optimizations/O0081-flag-reuse.md) | Flag reuse | `CMP x,0` becomes `TEST x,x` — or disappears entirely when the preceding ALU op already set the flags. |
 | ✅ | [O0082](docs/optimizations/O0082-memory-operand-folding.md) | Memory operand folding | `MOV AX,[x] / ADD DI,AX` becomes `ADD DI,[x]` as a general lowering rule, not per loop shape. |
 | ✅ | [O0083](docs/optimizations/O0083-store-to-load-forwarding.md) | Store-to-load forwarding | `MOV [n],AX / MOV AX,[n]` — the reload is dropped, the accumulator already holds the value. |
@@ -501,7 +501,7 @@ next free number rather than displacing anything.
 | ⬜ | [O0109](docs/optimizations/O0109-macro-fusion-placement.md) | Macro-fusion placement | Keep `CMP`/`TEST` adjacent to its branch on cores that fuse them — the opposite of what an 8086 wants. |
 | ⬜ | [O0110](docs/optimizations/O0110-general-induction-variables.md) | General induction variables | Any `base + i*stride` becomes an incrementally stepped value, not only the recognized array shapes. |
 | 🟡 | [O0111](docs/optimizations/O0111-redundant-induction-variables.md) | Redundant IV elimination | Loop variables that advance in lockstep collapse to one. |
-| ✅ | [O0112](docs/optimizations/O0112-countdown-loop.md) | Countdown loops | A fixed-trip loop counts down with `DEC`/`JNZ`, dropping the compare entirely. |
+| ⬜ | [O0112](docs/optimizations/O0112-countdown-loop.md) | Countdown loops | A fixed-trip loop counts down with `DEC`/`JNZ`, dropping the compare entirely. |
 | 🟡 | [O0113](docs/optimizations/O0113-loop-bounds-hoisted.md) | Loop bounds in registers | The limit and step are held across the loop instead of reloaded per iteration. |
 | ✅ | [O0114](docs/optimizations/O0114-loop-unswitching.md) | Loop unswitching | An invariant conditional moves out of the loop and each cloned body is specialized. |
 | ⬜ | [O0115](docs/optimizations/O0115-loop-peeling.md) | Loop peeling | Peel the first iteration to remove its special-case branch from the rest. |
@@ -519,7 +519,7 @@ next free number rather than displacing anything.
 | ⬜ | [O0127](docs/optimizations/O0127-loop-interleaving.md) | Loop interleaving | Separate each load from its consumer across unrolled copies to hide latency. |
 | ⬜ | [O0128](docs/optimizations/O0128-software-pipelining.md) | Software pipelining | Prologue/kernel/epilogue so different iterations occupy different pipeline stages; modulo scheduling. |
 | 🟡 | [O0129](docs/optimizations/O0129-unroll-factor-cost-model.md) | Unroll factor by cost model | Pick the factor from register pressure, code size, latency and trip count — not a constant 4. |
-| ✅ | [O0130](docs/optimizations/O0130-trip-count-versioning.md) | Trip-count versioning | Scalar, unrolled and vector variants of a loop, selected at run time by the count. |
+| 🟡 | [O0130](docs/optimizations/O0130-trip-count-versioning.md) | Trip-count versioning | Scalar, unrolled and vector variants of a loop, selected at run time by the count. |
 | ⬜ | [O0131](docs/optimizations/O0131-exact-trip-count.md) | Exact trip count | One analysis deriving the iteration count from start, end, step and PB's wrap semantics. |
 | ✅ | [O0132](docs/optimizations/O0132-compile-time-loop-evaluation.md) | Compile-time loop evaluation | A finite pure loop runs at compile time and becomes initialized data. |
 | ⬜ | [O0133](docs/optimizations/O0133-loop-prefix-evaluation.md) | Loop prefix evaluation | Evaluate the first iterations, then start the runtime loop from that state. |
@@ -612,12 +612,12 @@ next free number rather than displacing anything.
 | ⬜ | [O0215](docs/optimizations/O0215-udt-self-copy-elision.md) | UDT self-copy elision | `rec = rec`, where both sides are the structurally identical non-string lvalue, copies a block onto itself. |
 | ⬜ | [O0216](docs/optimizations/O0216-udt-self-compare-fold.md) | UDT self-compare folding | `rec = rec` as an expression folds to its constant truth: `-1` for `=`, `0` for `<>`. |
 | ✅ | [O0217](docs/optimizations/O0217-bounds-check-elimination.md) | Bounds-check elimination by range | An array index whose proven `[lo,hi]` lies inside the array's static bounds cannot raise Error 9, so its check is not emitted. |
-| ✅ | [O0218](docs/optimizations/O0218-range-comparison-folding.md) | Range-invariant comparison folding | A signed comparison against a constant whose answer is invariant over the proven range folds to that constant boolean — in ordinary code, not only in a branch condition. |
+| 🟡 | [O0218](docs/optimizations/O0218-range-comparison-folding.md) | Range-invariant comparison folding | A signed comparison against a constant whose answer is invariant over the proven range folds to that constant boolean — in ordinary code, not only in a branch condition. |
 | ✅ | [O0219](docs/optimizations/O0219-overflow-check-elimination.md) | Overflow-check elimination | An `INTEGER` add or subtract over an affine counter range that provably stays inside 16 bits cannot raise Error 6, so its `JNO` guard is not emitted. |
 | ✅ | [O0220](docs/optimizations/O0220-divide-guard-elimination.md) | Divide-by-zero guard elimination | The Error-11 guard before an `INTEGER` `\` or `MOD` is emitted unconditionally — it is not an `$ERROR` option but part of the language's behavior. |
 | ✅ | [O0221](docs/optimizations/O0221-operation-narrowing.md) | 32-bit operation narrowing | A 32-bit comparison or integral multiply whose operands the lattice proves both fit one 16-bit word runs on the 16-bit ALU:. |
-| ✅ | [O0222](docs/optimizations/O0222-identity-operation-removal.md) | Fact-proven identity removal | An operation whose facts prove it changes nothing is not emitted — only its operand is:. |
-| ✅ | [O0223](docs/optimizations/O0223-constant-result-folding.md) | Fact-proven constant result | An operation whose result the facts already know emits the constant — while still evaluating the operand for its effects:. |
+| 🟡 | [O0222](docs/optimizations/O0222-identity-operation-removal.md) | Fact-proven identity removal | An operation whose facts prove it changes nothing is not emitted — only its operand is:. |
+| 🟡 | [O0223](docs/optimizations/O0223-constant-result-folding.md) | Fact-proven constant result | An operation whose result the facts already know emits the constant — while still evaluating the operand for its effects:. |
 | ✅ | [O0224](docs/optimizations/O0224-bounded-multiply-off-fpu.md) | Bounded multiply stays off the FPU | PB promotes an integer multiply to floating point, so `p& = a% * b%` normally pays `FILD` for each operand, `FMUL`, and `FISTP`. |
 | ✅ | [O0225](docs/optimizations/O0225-ssa-construction.md) | SSA construction (CFG, dominators, phi placement) | The substrate every other SSA pass stands on:. |
 | ✅ | [O0226](docs/optimizations/O0226-proven-constant-reads.md) | Cross-block proven-constant reads | The emitter folds each read that O0017 proved constant — constant propagation across blocks, which the local folder (O0001) cannot do because it sees one expression at a time. |
@@ -666,7 +666,7 @@ next free number rather than displacing anything.
 | ⬜ | [O0263](docs/optimizations/O0263-allocation-site-alias.md) | Allocation-site alias analysis | Two objects created at different allocation sites are distinct, and stay distinct through copies of their descriptors. |
 | ⬜ | [O0264](docs/optimizations/O0264-live-range-splitting.md) | Live-range splitting around calls | A value that is live across a call currently loses its register for its entire lifetime, because the calling convention lets the callee clobber it. |
 | ⬜ | [O0265](docs/optimizations/O0265-vector-lane-coalescing.md) | Vector lane register coalescing | Vector code pays for data movement between lanes: a shuffle to bring operands into matching positions, a move to satisfy a two-operand instruction's destination. |
-| ✅ | [O0266](docs/optimizations/O0266-zero-length-intrinsic-folding.md) | Zero-length string intrinsic folding | String intrinsics with a provably zero length produce the empty string and need no runtime call at all:. |
+| 🟡 | [O0266](docs/optimizations/O0266-zero-length-intrinsic-folding.md) | Zero-length string intrinsic folding | String intrinsics with a provably zero length produce the empty string and need no runtime call at all:. |
 | ⬜ | [O0267](docs/optimizations/O0267-modulo-scheduling.md) | Modulo scheduling | The general form of software pipelining: choose an initiation interval II — one new logical iteration started every II cycles. |
 
 ### O — profile-guided optimization
@@ -894,7 +894,7 @@ next free number rather than displacing anything.
 | | # | Pass | What it does |
 |---|---|---|---|
 | ✅ | [C0001](docs/optimizations/C0001-386-codegen.md) | `$CPU 80386` codegen | 32-bit value flow: hardware `IDIV`/`DIV` for constant divisors, inline 64-bit bitwise, `SHLD`/`SHRD`, `MOVZX`/`MOVSX`, `REP STOSD`. |
-| ✅ | [C0002](docs/optimizations/C0002-486-codegen.md) | `$CPU 80486` gate | `BSWAP`/`XADD`/`CMPXCHG`, 16-byte-aligned procedure entries and hot loop tops. |
+| 🟡 | [C0002](docs/optimizations/C0002-486-codegen.md) | `$CPU 80486` gate | `BSWAP`/`XADD`/`CMPXCHG`, 16-byte-aligned procedure entries and hot loop tops. |
 | ✅ | [C0003](docs/optimizations/C0003-x87-scheduling.md) | x87 scheduling | FPU instructions serialize on a pseudo-resource so independent integer work schedules around them. |
 
 Several passes are implemented as verified subsets with deeper forms on the

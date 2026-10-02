@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter + string runtime |
-| **Source** | `EmitRepMovsbWidened` |
+| **Stage** | DOS runtime |
+| **Source** | `Runtime/DosRuntime.Core.cs` — `EmitRepMovsbWidened` |
 | **Gate** | `--optimize` + `$CPU 80386` |
-| **Verified by** | `tests/diff/DIFF40.BAS` (a 386 string storm) |
+| **Verified by** | none yet |
 | **Split from** | [R0003](R0003-string-engine.md) |
 
 ## What it is

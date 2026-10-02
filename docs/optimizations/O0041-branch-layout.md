@@ -3,8 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (layout by construction; loop-top alignment under `$CPU 80486`/`80586`) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.cs` — `AlignLoopTop` and the `IF`/loop emitters |
+| **Stage** | x86-16 back end |
+| **Verified by** | `PeepholeTests.Straighten_*`; `MachineLoopRotationTests` |
+| **Source** | `Backend/Peephole.cs` (block straightening: a jump to the next block becomes a fall-through, branches inverted); `Backend/MachineLoopRotation.cs` |
 | **Gate** | layout: always; alignment: `$CPU 80486`+ and `$OPTIMIZE SPEED` |
 | **Related** | [O0031](O0031-branch-fusion.md), [O0035](O0035-jump-relaxation.md), [C0002](C0002-486-codegen.md) |
 | **Split into** | [O0231](O0231-loop-top-alignment.md), [O0232](O0232-procedure-entry-alignment.md) |

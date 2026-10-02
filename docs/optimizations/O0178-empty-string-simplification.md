@@ -3,7 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Done — the `+ ""` concat identities fold and `s$ = ""` is already allocation-free; the zero-length intrinsics are split out as [O0266](O0266-zero-length-intrinsic-folding.md) |
-| **Stage** | Emitter |
+| **Stage** | IR middle end |
+| **Verified by** | `FlatTargetRuntimeTests` (`empty-string-identities`, held to DOS) |
+| **Source** | `Ir/Passes/StringConstantFold.cs` — `FoldEmptyOperand` (`s$ + ""`, `"" + s$`); `Ir/Passes/StringEmptinessTest.cs` |
 | **Related** | [O0009](O0009-string-temp-economy.md), [O0024](O0024-multi-concat.md), [O0076](O0076-algebraic-identities.md), [O0181](O0181-empty-string-comparison.md) |
 | **Split into** | [O0266](O0266-zero-length-intrinsic-folding.md) |
 
