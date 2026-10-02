@@ -65,7 +65,7 @@ public sealed class IrCallGraph {
   /// escaped into a value whose eventual calls are not enumerable here.
   /// </summary>
   public bool IsFullyVisible(IrFunction function) {
-    if (!this._functions.Contains(function)
+    if (!this._functions.Contains(function) || function.MayGainCallers
         || function.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
       return false;
 

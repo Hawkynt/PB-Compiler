@@ -112,7 +112,7 @@ public static partial class SemanticFunctionMerging {
   /// equally invisible to the rewrite.
   /// </summary>
   private static bool IsFullyVisible(IrModule module, IrFunction function) {
-    if (function.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
+    if (function.MayGainCallers || function.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
       return false;
     foreach (var user in function.Users)
       if (user is not IrCall call || !ReferenceEquals(call.Callee, function))

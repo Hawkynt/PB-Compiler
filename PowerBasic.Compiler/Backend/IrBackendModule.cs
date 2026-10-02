@@ -54,7 +54,8 @@ public sealed class IrBackendModule {
     if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35
         or IrBackendTarget.X86_32 or IrBackendTarget.X64)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
-        options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops);
+        options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops,
+        portableRuntime: options.PortableRuntimeHeapBytes is not null);
     else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.Mos6502)
       IrMiddleEndPipeline.RunNativeModule(module, options.Optimize, options.OptimizeForSpeed,
         options.OptimizeForSize, minimumIntegerStorageBits: 16,

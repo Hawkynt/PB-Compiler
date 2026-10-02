@@ -61,12 +61,17 @@ public sealed class IrRangeAnalysis {
 
   private readonly IrDominators _dom;
   private readonly Dictionary<IrValue, ValueRange> _global = new(ReferenceEqualityComparer.Instance);
-  private readonly Dictionary<IrBasicBlock, List<(IrValue Value, IrCmpPred Pred, IrValue Against)>> _facts =
+  /// <summary>Every branch fact, by the value it constrains, with the block where it starts to hold.</summary>
+  private readonly Dictionary<IrValue, List<(IrBasicBlock From, IrCmpPred Pred, IrValue Against)>> _facts =
     new(ReferenceEqualityComparer.Instance);
+
+  /// <summary>The dominator tree's enter and exit numbers, so "dominates" is two comparisons.</summary>
+  private readonly Dictionary<IrBasicBlock, (int Enter, int Exit)> _treeOrder = new(ReferenceEqualityComparer.Instance);
   private bool _solved;
 
   private IrRangeAnalysis(IrDominators dom) {
     this._dom = dom;
+    this.CollectFacts();
     this.Solve();
     this._solved = true;
   }
@@ -391,16 +396,17 @@ public sealed class IrRangeAnalysis {
   ///
   /// <para>
   /// The constraints are stored as the comparison they came from and turned into an interval HERE,
-  /// not when they were collected. That is deliberate: <see cref="FactsAt"/> is cached, the fixpoint
-  /// calls into it while its own answers are still growing, and a bound computed against a
-  /// half-solved operand and then cached would be a fact tighter than the truth - the one shape of
-  /// mistake this class must not make.
+  /// not when they were collected. That is deliberate: the fixpoint calls in here while its own
+  /// answers are still growing, and a bound computed against a half-solved operand and then kept
+  /// would be a fact tighter than the truth - the one shape of mistake this class must not make.
   /// </para>
   /// </summary>
   private ValueRange FactAbout(IrValue value, IrBasicBlock block) {
     var narrowed = ValueRange.Top;
-    foreach (var (constrained, pred, against) in this.FactsAt(block)) {
-      if (!ReferenceEquals(constrained, value))
+    if (!this._facts.TryGetValue(value, out var facts))
+      return narrowed;
+    foreach (var (from, pred, against) in facts) {
+      if (!this.HoldsAt(from, block))
         continue;
       var other = this.Global(against);
       // an unsigned predicate says nothing usable about a range that may be negative: read unsigned,
@@ -414,57 +420,77 @@ public sealed class IrRangeAnalysis {
   }
 
   /// <summary>
-  /// The constraints that hold throughout <paramref name="block"/>, collected once by walking its
-  /// dominator chain.
+  /// Collects every branch fact once. A conditional edge yields one only when the successor it leads
+  /// to is entered <b>solely</b> through that edge - the same test <c>CorrelatedValueProp</c> makes, for
+  /// the same reason: a successor with a second predecessor can be reached without the condition
+  /// having held. The fact then holds exactly where that successor dominates (<see cref="HoldsAt"/>).
   ///
   /// <para>
-  /// A conditional edge yields a fact only when the successor it leads to is entered <b>solely</b>
-  /// through that edge and dominates this block - the same test <c>CorrelatedValueProp</c> makes,
-  /// for the same reason: a successor with a second predecessor can be reached without the condition
-  /// having held, and a fact taken from it would be a fact about the wrong path.
+  /// Facts are kept by the value they constrain, not by the block they hold in, because a query asks
+  /// about one value: an unrolled or inlined function has dominator chains thousands of blocks deep,
+  /// and handing every query the whole chain's constraints made the analysis quadratic in them.
   /// </para>
   /// </summary>
-  private IReadOnlyList<(IrValue Value, IrCmpPred Pred, IrValue Against)> FactsAt(IrBasicBlock block) {
-    if (this._facts.TryGetValue(block, out var cached))
-      return cached;
-    var collected = new List<(IrValue Value, IrCmpPred Pred, IrValue Against)>();
-    this._facts[block] = collected;
-
-    // Only the idom chain is walked, and that is complete rather than a shortcut: a fact taken from
-    // an edge into T holds exactly where T dominates, and T dominates this block precisely when it
-    // sits on this chain.
-    for (var at = block; at is not null; at = Parent(at)) {
-      var predecessors = at.Predecessors.ToList();
-      if (predecessors.Count != 1)
-        continue;                                    // reachable another way: the condition need not have held
-      if (predecessors[0].Terminator is not IrCondBr { Condition: IrCmp cmp } branch)
+  private void CollectFacts() {
+    var children = new Dictionary<IrBasicBlock, List<IrBasicBlock>>(ReferenceEqualityComparer.Instance);
+    IrBasicBlock? root = null;
+    foreach (var block in this._dom.ReversePostorder) {
+      var idom = this._dom.ImmediateDominatorOf(block);
+      if (idom is null || ReferenceEquals(idom, block)) {
+        root ??= block;
         continue;
-      var holds = ReferenceEquals(branch.IfTrue, at) ? true
-                : ReferenceEquals(branch.IfFalse, at) ? false
-                : (bool?)null;
-      if (holds is { } outcome && !ReferenceEquals(branch.IfTrue, branch.IfFalse))
-        AddConstraints(collected, cmp, outcome);
+      }
+      if (!children.TryGetValue(idom, out var list))
+        children[idom] = list = [];
+      list.Add(block);
     }
-    return collected;
+    if (root is not null) {
+      var clock = 0;
+      var stack = new Stack<(IrBasicBlock Block, int Child)>();
+      stack.Push((root, 0));
+      var enter = new Dictionary<IrBasicBlock, int>(ReferenceEqualityComparer.Instance) { [root] = clock++ };
+      while (stack.Count > 0) {
+        var (block, child) = stack.Pop();
+        if (children.TryGetValue(block, out var list) && child < list.Count) {
+          stack.Push((block, child + 1));
+          enter[list[child]] = clock++;
+          stack.Push((list[child], 0));
+          continue;
+        }
+        this._treeOrder[block] = (enter[block], clock++);
+      }
+    }
 
-    IrBasicBlock? Parent(IrBasicBlock b) {
-      var idom = this._dom.ImmediateDominatorOf(b);
-      return idom is null || ReferenceEquals(idom, b) ? null : idom;
+    foreach (var block in this._dom.ReversePostorder.Count > 0 ? (IEnumerable<IrBasicBlock>)this._dom.ReversePostorder : []) {
+      var predecessors = block.Predecessors.ToList();
+      if (predecessors.Count != 1 || predecessors[0].Terminator is not IrCondBr { Condition: IrCmp cmp } branch)
+        continue;
+      var holds = ReferenceEquals(branch.IfTrue, block) ? true
+                : ReferenceEquals(branch.IfFalse, block) ? false
+                : (bool?)null;
+      if (holds is not { } outcome || ReferenceEquals(branch.IfTrue, branch.IfFalse))
+        continue;
+      var pred = outcome ? cmp.Pred : Negate(cmp.Pred);
+      if (pred is null || !cmp.Lhs.Type.IsInteger || !cmp.Rhs.Type.IsInteger)
+        continue;
+      // both directions, because a check written 10 >= i constrains i exactly as i <= 10 does
+      this.AddFact(cmp.Lhs, block, pred.Value, cmp.Rhs);
+      this.AddFact(cmp.Rhs, block, Swap(pred.Value), cmp.Lhs);
     }
   }
 
-  /// <summary>
-  /// Records what <c>lhs pred rhs</c> (or its negation) says about each side. Both directions are
-  /// recorded, because a check written <c>10 &gt;= i</c> constrains <c>i</c> exactly as
-  /// <c>i &lt;= 10</c> does; each is stored with the constrained value first, so the predicate is
-  /// swapped for the right-hand entry rather than at every read.
-  /// </summary>
-  private static void AddConstraints(List<(IrValue Value, IrCmpPred Pred, IrValue Against)> into, IrCmp cmp, bool holds) {
-    var pred = holds ? cmp.Pred : Negate(cmp.Pred);
-    if (pred is null || !cmp.Lhs.Type.IsInteger || !cmp.Rhs.Type.IsInteger)
-      return;
-    into.Add((cmp.Lhs, pred.Value, cmp.Rhs));
-    into.Add((cmp.Rhs, Swap(pred.Value), cmp.Lhs));
+  private void AddFact(IrValue value, IrBasicBlock from, IrCmpPred pred, IrValue against) {
+    if (!this._facts.TryGetValue(value, out var list))
+      this._facts[value] = list = [];
+    list.Add((from, pred, against));
+  }
+
+  /// <summary>Whether a fact starting at <paramref name="from"/> holds in <paramref name="block"/>: <paramref name="from"/> dominates it.</summary>
+  private bool HoldsAt(IrBasicBlock from, IrBasicBlock block) {
+    if (ReferenceEquals(from, block))
+      return true;
+    return this._treeOrder.TryGetValue(from, out var outer) && this._treeOrder.TryGetValue(block, out var inner)
+      && outer.Enter <= inner.Enter && inner.Exit <= outer.Exit;
   }
 
   private static bool IsUnsigned(IrCmpPred pred)

@@ -3,7 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter + runtime |
+| **Stage** | IR middle end + runtime |
+| **Source** | `Ir/Passes/ConstantInstrSpecialization.cs`, run by `IrMiddleEndPipeline.RunNativeModule` (x86-16, 6502) and `RunHostedModule` on the portable runtime (x86-32, x64); `rt_instr_short` / `rt_instr_horspool` in the DOS and portable runtimes |
+| **Verified by** | `HostedPipelineParityTests` |
 | **Related** | [O0154](O0154-swar-search.md), [O0330](O0330-library-call-recognition.md), [R0003](R0003-string-engine.md) |
 
 ## The idea
