@@ -10,6 +10,20 @@ public sealed partial class CodeGenerator {
   /// ERROR disables that fallback, NATIVE deliberately raises the hardware requirement, and EMULATE
   /// deliberately exercises the software path even on capable hardware.
   /// </summary>
+  /// <summary>
+  /// Whether a general-purpose instruction works on a LONG variable: <c>DEC n&amp;</c> names no 32-bit
+  /// register and says no <c>DWORD PTR</c>, so the text alone looks like 8086 code, yet the variable
+  /// makes it a 32-bit operation. Only the resolver knows the operand's size.
+  /// </summary>
+  private bool NamesDwordVariable(InlineInstruction instruction, IAsmSymbolResolver resolver) {
+    if (instruction.Mnemonic is not ("MOV" or "XCHG" or "ADD" or "ADC" or "SUB" or "SBB" or "AND" or "OR" or "XOR"
+        or "CMP" or "TEST" or "INC" or "DEC" or "NOT" or "NEG"))
+      return false;
+    this._textAssembler ??= new(this._asm);
+    return this._textAssembler.TryParseOperands(instruction.Operands, resolver, out var operands, out _)
+      && operands.Any(operand => operand is TextAssembler.ParsedAsmMemory { Memory.Size: OperandSize.Dword });
+  }
+
   private bool TryEmitPolicyInlineAsm(string line, IAsmSymbolResolver resolver, RuntimeTarget target, out string? error) {
     error = null;
     var instruction = InlineInstruction.Parse(line);
@@ -24,6 +38,8 @@ public sealed partial class CodeGenerator {
     if (!x87)
       required |= RequiredBitManipulationFeature(instruction) | RequiredSupplementalFeature(instruction)
         | RequiredCryptoFeature(instruction) | RequiredBmiFeature(instruction);
+    if (required == RuntimeCpuFeatures.None && !x87 && this.NamesDwordVariable(instruction, resolver))
+      required = RuntimeCpuFeatures.GeneralPurpose32;
     var policy = this.RuntimeIsaPolicyForRuntime();
     var mode = x87 ? policy.ResolveX87(instruction.Mnemonic) : policy.Resolve(instruction.Mnemonic, required);
     var nativelySupported = required == RuntimeCpuFeatures.None || target.Has(required);

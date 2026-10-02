@@ -23,6 +23,25 @@ public sealed class InlineAsmGp32SemanticTests {
   private static string Run(string body) => Cpu8086.Run(Compile(body)).Output;
 
   [Test]
+  public void Alu32_GivenLongVariableWithoutDwordRegister_ThenItIsEmulatedOn16BitInstructions() {
+    var cpu = Cpu8086.Run(Compile("""
+      DIM n&, m&
+      n& = 65535
+      m& = -1
+      ! INC n&
+      ! ADD n&, 7
+      ! DEC m&
+      ! SUB m&, 65536
+      PRINT n&; m&
+      """));
+
+    Assert.Multiple(() => {
+      Assert.That(cpu.Output, Does.Contain("65543 -65538"));
+      Assert.That(cpu.OperandSizePrefixes, Is.Zero);
+    });
+  }
+
+  [Test]
   public void Mul32_GivenProductFitsLowDword_ThenHighDwordAndCfOfAreClear() {
     var output = Run("""
       DIM lo&, hi&, flags%
