@@ -146,6 +146,22 @@ public sealed class InlineAsmLiftingTests {
       PRINT HEX$(r1&); " "; HEX$(r2&); " "; HEX$(r3&); " "; HEX$(r4&)
       PRINT HEX$(r5&); " "; HEX$(r6&); " "; HEX$(r7&)
       """),
+    ("vex-lane-wise", """
+      DIM a&, b&, r1&, r2&, r3&, r4&
+      a& = &H7FF08001
+      b& = &H0010FF02
+      ! MOVD XMM0, a&
+      ! MOVD XMM1, b&
+      ! VPADDB YMM2, YMM0, YMM1
+      ! MOVD r1&, XMM2
+      ! VPCMPEQB YMM3, YMM2, YMM0
+      ! MOVD r2&, XMM3
+      ! VPMULLW XMM4, XMM0, XMM1
+      ! MOVD r3&, XMM4
+      ! VPXOR YMM5, YMM4, YMM1
+      ! MOVD r4&, XMM5
+      PRINT HEX$(r1&); " "; HEX$(r2&); " "; HEX$(r3&); " "; HEX$(r4&)
+      """),
     ("flags-and-conditions", """
       DIM lo&, hi&, m&, c&, k%
       ! MOV EAX, -1
@@ -305,6 +321,84 @@ public sealed class InlineAsmLiftingTests {
       """;
     Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)),
       Is.EqualTo(Vice.Normalize("7FE00000 7FFFFF03 86FE02\n80FF0102 33441122 80FF3344 80FF0102 49911A23\n")));
+  }
+
+  /// <summary>
+  /// AVX2 on 256-bit registers: the shuffles, unpacks and packs work within each 128-bit half, the
+  /// permutes across them, and a VEX form clears what lies above the register it writes. Stated
+  /// results, from the host compiler's AVX2 intrinsics on the same inputs; the 8086's emulation takes
+  /// the lane-wise forms only. PB's HEX$ writes -1 as FFFF where the intrinsics' printf wrote FFFFFFFF.
+  /// </summary>
+  [TestCase("x86-32")]
+  [TestCase("x64")]
+  [TestCase("6502")]
+  public void Run_GivenAvx2_ThenEachHalfAndPermuteMatchesTheHardware(string platform) {
+    const string source = """
+      DIM a&, b&, c&, d&, r1&, r2&, r3&, r4&, r5&, r6&, r7&, r8&, r9&, r10&, r11&, r12&, r13&, r14&, r15&, r16&, r17&, r18&, r19&
+      a& = &H03020100
+      b& = &H07060504
+      c& = &H8B0A0988
+      d& = &H0F0E0D0C
+      ! MOVD XMM0, a&
+      ! MOVD XMM1, b&
+      ! PUNPCKLDQ XMM0, XMM1
+      ! MOVD XMM2, c&
+      ! MOVD XMM3, d&
+      ! PUNPCKLDQ XMM2, XMM3
+      ! PUNPCKLQDQ XMM0, XMM2
+      ! VINSERTI128 YMM0, YMM0, XMM2, 1
+      ! VPBROADCASTD YMM1, XMM2
+      ! VPSHUFB YMM2, YMM0, YMM1
+      ! MOVD r1&, XMM2
+      ! VEXTRACTI128 XMM7, YMM2, 1
+      ! MOVD r2&, XMM7
+      ! VPUNPCKHBW YMM2, YMM0, YMM1
+      ! MOVD r3&, XMM2
+      ! VEXTRACTI128 XMM7, YMM2, 1
+      ! MOVD r4&, XMM7
+      ! VPACKUSWB YMM2, YMM0, YMM1
+      ! MOVD r5&, XMM2
+      ! VEXTRACTI128 XMM7, YMM2, 1
+      ! MOVD r6&, XMM7
+      ! VPSHUFD YMM2, YMM0, 27
+      ! MOVD r7&, XMM2
+      ! VEXTRACTI128 XMM7, YMM2, 1
+      ! MOVD r8&, XMM7
+      ! VPERMQ YMM2, YMM0, 78
+      ! MOVD r9&, XMM2
+      ! VEXTRACTI128 XMM7, YMM2, 1
+      ! MOVD r10&, XMM7
+      ! VPERM2I128 YMM2, YMM0, YMM1, 131
+      ! MOVD r11&, XMM2
+      ! VEXTRACTI128 XMM7, YMM2, 1
+      ! MOVD r12&, XMM7
+      ! VPSRLW YMM2, YMM0, 4
+      ! MOVD r13&, XMM2
+      ! VEXTRACTI128 XMM7, YMM2, 1
+      ! PSHUFD XMM7, XMM7, 255
+      ! MOVD r14&, XMM7
+      ! VPADDB YMM2, YMM0, YMM1
+      ! MOVD r15&, XMM2
+      ! VEXTRACTI128 XMM7, YMM2, 1
+      ! PSHUFD XMM7, XMM7, 255
+      ! MOVD r16&, XMM7
+      ! VEXTRACTI128 XMM7, YMM0, 1
+      ! PSHUFD XMM7, XMM7, 85
+      ! MOVD r17&, XMM7
+      ! VPADDB XMM2, XMM0, XMM1
+      ! VEXTRACTI128 XMM7, YMM2, 1
+      ! MOVD r18&, XMM7
+      ! VZEROUPPER
+      ! VEXTRACTI128 XMM7, YMM0, 1
+      ! MOVD r19&, XMM7
+      PRINT HEX$(r1&); " "; HEX$(r2&); " "; HEX$(r3&); " "; HEX$(r4&); " "; HEX$(r5&); " "; HEX$(r6&)
+      PRINT HEX$(r7&); " "; HEX$(r8&); " "; HEX$(r9&); " "; HEX$(r10&); " "; HEX$(r11&); " "; HEX$(r12&); " "; HEX$(r13&); " "; HEX$(r14&)
+      PRINT HEX$(r15&); " "; HEX$(r16&); " "; HEX$(r17&); " "; HEX$(r18&); " "; HEX$(r19&)
+      """;
+    Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)), Is.EqualTo(Vice.Normalize(
+      "A0900 0 9098888 9008800 FFFF FFFF00FF\n"
+      + "F0E0D0C 0 8B0A0988 3020100 8B0A0988 0 300010 0\n"
+      + "8E0C0A88 8B0A0988 F0E0D0C 0 0\n")));
   }
 
   [Test]

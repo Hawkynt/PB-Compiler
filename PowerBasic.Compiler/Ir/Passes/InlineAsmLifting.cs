@@ -40,7 +40,11 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <c>PMULHUW</c>, <c>PMINUB</c>, <c>PMAXUB</c>, <c>PMINSW</c>, <c>PMAXSW</c>, <c>PAVGB</c>,
 /// <c>PAVGW</c>, <c>PSHUFW</c>; SSE2 <c>MOVDQA</c>/<c>MOVDQU</c>, the same packed operations on
 /// <c>XMM</c>, <c>PUNPCKLQDQ</c>/<c>PUNPCKHQDQ</c>, <c>PSHUFD</c>, <c>PSHUFLW</c>, <c>PSHUFHW</c>;
-/// SSSE3 <c>PSHUFB</c>.
+/// SSSE3 <c>PSHUFB</c>. Under AVX and AVX2 every one of those has its VEX form - <c>VPADDB YMM0, YMM1,
+/// YMM2</c> takes a separate first source, works on <c>XMM</c> or <c>YMM</c>, and zeroes the register
+/// above what it writes - with the unpacks, packs and shuffles kept within each 128-bit half as the
+/// hardware keeps them; AVX2's own <c>VEXTRACTI128</c>, <c>VINSERTI128</c>, <c>VPBROADCASTB/W/D/Q</c>,
+/// <c>VPERMQ</c>, <c>VPERM2I128</c>, <c>VZEROUPPER</c> and <c>VZEROALL</c> complete the set.
 /// </para>
 /// </summary>
 public static class InlineAsmLifting {
@@ -97,6 +101,9 @@ public static class InlineAsmLifting {
 
     private readonly Assembler _probe = new();
     private readonly Dictionary<Label, int> _labels = [];
+
+    /// <summary>Set while a VEX-encoded instruction is lifted through its legacy name: three operands, and the register zeroed above what it writes.</summary>
+    private bool _vex;
 
     /// <summary>A name the block binds is a memory operand at a label of its own, which maps back to the bound pointer.</summary>
     public bool TryResolve(string name, out AsmSymbol symbol) {
@@ -176,7 +183,7 @@ public static class InlineAsmLifting {
         case "SAR": return this.Shift(operands, IrBinaryOp.AShr);
         case "MOVD": return this.MoveVector(operands, 4);
         case "MOVQ": return this.MoveVector(operands, 8);
-        case "MOVDQA" or "MOVDQU": return this.MoveVector(operands, 16);
+        case "MOVDQA" or "MOVDQU": return this.MoveVector(operands, 0);
         case "PADDB": return this.Lanes(operands, 1, IrBinaryOp.Add);
         case "PADDW": return this.Lanes(operands, 2, IrBinaryOp.Add);
         case "PADDD": return this.Lanes(operands, 4, IrBinaryOp.Add);
@@ -237,6 +244,31 @@ public static class InlineAsmLifting {
         case "PSHUFW": return this.Shuffle(operands, 2, 0);
         case "PSHUFLW": return this.Shuffle(operands, 2, 0);
         case "PSHUFHW": return this.Shuffle(operands, 2, 8);
+        // AVX2's own, reached only through the V prefix below
+        case "EXTRACTI128" when this._vex: return this.Extract128(operands);
+        case "INSERTI128" when this._vex: return this.Insert128(operands);
+        case "PBROADCASTB" when this._vex: return this.Broadcast(operands, 1);
+        case "PBROADCASTW" when this._vex: return this.Broadcast(operands, 2);
+        case "PBROADCASTD" when this._vex: return this.Broadcast(operands, 4);
+        case "PBROADCASTQ" when this._vex: return this.Broadcast(operands, 8);
+        case "PERMQ" when this._vex: return this.PermuteQuadwords(operands);
+        case "PERM2I128" when this._vex: return this.PermuteHalves(operands);
+        case "ZEROUPPER" when this._vex: return this.ZeroVectors(16);
+        case "ZEROALL" when this._vex: return this.ZeroVectors(0);
+        // a VEX form is its legacy instruction with a separate first source, and a vector register it
+        // writes is zeroed above its own width, up to the widest register there is
+        case ['V', .. var legacy] when !this._vex && (legacy.StartsWith('P') || legacy is "MOVD" or "MOVQ" or "MOVDQA" or "MOVDQU"
+            or "EXTRACTI128" or "INSERTI128" or "ZEROUPPER" or "ZEROALL"):
+          this._vex = true;
+          try {
+            if (!this.Lift(legacy, operands))
+              return false;
+          } finally {
+            this._vex = false;
+          }
+          if (operands is [TextAssembler.ParsedAsmRegister first, ..] && this.PlaceOf(first, 0) is VectorPlace { Bytes: var written } vector)
+            this.ZeroBytes(vector with { Bytes = 64 }, written, 64);
+          return true;
         default:
           return false;
       }
@@ -255,6 +287,7 @@ public static class InlineAsmLifting {
         => new GeneralPlace(registers.General(r), 4, 0),
       TextAssembler.ParsedAsmRegister { Register: var r } when r.IsMmx() => new VectorPlace(registers.Mmx(r), 8),
       TextAssembler.ParsedAsmRegister { Register: var r } when r.IsXmm() => new VectorPlace(registers.Vector(r), 16),
+      TextAssembler.ParsedAsmRegister { Register: var r } when r.IsYmm() => new VectorPlace(registers.Vector(r), 32),
       TextAssembler.ParsedAsmRegister { Register: var r } => throw new NotLiftableException($"register {r} is not lifted (the stack and frame pointers belong to the compiled code)"),
       TextAssembler.ParsedAsmImmediate { Value: var value } => new ImmediatePlace(value),
       TextAssembler.ParsedAsmMemory { Memory: var memory } => this.MemoryOf(memory, defaultBytes),
@@ -592,9 +625,10 @@ public static class InlineAsmLifting {
     }
 
     /// <summary>
-    /// MOVD/MOVQ/MOVDQA/MOVDQU: <paramref name="bytes"/> from source to destination. A vector
-    /// destination written from a general register or memory is zeroed above what was written, as the
-    /// hardware zeroes it.
+    /// MOVD/MOVQ/MOVDQA/MOVDQU and their VEX forms: <paramref name="bytes"/> from source to destination,
+    /// or the vector register's whole width when <paramref name="bytes"/> is 0. A vector register
+    /// written with less than its width is zeroed above what was written, as the hardware zeroes it
+    /// (a VEX form zeroes on up to the widest register, which <see cref="Lift"/> does after it).
     /// </summary>
     private bool MoveVector(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int bytes) {
       if (operands.Count != 2)
@@ -603,6 +637,8 @@ public static class InlineAsmLifting {
       var source = this.PlaceOf(operands[1], bytes);
       if (destination is not VectorPlace && source is not VectorPlace)
         return false;
+      if (bytes == 0)
+        bytes = destination is VectorPlace { Bytes: var to } ? to : ((VectorPlace)source).Bytes;
       var chunk = Math.Min(bytes, 8);
       var values = new List<IrValue>();
       for (var offset = 0; offset < bytes; offset += chunk)
@@ -613,56 +649,55 @@ public static class InlineAsmLifting {
         else
           this.Add(new IrStore(values[i], this.LaneAddress(destination, i * chunk)));
       }
-      if (destination is VectorPlace vector && source is not VectorPlace)
-        for (var offset = bytes; offset < vector.Bytes; offset += 4)
-          this.Add(new IrStore(new IrConstantInt(IrType.I32, 0), this.LaneAddress(destination, offset)));
+      if (destination is VectorPlace vector)
+        this.ZeroBytes(vector, bytes, vector.Bytes);
       return true;
     }
 
-    /// <summary>The two operands of a packed operation: a vector destination and a vector or memory source of the same width.</summary>
-    private (Place Destination, Place Source, int Width) Packed(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
-      if (operands.Count != 2)
-        throw new NotLiftableException("expects two operands");
+    private void ZeroBytes(VectorPlace vector, int from, int to) {
+      for (var offset = from; offset < to; offset += 4)
+        this.Add(new IrStore(new IrConstantInt(IrType.I32, 0), this.LaneAddress(vector, offset)));
+    }
+
+    /// <summary>
+    /// The operands of a packed operation: the vector destination and the two it computes from - the
+    /// destination itself and the source, or under a VEX encoding the second and third operands.
+    /// </summary>
+    private (Place Destination, Place Left, Place Right, int Width) Packed(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      var count = this._vex ? 3 : 2;
+      if (operands.Count != count)
+        throw new NotLiftableException($"expects {count} operands");
       var destination = this.PlaceOf(operands[0], 0);
       if (destination is not VectorPlace { Bytes: var width })
-        throw new NotLiftableException("a packed operation writes an MMX or XMM register");
-      var source = this.PlaceOf(operands[1], width);
-      if (source is not (VectorPlace or MemoryPlace))
-        throw new NotLiftableException("a packed operation reads a register or memory");
-      return (destination, source, width);
+        throw new NotLiftableException("a packed operation writes a vector register");
+      var left = this._vex ? this.PlaceOf(operands[1], width) : destination;
+      var right = this.PlaceOf(operands[count - 1], width);
+      if (left is not (VectorPlace or MemoryPlace) || right is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("a packed operation reads registers or memory");
+      return (destination, left, right, width);
     }
 
+    /// <summary>The 128-bit blocks a vector operation keeps apart (an MMX register is one block of eight bytes).</summary>
+    private static int BlockOf(int width) => Math.Min(width, 16);
+
     /// <summary>Reads every lane of both operands, then writes every result: the hardware's snapshot semantics.</summary>
-    private bool Lanes(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, IrBinaryOp op, bool invertDestination = false) {
-      var (destination, source, width) = this.Packed(operands);
-      var type = Integer(lane);
-      var left = new List<IrValue>();
-      var right = new List<IrValue>();
-      for (var offset = 0; offset < width; offset += lane) {
-        left.Add(this.Add(new IrLoad(type, this.LaneAddress(destination, offset))));
-        right.Add(this.Add(new IrLoad(type, this.LaneAddress(source, offset))));
-      }
-      for (var i = 0; i < left.Count; ++i) {
-        var a = invertDestination ? this.Add(new IrBinary(IrBinaryOp.Xor, left[i], new IrConstantInt(type, -1))) : left[i];
-        var result = this.Add(new IrBinary(op, a, right[i]));
-        this.Add(new IrStore(result, this.LaneAddress(destination, i * lane)));
-      }
-      return true;
-    }
+    private bool Lanes(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, IrBinaryOp op, bool invertDestination = false)
+      => this.LaneWise(operands, lane, (a, b, type) => this.Add(new IrBinary(op,
+        invertDestination ? this.Add(new IrBinary(IrBinaryOp.Xor, a, new IrConstantInt(type, -1))) : a, b)));
 
     /// <summary>A lane-by-lane operation over the snapshot of both operands.</summary>
     private bool LaneWise(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, Func<IrValue, IrValue, IrType, IrValue> apply) {
-      var (destination, source, width) = this.Packed(operands);
+      var (destination, leftPlace, rightPlace, width) = this.Packed(operands);
       var type = Integer(lane);
-      var (left, right) = (this.LoadLanes(destination, type, lane, width), this.LoadLanes(source, type, lane, width));
+      var (left, right) = (this.LoadLanes(leftPlace, type, lane, width), this.LoadLanes(rightPlace, type, lane, width));
       var results = left.Select((a, i) => apply(a, right[i], type)).ToList();
       this.StoreLanes(destination, results, lane);
       return true;
     }
 
-    private List<IrValue> LoadLanes(Place place, IrType type, int lane, int width) {
+    private List<IrValue> LoadLanes(Place place, IrType type, int lane, int width, int start = 0) {
       var lanes = new List<IrValue>();
-      for (var offset = 0; offset < width; offset += lane)
+      for (var offset = start; offset < start + width; offset += lane)
         lanes.Add(this.Add(new IrLoad(type, this.LaneAddress(place, offset))));
       return lanes;
     }
@@ -717,66 +752,77 @@ public static class InlineAsmLifting {
     /// past the lane's width empties a logical shift and fills an arithmetic one with the sign.
     /// </summary>
     private bool PackedShift(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, IrBinaryOp op) {
-      if (operands.Count != 2)
-        throw new NotLiftableException("expects two operands");
+      var count = this._vex ? 3 : 2;
+      if (operands.Count != count)
+        throw new NotLiftableException($"expects {count} operands");
       var destination = this.PlaceOf(operands[0], 0);
       if (destination is not VectorPlace { Bytes: var width })
-        throw new NotLiftableException("a packed shift writes an MMX or XMM register");
-      var countPlace = this.PlaceOf(operands[1], width);
+        throw new NotLiftableException("a packed shift writes a vector register");
+      var source = this._vex ? this.PlaceOf(operands[1], width) : destination;
+      if (source is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("a packed shift reads a register or memory");
+      var countPlace = this.PlaceOf(operands[count - 1], 16);
       var type = Integer(lane);
       var bits = lane * 8;
-      var lanes = this.LoadLanes(destination, type, lane, width);
-      IrValue count = countPlace switch {
+      var lanes = this.LoadLanes(source, type, lane, width);
+      IrValue amount = countPlace switch {
         ImmediatePlace { Value: var value } => new IrConstantInt(IrType.I64, value & 0xFF),
         VectorPlace or MemoryPlace => this.Add(new IrLoad(IrType.I64, this.LaneAddress(countPlace, 0))),
         _ => throw new NotLiftableException("a packed shift counts by an immediate, a register or memory"),
       };
       // past the width the count saturates: bits - 1 for an arithmetic shift, an empty lane otherwise
-      var outOfRange = this.Compare(IrCmpPred.Ugt, count, new IrConstantInt(IrType.I64, bits - 1));
-      var inRange = this.Add(new IrSelect(outOfRange, new IrConstantInt(IrType.I64, bits - 1), count));
-      var amount = lane == 8 ? inRange : this.Narrow(inRange, type);
+      var outOfRange = this.Compare(IrCmpPred.Ugt, amount, new IrConstantInt(IrType.I64, bits - 1));
+      var inRange = this.Add(new IrSelect(outOfRange, new IrConstantInt(IrType.I64, bits - 1), amount));
+      var by = lane == 8 ? inRange : this.Narrow(inRange, type);
       var results = lanes.Select(IrValue (value) => {
-        var shifted = this.Add(new IrBinary(op, value, amount));
+        var shifted = this.Add(new IrBinary(op, value, by));
         return op == IrBinaryOp.AShr ? shifted : this.Add(new IrSelect(outOfRange, new IrConstantInt(type, 0), shifted));
       }).ToList();
       this.StoreLanes(destination, results, lane);
       return true;
     }
 
-    /// <summary>PUNPCKL/PUNPCKH: the lanes of one half of each operand, interleaved destination first.</summary>
+    /// <summary>PUNPCKL/PUNPCKH: within each 128-bit block, the lanes of one half of each operand, interleaved left first.</summary>
     private bool Unpack(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, bool high) {
-      var (destination, source, width) = this.Packed(operands);
-      if (lane == 8 && width != 16)
-        throw new NotLiftableException("PUNPCKLQDQ/PUNPCKHQDQ take XMM registers");
+      var (destination, leftPlace, rightPlace, width) = this.Packed(operands);
+      if (lane == 8 && width < 16)
+        throw new NotLiftableException("PUNPCKLQDQ/PUNPCKHQDQ take XMM or YMM registers");
       var type = Integer(lane);
-      var left = this.LoadLanes(destination, type, lane, width);
-      var right = this.LoadLanes(source, type, lane, width);
-      var start = high ? left.Count / 2 : 0;
+      var block = BlockOf(width);
       var results = new List<IrValue>();
-      for (var i = 0; i < left.Count / 2; ++i) {
-        results.Add(left[start + i]);
-        results.Add(right[start + i]);
+      for (var start = 0; start < width; start += block) {
+        var half = start + (high ? block / 2 : 0);
+        var left = this.LoadLanes(leftPlace, type, lane, block / 2, half);
+        var right = this.LoadLanes(rightPlace, type, lane, block / 2, half);
+        for (var i = 0; i < left.Count; ++i) {
+          results.Add(left[i]);
+          results.Add(right[i]);
+        }
       }
       this.StoreLanes(destination, results, lane);
       return true;
     }
 
-    /// <summary>PACKSSWB/PACKSSDW/PACKUSWB: each operand's lanes narrowed to half their width with saturation, destination first.</summary>
+    /// <summary>PACKSSWB/PACKSSDW/PACKUSWB: within each 128-bit block, each operand's lanes narrowed to half their width with saturation, left first.</summary>
     private bool Pack(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, bool signedResult) {
-      var (destination, source, width) = this.Packed(operands);
+      var (destination, leftPlace, rightPlace, width) = this.Packed(operands);
       var type = Integer(lane);
       var narrow = Integer(lane / 2);
-      var wide = this.LoadLanes(destination, type, lane, width).Concat(this.LoadLanes(source, type, lane, width));
-      var results = wide.Select(value => this.Clamp(this.Widen(value, IrCastOp.SExt, IrType.I64), narrow, signedResult)).ToList();
+      var block = BlockOf(width);
+      var results = new List<IrValue>();
+      for (var start = 0; start < width; start += block) {
+        var wide = this.LoadLanes(leftPlace, type, lane, block, start).Concat(this.LoadLanes(rightPlace, type, lane, block, start));
+        results.AddRange(wide.Select(value => this.Clamp(this.Widen(value, IrCastOp.SExt, IrType.I64), narrow, signedResult)));
+      }
       this.StoreLanes(destination, results, lane / 2);
       return true;
     }
 
     /// <summary>PMADDWD: signed word products, adjacent pairs summed into doublewords.</summary>
     private bool MultiplyAdd(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
-      var (destination, source, width) = this.Packed(operands);
-      var left = this.LoadLanes(destination, IrType.I16, 2, width);
-      var right = this.LoadLanes(source, IrType.I16, 2, width);
+      var (destination, leftPlace, rightPlace, width) = this.Packed(operands);
+      var left = this.LoadLanes(leftPlace, IrType.I16, 2, width);
+      var right = this.LoadLanes(rightPlace, IrType.I16, 2, width);
       IrValue Product(int i) => this.Add(new IrBinary(IrBinaryOp.Mul,
         this.Widen(left[i], IrCastOp.SExt, IrType.I32), this.Widen(right[i], IrCastOp.SExt, IrType.I32)));
       var results = new List<IrValue>();
@@ -787,57 +833,152 @@ public static class InlineAsmLifting {
     }
 
     /// <summary>
-    /// PSHUFD/PSHUFW/PSHUFLW/PSHUFHW: four lanes of the source chosen by the immediate's bit pairs,
-    /// written to the destination's lanes at <paramref name="start"/>; PSHUFLW and PSHUFHW copy the
-    /// other half unchanged.
+    /// PSHUFD/PSHUFW/PSHUFLW/PSHUFHW: within each 128-bit block, four lanes of the source chosen by the
+    /// immediate's bit pairs, written at <paramref name="start"/> bytes into the block; PSHUFLW and
+    /// PSHUFHW copy the other half unchanged.
     /// </summary>
     private bool Shuffle(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, int start) {
-      if (operands.Count != 3 || this.PlaceOf(operands[2], 1) is not ImmediatePlace { Value: var order })
-        throw new NotLiftableException("expects a register, a source and an immediate order");
-      var destination = this.PlaceOf(operands[0], 0);
-      if (destination is not VectorPlace { Bytes: var width })
-        throw new NotLiftableException("a shuffle writes an MMX or XMM register");
-      var source = this.PlaceOf(operands[1], width);
-      if (source is not (VectorPlace or MemoryPlace))
-        throw new NotLiftableException("a shuffle reads a register or memory");
+      var (destination, source, order, width) = this.WithImmediate(operands);
       var type = Integer(lane);
       var all = this.LoadLanes(source, type, lane, width);
       var results = new List<IrValue>(all);
-      var first = start / lane;
-      for (var i = 0; i < 4; ++i)
-        results[first + i] = all[first + (int)((order >> (2 * i)) & 3)];
-      this.StoreLanes(destination, results.Take(width / lane).ToList(), lane);
+      var perBlock = BlockOf(width) / lane;
+      for (var block = 0; block < all.Count; block += perBlock) {
+        var first = block + start / lane;
+        for (var i = 0; i < 4; ++i)
+          results[first + i] = all[first + (int)((order >> (2 * i)) & 3)];
+      }
+      this.StoreLanes(destination, results, lane);
       return true;
+    }
+
+    /// <summary>A vector destination, a register or memory source and an immediate - the shape of the shuffles and permutes.</summary>
+    private (VectorPlace Destination, Place Source, long Immediate, int Width) WithImmediate(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 3 || this.PlaceOf(operands[2], 1) is not ImmediatePlace { Value: var immediate })
+        throw new NotLiftableException("expects a register, a source and an immediate");
+      if (this.PlaceOf(operands[0], 0) is not VectorPlace { Bytes: var width } destination)
+        throw new NotLiftableException("writes a vector register");
+      var source = this.PlaceOf(operands[1], width);
+      if (source is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("reads a register or memory");
+      return (destination, source, immediate, width);
     }
 
     private bool AndNot(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands)
       => this.Lanes(operands, 8, IrBinaryOp.And, invertDestination: true);
 
     /// <summary>
-    /// PSHUFB: each destination byte takes the value byte its mask byte selects (the low three or four
-    /// bits), or zero when the mask byte's top bit is set.
+    /// PSHUFB: each destination byte takes the byte of its own 128-bit block that its mask byte selects
+    /// (the low three or four bits), or zero when the mask byte's top bit is set.
     /// </summary>
     private bool Pshufb(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
-      var (destination, source, width) = this.Packed(operands);
-      var values = new List<IrValue>();
-      var masks = new List<IrValue>();
-      for (var i = 0; i < width; ++i) {
-        values.Add(this.Add(new IrLoad(IrType.I8, this.LaneAddress(destination, i))));
-        masks.Add(this.Add(new IrLoad(IrType.I8, this.LaneAddress(source, i))));
-      }
+      var (destination, valuePlace, maskPlace, width) = this.Packed(operands);
+      var values = this.LoadLanes(valuePlace, IrType.I8, 1, width);
+      var masks = this.LoadLanes(maskPlace, IrType.I8, 1, width);
+      var block = BlockOf(width);
+      var results = new List<IrValue>();
       for (var i = 0; i < width; ++i) {
         // select the indexed byte with a chain of selects over the snapshot - no table in memory, so
         // it stays a pure function of the loaded lanes
-        var index = this.Add(new IrBinary(IrBinaryOp.And, masks[i], new IrConstantInt(IrType.I8, width - 1)));
-        IrValue picked = values[0];
-        for (var k = 1; k < width; ++k) {
+        var first = i / block * block;
+        var index = this.Add(new IrBinary(IrBinaryOp.And, masks[i], new IrConstantInt(IrType.I8, block - 1)));
+        var picked = values[first];
+        for (var k = 1; k < block; ++k) {
           var hit = this.Add(new IrCmp(IrCmpPred.Eq, index, new IrConstantInt(IrType.I8, k)));
-          picked = this.Add(new IrSelect(hit, values[k], picked));
+          picked = this.Add(new IrSelect(hit, values[first + k], picked));
         }
         var zeroed = this.Add(new IrCmp(IrCmpPred.Slt, masks[i], new IrConstantInt(IrType.I8, 0)));
-        var result = this.Add(new IrSelect(zeroed, new IrConstantInt(IrType.I8, 0), picked));
-        this.Add(new IrStore(result, this.LaneAddress(destination, i)));
+        results.Add(this.Add(new IrSelect(zeroed, new IrConstantInt(IrType.I8, 0), picked)));
       }
+      this.StoreLanes(destination, results, 1);
+      return true;
+    }
+
+    // --- AVX2's own instructions, each reached through its V prefix ---------------------------------
+
+    /// <summary>VEXTRACTI128: the 128-bit half of a YMM register the immediate names.</summary>
+    private bool Extract128(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 3 || this.PlaceOf(operands[2], 1) is not ImmediatePlace { Value: var half })
+        throw new NotLiftableException("expects a destination, a YMM register and an immediate");
+      var source = this.PlaceOf(operands[1], 32);
+      if (source is not VectorPlace { Bytes: 32 })
+        throw new NotLiftableException("extracts from a YMM register");
+      var destination = this.PlaceOf(operands[0], 16);
+      if (destination is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("writes an XMM register or memory");
+      var lanes = this.LoadLanes(source, IrType.I64, 8, 16, (int)(half & 1) * 16);
+      this.StoreLanes(destination, lanes, 8);
+      return true;
+    }
+
+    /// <summary>VINSERTI128: the second operand with the half the immediate names replaced by the third.</summary>
+    private bool Insert128(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 4 || this.PlaceOf(operands[3], 1) is not ImmediatePlace { Value: var half })
+        throw new NotLiftableException("expects a YMM destination, a YMM source, a 128-bit source and an immediate");
+      if (this.PlaceOf(operands[0], 32) is not VectorPlace { Bytes: 32 } destination
+          || this.PlaceOf(operands[1], 32) is not VectorPlace { Bytes: 32 } source)
+        throw new NotLiftableException("inserts into YMM registers");
+      var insert = this.PlaceOf(operands[2], 16);
+      if (insert is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("inserts a register or memory");
+      var lanes = this.LoadLanes(source, IrType.I64, 8, 32);
+      var replacement = this.LoadLanes(insert, IrType.I64, 8, 16);
+      var at = (int)(half & 1) * 2;
+      lanes[at] = replacement[0];
+      lanes[at + 1] = replacement[1];
+      this.StoreLanes(destination, lanes, 8);
+      return true;
+    }
+
+    /// <summary>VPBROADCASTB/W/D/Q: the source's lowest lane in every lane of the destination.</summary>
+    private bool Broadcast(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane) {
+      if (operands.Count != 2 || this.PlaceOf(operands[0], 0) is not VectorPlace { Bytes: var width } destination)
+        throw new NotLiftableException("expects a vector destination and a source");
+      var source = this.PlaceOf(operands[1], lane);
+      if (source is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("broadcasts from an XMM register or memory");
+      var value = this.Add(new IrLoad(Integer(lane), this.LaneAddress(source, 0)));
+      this.StoreLanes(destination, Enumerable.Repeat(value, width / lane).ToList(), lane);
+      return true;
+    }
+
+    /// <summary>VPERMQ: four quadwords of the source in the order the immediate's bit pairs give, across the whole register.</summary>
+    private bool PermuteQuadwords(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      var (destination, source, order, width) = this.WithImmediate(operands);
+      if (width != 32)
+        throw new NotLiftableException("permutes a YMM register");
+      var all = this.LoadLanes(source, IrType.I64, 8, 32);
+      this.StoreLanes(destination, Enumerable.Range(0, 4).Select(i => all[(int)((order >> (2 * i)) & 3)]).ToList(), 8);
+      return true;
+    }
+
+    /// <summary>VPERM2I128: each half of the destination one of the four halves of the two sources, or zero.</summary>
+    private bool PermuteHalves(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 4 || this.PlaceOf(operands[3], 1) is not ImmediatePlace { Value: var order })
+        throw new NotLiftableException("expects a YMM destination, two sources and an immediate");
+      if (this.PlaceOf(operands[0], 32) is not VectorPlace { Bytes: 32 } destination)
+        throw new NotLiftableException("writes a YMM register");
+      var halves = new List<IrValue>();
+      foreach (var operand in new[] { operands[1], operands[2] }) {
+        var place = this.PlaceOf(operand, 32);
+        if (place is not (VectorPlace or MemoryPlace))
+          throw new NotLiftableException("reads YMM registers or memory");
+        halves.AddRange(this.LoadLanes(place, IrType.I64, 8, 32));
+      }
+      var results = new List<IrValue>();
+      for (var half = 0; half < 2; ++half) {
+        var control = (int)(order >> (4 * half)) & 0xF;
+        for (var q = 0; q < 2; ++q)
+          results.Add((control & 8) != 0 ? new IrConstantInt(IrType.I64, 0) : halves[(control & 3) * 2 + q]);
+      }
+      this.StoreLanes(destination, results, 8);
+      return true;
+    }
+
+    /// <summary>VZEROUPPER/VZEROALL: every vector register cleared above its low 128 bits, or entirely.</summary>
+    private bool ZeroVectors(int from) {
+      for (var index = 0; index < 8; ++index)
+        this.ZeroBytes(new VectorPlace(registers.Vector((Reg)((int)Reg.XMM0 + index)), 64), from, 64);
       return true;
     }
   }
