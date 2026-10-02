@@ -16,6 +16,9 @@ public sealed partial class CodeGenerator {
     if (instruction.Mnemonic.Length == 0)
       return false;
 
+    if (this.TryReject8086ImmediatePush(instruction, resolver, target, out error))
+      return true;
+
     if (this.TryEmit8086CompatibleShift(instruction, resolver, target, out error))
       return true;
 
@@ -144,6 +147,23 @@ public sealed partial class CodeGenerator {
     error ??= x87
       ? "x87 software emulation backend is not available for this instruction"
       : $"no semantics-preserving emulator is registered for {instruction.Mnemonic}";
+    return true;
+  }
+
+  /// <summary>The 8086 has PUSH r/m16, but immediate and label-offset forms require the 80186.</summary>
+  private bool TryReject8086ImmediatePush(InlineInstruction instruction, IAsmSymbolResolver resolver,
+      RuntimeTarget target, out string? error) {
+    error = null;
+    if (target.CpuLevel >= 186 || instruction.Mnemonic != "PUSH")
+      return false;
+
+    this._textAssembler ??= new(this._asm);
+    if (!this._textAssembler.TryParseOperands(instruction.Operands, resolver, out var operands, out error))
+      return true;
+    if (operands.Count != 1 || operands[0] is not (TextAssembler.ParsedAsmImmediate or TextAssembler.ParsedAsmLabel))
+      return false;
+
+    error = "PUSH with an immediate requires 80186 or later; target is 8086";
     return true;
   }
 

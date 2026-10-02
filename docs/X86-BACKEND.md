@@ -1805,6 +1805,14 @@ The assertion is `BackendCpuTargetTests.Selection_GivenAn8086Target_ThenNoShiftC
 and it is made against the **machine IR** rather than the image on purpose: `C1` is an ordinary byte
 and a search of the executable matches a displacement, a literal or a string as readily as an opcode.
 
+The inline-assembly path makes the same target distinction. Its policy expands a multi-bit immediate
+shift into repeated 8086 count-one instructions; it refuses `PUSH` with an immediate or label offset
+under `$CPU 8086`, because the text assembler would otherwise emit the 80186-only `6A`/`68` opcode.
+Register and memory `PUSH` remain legal. The artifact writer returns no image after a routed emission
+diagnostic, so callers cannot accidentally save a partial binary. `InlineAsm8086PushTests` checks the
+refusal and both legal CPU/register cases; the dialect metastatement battery checks that the two shift
+targets produce different images rather than incorrectly demanding rejection of a safely expanded shift.
+
 ## `EXIT FAR`: PB's other non-local jump
 
 The keyword argues for the wrong reading. `EXIT FAR` is not a far **return** and pops nothing: `EXIT

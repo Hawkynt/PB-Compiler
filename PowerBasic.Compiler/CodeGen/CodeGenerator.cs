@@ -321,6 +321,11 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     this._listingDataLength = asm.Position - this._listingCodeLength;
     this._rt.PlaceBss(asm); // pb36 P3: zero blobs live behind the image
 
+    // Inline-asm target errors can be discovered while MachineEmitter writes a routed body. Never
+    // return a partial COM/EXE to a library caller that might overlook the diagnostics.
+    if (this.Errors.Count > 0)
+      return [];
+
     var heapParagraphs = HeapParagraphs(trimmedSections);
     if (emitCom)
       DosRuntime.BindComParagraphs(asm, 0x1000 + heapParagraphs);   // the whole 64 KiB segment, then the heaps

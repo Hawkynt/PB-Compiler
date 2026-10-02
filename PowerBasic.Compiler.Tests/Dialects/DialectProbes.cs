@@ -287,9 +287,8 @@ internal static class DialectProbes {
       var first = Image(claim.Directive + "\n" + claim.Body, dialect);
       var second = Image(claim.Against + "\n" + claim.Body, dialect);
 
-      // A CPU-tier claim about inline assembly is not "the images differ" - it is "the narrower target
-      // REFUSES an instruction it cannot execute". Accepting it produces an image that faults on the
-      // very machine the source named, which no amount of difference between two images would show.
+      // An instruction without a registered safe lowering must be REFUSED on the narrower target.
+      // Image difference alone would not detect an illegal instruction in the 8086 image.
       if (claim.Kind == DialectMetaClaims.Kind.RefusedUnderDirective) {
         if (second is null)
           failed.Add($"{claim.Id}: the body did not compile even under '{claim.Against}', so the claim is untestable");

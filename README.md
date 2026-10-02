@@ -169,6 +169,9 @@ pbc HELLO.BAS -o HELLO.EXE --optimize
 Run the result on DOS or in DOSBox. [Getting started](#-installation) below covers the dialect
 selection and the unit/library forms.
 
+With `$CPU 8086`, inline assembly rejects immediate `PUSH` (an 80186 instruction); multi-bit
+immediate shifts are instead expanded into 8086 count-one instructions.
+
 ## ❓ Why
 
 PowerBASIC for DOS is proprietary, 16-bit and long out of print — it cannot run
