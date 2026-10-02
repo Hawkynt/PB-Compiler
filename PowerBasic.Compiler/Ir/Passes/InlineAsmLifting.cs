@@ -30,7 +30,9 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// declined by name, never compiled into something else. The set lifted so far: <c>MOV</c>,
 /// <c>ADD</c>, <c>ADC</c>, <c>SUB</c>, <c>SBB</c>, <c>CMP</c>, <c>AND</c>, <c>OR</c>, <c>XOR</c>,
 /// <c>TEST</c>, <c>NOT</c>, <c>NEG</c>, <c>INC</c>, <c>DEC</c>, <c>SHL</c>/<c>SAL</c>, <c>SHR</c>,
-/// <c>SAR</c>, <c>CLC</c>, <c>STC</c>, <c>CMC</c>, <c>JMP</c>, <c>Jcc</c>, <c>SETcc</c>, <c>CMOVcc</c>,
+/// <c>SAR</c>, <c>MUL</c>, <c>IMUL</c> (one, two and three operands), <c>MOVZX</c>, <c>MOVSX</c>,
+/// <c>XCHG</c>, <c>BSWAP</c>, <c>BSF</c>, <c>BSR</c>, <c>CLC</c>, <c>STC</c>, <c>CMC</c>, <c>JMP</c>,
+/// <c>Jcc</c>, <c>SETcc</c>, <c>CMOVcc</c>,
 /// <c>NOP</c>; MMX
 /// <c>MOVD</c>, <c>MOVQ</c>, <c>PADDB/W/D/Q</c>, <c>PSUBB/W/D/Q</c>, <c>PAND</c>, <c>PANDN</c>, <c>POR</c>,
 /// <c>PXOR</c>, <c>PCMPEQB/W/D</c>, <c>PCMPGTB/W/D</c>, <c>PMULLW</c>, <c>PMULHW</c>, <c>PMADDWD</c>,
@@ -183,6 +185,15 @@ public static class InlineAsmLifting {
         case "NEG": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Sub, new IrConstantInt(type, 0), v), FlagRule.Negate);
         case "INC": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Add, v, new IrConstantInt(type, 1)), FlagRule.Increment);
         case "DEC": return this.Unary(operands, (v, type) => new IrBinary(IrBinaryOp.Sub, v, new IrConstantInt(type, 1)), FlagRule.Decrement);
+        case "MOVZX": return this.Extend(operands, IrCastOp.ZExt);
+        case "MOVSX": return this.Extend(operands, IrCastOp.SExt);
+        case "XCHG": return this.Exchange(operands);
+        case "BSWAP": return this.ByteSwap(operands);
+        case "MUL": return this.WideMultiply(operands, IrCastOp.ZExt);
+        case "IMUL" when operands.Count == 1: return this.WideMultiply(operands, IrCastOp.SExt);
+        case "IMUL": return this.TruncatingMultiply(operands);
+        case "BSF": return this.BitScan(operands, forward: true);
+        case "BSR": return this.BitScan(operands, forward: false);
         case "CLC": this.SetFlag('C', IrBuilder.ConstBool(false)); return true;
         case "STC": this.SetFlag('C', IrBuilder.ConstBool(true)); return true;
         case "CMC": this.SetFlag('C', this.Add(new IrBinary(IrBinaryOp.Xor, this.GetFlag('C'), IrBuilder.ConstBool(true)))); return true;
@@ -458,6 +469,125 @@ public static class InlineAsmLifting {
       }, current, value, result);
       if (write)
         this.Write(destination, result);
+      return true;
+    }
+
+    /// <summary>The general register or memory operand of a one-operand instruction, with its stated width.</summary>
+    private Place SizedOperand(TextAssembler.ParsedAsmOperand operand) {
+      var place = this.PlaceOf(operand, 0);
+      if (place is VectorPlace or ImmediatePlace || place.Bytes is not (1 or 2 or 4))
+        throw new NotLiftableException("takes a general register or a sized variable");
+      return place;
+    }
+
+    /// <summary>MOVZX/MOVSX: a byte or word widened into a 16- or 32-bit register.</summary>
+    private bool Extend(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrCastOp extend) {
+      if (operands.Count != 2 || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 2 or 4 } destination)
+        throw new NotLiftableException("widens into a 16- or 32-bit register");
+      var source = this.SizedOperand(operands[1]);
+      if (source.Bytes >= destination.Bytes)
+        throw new NotLiftableException("widens a narrower operand");
+      this.Write(destination, this.Widen(this.Read(source, source.Bytes), extend, Integer(destination.Bytes)));
+      return true;
+    }
+
+    private bool Exchange(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 2)
+        throw new NotLiftableException("expects two operands");
+      var first = this.PlaceOf(operands[0], 0);
+      var second = this.PlaceOf(operands[1], first.Bytes);
+      var bytes = first.Bytes != 0 ? first.Bytes : second.Bytes;
+      if (first is VectorPlace or ImmediatePlace || second is VectorPlace or ImmediatePlace || bytes is not (1 or 2 or 4))
+        throw new NotLiftableException("exchanges general registers or a register and a variable");
+      if (first is MemoryPlace m1) first = m1 with { Bytes = bytes };
+      if (second is MemoryPlace m2) second = m2 with { Bytes = bytes };
+      var (a, b) = (this.Read(first, bytes), this.Read(second, bytes));
+      this.Write(first, b);
+      this.Write(second, a);
+      return true;
+    }
+
+    private bool ByteSwap(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 1 || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 4 } place)
+        throw new NotLiftableException("swaps a 32-bit register");
+      var value = this.Read(place, 4);
+      IrValue result = new IrConstantInt(IrType.I32, 0);
+      for (var i = 0; i < 4; ++i) {
+        var octet = this.Add(new IrBinary(IrBinaryOp.And, this.Add(new IrBinary(IrBinaryOp.LShr, value, new IrConstantInt(IrType.I32, 8 * i))),
+          new IrConstantInt(IrType.I32, 0xFF)));
+        result = this.Add(new IrBinary(IrBinaryOp.Or, result, this.Add(new IrBinary(IrBinaryOp.Shl, octet, new IrConstantInt(IrType.I32, 8 * (3 - i))))));
+      }
+      this.Write(place, result);
+      return true;
+    }
+
+    /// <summary>
+    /// MUL and one-operand IMUL: AL, AX or EAX times the operand, the double-width product in AX, DX:AX
+    /// or EDX:EAX; CF and OF say whether the upper half is more than the lower half's extension.
+    /// </summary>
+    private bool WideMultiply(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrCastOp extend) {
+      if (operands.Count != 1)
+        throw new NotLiftableException("expects one operand");
+      var source = this.SizedOperand(operands[0]);
+      var bytes = source.Bytes;
+      var accumulator = new GeneralPlace(registers.General(Reg.EAX), bytes, 0);
+      var wide = Integer(bytes * 2);
+      var product = this.Add(new IrBinary(IrBinaryOp.Mul,
+        this.Widen(this.Read(accumulator, bytes), extend, wide), this.Widen(this.Read(source, bytes), extend, wide)));
+      var low = this.Narrow(product, Integer(bytes));
+      var high = this.Narrow(this.Add(new IrBinary(IrBinaryOp.LShr, product, new IrConstantInt(wide, bytes * 8))), Integer(bytes));
+      if (bytes == 1)
+        this.Write(new GeneralPlace(registers.General(Reg.EAX), 2, 0), product);
+      else {
+        this.Write(accumulator, low);
+        this.Write(new GeneralPlace(registers.General(Reg.EDX), bytes, 0), high);
+      }
+      var spill = this.Compare(IrCmpPred.Ne, product, this.Widen(low, extend, wide));
+      this.SetFlag('C', spill);
+      this.SetFlag('O', spill);
+      return true;
+    }
+
+    /// <summary>Two- and three-operand IMUL: the product truncated to the destination; CF and OF say whether it fitted.</summary>
+    private bool TruncatingMultiply(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count is not (2 or 3) || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 2 or 4 } destination)
+        throw new NotLiftableException("multiplies into a 16- or 32-bit register");
+      var bytes = destination.Bytes;
+      var (left, right) = operands.Count == 2
+        ? (this.Read(destination, bytes), this.Read(this.PlaceOf(operands[1], bytes), bytes))
+        : (this.Read(this.PlaceOf(operands[1], bytes), bytes), this.Read(this.PlaceOf(operands[2], bytes), bytes));
+      var wide = Integer(bytes * 2);
+      var product = this.Add(new IrBinary(IrBinaryOp.Mul, this.Widen(left, IrCastOp.SExt, wide), this.Widen(right, IrCastOp.SExt, wide)));
+      var low = this.Narrow(product, Integer(bytes));
+      var spill = this.Compare(IrCmpPred.Ne, product, this.Widen(low, IrCastOp.SExt, wide));
+      this.Write(destination, low);
+      this.SetFlag('C', spill);
+      this.SetFlag('O', spill);
+      return true;
+    }
+
+    /// <summary>
+    /// BSF/BSR: the index of the lowest or highest set bit, and ZF clear; a zero source sets ZF and
+    /// leaves the destination as it was, which is what the processors do whatever the manual reserves.
+    /// </summary>
+    private bool BitScan(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, bool forward) {
+      if (operands.Count != 2 || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 2 or 4 } destination)
+        throw new NotLiftableException("scans into a 16- or 32-bit register");
+      var bytes = destination.Bytes;
+      var type = Integer(bytes);
+      var source = this.Read(this.PlaceOf(operands[1], bytes), bytes);
+      var zero = this.Compare(IrCmpPred.Eq, source, new IrConstantInt(type, 0));
+      // the scan as a chain of selects, checked from the far end so the nearest set bit wins
+      IrValue index = this.Read(destination, bytes);
+      var bits = bytes * 8;
+      for (var step = 0; step < bits; ++step) {
+        var bit = forward ? bits - 1 - step : step;
+        var mask = new IrConstantInt(type, bit == 63 ? long.MinValue : 1L << bit);
+        var set = this.Compare(IrCmpPred.Ne, this.Add(new IrBinary(IrBinaryOp.And, source, mask)), new IrConstantInt(type, 0));
+        index = this.Add(new IrSelect(set, new IrConstantInt(type, bit), index));
+      }
+      this.Write(destination, index);
+      this.SetFlag('Z', zero);
       return true;
     }
 
@@ -773,7 +903,7 @@ public static class InlineAsmLifting {
     }
 
     private IrValue Widen(IrValue value, IrCastOp op, IrType type) => this.Add(new IrCast(op, value, type));
-    private IrValue Narrow(IrValue value, IrType type) => this.Add(new IrCast(IrCastOp.Trunc, value, type));
+    private IrValue Narrow(IrValue value, IrType type) => value.Type.Bits == type.Bits ? value : this.Add(new IrCast(IrCastOp.Trunc, value, type));
 
     /// <summary>All ones where the comparison holds, zero where it does not.</summary>
     private IrValue Mask(IrCmpPred predicate, IrValue a, IrValue b, IrType type)

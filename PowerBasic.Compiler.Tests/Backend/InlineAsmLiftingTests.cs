@@ -162,6 +162,42 @@ public sealed class InlineAsmLiftingTests {
       ! MOVD r4&, XMM5
       PRINT HEX$(r1&); " "; HEX$(r2&); " "; HEX$(r3&); " "; HEX$(r4&)
       """),
+    ("multiply-extend-swap-scan", """
+      DIM lo&, hi&, p&, q%, z&, s&, x&, y&
+      x& = -7
+      ! MOV EAX, 100000
+      ! MOV ECX, 300000
+      ! MUL ECX
+      ! MOV lo&, EAX
+      ! MOV hi&, EDX
+      ! MOV EAX, x&
+      ! MOV ECX, 3
+      ! IMUL ECX
+      ! MOV p&, EDX
+      ! MOV AL, 200
+      ! MOV BL, 3
+      ! MUL BL
+      ! MOV q%, AX
+      ! MOV ESI, 70000
+      ! IMUL ESI, ESI, 40000
+      ! JO overflowed
+      ! MOV ESI, 0
+      overflowed:
+      ! MOV z&, ESI
+      ! MOV AL, -5
+      ! MOVSX EBX, AL
+      ! MOV s&, EBX
+      ! MOV AX, -2
+      ! MOVZX EDX, AX
+      ! MOV y&, EDX
+      ! MOV EAX, &H11223344
+      ! BSWAP EAX
+      ! MOV x&, EAX
+      ! MOV EDX, 1000
+      ! XCHG EDX, y&
+      ! MOV y&, EDX
+      PRINT lo&; hi&; p&; q%; z&; s&; y&; HEX$(x&)
+      """),
     ("flags-and-conditions", """
       DIM lo&, hi&, m&, c&, k%
       ! MOV EAX, -1
@@ -242,13 +278,13 @@ public sealed class InlineAsmLiftingTests {
     Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)), Is.EqualTo(expected));
   }
 
-  /// <summary>SETcc has no 8086 emulation to compare against, so its results are stated.</summary>
+  /// <summary>SETcc, BSF and BSR have no 8086 emulation to compare against, so their results are stated.</summary>
   [TestCase("x86-32")]
   [TestCase("x64")]
   [TestCase("6502")]
   public void Run_GivenSetcc_ThenEachConditionIsTheOneTheFlagsSay(string platform) {
     const string source = """
-      DIM e%, b%, l%, g%
+      DIM e%, b%, l%, g%, f%, r%, w%, z%
       ! MOV AX, 10
       ! CMP AX, 10
       ! SETE AL
@@ -267,9 +303,21 @@ public sealed class InlineAsmLiftingTests {
       ! SETG DL
       ! MOV DH, 0
       ! MOV g%, DX
-      PRINT e%; b%; l%; g%
+      ! MOV AX, &H0140
+      ! BSF CX, AX
+      ! MOV f%, CX
+      ! BSR CX, AX
+      ! MOV r%, CX
+      ! MOV DX, 3
+      ! MOV BX, 0
+      ! BSF DX, BX
+      ! SETZ CL
+      ! MOV CH, 0
+      ! MOV w%, DX
+      ! MOV z%, CX
+      PRINT e%; b%; l%; g%; f%; r%; w%; z%
       """;
-    Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)), Is.EqualTo(Vice.Normalize(" 1  1  0  0 \n")));
+    Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)), Is.EqualTo(Vice.Normalize(" 1  1  0  0  6  8  3  1 \n")));
   }
 
   /// <summary>
@@ -548,13 +596,13 @@ public sealed class InlineAsmLiftingTests {
     var work = Directory.CreateTempSubdirectory("pbc-lift-");
     try {
       var path = Path.Combine(work.FullName, "PROG.BAS");
-      File.WriteAllText(path, "DIM a&\n! MOV EAX, 1\n! BSWAP EAX\n! MOV a&, EAX\nPRINT a&\n");
+      File.WriteAllText(path, "DIM a&\n! MOV EAX, 1\n! PUSH EAX\n! POP EBX\n! MOV a&, EBX\nPRINT a&\n");
       var stderr = new StringWriter();
       var code = PowerBasic.Compiler.Cli.Driver.Run(["--dialect", "pb36", "--platform", "x64", path], TextWriter.Null, stderr);
 
       Assert.Multiple(() => {
         Assert.That(code, Is.Not.Zero);
-        Assert.That(stderr.ToString(), Does.Contain("'BSWAP' has no IR lifting yet"));
+        Assert.That(stderr.ToString(), Does.Contain("'PUSH' has no IR lifting yet"));
       });
     } finally {
       work.Delete(recursive: true);
