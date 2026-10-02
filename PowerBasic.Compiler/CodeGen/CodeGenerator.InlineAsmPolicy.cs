@@ -17,7 +17,7 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private bool NamesDwordVariable(InlineInstruction instruction, IAsmSymbolResolver resolver) {
     if (instruction.Mnemonic is not ("MOV" or "XCHG" or "ADD" or "ADC" or "SUB" or "SBB" or "AND" or "OR" or "XOR"
-        or "CMP" or "TEST" or "INC" or "DEC" or "NOT" or "NEG"))
+        or "CMP" or "TEST" or "INC" or "DEC" or "NOT" or "NEG" or "PUSH" or "POP"))
       return false;
     this._textAssembler ??= new(this._asm);
     return this._textAssembler.TryParseOperands(instruction.Operands, resolver, out var operands, out _)
