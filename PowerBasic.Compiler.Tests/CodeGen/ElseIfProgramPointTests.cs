@@ -22,26 +22,24 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 [TestFixture]
 public sealed class ElseIfProgramPointTests {
 
-  private static string Run(string source, bool optimize, bool backend) {
+  private static string Run(string source, bool optimize) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = backend };
+    var cg = new CodeGenerator(model) { Optimize = optimize};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
   }
 
-  /// <summary>Every combination has to agree; the optimizer is not allowed a different answer.</summary>
-  private static void AllPathsAgree(string source, string expected) {
+  /// <summary>Both builds have to print it; the optimizer is not allowed a different answer.</summary>
+  private static void BothBuildsPrint(string source, string expected) {
     foreach (var optimize in new[] { false, true })
-      foreach (var backend in new[] { false, true })
-        Assert.That(Run(source, optimize, backend), Is.EqualTo(expected),
-          $"optimize={optimize} backend={backend}");
+      Assert.That(Run(source, optimize), Is.EqualTo(expected), $"optimize={optimize}");
   }
 
   [Test]
   public void ElseIf_GivenAnEqualityAfterASignTest_ThenTheZeroArmIsReached() =>
-    AllPathsAgree("""
+    BothBuildsPrint("""
       DIM i AS INTEGER
       FOR i = -2 TO 2
         IF i < 0 THEN
@@ -58,7 +56,7 @@ public sealed class ElseIfProgramPointTests {
   /// <summary>With no ELSE the faulty fold made the value vanish entirely rather than take a wrong arm.</summary>
   [Test]
   public void ElseIf_GivenNoElseArm_ThenTheZeroArmStillRuns() =>
-    AllPathsAgree("""
+    BothBuildsPrint("""
       DIM i AS INTEGER
       FOR i = -2 TO 2
         IF i < 0 THEN
@@ -73,7 +71,7 @@ public sealed class ElseIfProgramPointTests {
   /// <summary>The same shape outside a FOR loop: the counter was never the point, the refinement was.</summary>
   [Test]
   public void ElseIf_GivenADoLoopInsteadOfFor_ThenItBehavesTheSame() =>
-    AllPathsAgree("""
+    BothBuildsPrint("""
       DIM i AS INTEGER
       i = -2
       DO WHILE i <= 2
@@ -92,7 +90,7 @@ public sealed class ElseIfProgramPointTests {
   /// <summary>A second ELSEIF is judged at the IF's point too, not at the first ELSEIF's arm.</summary>
   [Test]
   public void ElseIf_GivenAChainOfThem_ThenEveryArmIsReachable() =>
-    AllPathsAgree("""
+    BothBuildsPrint("""
       DIM i AS INTEGER
       FOR i = -1 TO 3
         IF i < 0 THEN

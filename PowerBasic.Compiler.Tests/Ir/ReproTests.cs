@@ -21,7 +21,7 @@ public sealed class InlineRegressionTests {
     var unit = Parser.Parse(Lexer.Tokenize(
       "DECLARE FUNCTION sq%(BYVAL n%)\nDIM a%(0 TO 4)\nINPUT k%\nFOR i% = 0 TO k%\n  a%(i%) = sq%(i%)\nNEXT i%\n\nFUNCTION sq%(BYVAL n%)\n  sq% = n% OR n%\nEND FUNCTION", "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var module = IrLowering.TryLowerModule(Binder.Bind(unit, Dialect.Pb35))!;
-    var pm = IrPassManager.Standard();
+    var pm = IrMiddleEndPipeline.Standard();
     pm.VerifyEachPass = true;
 
     pm.RunOnModule(module);

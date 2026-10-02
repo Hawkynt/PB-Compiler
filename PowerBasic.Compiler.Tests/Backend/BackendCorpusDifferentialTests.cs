@@ -7,14 +7,14 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// The corpus-wide version of <see cref="BackendDifferentialTests"/>: every battery program compiled
-/// BOTH ways, both images executed, and their observable behaviour compared - what they printed, and
-/// what they wrote to any file they created.
+/// The corpus-wide differential: every battery program compiled with the optimizer ON and OFF, both
+/// images executed, and their observable behaviour compared - what they printed, what the screen
+/// shows, and what they wrote to any file they created.
 ///
-/// This is the measurement that says whether the retargetable path produces the same program as the
-/// direct emitter, rather than merely a program that assembles. It needs no vintage oracle: the golden
-/// battery holds the DIRECT emitter to PBC 3.50, so for the IR path the direct emitter is the
-/// reference, and the question is only whether the two agree.
+/// This is the measurement that says whether the optimizer preserves the program, rather than
+/// merely producing one that assembles. It needs no vintage oracle: the unoptimized build is the
+/// plain form of the same program - no CSE, no SCCP, no register residency, no inlining - so the
+/// optimized one must behave exactly as it does.
 ///
 /// The three outcomes are kept apart on purpose, because collapsing them is how a coverage number
 /// starts lying:
@@ -23,7 +23,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 ///   <item><b>not compared</b> - something declined to run (an opcode, console input, or another DOS
 ///     service the interpreter does not implement). Never counted as agreement.</item>
 ///   <item><b>disagreed</b> - both ran and behaved differently. Any of these is a miscompilation in
-///     one of the two paths and fails the fixture.</item>
+///     one of the two builds and fails the fixture.</item>
 /// </list>
 /// </summary>
 [TestFixture, Category("Slow")]
@@ -40,7 +40,7 @@ public sealed class BackendCorpusDifferentialTests {
   /// </summary>
   private sealed record Behaviour(string Output, string Screen, string Files, int ExitCode);
 
-  private sealed record Disagreement(string Program, Behaviour Direct, Behaviour Routed, string Routed64);
+  private sealed record Disagreement(string Program, Behaviour Optimized, Behaviour Unoptimized, string Optimized64);
 
   /// <summary>Everything a run can be observed to have done: what it printed, what it left in files, how it ended.</summary>
   private static Behaviour? Observe(byte[] image, out string why) {
@@ -70,13 +70,12 @@ public sealed class BackendCorpusDifferentialTests {
   /// is that a NEW one fails the build.
   /// </summary>
   /// <summary>
-  /// Programs where the two back ends genuinely disagree, each with a diagnosis. EMPTY, and it should
-  /// stay that way: an entry here is a defect that has been located, not one that has been excused.
+  /// Programs whose two builds genuinely disagree, each with a diagnosis. EMPTY, and it should stay
+  /// that way: an entry here is a defect that has been located, not one that has been excused.
   ///
-  /// It had two, DIFF01 and DIFF55, on INT/FIX. Neither was a compiler defect - the TEST CPU ignored
-  /// FLDCW, and INT and FIX are implemented by setting the x87 rounding mode and calling FRNDINT, so
-  /// a CPU that always rounds to nearest turned INT(2.7) into 3. Both back ends were being judged by
-  /// a reference that was wrong.
+  /// It once had two, DIFF01 and DIFF55, on INT/FIX. Neither was a compiler defect - the TEST CPU
+  /// ignored FLDCW, and INT and FIX are implemented by setting the x87 rounding mode and calling
+  /// FRNDINT, so a CPU that always rounds to nearest turned INT(2.7) into 3.
   /// </summary>
   private static readonly Dictionary<string, string> _known = new(StringComparer.OrdinalIgnoreCase);
 
@@ -87,11 +86,11 @@ public sealed class BackendCorpusDifferentialTests {
   }
 
   [Test]
-  public void Corpus_WhenCompiledBothWaysAndRun_ThenTheBackEndAgreesWithTheDirectEmitter() {
+  public void Corpus_WhenCompiledOptimizedAndUnoptimizedAndRun_ThenBothBuildsBehaveAlike() {
     var dir = Path.Combine(_repoRoot, "tests");
     Assume.That(Directory.Exists(dir), "no tests/*.BAS corpus present");
 
-    int agreed = 0, notCompared = 0, routedSomething = 0;
+    int agreed = 0, notCompared = 0, participants = 0;
     var disagreements = new List<Disagreement>();
     var reasons = new Dictionary<string, int>(StringComparer.Ordinal);
     var compileCases = new List<string>();
@@ -101,6 +100,7 @@ public sealed class BackendCorpusDifferentialTests {
     foreach (var file in Directory.EnumerateFiles(dir, "*.BAS", SearchOption.AllDirectories)
                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
       var name = Path.GetFileName(file);
+      var relative = Path.GetRelativePath(dir, file).Replace('\\', '/');
       // Preprocessor.Expand, not Lexer.Tokenize: it is its own entry point, and it is what resolves
       // $INCLUDE and picks a $IF branch. Tokenizing the file directly spliced EVERY branch of a
       // conditional in and left every $INCLUDE unresolved, so WEIRD.BAS and DIFF10.BAS were compared
@@ -110,68 +110,53 @@ public sealed class BackendCorpusDifferentialTests {
         => Binder.Bind(Parser.Parse(Preprocessor.Expand(file, new FileSourceProvider(), Dialect.Pb36), name, Dialect.Pb36),
              Dialect.Pb36);
 
-      foreach (var optimize in new[] { true, false })
-        Compare(optimize);
-      continue;
-
-      // Both optimization settings, because they are different emitters: with the optimizer off there
-      // is no CSE, no SCCP, no register residency, and the direct path emits the plain AX-serial form.
-      // A routed function has to agree with BOTH, and the shapes it must agree with are not the same.
-      void Compare(bool optimize) {
-      byte[] directImage, routedImage;
-      IEnumerable<string> routedNames;
+      byte[] optimizedImage, unoptimizedImage;
+      bool routedBoth;
       try {
-        var bound = Bind();
-        if (bound.Errors.Count > 0)
-          return;                                     // a program the front end rejects is not this test's business
-        var direct = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = false };
-        var routed = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = true };
-        directImage = direct.EmitExecutable();
-        routedImage = routed.EmitExecutable();
-        routedNames = routed.BackendRoutedNames.ToList();
-        if (direct.Errors.Count > 0 || routed.Errors.Count > 0)
-          return;
+        if (Bind().Errors.Count > 0)
+          continue;                                   // a program the front end rejects is not this test's business
+        var optimized = new CodeGenerator(Bind()) { Optimize = true };
+        var unoptimized = new CodeGenerator(Bind()) { Optimize = false };
+        optimizedImage = optimized.EmitExecutable();
+        unoptimizedImage = unoptimized.EmitExecutable();
+        routedBoth = optimized.BackendRoutedNames.Any() && unoptimized.BackendRoutedNames.Any();
+        if (optimized.Errors.Count > 0 || unoptimized.Errors.Count > 0)
+          continue;
       } catch (Exception e) {
         var reason = Summarize("compile: " + e.GetType().Name);
         reasons[reason] = reasons.GetValueOrDefault(reason) + 1;
-        compileCases.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')} " +
-          $"({(optimize ? "optimized" : "unoptimized")}): {e.GetType().Name}: {e.Message}");
-        return;
+        compileCases.Add($"{relative}: {e.GetType().Name}: {e.Message}");
+        continue;
       }
 
-      // a program the back end takes nothing of compares the direct emitter with itself - true, but
-      // it measures nothing, so it is not counted as agreement
-      if (!routedNames.Any()) {
-        unroutedCases.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')} " +
-          $"({(optimize ? "optimized" : "unoptimized")})");
-        return;
+      // a build the back end takes nothing of measures nothing about it, so it is not counted
+      if (!routedBoth) {
+        unroutedCases.Add(relative);
+        continue;
       }
-      ++routedSomething;
+      ++participants;
 
-      var directRun = Observe(directImage, out var directWhy);
-      var routedRun = Observe(routedImage, out var routedWhy);
-      if (directRun is null || routedRun is null) {
+      var optimizedRun = Observe(optimizedImage, out var optimizedWhy);
+      var unoptimizedRun = Observe(unoptimizedImage, out var unoptimizedWhy);
+      if (optimizedRun is null || unoptimizedRun is null) {
         ++notCompared;
-        var reason = Summarize(directRun is null ? "direct: " + directWhy : "routed: " + routedWhy);
+        var reason = Summarize(optimizedRun is null ? "optimized: " + optimizedWhy : "unoptimized: " + unoptimizedWhy);
         reasons[reason] = reasons.GetValueOrDefault(reason) + 1;
-        notComparedCases.Add($"{Path.GetRelativePath(dir, file).Replace('\\', '/')} " +
-          $"({(optimize ? "optimized" : "unoptimized")}): {reason}");
-        return;
+        notComparedCases.Add($"{relative}: {reason}");
+        continue;
       }
 
-      if (directRun == routedRun)
+      if (optimizedRun == unoptimizedRun)
         ++agreed;
       else
-        disagreements.Add(new(name + (optimize ? " (optimized)" : " (unoptimized)"),
-          directRun, routedRun, Convert.ToBase64String(routedImage)[..16]));
-      }
+        disagreements.Add(new(name, optimizedRun, unoptimizedRun, Convert.ToBase64String(optimizedImage)[..16]));
     }
 
     var report = new StringBuilder()
-      .AppendLine($"compilations the back end took part in  : {routedSomething} (each program is tried optimized AND unoptimized)")
-      .AppendLine($"  ran both ways and AGREED             : {agreed}")
-      .AppendLine($"  not compared (nothing ran)           : {notCompared}")
-      .AppendLine($"  ran both ways and DISAGREED          : {disagreements.Count}")
+      .AppendLine($"programs compiled optimized and unoptimized : {participants}")
+      .AppendLine($"  ran both builds and AGREED                : {agreed}")
+      .AppendLine($"  not compared (nothing ran)                : {notCompared}")
+      .AppendLine($"  ran both builds and DISAGREED             : {disagreements.Count}")
       .AppendLine("why a comparison did not happen:");
     foreach (var (reason, count) in reasons.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).Take(12))
       report.AppendLine($"  {count,5}  {reason}");
@@ -182,48 +167,22 @@ public sealed class BackendCorpusDifferentialTests {
     foreach (var notComparedCase in notComparedCases)
       report.AppendLine($"NOT COMPARED {notComparedCase}");
     foreach (var d in disagreements.Take(5))
-      report.AppendLine($"DISAGREEMENT {d.Program}:{Difference(d.Direct, d.Routed)}");
+      report.AppendLine($"DISAGREEMENT {d.Program}:{Difference(d.Optimized, d.Unoptimized)}");
     TestContext.Out.Write(report.ToString());
 
     // A baseline, not a blanket pass. Each entry is a KNOWN defect with a diagnosis; anything else
     // appearing here is a regression and fails immediately.
-    // the program name carries "(optimized)" / "(unoptimized)"; a known defect is known both ways
-    var unexpected = disagreements.Where(d => !_known.ContainsKey(d.Program.Split(' ')[0])).ToList();
+    var unexpected = disagreements.Where(d => !_known.ContainsKey(d.Program)).ToList();
     Assert.That(unexpected, Is.Empty,
-      "the x86-16 back end and the direct emitter produce programs that behave differently:\n" + report);
+      "the optimized and unoptimized builds produce programs that behave differently:\n" + report);
     Assert.That(compileCases, Is.Empty,
-      "a corpus compilation threw before the two back ends could be compared:\n" + report);
-    // A floor, so a change that quietly stops routing things fails instead of passing with less
-    // compared. 55 when the harness first ran both optimization modes, 57 once procedures with local
-    // arrays became routable - the alloca layout and frame zeroing that had kept them out are fixed -
-    // 61 once PRINT of a string variable had a runtime ABI entry (and the string-ownership copy that
-    // entry needs to be safe), 65 once the back end could EMIT the ON ERROR handler rather than only
-    // lower it, and 75 once loop unrolling joined the pipeline - a fully unrolled loop turns its
-    // counter into a constant, which makes bodies selectable that were not before.
-    // 78 once inlining joined the production pipeline - a call inlined is a callee body the caller's
-    // optimizer can see, which makes module bodies selectable that were not.
-    // 208 once constant QUAD printing could stage all four words and call PB's DOUBLE formatter.
-    // 228 once materialized ordered x87 comparisons routed ten more programs in both optimization
-    // modes; 222 execute in both paths and agree, while six remain outside the emulator's opcode set.
-    // After signed 32-bit divide/remainder raised whole-body ownership by three, the corpus baseline
-    // is 234 participants and 228 agreements; the same six cases remain outside the emulator.
-    // The remaining DOS string-kernel ABI mappings add four whole programs in both modes: seven of
-    // those eight executions agree, while one raises the opcode-66 executor limitation to seven.
-    // Subsequent lowering, unsigned conversion, and string-ownership work adds six more complete
-    // module bodies in both modes; the same seven executions remain emulator-limited.
-    // The shared-array/STATIC bridge adds SHAREDG in both modes, and both executions agree.
-    // Binary-record conversion adds DIFF58 in both modes; DIFF08 also routes in both modes but reaches
-    // an executor-only DOS device-information limitation. That yields four participants and two agreements.
-    // Segmented raw-memory comparison adds DIFF10 in both modes, and both executions agree.
-    // Segmented memcpy/memset adds DIFF23 and DIFF74 in both modes. The executable 386 subset, DOS
-    // device query, self-EXEC transition and EMS page frame now cover every remaining participant:
-    // Mixed unoptimized calls into ABI-compatible direct callees add three more programs:
-    // 317 compilations execute, 317 agree, and none stop at an emulator boundary.
-    // DIFF115 (signed LONG ordering across an overflowing difference) and DIFF116 (decimal literals
-    // wider than QUAD) route in both modes: 321 compilations execute and 321 agree.
-    Assert.That(routedSomething, Is.GreaterThanOrEqualTo(321),
-      "the back end participated in fewer compilations than it used to:\n" + report);
-    Assert.That(agreed, Is.GreaterThanOrEqualTo(321),
+      "a corpus compilation threw before the two builds could be compared:\n" + report);
+    // A floor, so a change that quietly stops compiling or running corpus programs fails instead of
+    // passing with less compared. Each program counts once, for its optimized and unoptimized build:
+    // 185 when the comparison became optimized against unoptimized, every one of them agreeing.
+    Assert.That(participants, Is.GreaterThanOrEqualTo(185),
+      "fewer corpus programs were compiled both ways than used to be:\n" + report);
+    Assert.That(agreed, Is.GreaterThanOrEqualTo(185),
       "fewer programs were compared than used to be:\n" + report);
     Assert.That(notCompared, Is.Zero,
       "a participating corpus program stopped before its behavior could be compared:\n" + report);
@@ -239,7 +198,7 @@ public sealed class BackendCorpusDifferentialTests {
   /// Where two runs first parted, with a window either side. A whole-output dump is unreadable for a
   /// program that prints thousands of numbers, and the useful question is always "which one first".
   /// </summary>
-  private static string Difference(Behaviour direct, Behaviour routed) {
+  private static string Difference(Behaviour optimized, Behaviour unoptimized) {
     static string Window(string a, string b, string what) {
       if (a == b)
         return "";
@@ -250,12 +209,12 @@ public sealed class BackendCorpusDifferentialTests {
       static string Show(string text, int from, int at) =>
         (from < text.Length ? text[from..Math.Min(text.Length, at + 40)] : "")
           .Replace((char)13, '|').Replace((char)10, '/');
-      return $"\n  {what} differs at {at}:\n    direct: {Show(a, from, at)}\n    routed: {Show(b, from, at)}";
+      return $"\n  {what} differs at {at}:\n    optimized:   {Show(a, from, at)}\n    unoptimized: {Show(b, from, at)}";
     }
-    return Window(direct.Output, routed.Output, "output")
-      + Window(direct.Screen, routed.Screen, "screen")
-      + Window(direct.Files, routed.Files, "files")
-      + (direct.ExitCode == routed.ExitCode ? "" : $"\n  exit code {direct.ExitCode} against {routed.ExitCode}");
+    return Window(optimized.Output, unoptimized.Output, "output")
+      + Window(optimized.Screen, unoptimized.Screen, "screen")
+      + Window(optimized.Files, unoptimized.Files, "files")
+      + (optimized.ExitCode == unoptimized.ExitCode ? "" : $"\n  exit code {optimized.ExitCode} against {unoptimized.ExitCode}");
   }
 
   private static string Escape(Behaviour behaviour) {

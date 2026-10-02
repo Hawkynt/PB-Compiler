@@ -44,7 +44,12 @@ public static class LoopUnroll {
   private const int _RUNTIME_FACTOR = 4;
 
   /// <summary>Unrolls what it can in <paramref name="fn"/>; returns how many loops it took.</summary>
-  public static int Run(IrFunction fn) {
+  /// <param name="runtimeUnrolling">
+  /// Whether O0063 may run. It always grows the code - a prologue loop plus four copies of the body -
+  /// and buys only cycles, so the pipeline allows it under <c>$OPTIMIZE SPEED</c> alone, like every
+  /// other size-growing rewrite; before, the default objective unrolled every runtime-count loop.
+  /// </param>
+  public static int Run(IrFunction fn, bool runtimeUnrolling = true) {
     if (fn.HasErrorHandler)
       return 0;                                  // a fault can enter this function anywhere - see IrFunction
 
@@ -57,7 +62,7 @@ public static class LoopUnroll {
         ++unrolled;
         continue;
       }
-      if (MatchRuntime(fn, header) is { } runtime && TryRuntimeUnroll(fn, runtime))
+      if (runtimeUnrolling && MatchRuntime(fn, header) is { } runtime && TryRuntimeUnroll(fn, runtime))
         ++unrolled;
     }
     return unrolled;

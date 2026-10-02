@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.Ir;
 
@@ -34,10 +35,70 @@ public sealed class X86DefinitionAbiTests {
     });
   }
 
-  [TestCase(IrCallConvention.Fastcall)]
-  [TestCase(IrCallConvention.Watcall)]
-  public void Layout_GivenRegisterConvention_ThenDeclinesUntilDefinitionRegisterPlanExists(IrCallConvention convention) {
-    Assert.That(X86CallAbi.TryDefinitionStackLayout(Function(convention), out _, out var decline), Is.False);
-    Assert.That(decline, Does.Contain("register definition ABI"));
+  [Test]
+  public void Layout_GivenFastcallWithALongInARegisterPosition_ThenItDeclines() {
+    Assert.That(X86CallAbi.TryDefinitionStackLayout(
+      Function(IrCallConvention.Fastcall), out _, out var decline), Is.False);
+    Assert.That(decline, Does.Contain("not one word"));
+  }
+
+  [Test]
+  public void Layout_GivenWatcallWordThenLong_ThenUsesAxAndCxBx() {
+    Assert.That(X86CallAbi.TryDefinitionStackLayout(
+      Function(IrCallConvention.Watcall), out var layout, out var decline), Is.True, decline);
+    Assert.Multiple(() => {
+      Assert.That(layout.ParameterOffsets, Is.EqualTo(new[] { -2, -6 }));
+      Assert.That(layout.ParameterBytes, Is.Zero);
+      Assert.That(layout.Spills, Is.EqualTo(new[] { Reg.AX, Reg.CX, Reg.BX }),
+        "a pair is pushed high then low so its low word lands at the parameter offset");
+    });
+  }
+
+  private static IrFunction Words(IrCallConvention convention, int count) => new("f", IrType.Void,
+    [.. Enumerable.Range(0, count).Select(i => new IrArgument(IrType.I16, i, $"w{i}"))]) {
+      Convention = convention,
+    };
+
+  /// <summary>
+  /// The prologue pushes the argument registers in parameter order, so parameter 0 is at [BP-2];
+  /// what the registers cannot hold is on the stack in the convention's order, above the return.
+  /// </summary>
+  [Test]
+  public void Layout_GivenWatcallWithFiveWords_ThenFourSpillBelowBpAndOneIsOnTheStack() {
+    Assert.That(X86CallAbi.TryDefinitionStackLayout(
+      Words(IrCallConvention.Watcall, 5), out var layout, out var decline), Is.True, decline);
+    Assert.Multiple(() => {
+      Assert.That(layout.ParameterOffsets, Is.EqualTo(new[] { -2, -4, -6, -8, 4 }));
+      Assert.That(layout.ParameterBytes, Is.EqualTo(2),
+        "only the overflow argument occupies caller-clean stack space");
+      Assert.That(layout.Spills, Is.EqualTo(new[] { Reg.AX, Reg.DX, Reg.BX, Reg.CX }));
+    });
+  }
+
+  [Test]
+  public void Layout_GivenWatcallMixedWordsAndLongs_ThenStopsAtFirstUnallocatablePair() {
+    IrType[] types = [IrType.I16, IrType.I32, IrType.I16, IrType.I32, IrType.I16];
+    var function = new IrFunction("f", IrType.Void,
+      [.. types.Select((type, index) => new IrArgument(type, index))]) {
+        Convention = IrCallConvention.Watcall,
+      };
+
+    Assert.That(X86CallAbi.TryDefinitionStackLayout(
+      function, out var layout, out var decline), Is.True, decline);
+    Assert.Multiple(() => {
+      Assert.That(layout.ParameterOffsets, Is.EqualTo(new[] { -2, -6, -8, 4, 8 }));
+      Assert.That(layout.ParameterBytes, Is.EqualTo(6));
+      Assert.That(layout.Spills, Is.EqualTo(new[] { Reg.AX, Reg.CX, Reg.BX, Reg.DX }));
+    });
+  }
+
+  [Test]
+  public void Layout_GivenFastcallWithFourWords_ThenThreeSpillBelowBp() {
+    Assert.That(X86CallAbi.TryDefinitionStackLayout(
+      Words(IrCallConvention.Fastcall, 4), out var layout, out var decline), Is.True, decline);
+    Assert.Multiple(() => {
+      Assert.That(layout.ParameterOffsets, Is.EqualTo(new[] { -2, -4, -6, 4 }));
+      Assert.That(layout.Spills, Is.EqualTo(new[] { Reg.AX, Reg.DX, Reg.BX }));
+    });
   }
 }

@@ -11,10 +11,8 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// writes through it, <c>@p[i]</c> steps it by whole targets and <c>@q.Field</c> selects inside the
 /// record it names.
 ///
-/// Every case asserts the VALUE the program should print as well as agreement with the direct
-/// emitter. Agreement alone would pass on a shared misunderstanding - a dereference that read the
-/// wrong cell in both paths prints the same wrong number twice - and the point of a pointer is
-/// precisely which cell it reaches.
+/// Every case asserts the VALUE the program should print: a dereference that reads the wrong cell
+/// prints a plausible wrong number, and the point of a pointer is precisely which cell it reaches.
 /// </summary>
 [TestFixture]
 public sealed class BackendPointerTests {
@@ -25,24 +23,17 @@ public sealed class BackendPointerTests {
     return model;
   }
 
-  private static (string Direct, string Routed, IEnumerable<string> RoutedNames) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
-    var directImage = direct.EmitExecutable();
-    var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+  private static (string Output, IEnumerable<string> RoutedNames) Run(string source) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output;
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return (Cpu8086.Run(image).Output, generator.BackendRoutedNames);
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return ("", generator.BackendRoutedNames);
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"), routed.BackendRoutedNames);
   }
 
   /// <summary>The reason the whole-module lowering declined, or null when it took the program.</summary>
@@ -53,7 +44,7 @@ public sealed class BackendPointerTests {
 
   [Test]
   public void Deref_GivenAPointerToAScalar_ThenItReadsAndWritesThatVariablesOwnCell() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM p AS INTEGER PTR
       x% = 11
       y% = 77
@@ -65,16 +56,15 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
-    Assert.That(routed, Is.EqualTo(direct));
     // the value read back is the one the variable held, the write lands in x% - and NOT in the
     // variable next to it, which is what a wrongly-formed address would show
-    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+    Assert.That(output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "11", "42", "77" }));
   }
 
   [Test]
   public void Deref_GivenAnIndexedPointerIntoAnArray_ThenTheIndexStepsByWholeElements() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM p AS INTEGER PTR
       DIM a%(1 TO 5)
       FOR i% = 1 TO 5
@@ -88,16 +78,15 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     // zero-based whatever the array's own lower bound is, and scaled by the TARGET's size: @p[2] is
     // a%(3) rather than a%(2) or the byte two along
-    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+    Assert.That(output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "10", "30", "99" }));
   }
 
   [Test]
   public void Deref_GivenAPointerToARecord_ThenAFieldSelectsAtItsOwnOffset() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       TYPE Pt
         X AS INTEGER
         Y AS INTEGER
@@ -115,15 +104,14 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     // the second field is reached at its offset, and writing it leaves the first alone
-    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+    Assert.That(output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "7", "-3", "33", "7" }));
   }
 
   [Test]
   public void Call_GivenAByValPointerAgainstAByRefParameter_ThenTheCalleeWritesThroughIt() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE SUB Bump (v AS INTEGER)
       DIM p AS INTEGER PTR
       x% = 10
@@ -137,13 +125,12 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(routed.Trim(), Is.EqualTo("11"), "the pointer's own value was the address the callee wrote through");
+    Assert.That(output.Trim(), Is.EqualTo("11"), "the pointer's own value was the address the callee wrote through");
   }
 
   [Test]
   public void Deref_GivenAPointerAssignedFromAnotherPointer_ThenBothReachTheSameCell() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM p AS INTEGER PTR
       DIM r AS INTEGER PTR
       x% = 5
@@ -155,21 +142,20 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+    Assert.That(output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "64", "64" }));
   }
 
   /// <summary>
-  /// <c>VARPTR</c> is an address, and the only thing about an address that both back ends can be held
-  /// to is the DISTANCE between two of them: the absolute offset a variable happens to land on is a
-  /// layout fact, and the direct emitter's data cell and the routed frame slot are not the same place.
+  /// <c>VARPTR</c> is an address, and the only thing about an address a test can hold the back end to
+  /// is the DISTANCE between two of them: the absolute offset a variable happens to land on is a
+  /// layout fact, not a property of the language.
   /// Array elements are the case where the distance IS the language's own promise - PB programs walk
   /// an array by adding SIZEOF(element) to VARPTR of its first - so that is what is pinned here.
   /// </summary>
   [Test]
   public void VarPtr_GivenAdjacentArrayElements_ThenTheAddressesDifferByTheElementSize() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM a%(1 TO 4)
       DIM b&(1 TO 4)
       DIM first AS LONG
@@ -182,9 +168,8 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
-    Assert.That(routed, Is.EqualTo(direct));
     // two bytes an INTEGER, four a LONG, and the stride multiplies rather than repeating
-    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+    Assert.That(output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "2", "6", "4" }));
   }
 
@@ -196,7 +181,7 @@ public sealed class BackendPointerTests {
   /// </summary>
   [Test]
   public void VarPtr_WhenPokedAndPeekedThrough_ThenItReachesTheVariablesOwnByte() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM v AS WORD
       DIM w AS WORD
       v = 0
@@ -210,10 +195,9 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     // the byte read back is the byte written, the variable itself now holds it - and the variable
     // beside it is untouched, which is what a VARPTR off by a cell would show
-    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+    Assert.That(output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "65", "65", "999" }));
   }
 
@@ -225,7 +209,7 @@ public sealed class BackendPointerTests {
   /// </summary>
   [Test]
   public void VarPtr_GivenASharedVariable_ThenItAddressesTheModulesOwnDataCell() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE FUNCTION Poked% ()
       DIM g AS SHARED WORD
       g = 5
@@ -233,7 +217,7 @@ public sealed class BackendPointerTests {
       PRINT g
       END
 
-      FUNCTION Poked% ()
+      FUNCTION Poked% () NOINLINE
         SHARED g AS WORD
         DEF SEG = VARSEG(g)
         POKE VARPTR(g), 77
@@ -244,8 +228,7 @@ public sealed class BackendPointerTests {
 
     Assert.That(names, Does.Contain("main"));
     Assert.That(names, Does.Contain("Poked"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+    Assert.That(output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "77", "77" }));
   }
 
@@ -256,7 +239,7 @@ public sealed class BackendPointerTests {
   /// </summary>
   [Test]
   public void VarPtr_GivenTheSameVariableTwice_ThenItAnswersTheSameAddress() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM v AS INTEGER
       DIM here AS LONG
       v = 3
@@ -267,8 +250,7 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(routed.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+    Assert.That(output.Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries)
       .Select(l => l.Trim()).ToArray(), Is.EqualTo(new[] { "0", "4" }));
   }
 
@@ -281,8 +263,8 @@ public sealed class BackendPointerTests {
   // scalar and an AT array's is the segment it names. The routed answer of 0 was a wrong address, and
   // a DEF SEG built out of it reads and writes the program's own data.
   //
-  // Each case below is a DIFFERENCE against a scalar's VARSEG rather than an absolute segment: the
-  // two back ends lay data out differently and only the relationship is a property of the language.
+  // Each case below is a DIFFERENCE against a scalar's VARSEG rather than an absolute segment: where
+  // the data lands is a layout fact and only the relationship is a property of the language.
 
   /// <summary>
   /// A dynamic array's elements live in the far array heap, one segment for the whole image, which is
@@ -292,7 +274,7 @@ public sealed class BackendPointerTests {
   /// </summary>
   [Test]
   public void VarSeg_GivenADynamicArrayElement_ThenItAnswersTheFarHeapSegmentRatherThanDs() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
       DIM k AS INTEGER
       DIM scal AS INTEGER
@@ -313,10 +295,9 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
-    Assert.That(routed, Is.EqualTo(direct));
     // the far heap is 0x2000 paragraphs above DGROUP here, and PEEK through the pair reads the very
     // byte the element holds - which is the half a DS-shaped answer got wrong
-    Assert.That(routed.Trim(), Is.EqualTo("8192  33  33"));
+    Assert.That(output.Trim(), Is.EqualTo("8192  33  33"));
   }
 
   /// <summary>
@@ -325,13 +306,14 @@ public sealed class BackendPointerTests {
   /// </summary>
   [Test]
   public void VarSeg_GivenAnAbsoluteArrayElement_ThenItAnswersTheSegmentTheDimNamed() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
       DIM DYNAMIC vid%(0 TO 7) AT &HB800
       DIM v AS INTEGER
       v = Given%(1)
       vid%(Given%(0)) = &H0F41
       PRINT VARSEG(vid%(0)) - VARSEG(v)
+      PRINT HEX$(VARSEG(vid%(0)))
       END
 
       FUNCTION Given%(BYVAL v%) NOINLINE
@@ -340,8 +322,9 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(routed.Trim(), Is.Not.EqualTo("0"), "an AT array is not in DGROUP, whatever DGROUP is");
+    var lines = output.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+    Assert.That(lines[0].Trim(), Is.Not.EqualTo("0"), "an AT array is not in DGROUP, whatever DGROUP is");
+    Assert.That(lines[1].Trim(), Is.EqualTo("B800"), "the segment is the one the DIM named");
   }
 
   /// <summary>
@@ -350,7 +333,7 @@ public sealed class BackendPointerTests {
   /// </summary>
   [Test]
   public void VarSeg_GivenNearStorage_ThenItStillAnswersTheDataSegment() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
       DIM a%(0 TO 7)
       DIM v AS INTEGER
@@ -367,8 +350,7 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(routed.Trim(), Is.EqualTo("0  0"),
+    Assert.That(output.Trim(), Is.EqualTo("0  0"),
       "a static array's elements and a string's HANDLE are both in DGROUP");
   }
 
@@ -385,7 +367,7 @@ public sealed class BackendPointerTests {
   /// </summary>
   [Test]
   public void VarSeg_GivenASubscriptWithASideEffect_ThenTheSubscriptIsStillEvaluated() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE FUNCTION Side%(BYVAL v%)
       DIM hits AS SHARED INTEGER
       DIM a%(0 TO 3)
@@ -404,8 +386,7 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(routed.Trim(), Is.EqualTo("0  1  2  2"),
+    Assert.That(output.Trim(), Is.EqualTo("0  1  2  2"),
       "the VARSEG subscript ran once, and the VARPTR one after it took the count to two");
   }
 
@@ -417,7 +398,7 @@ public sealed class BackendPointerTests {
   /// </summary>
   [Test]
   public void VarSeg_GivenAnOutOfRangeSubscriptUnderBoundsChecking_ThenTheTrapStillFires() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       $ERROR BOUNDS ON
       DECLARE FUNCTION Given%(BYVAL v%)
       DIM a%(0 TO 3)
@@ -435,8 +416,7 @@ public sealed class BackendPointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Does.Contain("in range").And.Contain("RUNTIME ERROR").And.Not.Contain("not reached"));
+    Assert.That(output, Does.Contain("in range").And.Contain("RUNTIME ERROR").And.Not.Contain("not reached"));
   }
 
   /// <summary>
@@ -446,14 +426,14 @@ public sealed class BackendPointerTests {
   ///
   /// <para>
   /// Answering with it is not an invention: it is the same address a read of <c>h%(1)</c> would use,
-  /// formed the same way and including the EMS remap, which is exactly what the direct emitter does by
-  /// building the place before asking which segment it is in. So the two are compared rather than a
-  /// number being asserted - the segment itself depends on where DOS put the block.
+  /// formed the same way and including the EMS remap, which is exactly what the direct emitter did by
+  /// building the place before asking which segment it is in. The segment itself depends on where DOS
+  /// put the block, so what is asserted is the distance between two elements' segments.
   /// </para>
   /// </summary>
   [Test]
   public void Execute_GivenVarSegOfAPagedArrayElement_ThenItIsTheElementsOwnSegment() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM HUGE h%(0 TO 40000)
       h%(1) = 2
       h%(40000) = 3
@@ -463,10 +443,9 @@ public sealed class BackendPointerTests {
 
     Assert.Multiple(() => {
       Assert.That(names, Does.Contain("main"), "VARSEG of a paged element no longer declines");
-      Assert.That(routed, Is.EqualTo(direct));
       // the array starts at index 0, so element 40000 is 80000 bytes in - 5000 paragraphs past
       // element 1, which sits in the first one
-      Assert.That(routed.Replace("\r\n", "|").Trim(), Is.EqualTo("2  3 | 5000 |"));
+      Assert.That(output.Replace("\r\n", "|").Trim(), Is.EqualTo("2  3 | 5000 |"));
     });
   }
 

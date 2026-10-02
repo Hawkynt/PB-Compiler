@@ -28,7 +28,7 @@ public sealed class ReturnStructureReductionPipelineTests {
     callerBuilder.Call(IrType.Void, consume, observed);
     callerBuilder.Ret();
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.Multiple(() => {
       Assert.That(observedStore.Parent, Is.Not.Null, "the externally observed result region stays live");

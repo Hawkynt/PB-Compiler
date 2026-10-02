@@ -29,21 +29,21 @@ public sealed class BackendInputRoutingTests {
     return model;
   }
 
-  private static string Run(string source, bool routed) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+  private static string Run(string source) {
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output;
   }
 
   private static IEnumerable<string> RoutedNames(string source) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     cg.EmitExecutable();
     return cg.BackendRoutedNames.ToList();
   }
 
   /// <summary>Writes a file, reads it back through INPUT #, and prints what came out.</summary>
-  private static readonly (string Name, string Source)[] _programs = [
+  private static readonly (string Name, string Source, string Expected)[] _programs = [
     ("integers", """
       OPEN "OUT.TXT" FOR OUTPUT AS #1
       PRINT #1, "42"
@@ -57,7 +57,7 @@ public sealed class BackendInputRoutingTests {
       CLOSE #1
       PRINT a; b
       END
-      """),
+      """, "42 -7"),
     ("longs", """
       OPEN "OUT.TXT" FOR OUTPUT AS #1
       PRINT #1, "2000000000"
@@ -68,7 +68,7 @@ public sealed class BackendInputRoutingTests {
       CLOSE #1
       PRINT v
       END
-      """),
+      """, "2000000000"),
     ("floats", """
       OPEN "OUT.TXT" FOR OUTPUT AS #1
       PRINT #1, "3.5"
@@ -82,7 +82,7 @@ public sealed class BackendInputRoutingTests {
       CLOSE #1
       PRINT s; d
       END
-      """),
+      """, "3.5  1.25"),
     ("strings", """
       OPEN "OUT.TXT" FOR OUTPUT AS #1
       WRITE #1, "hello", "world"
@@ -95,7 +95,7 @@ public sealed class BackendInputRoutingTests {
       CLOSE #1
       PRINT a; "/"; b
       END
-      """),
+      """, "hello/world"),
     // rounding: INPUT of a fractional number into an INTEGER goes through the same nearest-even
     // rounding an assignment does, which is what FISTP does with the default control word
     ("rounding into an integer", """
@@ -114,22 +114,23 @@ public sealed class BackendInputRoutingTests {
       CLOSE #1
       PRINT a; b; c
       END
-      """),
+      """, "2  4 -2"),
   ];
 
   [Test]
-  public void Input_GivenEveryTargetType_ThenTheRoutedProgramMatchesTheDirectEmitter() {
-    foreach (var (name, source) in _programs)
-      Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)), $"program '{name}'");
+  public void Input_GivenEveryTargetType_ThenTheValuesReadBackAsWritten() {
+    // 2.5, 3.5 and -2.5 round to the even neighbour: 2, 4 and -2
+    foreach (var (name, source, expected) in _programs)
+      Assert.That(Run(source).Trim(), Is.EqualTo(expected), $"program '{name}'");
   }
 
   /// <summary>
-  /// And the back end really took the body. Without this the comparison above would pass on every
-  /// program the selector quietly declined, since both sides would then be the direct emitter.
+  /// And the back end really took the body, so the values above are the routed INPUT entries' own
+  /// and not a fallback's.
   /// </summary>
   [Test]
   public void Input_GivenEveryTargetType_ThenTheBackEndOwnsTheBody() {
-    foreach (var (name, source) in _programs)
+    foreach (var (name, source, _) in _programs)
       Assert.That(RoutedNames(source), Does.Contain("main"), $"program '{name}' was not routed");
   }
 
@@ -161,9 +162,10 @@ public sealed class BackendInputRoutingTests {
     ("dword past the signed range", InputProgram("DWORD", "4000000000"), "4000000000"),
     ("dword at the top", InputProgram("DWORD", "4294967295"), "4294967295"),
     ("quad that a LONG cannot hold", InputProgram("QUAD", "8589934592"), "8589934592"),
-    // 57 significant bits: more than a DOUBLE's 53, so a QUAD that went anywhere near one on the way
-    // in comes back with the last digits wrong
-    ("quad past a double's mantissa", InputProgram("QUAD", "76861433640456465"), null!),
+    // 57 significant bits: more than a DOUBLE's 53. PRINT renders a QUAD that wide in E notation at
+    // fifteen digits - genuine PBC 3.50 prints exactly this (checked with scripts/diff-one.sh). The
+    // low digits themselves are beyond Cpu8086, whose x87 is a C# double.
+    ("quad past a double's mantissa", InputProgram("QUAD", "76861433640456465"), "7.68614336404565E+16"),
   ];
 
   private static string InputProgram(string type, string literal) => $"""
@@ -193,28 +195,24 @@ public sealed class BackendInputRoutingTests {
   ];
 
   [Test]
-  public void Input_GivenAByteWordDwordOrQuad_ThenTheRoutedProgramRoutesAndMatchesTheDirectEmitter() {
-    AssertRoutedMatchesDirect(_unsignedAndQuadPrograms);
+  public void Input_GivenAByteWordDwordOrQuad_ThenTheRoutedProgramReadsTheWholeValue() {
+    AssertRoutedReadsBack(_unsignedAndQuadPrograms);
   }
 
   [Test]
-  public void Input_GivenAValuePastTheTargetsSignedRange_ThenItWrapsAsTheDirectEmitterWraps() {
-    AssertRoutedMatchesDirect(_outOfRangePrograms);
+  public void Input_GivenAValuePastTheTargetsSignedRange_ThenItWrapsToTheLowBitsAsPbDoes() {
+    AssertRoutedReadsBack(_outOfRangePrograms);
   }
 
-  private static void AssertRoutedMatchesDirect((string Name, string Source, string Expected)[] programs) {
+  private static void AssertRoutedReadsBack((string Name, string Source, string Expected)[] programs) {
     foreach (var (name, source, expected) in programs)
       foreach (var optimize in new[] { false, true }) {
-        var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-        var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
-        var directOutput = Cpu8086.Run(direct.EmitExecutable()).Output;
+        var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
         var routedOutput = Cpu8086.Run(routed.EmitExecutable()).Output;
 
         Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
-          $"'{name}' was not routed (optimize={optimize}), so this compares the direct emitter with itself");
-        Assert.That(routedOutput, Is.EqualTo(directOutput), $"'{name}' (optimize={optimize})");
-        if (expected is not null)
-          Assert.That(routedOutput.Trim(), Is.EqualTo(expected), $"'{name}' (optimize={optimize})");
+          $"'{name}' was not routed (optimize={optimize})");
+        Assert.That(routedOutput.Trim(), Is.EqualTo(expected), $"'{name}' (optimize={optimize})");
       }
   }
 
@@ -236,7 +234,6 @@ public sealed class BackendInputRoutingTests {
       PRINT b
       END
       """;
-    Assert.That(Run(source, routed: true).Trim(), Is.EqualTo(expected));
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    Assert.That(Run(source).Trim(), Is.EqualTo(expected));
   }
 }

@@ -74,47 +74,39 @@ public sealed class BackendPagedArrayTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenAHugeArray_WhenRouted_ThenElementsAcrossSegmentsKeepTheirOwnValues(bool optimize) {
-    var routed = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize};
 
     var cpu = Cpu8086.Run(routed.EmitExecutable());
 
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
-      "the module body must not fall back to the direct emitter - then this would test that instead");
+      "the module body must reach the back end, or this does not test its paged-array access");
     Assert.That(cpu.Output.Replace("\r\n", "|"), Is.EqualTo(
       " 11  22  33  999 | 163840 | 0  20000 | 7  8  9  1  40000 |"));
   }
 
-  [TestCase(false)]
-  [TestCase(true)]
-  public void Execute_GivenAHugeArray_WhenRouted_ThenItAgreesWithTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_hugeProgram)) { Optimize = optimize, UseExperimentalBackend = true };
+  [Test]
+  public void Execute_GivenAHugeArray_WhenOptimized_ThenItPrintsWhatTheUnoptimizedBuildPrints() {
+    var optimized = new CodeGenerator(Bind(_hugeProgram)) { Optimize = true};
+    var unoptimized = new CodeGenerator(Bind(_hugeProgram)) { Optimize = false};
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var optimizedCpu = Cpu8086.Run(optimized.EmitExecutable());
+    var unoptimizedCpu = Cpu8086.Run(unoptimized.EmitExecutable());
 
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+    Assert.That(optimizedCpu.Output, Is.EqualTo(unoptimizedCpu.Output));
   }
 
   [Test]
-  public void Execute_GivenAVirtualArray_WhenRouted_ThenMappedPagesAndFreeCountMatchTheDirectEmitter() {
-    var direct = new CodeGenerator(Bind(_virtualProgram)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_virtualProgram)) { Optimize = true, UseExperimentalBackend = true };
-    var directImage = direct.EmitExecutable();
+  public void Execute_GivenAVirtualArray_WhenRouted_ThenMappedPagesKeepTheirValuesAndEraseReturnsTheEms() {
+    var routed = new CodeGenerator(Bind(_virtualProgram)) { Optimize = true};
     var routedImage = routed.EmitExecutable();
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"));
 
-    var directCpu = Cpu8086.Run(directImage);
     var routedCpu = Cpu8086.Run(routedImage);
-    Assert.Multiple(() => {
-      Assert.That(directCpu.Output.Replace("\r\n", "|"),
-        Is.EqualTo(" 11  22  33  44  55  66 | 65536 | 0 |"));
-      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-    });
+    Assert.That(routedCpu.Output.Replace("\r\n", "|"),
+      Is.EqualTo(" 11  22  33  44  55  66 | 65536 | 0 |"));
   }
 
   /// <summary>
@@ -129,7 +121,7 @@ public sealed class BackendPagedArrayTests {
       v(4097) = 4097
       PRINT v(1); v(4097); FRE(-11) > 0
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var image = routed.EmitExecutable();
 
@@ -140,8 +132,8 @@ public sealed class BackendPagedArrayTests {
 
   /// <summary>
   /// The boundary of what lowers, pinned so widening it stays a deliberate act. Each of these is a
-  /// shape the DIRECT emitter refuses too, or one whose descriptor the two paths could not share -
-  /// and a decline costs coverage where a guess would cost correctness.
+  /// shape the direct emitter refused too, or one whose descriptor the lowering cannot model - and a
+  /// decline costs coverage where a guess would cost correctness.
   /// </summary>
   [TestCase("DIM HUGE h(0 TO 3, 0 TO 3) AS LONG\nh(0, 0) = 1",
     "rank above one: the direct emitter reports it unsupported")]

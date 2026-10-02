@@ -32,8 +32,8 @@ public sealed class X87StackOptimizerTests {
     return instructions;
   }
 
-  private static (MFunction Function, MBlock Block) OneBlock(params MInstr[] instructions) {
-    var function = new MFunction("f");
+  private static (X86MachineFunction Function, MBlock Block) OneBlock(params MInstr[] instructions) {
+    var function = new X86MachineFunction("f");
     var block = new MBlock("entry");
     block.Instructions.AddRange(instructions);
     function.Blocks.Add(block);
@@ -104,7 +104,7 @@ public sealed class X87StackOptimizerTests {
   public void Retention_GivenLoopInvariantTemporary_ThenResidencyCrossesBackEdgeAndFlushesOnExit() {
     var value = Temp(0);
     var observed = Temp(1);
-    var function = new MFunction("f");
+    var function = new X86MachineFunction("f");
     var preheader = new MBlock("preheader");
     var loop = new MBlock("loop");
     var exit = new MBlock("exit");

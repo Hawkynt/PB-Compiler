@@ -11,6 +11,14 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class Inliner {
 
   private const int DefaultMaxCalleeInstructions = 64;
+
+  /// <summary>
+  /// SIZE's budget: a body about the size of the call it replaces - argument pushes, the CALL, the
+  /// callee's frame and RET - so inlining it cannot grow the program. SIZE used to skip inlining
+  /// entirely and then lost to the default objective on exactly the small helpers it could have
+  /// absorbed for free.
+  /// </summary>
+  private const int SizeMaxCalleeInstructions = 8;
   private const int SpeedMaxCalleeInstructions = 256;
   private const int ProfileMaxCalleeInstructions = 512;
   private const int SpeedProfileMaxCalleeInstructions = 1024;
@@ -31,7 +39,8 @@ public static class Inliner {
   /// earns no inline budget. O0268 can supply this lookup once profile loading/stable identities exist;
   /// keeping the lookup abstract here avoids coupling the inliner to that representation.
   /// </param>
-  public static int Run(IrModule module, bool optimizeForSpeed = false, Func<IrCall, ulong?>? callEdgeCount = null) {
+  public static int Run(IrModule module, bool optimizeForSpeed = false, Func<IrCall, ulong?>? callEdgeCount = null,
+      bool optimizeForSize = false) {
     var inlined = 0;
     foreach (var fn in module.Functions) {
       // A function with an armed error handler is not duplicable, in either direction. Its blocks are
@@ -49,7 +58,9 @@ public static class Inliner {
       foreach (var call in fn.AllInstructions.OfType<IrCall>().ToList())
         if (call.Parent is not null && call.Callee is IrFunction callee
             && !callee.HasErrorHandler
-            && IsInlinable(callee, fn, InlineBudgetFor(call, optimizeForSpeed, callEdgeCount?.Invoke(call)))) {
+            && IsInlinable(callee, fn, optimizeForSize
+              ? SizeMaxCalleeInstructions
+              : InlineBudgetFor(call, optimizeForSpeed, callEdgeCount?.Invoke(call)))) {
           InlineCall(call, callee, fn, inlined);
           ++inlined;
         }

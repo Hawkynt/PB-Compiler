@@ -195,7 +195,7 @@ public sealed class O0291HandleOwnershipElisionTests {
     b.Call(IrType.Void, free, source);
     b.Ret();
 
-    var passes = IrPassManager.Standard(includeModulePasses: false);
+    var passes = IrMiddleEndPipeline.Standard(includeModulePasses: false);
     passes.VerifyEachPass = true;
     passes.RunToFixpoint(fn);
 

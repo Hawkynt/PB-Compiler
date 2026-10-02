@@ -2,23 +2,35 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
-| **Stage** | Whole-program shape recognition, before runtime selection |
-| **Source** | `CodeGen/CodeGenerator.Trivial.cs` |
+| **Status** | ⬜ Planned; the former raw-byte artifact shortcut was retired |
+| **Stage** | Whole-program IR plus target machine lowering |
+| **Source** | — |
 | **Gate** | `--optimize` |
-| **Verified by** | execution in DOSBox (25-byte hello world) |
+| **Verified by** | not implemented |
 | **Related** | [P0001](P0001-runtime-trimming.md), [P0005](P0005-com-output.md), [R0001](R0001-fast-text-output.md) |
 
-## What it is
+## What it should be
 
-Some programs have no run-time behavior at all — their entire output is known at
-compile time. A program whose only effects are `PRINT`ing compile-time strings
-and integrals, and `END`, lowers to a raw COM-style image: the whole output text
-— including PB number formatting, 14-column comma zones and CRLFs — is
-precomputed and written with **one** DOS call.
+When a program's complete observable behavior is writing compile-time text and exiting,
+the middle end can combine those effects into one target-independent operation. The
+x86-16 backend may then select a compact DOS write and exit sequence through the normal
+machine pipeline.
 
-`AH=9` when the text contains no `$`, otherwise `AH=40h`; exit via `INT 20h` or
-`AH=4Ch`.
+The whole output includes PowerBASIC number formatting, fourteen-column comma zones and
+CRLFs. A correct implementation must stop specializing as soon as column state, `USING`,
+redirection, error handling or a dynamic operand can change the result.
+
+## Why the former implementation was retired
+
+`Emit/DosTrivialImage.cs` inspected optimized IR and returned hand-authored x86 bytes
+directly from DOS artifact construction. Selection and allocation had already been
+probed for routing, but their machine product was never emitted. That made the artifact
+an alternate code generator and invalidated the invariant that every production body
+passes through Low IR, instruction selection, scheduling, allocation and
+`X86ProductionEmitter`.
+
+P0007 can return only as an IR or machine transformation. COM selection remains P0005;
+it changes the container, not the compiler path.
 
 ## Sample
 
@@ -26,38 +38,10 @@ precomputed and written with **one** DOS call.
 PRINT "Hello, World!"
 ```
 
-## Without the optimizer
-
-14 254 bytes: the full runtime, the string console path, column tracking, the
-capture buffer, the formatter.
-
-## With the optimizer
-
-**25 bytes**, verified running in DOSBox:
-
-```asm
-    org     100h
-    mov     dx, msg
-    mov     ah, 9
-    int     21h
-    int     20h
-msg db "Hello, World!", 0Dh, 0Ah, "$"
-```
-
 ## Equivalent BASIC
 
 Conceptually the program has been constant-folded end to end:
 
 ```basic
-' the entire observable behavior is one write of a known byte string
+' one write of a known byte string, followed by the same exit
 ```
-
-## Why it is safe
-
-The recognition is a **whole-program** shape test and falls back to the generic
-runtime the moment anything can be observed differently: column state carried
-across statements, `PRINT` zones with runtime operands, `USING`, a non-literal
-operand, file or `STDOUT` redirection, an error handler, or any statement with
-another effect. Where it does apply, the emitted bytes are exactly the bytes the
-generic path would have written, computed at compile time instead of at run
-time.

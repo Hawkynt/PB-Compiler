@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (even sizes) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — block-move/compare widening |
+| **Status** | ⬜ Not implemented on the IR path |
+| **Stage** | — |
+| **Source** | None. A whole-UDT compare lowers to `rt_mem_compare` (`Ir/IrLowering.cs` — `LowerUdtComparison`), which is the runtime's `REPE CMPSB` loop (`Runtime/DosRuntime.Memory.cs` — `rt_memcmp`) |
 | **Gate** | `--optimize` |
 | **Verified by** | `tests/diff/DIFF23.BAS` |
 | **Split from** | [O0015](O0015-udt-zero-cost.md) (which is now the block copy) |
@@ -14,6 +14,12 @@
 The PowerBASIC 3.1 whole-value `=`/`<>` comparison of two `TYPE` values is a
 memory compare. For an even byte size it runs `REPE CMPSW` — half the iterations
 of `REPE CMPSB`.
+
+Not implemented on the IR path; the emitter-level version was retired with the
+direct emitter. The related `Ir/Passes/AggregateBlockScalarization.cs` replaces
+an equality-only `rt_mem_compare` with per-field compares when the surrounding
+typed accesses prove the record's complete layout; otherwise the byte compare
+runs.
 
 ## Sample
 

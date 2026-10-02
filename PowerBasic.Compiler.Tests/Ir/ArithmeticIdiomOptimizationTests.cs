@@ -398,7 +398,7 @@ public sealed class ArithmeticIdiomOptimizationTests {
     var right = next.Append(new IrBinary(IrBinaryOp.FDiv, y, divisor));
     next.Append(new IrRet(next.Append(new IrBinary(IrBinaryOp.FAdd, left, right))));
 
-    IrPassManager.Standard(optimizeForSpeed: true, includeModulePasses: false).RunToFixpoint(fn);
+    IrMiddleEndPipeline.Standard(optimizeForSpeed: true, includeModulePasses: false).RunToFixpoint(fn);
 
     Assert.Multiple(() => {
       Assert.That(fn.AllInstructions.OfType<IrBinary>().Count(binary => binary.Op == IrBinaryOp.FDiv), Is.EqualTo(1));

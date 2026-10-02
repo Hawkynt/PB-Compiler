@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | SSA mid-end, between binder and emitter |
-| **Source** | `CodeGen/Ssa/ControlFlowGraph.cs`, `DominatorTree.cs`, `SsaForm.cs`, `Sccp.cs` |
-| **Gate** | `--optimize`; proven-constant reads are **not** folded under `$ERROR OVERFLOW/NUMERIC` |
-| **Verified by** | `tests/diff/DIFF48.BAS`, `DIFF49.BAS` (loops), `PowerBasic.Compiler.Tests/CodeGen/SsaTests.cs` |
+| **Stage** | IR middle end (scalar simplification) |
+| **Source** | `Ir/Passes/Sccp.cs` — `Solver.Solve`, `Rewrite`; constants evaluated by `Ir/IrConstFold.cs`; SSA from `Ir/Passes/Mem2Reg.cs` |
+| **Gate** | `--optimize`; under `$ERROR` checking the trap tests are ordinary IR compares, folded like any other |
+| **Verified by** | `tests/diff/DIFF48.BAS`, `DIFF49.BAS` (loops), `PowerBasic.Compiler.Tests/Ir/SccpTests.cs` |
 | **Related** | [O0001](O0001-constant-folding.md), [O0002](O0002-dead-code-elimination.md), [O0016](O0016-value-fact-analysis.md), [O0044](O0044-ir-sccp.md) |
 | **Split into** | [O0225](O0225-ssa-construction.md), [O0226](O0226-proven-constant-reads.md) |
 
@@ -20,8 +20,11 @@ zero-initialized locals make an uninitialized read provably zero.
 That is strictly more powerful than local folding, because it sees through phis
 and dead control flow.
 
-The SSA form it runs on is [O0225](O0225-ssa-construction.md); folding the
-proven reads at the emitter is [O0226](O0226-proven-constant-reads.md).
+The SSA form it runs on is [O0225](O0225-ssa-construction.md). After the solve
+`Sccp` rewrites what it proved itself: constant values are replaced by their
+constants, constant conditional branches become unconditional, and blocks that
+became unreachable are deleted; see also
+[O0226](O0226-proven-constant-reads.md).
 
 ## Sample
 
@@ -79,16 +82,16 @@ PRINT 12
 
 ## Why it is safe
 
-- The graph is sound by construction: the builder **bails** on post-test loops,
-  `GOTO`/labels, `GOSUB`, `ON ERROR` and anything else it cannot model
-  precisely, so a body it does not understand is simply not optimized.
-- Only non-escaping integral scalars are renamed; a variable that escapes via a
-  BYREF call, an address intrinsic or any opaque statement is dropped from the
-  analysis.
+- It runs on the IR's control-flow graph, which the lowering builds for every
+  construct, `GOTO`/`GOSUB` included. `Mem2Reg` promotes only stack slots whose
+  every use is a direct load or store of the slot's own shape; a variable whose
+  address escapes stays in memory, and loads, calls and other opaque values sit
+  at the lattice's bottom.
 - The cyclic constant lattice converges because the lattice is monotone.
-- The arithmetic is delegated to the emitter's `ConstantFolder` and every stored
-  value is wrapped to its variable's type, so a proven constant is the exact
-  value the program computes — including the wrap-guard from
-  [O0001](O0001-constant-folding.md).
-- Folding is disabled under `$ERROR OVERFLOW/NUMERIC`, where a folded constant
-  would skip a runtime trap the real arithmetic must still raise.
+- The arithmetic is `IrConstFold`'s: integer results wrap to the result type's
+  width, and an operation whose result is undefined (division by zero,
+  `INT_MIN / -1`, out-of-range shifts or float-to-integer conversions) is not
+  folded, so its runtime behaviour — trap included — is kept.
+- `$ERROR OVERFLOW/NUMERIC/BOUNDS` checks are lowered as an explicit compare and
+  a branch to the raise, so folding the arithmetic folds the check with it: a
+  proven overflow still raises, and a check proven unable to fire goes away.

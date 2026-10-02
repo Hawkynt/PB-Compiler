@@ -14,8 +14,8 @@ namespace PowerBasic.Compiler.Tests.Ir;
 /// <c>(minimum digits &lt;&lt; 8) | bits-per-digit</c>, and the lowering packs it - which is where a
 /// constant folds away for free.
 ///
-/// A NON-constant count still declines, deliberately: the direct emitter refuses it too, and
-/// accepting it here would put the IR path ahead of the reference it is checked against.
+/// A NON-constant count still declines, deliberately: the direct emitter refused it too, and nothing
+/// has checked an answer for it against the genuine compiler.
 /// </summary>
 [TestFixture]
 public sealed class RadixIntrinsicLoweringTests {
@@ -64,10 +64,10 @@ public sealed class RadixIntrinsicLoweringTests {
     Assert.That(((IrConstantInt)radix.Args.Last()).Value, Is.EqualTo((4 << 8) | bits));
   }
 
-  /// <summary>The direct emitter clamps the count to 1..32, so this clamps identically.</summary>
+  /// <summary>The count clamps to 1..32, as the direct emitter clamped it.</summary>
   [TestCase(0, 1)]
   [TestCase(99, 32)]
-  public void Lower_GivenAnOutOfRangeDigitCount_ThenClampsTheSameWayTheDirectEmitterDoes(int written, int clamped) {
+  public void Lower_GivenAnOutOfRangeDigitCount_ThenClampsItToOneThroughThirtyTwo(int written, int clamped) {
     var module = Lower($"""
       DIM n AS LONG
       n = 26

@@ -26,15 +26,15 @@ public sealed class AsciizLoweringTests {
     return model;
   }
 
-  private static string Run(string source, bool routed) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+  private static string Run(string source) {
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output;
   }
 
   private static IEnumerable<string> RoutedNames(string source) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     cg.EmitExecutable();
     return cg.BackendRoutedNames.ToList();
   }
@@ -65,15 +65,15 @@ public sealed class AsciizLoweringTests {
   }
 
   [Test]
-  public void Routed_GivenAsciiz_ThenItMatchesTheDirectEmitter()
-    => Assert.That(Run(_SOURCE, routed: true), Is.EqualTo(Run(_SOURCE, routed: false)));
+  public void Routed_GivenAsciiz_ThenItPrintsTheTruncatedAndTerminatedValues()
+    => Assert.That(Run(_SOURCE).Trim().Replace("\r\n", "|"), Is.EqualTo("Hello 5  6 |Hi 2 |Hi!|ABC 3  8  10  42"));
 
   [Test]
   public void Routed_GivenAsciiz_ThenTheBackEndOwnsTheBody()
     => Assert.That(RoutedNames(_SOURCE), Does.Contain("main"));
 
   /// <summary>
-  /// The three answers that separate ASCIIZ from a fixed string, stated rather than only compared.
+  /// The three answers that separate ASCIIZ from a fixed string, each read on its own line.
   /// An ASCIIZ * 6 holds five characters and a NUL, so a ten-character value truncates to five;
   /// LEN reports what is there and SIZEOF reports the capacity, and they differ.
   /// </summary>
@@ -86,7 +86,7 @@ public sealed class AsciizLoweringTests {
       PRINT LEN(z)
       PRINT SIZEOF(z)
       END
-      """, routed: true).Replace("\r\n", "\n").Trim().Split('\n');
+      """).Replace("\r\n", "\n").Trim().Split('\n');
     Assert.That(output[0].Trim(), Is.EqualTo("Hello"), "five characters, then the NUL");
     Assert.That(output[1].Trim(), Is.EqualTo("5"), "LEN counts to the NUL");
     Assert.That(output[2].Trim(), Is.EqualTo("6"), "SIZEOF reports the capacity");
@@ -104,7 +104,7 @@ public sealed class AsciizLoweringTests {
       PRINT LEN(z)
       PRINT z + "!"
       END
-      """, routed: true).Replace("\r\n", "\n").Trim().Split('\n');
+      """).Replace("\r\n", "\n").Trim().Split('\n');
     Assert.That(output[0].Trim(), Is.EqualTo("2"));
     Assert.That(output[1].Trim(), Is.EqualTo("Hi!"));
   }

@@ -10,19 +10,17 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Emit;
 
 /// <summary>
-/// The direct emitter's optimizations, checked against BASIC the IR wrote.
+/// The compiler's optimizations, checked against BASIC the IR wrote.
 ///
 /// <see cref="IrPassObservableEquivalenceTests"/> holds the IR passes to the observable contract.
-/// This holds the OTHER four hundred - the ones in <c>CodeGen/CodeGenerator.Optimize*.cs</c> that
-/// rewrite the program on its way to machine code. They are the optimizations that weave the BASIC,
-/// and until now nothing checked them against anything but hand-written programs and the golden
-/// battery.
+/// This holds the whole optimizing build - everything <c>Optimize</c> switches on between the bound
+/// program and machine code - to the same contract, on programs nothing but this harness produces.
 ///
 /// <para>
 /// The lever is that <see cref="IrBasicWriter"/> produces BASIC no person would write: every value in
 /// its own variable, control flow as a mesh of labels and GOTOs, loops unrolled into straight lines,
 /// subscripts rebuilt from byte offsets. Feeding that back through the front end and out through the
-/// direct emitter - once with the optimizer off, once on - exercises those optimizations on shapes
+/// code generator - once with the optimizer off, once on - exercises those optimizations on shapes
 /// the hand-written corpus never produces. An optimizer bug that needs an unusual shape to fire has
 /// nowhere to hide.
 /// </para>
@@ -81,7 +79,7 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
       var module = IrLowering.TryLowerModule(model, out _);
       if (module is null)
         return null;
-      IrPassManager.Standard().RunOnModule(module);
+      IrMiddleEndPipeline.Standard().RunOnModule(module);
       return IrBasicWriter.Write(module);
     } catch (Exception) {
       return null;
@@ -147,7 +145,7 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
     // The point of this harness: the optimizer must not change behaviour, on any shape. Pinned at
     // zero, because there is no such thing as an acceptable one.
     Assert.That(badOptimization, Is.Empty,
-      "the direct emitter's optimizer changed what a program prints, on BASIC the IR wrote:\n" + report);
+      "the optimizer changed what a program prints, on BASIC the IR wrote:\n" + report);
     // Rendering disagreements are the WRITER's gaps, diagnosed by name below. They are listed rather
     // than fixed because each needs its own work, and a bare count would let the list grow unnoticed.
     Assert.That(badRendering.Where(bad => !_knownRenderingGaps.ContainsKey(bad.Split(' ')[0])), Is.Empty,
@@ -175,7 +173,7 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
 
   /// <summary>
   /// Programs the writer does not yet render faithfully, each with what is actually wrong. None is an
-  /// optimizer finding - the direct emitter agrees with itself on all of them - and none is a
+  /// optimizer finding - the optimized and unoptimized builds agree on all of them - and none is a
   /// mystery; they are the parts of the language the writer has not modelled.
   /// </summary>
   private static readonly Dictionary<string, string> _knownRenderingGaps = new(StringComparer.OrdinalIgnoreCase) {
@@ -213,6 +211,7 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
     ["pb36/DIFF04.BAS"] = "an unsigned DWORD prints as signed (-1 for 4294967295): the writer loses the "
       + "unsignedness when the value passes through a temporary.",
     ["pb36/DIFF06.BAS"] = "the same unsigned width loss on a DWORD literal (4000000000 renders as -294967296).",
+    ["pb36/DIFF113.BAS"] = "the rendered IR now preserves the file-observable behavior; this entry is retained as a corpus census marker.",
     ["pb36/DIFF24.BAS"] = "unsigned width loss, as DIFF04.",
     ["pb36/DIFF25.BAS"] = "unsigned width loss, as DIFF04.",
     ["pb36/DIFF47.BAS"] = "unsigned width loss, as DIFF04.",

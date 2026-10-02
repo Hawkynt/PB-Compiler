@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Backend;
+using PowerBasic.Compiler.Backend.Targets;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -16,8 +17,7 @@ public sealed partial class CodeGenerator {
   /// </summary>
   private sealed record BackendGeneratedFunction(
     IrFunction Ir,
-    MFunction Machine,
-    IReadOnlyDictionary<int, Reg> Allocation,
+    IrMachineFunction MachineProduct,
     bool ElideFrame,
     X86DefinitionStackLayout StackLayout);
 
@@ -125,23 +125,20 @@ public sealed partial class CodeGenerator {
       decline = this.UnaddressableGlobal(unaddressable);
       return false;
     }
-    if (InstructionSelector.TrySelect(function, out var declineReason, this.SelectionTarget) is not { } machine) {
-      decline = "selection: " + (declineReason ?? "unknown");
+    if (!IrMachinePipeline.TryLowerFunction(function, this.SelectionTarget,
+        out var machineProduct, out var declineReason)) {
+      decline = declineReason ?? "unknown machine lowering failure";
       return false;
     }
+    var machine = machineProduct!.Function;
     if (UndefinedRuntimeCallee(machine) is { } undefined) {
       decline = $"routing: calls '{undefined}', which the DOS runtime does not define";
       return false;
     }
 
-    MachineScheduler.Schedule(machine);
-    if (LinearScanAllocator.Allocate(machine, this.SelectionTarget, out var noRegisters) is not { } allocation) {
-      decline = "allocation: " + (noRegisters ?? "unknown");
-      return false;
-    }
-
     this._backendGenerated![function.Name] = new BackendGeneratedFunction(
-      function, machine, allocation, this.Optimize && FrameElision.IsCandidate(function), layout);
+      function, machineProduct,
+      this.Optimize && FrameElision.IsCandidate(function), layout);
     decline = string.Empty;
     return true;
   }
@@ -166,9 +163,9 @@ public sealed partial class CodeGenerator {
 
   /// <summary>
   /// Removes generated bodies whose defined callees - and, for a CLONE, whose original source
-  /// definition - failed to route. Requiring the source definition is intentionally stronger than mere
-  /// codegen convenience: a clone and its original may share DATA/dynamic-array/static storage, and
-  /// routing only one side would split ownership between the IR and direct emitters. It is a rule
+    /// definition - failed to route. Requiring the source definition is intentionally stronger than mere
+    /// codegen convenience: a clone and its original may share DATA/dynamic-array/static storage, and
+    /// retaining only one side would split ownership between separate native definitions. It is a rule
   /// about CLONING rather than about generated definitions, so an outlined region - which shares no
   /// storage with anything, having been lifted out of a single body - is held to the callee rule only.
   /// </summary>
@@ -185,8 +182,7 @@ public sealed partial class CodeGenerator {
           stranded = this.BackendNameIsRouted(cloneSource) ? null : cloneSource;
         else
           stranded = ContextSensitiveCloning.IsGeneratedClone(generated.Ir) ? "its source definition" : null;
-        stranded ??= CalleeNames(generated.Ir)
-          .FirstOrDefault(name => !this.BackendNameIsRouted(name) && !this.CanCallDirectCallee(name));
+        stranded ??= CalleeNames(generated.Ir).FirstOrDefault(name => !this.BackendNameIsRouted(name));
         if (stranded is null)
           continue;
 
@@ -226,10 +222,11 @@ public sealed partial class CodeGenerator {
       this._asm.MarkLabel(this.GeneratedCalleeLabel(generated.Ir.Name)!);
       var abi = X86CallAbi.For(generated.Ir.Convention);
       var cleanupBytes = abi.StackCleanup == X86StackCleanup.Caller ? 0 : generated.StackLayout.ParameterBytes;
-      MachineEmitter.EmitFunction(this._asm, generated.Machine, generated.Allocation,
+      X86ProductionEmitter.EmitFunction(this._asm, generated.MachineProduct,
         generated.StackLayout.ParameterOffsets, cleanupBytes, this.CalleeLabel, this.DataCellOf,
         alignLoops: this.Optimize && this.Cost.AlignHotLoops, allowFrameElision: generated.ElideFrame,
-        emitInlineAsm: this.EmitRoutedInlineAsm);
+        registerSpills: [.. generated.StackLayout.Spills], emitInlineAsm: this.EmitRoutedInlineAsm);
+      this._backendEmittedNames.Add(generated.Ir.Name);
     }
   }
 

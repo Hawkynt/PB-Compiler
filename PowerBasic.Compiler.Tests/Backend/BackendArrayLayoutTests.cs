@@ -20,24 +20,17 @@ public sealed class BackendArrayLayoutTests {
     return model;
   }
 
-  private static (string Direct, string Routed, IEnumerable<string> RoutedNames) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
-    var directImage = direct.EmitExecutable();
-    var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
+  private static (string Output, IEnumerable<string> RoutedNames) Run(string source) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output;
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return (Cpu8086.Run(image).Output, generator.BackendRoutedNames);
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return ("", []);
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"), routed.BackendRoutedNames);
   }
 
   private static string[] Lines(string output)
@@ -46,7 +39,7 @@ public sealed class BackendArrayLayoutTests {
 
   [Test]
   public void StaticTwoDimensionalArray_UsesFirstSubscriptFastestPhysicalLayout() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       DIM a%(10 TO 12, 20 TO 23)
       DIM origin AS LONG
       origin = VARPTR(a%(10, 20))
@@ -56,7 +49,6 @@ public sealed class BackendArrayLayoutTests {
       """);
 
     Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
-    Assert.That(routed, Is.EqualTo(direct));
     // INTEGER elements are two bytes. The first dimension has stride 1 element; the second has
     // stride 3 elements. (12,23) is element 2 + 3*3 = 11 from the origin.
     Assert.That(Lines(routed), Is.EqualTo(new[] { "2", "6", "22" }));
@@ -64,7 +56,7 @@ public sealed class BackendArrayLayoutTests {
 
   [Test]
   public void DynamicTwoDimensionalArray_UsesTheSameFirstSubscriptFastestPhysicalLayout() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       REDIM a%(10 TO 12, 20 TO 23)
       DIM origin AS LONG
       origin = VARPTR(a%(10, 20))
@@ -74,13 +66,12 @@ public sealed class BackendArrayLayoutTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "2", "6", "22" }));
   }
 
   [Test]
   public void OptionBaseChangedBetweenDynamicDimAndRedim_IsCapturedPerDeclaration() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       DIM a%(2)
       PRINT LBOUND(a%)
       PRINT UBOUND(a%)
@@ -91,13 +82,12 @@ public sealed class BackendArrayLayoutTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "0", "2", "1", "3" }));
   }
 
   [Test]
   public void OptionBaseOne_DynamicDimAndRedimPreserve_UseOneAsEveryImplicitLowerBound() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       OPTION BASE 1
       DIM a%(4, 5)
       a%(4, 5) = 45
@@ -115,13 +105,12 @@ public sealed class BackendArrayLayoutTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "1", "4", "1", "5", "1", "4", "1", "6", "45" }));
   }
 
   [Test]
   public void RedimPreserve_WhenOnlyTheLastDimensionGrows_KeepsEveryExistingElementInPlace() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       REDIM a%(1 TO 2, 10 TO 11)
       a%(1, 10) = 11
       a%(2, 10) = 12
@@ -138,7 +127,6 @@ public sealed class BackendArrayLayoutTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     // The existing four elements remain the allocation prefix when the LAST (slowest) dimension
     // grows; the allocator also promises a zero-filled new tail.
     Assert.That(Lines(routed), Is.EqualTo(new[] { "11", "12", "21", "22", "0", "0" }));
@@ -146,7 +134,7 @@ public sealed class BackendArrayLayoutTests {
 
   [Test]
   public void RedimPreserve_OnNeverAllocatedArray_AllocatesTheRequestedFreshShape() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       REDIM PRESERVE a%(1 TO 2, 10 TO 11)
       PRINT LBOUND(a%, 1)
       PRINT UBOUND(a%, 1)
@@ -156,13 +144,12 @@ public sealed class BackendArrayLayoutTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "1", "2", "10", "11", "0" }));
   }
 
   [Test]
   public void RedimPreserve_WhenANonLastUpperBoundChanges_RaisesSubscriptOutOfRangeWithoutChangingTheArray() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       REDIM a%(1 TO 2, 10 TO 11)
       a%(2, 11) = 22
       DIM changed AS INTEGER
@@ -181,13 +168,12 @@ public sealed class BackendArrayLayoutTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "9", "1", "2", "10", "11", "22" }));
   }
 
   [Test]
   public void RedimPreserve_WhenALowerBoundChanges_RaisesSubscriptOutOfRangeWithoutChangingTheArray() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       REDIM a%(1 TO 2, 10 TO 11)
       a%(2, 11) = 22
       DIM changed AS INTEGER
@@ -206,13 +192,12 @@ public sealed class BackendArrayLayoutTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "9", "1", "2", "10", "11", "22" }));
   }
 
   [Test]
   public void RedimPreserve_EvaluatesEachRuntimeBoundOnceInSourceOrder() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       DECLARE FUNCTION Mark%(BYVAL value%, BYVAL code%)
       DIM seq AS SHARED INTEGER
       REDIM a%(1 TO 2, 10 TO 11)
@@ -224,7 +209,7 @@ public sealed class BackendArrayLayoutTests {
       PRINT a%(2, 11)
       END
 
-      FUNCTION Mark%(BYVAL value%, BYVAL code%)
+      FUNCTION Mark%(BYVAL value%, BYVAL code%) NOINLINE
         SHARED seq AS INTEGER
         seq = seq * 10 + code%
         Mark% = value%
@@ -233,13 +218,12 @@ public sealed class BackendArrayLayoutTests {
 
     Assert.That(names, Does.Contain("main"));
     Assert.That(names, Does.Contain("Mark"));
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "1234", "22" }));
   }
 
   [Test]
   public void MultidimensionalSubscripts_AreStillEvaluatedLeftToRight() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       DECLARE FUNCTION Mark%(BYVAL n%)
       DIM seq AS SHARED INTEGER
       DIM s%(0 TO 1, 0 TO 1)
@@ -254,7 +238,7 @@ public sealed class BackendArrayLayoutTests {
       PRINT seq
       END
 
-      FUNCTION Mark%(BYVAL n%)
+      FUNCTION Mark%(BYVAL n%) NOINLINE
         SHARED seq AS INTEGER
         seq = seq * 10 + n% + 1
         Mark% = n%
@@ -263,7 +247,6 @@ public sealed class BackendArrayLayoutTests {
 
     Assert.That(names, Does.Contain("main"));
     Assert.That(names, Does.Contain("Mark"));
-    Assert.That(routed, Is.EqualTo(direct));
     // Reversing expression evaluation merely to make the address fold convenient would print 21.
     Assert.That(Lines(routed), Is.EqualTo(new[] { "12", "12" }));
   }

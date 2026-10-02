@@ -40,7 +40,7 @@ public sealed class BackendFloatPhiTests {
   public void Phi_GivenAFloatCarriedRoundALoop_ThenItSelectsThroughAFrameCell() {
     var module = IrLowering.TryLowerModule(Bind(_carriesAFloat), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     var main = module!.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     Assert.That(main.AllInstructions.OfType<IrPhi>().Any(p => p.Type.IsFloat), Is.True,
@@ -51,16 +51,13 @@ public sealed class BackendFloatPhiTests {
     Assert.That(m!.AllInstructions.Any(i => i.Opcode == MOpcode.Fstp), "the edge copy stores through the cell");
   }
 
-  /// <summary>And it prints the same number either way, which is the only claim that matters.</summary>
+  /// <summary>And it prints the right number, which is the only claim that matters: 1 + 40 * 0.5.</summary>
   [Test]
-  public void Phi_GivenAFloatCarriedRoundALoop_ThenBothPathsPrintTheSame() {
-    string Run(bool routed) {
-      var cg = new CodeGenerator(Bind(_carriesAFloat)) { Optimize = true, UseExperimentalBackend = routed };
-      var image = cg.EmitExecutable();
-      Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
-      return Cpu8086.Run(image).Output.Trim();
-    }
+  public void Phi_GivenAFloatCarriedRoundALoop_ThenItPrintsTheAccumulatedValue() {
+    var cg = new CodeGenerator(Bind(_carriesAFloat)) { Optimize = true};
+    var image = cg.EmitExecutable();
+    Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
 
-    Assert.That(Run(routed: true), Is.EqualTo(Run(routed: false)));
+    Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("21"));
   }
 }

@@ -1,26 +1,42 @@
 # Back ends — retargeting without giving up the optimizer
 
-`pbc` has two ways to turn a bound program into output, and they exist for different
-reasons. Knowing which layer a change belongs to is the whole point of this document.
+`pbc` has one way to turn a bound program into code: lower it to a typed SSA IR,
+optimize the IR, and hand it to a back end. Which back end is the only choice left,
+and knowing which layer a change belongs to is the whole point of this document.
 
 ```mermaid
 flowchart TD
   SRC[".BAS"] --> FE["Front end<br/>lexer · parser · binder<br/>(dialect-driven, no optimization)"]
   FE --> SM["SemanticModel<br/>(bound AST + side tables)"]
-  SM --> DIRECT["DIRECT PATH<br/>CodeGen/CodeGenerator*.cs<br/>optimize while emitting x86-16"]
   SM --> IRL["Ir/IrLowering<br/>bound AST → typed SSA IR"]
-  IRL --> OPT["Ir/Passes (11 passes)<br/>mem2reg · instcombine · sccp · gvn ·<br/>licm · dse · dce · ifconv · simplifycfg …"]
+  IRL --> OPT["Ir/Passes/IrMiddleEndPipeline<br/>mem2reg · instcombine · sccp · gvn ·<br/>licm · dse · dce · inliner · globaldce …"]
+  OPT --> X86["Backend/ — x86-16<br/>select · peephole · schedule ·<br/>linear-scan allocate · emit"]
   OPT --> LLVM["Ir/LlvmEmitter → .ll"]
   OPT --> CEM["Ir/CEmitter → .c"]
   OPT --> NEXT["a native ARM/68k/… back end<br/>(the seam this is built for)"]
-  DIRECT --> EXE[".EXE — oracle-checked: same OUTPUT as genuine PBC"]
+  X86 --> EXE[".EXE — oracle-checked: same OUTPUT as genuine PBC"]
   LLVM --> NATIVE["llc → native object"]
   CEM --> CC["any C compiler"]
 ```
 
-## The two paths, and why both exist
+## One code generator
 
-**The direct path** (`CodeGen/`) is the fidelity path. Its job is to be
+`CodeGen/CodeGenerator` drives the x86-16 back end for every procedure body and
+module body, and wraps it in what a DOS image needs: runtime selection and trimming,
+data layout, inline assembly, units and linking. There is no second emitter to fall
+back on. Routing is mandatory: a body the back end declines is a compile error
+("routing is mandatory and 'X' was not taken by the x86-16 back end: <reason>").
+The syntax-tree emitter that used to compile programs directly, and the AST
+optimizer passes that fed it, are gone ([DIRECT-EMITTER-RETIREMENT.md](DIRECT-EMITTER-RETIREMENT.md));
+`pbc` rejects `--x-backend`, `--no-x-backend` and `--x-backend-strict`, and the
+`PBC_X_BACKEND*` environment variables do nothing.
+
+`IrLowering` turns the bound model into a target-independent typed SSA IR,
+`IrMiddleEndPipeline` optimizes it (`RunNativeModule` for DOS, `RunHostedModule`
+for hosted targets such as C), and a back end renders it. Adding a target means writing one emitter —
+not a compiler. With the optimizer off the middle end runs only `Legalize`, so
+unoptimized output is not shaped by any optimization.
+
 ### What the fidelity gates actually enforce
 
 Worth stating plainly, because the phrase "byte-identical" appears throughout this repository and
@@ -29,25 +45,20 @@ Worth stating plainly, because the phrase "byte-identical" appears throughout th
 - `GoldenTests` compiles every `tests/NAME.BAS` and compares its **DOSBox stdout** against
   `tests/NAME.expected`.
 - `scripts/run-diff-tests.sh` compiles each `tests/diff/*.BAS` twice — once with the genuine
-  `PBC.EXE`, once with ours — **runs both**, and diffs `RESULT.TXT`.
+  `PBC.EXE`, once with ours — **runs both**, and diffs `RESULT.TXT`. Last measured on
+  dosbox-staging: 592 pass / 0 fail / 0 skip.
 
 Both are observational. The contract this compiler is actually held to is: *the same program behaves
 the same way*, and the artefacts it produces (`.EXE`, `.PBU`, `.LIB`) are usable the same way. Byte
-identity with PBC 3.50 was an aim and is a useful discipline, but it is not a gate, and it is not
-what stands between the IR path and retiring the direct emitter.
-
-### Retiring the direct emitter — the actual checklist
-
-| | now |
-|---|---|
-| every program compiles through the IR | 135 / 162 lower; **65 / 135** module bodies fully owned; 137 / 224 functions routed, 178 selected |
-| observable behaviour identical | **0 disagreements** over 136 compilations |
-| units and libraries (`.PBU`, `.LIB`) route | **yes** — a routed `.PBU` links against an ordinarily-built main module and behaves identically (`RoutedUnitTests`) |
+identity with PBC 3.50 was an aim and is a useful discipline, but it is not a gate. Throughout this
+repository "byte-identical" describes the **output** a program produces — the `RESULT.TXT` an oracle
+battery diffs — not the executable image.
 
 ### Could the IR path be byte-identical unoptimized?
 
-Measured, not assumed (`UnoptimizedByteCompatibilityTests`). Over the 33 corpus programs the back end
-takes part in with `--no-optimize`:
+Measured, not assumed, while the direct emitter still existed to compare against (the
+`UnoptimizedByteCompatibilityTests` fixture, retired with it). Over the 33 corpus programs the back end
+took part in with `--no-optimize`:
 
 | | |
 |---|---|
@@ -61,31 +72,9 @@ because the IR path does real register allocation where the direct emitter is AX
 construction; longer because the IR pipeline runs transformations of its own (loop unrolling trades
 size for speed) and the routed prologue zeroes its frame unconditionally.
 
-So byte-identity is not a near-miss to be closed by tidying. It would require the IR back end to
-reproduce the direct emitter's instruction selection — the opposite of why it exists. The contract
-the IR path is held to is **observable equivalence**, which is measured continuously by
-`BackendCorpusDifferentialTests`.
-
----
-
-observably identical to the genuine vintage compilers with the optimizer off, and to
-optimize aggressively with it on while *staying* observably identical. Its
-optimizations are interleaved with emission on purpose — many of them are decisions
-about 8086 encodings (which register stays resident, whether a `CMP AX,BX` can stand
-in for a 32-bit compare). That interleaving is not a design flaw to be refactored
-away; it is what lets encoding-level decisions be made at all. This path is not
-retargetable and is not meant to be.
-
-Note on wording: throughout this repository "byte-identical" describes the **output** a program
-produces — the `RESULT.TXT` an oracle battery diffs — not the executable image. No test compares
-executables; see "What the fidelity gates actually enforce" above.
-
-**The IR path** (`Ir/`) is the retargeting path. `IrLowering` turns the bound model
-into a target-independent typed SSA IR; the pass pipeline optimizes it; a back end
-renders it. Adding a target means writing one emitter — not a compiler.
-
-Nothing in the production DOS pipeline depends on the IR path, so experiments there
-cannot regress the golden gate.
+So byte-identity was not a near-miss to be closed by tidying. It would have required the IR back end
+to reproduce the direct emitter's instruction selection — the opposite of why it exists. The contract
+is **observable equivalence**.
 
 ## What a new back end costs
 
@@ -112,6 +101,9 @@ dead-code elimination, because those run before the back end is involved.
 pbc --emit-c PROG.BAS -O prog.c
 cc -std=c99 -O2 -I runtime -o prog prog.c runtime/pbc_rt.c -lm
 ```
+
+The C back end is a rendering, for reading or for a C toolchain someone else runs; no `pbc`
+build goes through it. Native Linux programs come from the native x86 back end below.
 
 C99, no compiler extensions. Two details are load-bearing:
 
@@ -151,6 +143,171 @@ this path with the host C compiler and diffs the result against that golden — 
 same file the DOSBox battery checks the 16-bit executable against. A program outside
 the lowering's subset is reported and skipped, never quietly passed.
 
+## The native x86-32 / x64 back end (`--platform x86-32|x64`)
+
+```bash
+pbc --platform x64 PROG.BAS           # -> PROG, a static Linux executable
+pbc --platform x86-32 --emit-obj P.BAS  # -> P.o, exporting pb_main and pb_start
+```
+
+Nothing but `pbc` is involved: no C compiler, assembler or linker. The IR goes through the hosted
+middle end (`RunHostedModule`, the one `--emit-c` uses), `Runtime/Portable/PortableRuntime` defines
+the `rt_*` functions the module calls into it - before the middle end, so the optimizer sees runtime
+and program together, and again after it for the calls it introduced - and `Backend/X86Native`
+compiles the lot.
+
+- **`X86Assembler`** is the instruction set as types, for both modes: `X86Reg`, `X86Width`,
+  `X86Mem`, the ALU/shift/x87 groups as enums, immediates under their own method names (a literal `0`
+  converts silently to a register enum, so `Mov(w, reg, 0)` would be ambiguous). It keeps text, data
+  and bss sections; a label reference is a fixup - RIP-relative on x64, absolute on i386 - resolved
+  at layout for an executable and turned into a relocation for an object.
+- **`X86NativeCompiler`** gives every SSA value and local a slot below the frame pointer, passes
+  arguments in a caller-reserved stack area above it and returns through one static area, so
+  recursion needs nothing special. Integers are worked in `eax`/`rax`; on i386 a 64-bit value is
+  worked in halves, with multiply, divide and shifts written out (`WideMultiply`, `WideDivide`,
+  `WideShift`). Floats are x87 in their IEEE memory formats - SINGLE, DOUBLE and the 80-bit EXT -
+  so they get the same 80-bit arithmetic the DOS programs do; SQR, SIN, LOG, `^` and the rest are
+  the x87's own instructions. Division by zero and BASIC's domain errors raise through `rt_error`
+  instead of faulting.
+- **`PortableRuntime`** is the runtime written once, as IR built with a small structured writer
+  (`IrWriter`: locals, `If`, `While`), split by concern: `PRINT` with BASIC's sign slot, zones,
+  `TAB` and `SPC`; numbers as text both ways - the `%G`-shaped float formatting at 7, 15 or 18
+  digits (scaled by correctly rounded powers of ten kept as EXT constants) shared by `PRINT` and
+  `STR$`, `HEX$`/`OCT$`/`BIN$` with the DOS 16-bit fold, and a BASIC-shaped `VAL`; strings - a
+  power-of-two size-class heap (error 14 when it runs out), handles pointing at `[length][bytes]`,
+  a null handle as `""`, and every `rt_str_*` routine the battery uses, CONSUMING the handles it is
+  given as the DOS runtime does (`RuntimeAbi.cs` names the few that borrow) - `runtime/pbc_rt.c`
+  never frees, which only a host with memory to spare can afford; dynamic arrays on the same heap
+  (error 7); sequential and record files and `INPUT`; `rt_error`, `rt_end`. A varargs
+  `rt_str_concat_n` is rewritten into the pairwise chain it stands for, since IR cannot read C
+  varargs. Its whole contact with the operating system is a handful of primitives each back end
+  emits - `sys_write`, `sys_read`, `sys_open`, `sys_close`, `sys_seek`, `sys_unlink`, `sys_exit` -
+  here Linux system calls (`syscall` on x64, `int 0x80` on i386, which is why an i386 program runs
+  on an x64 kernel with no 32-bit library installed), and `sys_trap`, the question `rt_error` asks
+  first.
+- **`ON ERROR`, `TRY` and `EXIT FAR`** are the back end's, because arming captures the current
+  frame and a call would capture its own. The state is the DOS runtime's: a handler cell - nought
+  when disarmed, a RESUME NEXT stub for `ON ERROR RESUME NEXT` - with the frame and stack it runs
+  in, which is exactly the triple `TRY` saves and restores (`rt_onerr`, `rt_onerr_bp`,
+  `rt_onerr_sp`, pointer-sized in the IR, map onto the three cells). `sys_trap`, like `rt_raise`,
+  sets `ERR` and, with a handler armed, latches the faulting statement for RESUME, restores the
+  frame and stack and jumps through the handler. A procedure that arms a handler keeps its caller's
+  in its frame and puts it back on return, as the DOS back end does; `EXIT FAR` has a triple of its
+  own. `FlatTargetNonLocalJumpTests` runs the same programs here, on the 6502 and on DOS, and wants
+  DOS's output from all of them.
+- **`Emit/Elf/ElfWriter`** writes the ELF containers, and **`Ir/IrUnitFile`** the units of the
+  three IR platforms. What every platform builds:
+
+| Option | x86-16 (DOS, default) | x86-32 / x64 | 6502 |
+|---|---|---|---|
+| *(none)* | MZ `.EXE` | static ELF executable | C64 `.PRG` |
+| `--emit-com` / `$COMPILE COM` | `.COM` | refused: a COM image is DOS's own container (a PSP, an entry at `0100h`) | refused, likewise |
+| `$COMPILE UNIT` | `.PBU` of 8086 code | `.PBU` of IR | `.PBU` of IR |
+| `pbc lib build` | `.PBL` / OMF `.LIB` | `.PBL` of IR units | `.PBL` of IR units |
+| `--emit-obj` | Intel OMF `.OBJ` | ELF relocatable `.o`: `pb_main` for a C caller, `pb_start` to link alone | `.OBJ`: an IR unit |
+| `--emit-lib` | refused: `pbc lib build` makes `.PBL`/`.LIB` | `ar` archive of that object, with the GNU symbol index | `.LIB`: an IR library of that unit |
+| `$LINK` | 8086 PBU, PBL, OMF OBJ and LIB | IR units and libraries | IR units and libraries, `.OBJ`/`.LIB` included |
+
+**Units on the IR platforms** hold the unit's lowered IR, before any optimization
+(`IrUnitFile`: a versioned binary encoding every instruction, attribute and exact constant, which
+`IrUnitFileTests` round-trips over the whole battery). `$LINK` reads them back and
+`IrModuleLinker` joins them to the program right after lowering - procedures by name,
+case-insensitively and with their signatures checked; the runtime's `rt_*` cells as the one cell
+each is - so the middle end optimizes program and units as one module, and one unit links into any
+of the three platforms. As on DOS a unit is procedures only, and it may import a procedure the
+program supplies. The magic tells an IR unit from an 8086 one, and each platform refuses the
+other's with the reason. `FlatTargetUnitTests` compiles a unit and a program linking it - directly,
+through a library, and as the 6502's object and library - on x86-32, x64, the 6502 and DOS, and
+wants DOS's output from all of them.
+
+`PlatformTests` builds, runs and links all three artifacts for both machines - the host C compiler,
+or the bare `ld` where there is no 32-bit C library, is the oracle that the objects link, never part
+of the build. `NativeBatteryTests` run every DOS battery program the back end accepts against its
+DOS golden output, per machine, with a floor under how many that is.
+
+## The 6502 back end (`--platform 6502`)
+
+```bash
+pbc --platform 6502 PROG.BAS        # -> PROG.PRG; LOAD "PROG",8 and RUN on a Commodore 64
+```
+
+`Backend/Mos6502/` compiles the optimized IR - the same module, after the same native middle end
+the DOS build runs - straight to 6502 machine code. It does not go through the x86 machine IR: a
+chip with three 8-bit registers has nothing to gain from a register allocator built for eight
+16-bit ones.
+
+- **`Mos6502Isa` / `Mos6502Assembler`** are the instruction set as types: an `M6502Op` in an
+  `M6502Mode` the chip has, or an exception where it is written. The assembler resolves labels and
+  relaxes a conditional branch that cannot reach its target into the inverse branch over a `JMP`.
+- **Values live in static frames.** Every function gets one fixed address per argument, SSA value
+  and local, addressed absolutely - the fastest access the 6502 has. Frames share memory through a
+  call-graph overlay: a function's frame sits above those of everything it calls, so functions on
+  different branches of the call tree reuse the same bytes, and the innermost functions - the
+  tightest loops - land in the page-zero window left over below `$90`, where every access is a
+  two-byte instruction. Recursion is the one thing that
+  makes a static frame wrong, and the call graph says where it can happen: a function in a cycle
+  (Tarjan's SCCs over direct calls) saves its own frame to a soft stack at `$C000`-`$CFFF` before a
+  call back into the cycle and restores it after. A call out of the cycle, and every call in a program
+  without recursion, pays nothing for it.
+- **The runtime is the portable one** (`Runtime/Portable`, the same IR x86-32 and x64 compile):
+  `PRINT`, `INPUT`, strings, `VAL`/`STR$` and BASIC's errors; `ON ERROR`, `TRY` and `EXIT FAR` are
+  the compiler's, in the DOS runtime's shape as on x86-32 and x64. What the 6502 supplies itself is
+  `Mos6502Runtime`, assembled routine by routine as the code asks for them: `sys_write` through the
+  KERNAL's `CHROUT` (ASCII mapped onto PETSCII after start-up selects the lower-case character set,
+  a new line as a carriage return), `sys_read` on the console through `CHRIN` (PETSCII back to
+  ASCII, the carriage return as a new line), a run-time error that unwinds to the armed handler
+  with the stack pointers saved when it was armed, 16-, 32- and 64-bit multiply and divide (error 11 on a zero
+  divisor), frame save and restore, and the runtime's own block copy in place of `rt.copy`'s IR body.
+- **Floating point is soft float** (`Mos6502Runtime.Float.cs`). A SINGLE, DOUBLE or EXT is stored in
+  its IEEE format and unpacked into page-zero accumulators with a 72-bit mantissa - 64 bits and a
+  guard byte whose bit 0 is sticky - so an operation is exact up to that bit and rounds to
+  nearest-even once, when it is packed back into the format its IR type names. There are no
+  infinities: overflow is error 6, a zero divisor error 11. `Mos6502FloatTests` hold add, subtract,
+  multiply, divide and compare to .NET's IEEE results bit for bit over random operands.
+- **Files are the 1541's** (`Mos6502Runtime.Files.cs`): `sys_open`, `sys_read`, `sys_write`,
+  `sys_close` and `sys_unlink` go through the KERNAL's channel I/O to device 8, one logical file
+  per BASIC file with its own secondary address. `OPEN` sends `name,S,R`, `@0:name,S,W` or
+  `name,S,A` in PETSCII capitals and reads the drive's status back off channel 15, since a 1541
+  reports a missing file there rather than failing the `OPEN`; `KILL` sends `S0:name`. APPEND to a
+  missing file creates it, as DOS does, and the return to BASIC closes what the program left open,
+  because a 1541 file never closed is a splat file. Sequential files cannot seek, so a RANDOM or
+  BINARY file lives in a 4 KB RAM cache while it is open (`Mos6502Runtime.FileCache.cs`): read whole
+  at `OPEN`, written back whole with `@0:` at `CLOSE` if it changed - one such file at a time, and
+  the cache reserved only in a program that opens one. `Cpu6502` models the KERNAL calls and the
+  drive, and the VICE test runs the file programs against a host directory as drive 8.
+- **`PEEK` and `POKE` take the offset as the address** - the machine is flat and 16-bit, so
+  `POKE 53280, 0` sets the border colour as it does in C64 BASIC - and `DEF SEG` selects nothing.
+  (x86-32 and x64 decline them: a 16-bit DOS offset names nothing in a Linux process.)
+- **Math functions are portable IR** (`PortableRuntime.Math.cs`, switched on by
+  `PortableRuntimeSoftMath`): the `llvm.sqrt`/`sin`/`cos`/`tan`/`atan`/`log`/`exp`/`pow` family,
+  each computed in EXTENDED on the soft float. A whole exponent multiplies by repeated squaring, so
+  `2 ^ 10` is exactly 1024; the rest reduce the argument - Cody and Waite's two-part `ln 2` and
+  `π/2`, a power-of-two split for `ln` and `√` - and sum a short series. Any target without
+  floating-point hardware can switch them on; `Mos6502ProgramTests` holds them to .NET's answers to
+  fourteen digits.
+- **Size comes first.** A C64 leaves 46 KB for program and data - `$0801` up to the soft stack at
+  `$C000`, the top 8 KB under the BASIC ROM, which start-up maps out while the program runs and the
+  return to BASIC maps back in - so the build optimizes for size
+  unless `$OPTIMIZE SPEED` asks otherwise, the string heap is 4 KB, and the portable runtime keeps
+  its lengths, positions and counters in 16 bits (`IrWriter.Index`) - the `rt_*` ABI keeps its
+  declared widths and each entry converts at that edge. A `$OPTIMIZE SPEED` build that does not
+  fit is built again for size, with a warning - unrolled and inlined, the differential battery's
+  speed programs need up to 100 KB, and a slower program beats one that does not load. A program
+  that does not fit even then is declined with how far past `$C000` it would reach.
+- **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$8F`, BASIC's own),
+  the processor port that maps the BASIC ROM and the stack pointer are saved on entry and restored
+  on exit, so the final `RTS` - or `END`, or a
+  run-time error, from any depth - lands at `READY.` with BASIC intact.
+- **`Emit/Commodore/C64Prg`** writes the load address `$0801` and a `10 SYS 2061` line in front of
+  the code.
+
+What it does not lower yet it declines by name - inline assembly,
+calls through pointers - rather than compiling it into something else.
+`Mos6502ProgramTests` run compiled programs on `Cpu6502` (a hand-decoded interpreter in the test
+project, independent of the compiler's opcode table); `Mos6502BatteryTests` run every DOS battery
+program the back end accepts against its DOS golden output, keep a floor under how many that is, and
+cross-check four - among them the sequential and the RANDOM/BINARY file programs - on VICE with the real KERNAL when `x64sc` and `xvfb-run` are installed.
+
 ## The seam is a test, not an interface
 
 There is deliberately no `IBackend` abstraction. An emitter's input is `IrModule`
@@ -160,7 +317,7 @@ cross-checking:
 
 | Check | What it proves |
 |---|---|
-| `scripts/run-diff-tests.sh` | the direct path still matches the genuine vintage compilers |
+| `scripts/run-diff-tests.sh` | the x86-16 path still matches the genuine vintage compilers |
 | `CBackendTests` | the IR path's C output matches the DOS goldens |
 | `EmitLlvmTests` | the IR path's LLVM output is accepted by `llvm-as` and lowered by `llc` |
 | `IrVerifier` | every pass leaves structurally valid, well-typed SSA |
@@ -168,7 +325,7 @@ cross-checking:
 | `BackendRoutingGateTests` | one program per construct, so a construct that silently STOPS routing is a red test rather than a quiet fallback |
 
 Any new back end should add one row to that table. The cross-check has already earned
-its keep. Running the DOS battery through both paths found five real defects that a
+its keep. Running the DOS battery through both the C back end and the DOS build found five real defects that a
 single back end cannot expose, because there was nothing to disagree with:
 
 | Defect | Symptom |
@@ -183,6 +340,11 @@ The last two were miscompiles: correct-looking IR, wrong program. `tests/SHAREDG
 now pins both, in the DOS battery and in `CBackendTests`.
 
 ## The bar for retiring the direct emitter
+
+**Met; the direct emitter is gone.** This section is the record of the four gates and how each
+was measured while two code generators still existed; its "today" and "now" are the state at the
+time each part was written, and names such as `UseExperimentalBackend`, `PBC_X_BACKEND` and the
+`Opt*` AST passes refer to code that has since been deleted.
 
 Worth stating plainly, because coverage numbers make the distance look shorter than it is. Dropping
 `CodeGen/` needs THREE things, and only the first is being measured today.
@@ -317,17 +479,17 @@ PBU named by `$LINK`, so `LINKDEMO` is measured with the same `MATHUNIT.PBU` inp
 Its numeric, BYREF, nested-call and dynamic-string calls use the routed stack ABI in both optimizer
 modes, through either a PBU or a PBL. Routed calls to near CDECL and STDCALL declarations now preserve
 their IR convention identity, push argument groups right-to-left, and apply caller/callee cleanup as
-declared. Near FASTCALL/WATCALL calls stage their leading one-word values in the ABI registers, push
-the overflow in the declared direction and leave its cleanup to the callee; source-declared
+declared. Near FASTCALL calls stage leading one-word values and remain callee-clean. WATCALL also
+allocates LONGs to DX:AX or CX:BX, pushes overflow right-to-left and restores it in the caller;
+source-declared
 FASTCALL/WATCALL *definitions* route with them, because the routed prologue now pushes those same
 registers into the negative frame cells `LayoutFrame` had always assigned them. Merely having a link
 input no longer rejects the entire module.
 
-Two limits remain. A register-convention value wider than a word - LONG, float, far pointer, multiword
-aggregate - is refused on the routed and the direct path alike, because the per-compiler rules for
-splitting one across a register pair differ between FASTCALL and WATCALL and neither is modelled; the
-call side and the definition side share one predicate for it, which is what stops a definition and its
-call sites disagreeing about which shapes exist. And a GENERATED definition - a clone, or a procedure
+Two limits remain. WATCALL now models word values and Watcom's LONG pairs; float, far-pointer and
+aggregate register classes still decline, and FASTCALL remains word-only until its Microsoft and
+Borland identities are split. The call and definition sides share one placement plan, which stops
+them disagreeing about which shapes exist. A GENERATED definition - a clone, or a procedure
 whose signature an interprocedural pass rewrote - has no `ProcedureSymbol` carrying that spill plan, so
 `X86CallAbi.TryDefinitionStackLayout` derives the frame from the IR signature alone and declines a
 register convention outright.
@@ -343,7 +505,7 @@ The six near conventions and the rules each one selects:
 | `CDECL` | - | right-to-left | caller |
 | `STDCALL` | - | right-to-left | callee |
 | `FASTCALL` | AX, DX, BX | left-to-right | callee |
-| `WATCALL` | AX, DX, BX, CX | right-to-left | callee |
+| `WATCALL` | AX, DX, BX, CX | right-to-left | caller |
 
 Dynamic-string `SWAP` removes the former invisible lowering row. The IR loads the raw handle from
 each owner cell and crosses the stores; it neither borrows a duplicate nor frees a handle because the
@@ -390,8 +552,10 @@ The rule is about how many FUNCTIONS read DATA rather than about which ones, and
 before selection and allocation have had their say - so it is granted optimistically and CHECKED once
 the last routing decision is in. A split set of readers discards the routing and decides it again with
 the pool left to the direct emitter, which is the state the old rule assumed in advance. The check has
-to run before `OptRegParm`, which mutates the model's calling conventions on the strength of the
-routing: recomputing after it would lower a model the first pass never saw.
+At the time, the check had to run before the now-retired `OptRegParm`, which mutated the model's
+calling conventions on the strength of routing: recomputing after it would have lowered a model the
+first pass never saw. The mandatory IR pipeline now performs private convention selection on the
+finished IR call graph.
 
 Two things turned up alongside. `ContainsDataRead` named the compound statements it descended into -
 IF, FOR, DO, SELECT - and therefore not `TRY`, so a `READ` inside a `TRY` block read as a body with no
@@ -531,13 +695,13 @@ registers it defines"). What still declines is a register something in between D
 the whole caller-saved file, and no allocation can answer that.
 
 **Routing now honours the optimizer flag, and the thing that made that hard was not what this
-document said it was.** `CodeGenerator.Backend.cs` used to run `IrPassManager.Standard(...)` whenever
+document said it was.** `CodeGenerator.Backend.cs` used to run `IrMiddleEndPipeline.Standard(...)` whenever
 a function routed, so a `--no-optimize` build of a routed function was still fully optimized. That
 was defensible while the gate was observational - `tests/diff` compiles pb35 with the optimizer OFF
 and passed routed either way - but it made the battery's two builds of a routed scenario ONE build,
 and it made `--no-optimize` a false statement about a routed function.
 
-`IrPassManager.Legalize()` is the set that survives the flag, and each member is present because the
+`IrMiddleEndPipeline.Legalize()` is the set that survives the flag, and each member is present because the
 selector consumes the form it produces. Its faithful `mem2reg` variant builds SSA for compiler
 temporaries while retaining BASIC source variables whose observable storage must survive. Its
 faithful `instcombine` variant canonicalizes address and arithmetic shapes without folding a
@@ -559,11 +723,12 @@ budget is a backstop nothing reaches (see docs/X86-BACKEND.md, "the spill loop t
 measure falls"). The first budget-free measurement reached 174 rounds in both modes; the 2026-08-25
 combined-tree remeasurement lowers those maxima to 168 optimized and 153 unoptimized.
 
-Turning off inlining initially cost six corpus participants. The replacement is an ABI fact rather
-than an optimization: `OptRegParm` can rewrite a direct BASIC/PASCAL callee only under SPEED
-optimization, so an unoptimized or non-SPEED routed caller may call that local direct body through
-their shared stack convention. Unresolved declarations, ambiguous overloads and SPEED-mode direct
-callees still decline. This also found a state handoff bug: routed `main` must replay its final lexical
+Turning off inlining initially cost six corpus participants. Before the direct emitter was retired,
+the replacement was an ABI fact rather than an optimization: `OptRegParm` rewrote a direct
+BASIC/PASCAL callee only under SPEED optimization, so an unoptimized or non-SPEED routed caller could
+call that local direct body through their shared stack convention. Unresolved declarations, ambiguous
+overloads and SPEED-mode direct callees still declined. This also found a state handoff bug: routed
+`main` had to replay its final lexical
 `$ERROR` metastatements for direct procedures emitted afterwards, or a direct recursive callee loses
 `$ERROR STACK ON` and corrupts memory instead of raising Error 201.
 
@@ -1013,7 +1178,7 @@ inherit them.
   arriving from the other direction.
 
 * **`smaller-than-unoptimized` now holds for a routed function - CLOSED.** Routing used to run
-  `IrPassManager.Standard` whatever `Optimize` said, so the battery's two builds of a routed scenario
+  `IrMiddleEndPipeline.Standard` whatever `Optimize` said, so the battery's two builds of a routed scenario
   were the same build; 15 of the 23 rows failed routed for that reason alone. Gating the pipeline on
   the flag is the repair (above), and 13 of the 15 close with it. The two that do not are the two
   things this back end does whatever the flag says: `UnreachableCodeDropped` (a block nothing reaches
@@ -1818,10 +1983,10 @@ disagrees with the DOS golden, which is the only thing that fixture exists to ca
 ### These two back ends decline; they never throw
 
 The rule the x86-16 path states for itself ([X86-BACKEND.md](X86-BACKEND.md)) binds
-here **more** tightly, not less. There a decline is caught by `CodeGenerator` and the
-direct emitter compiles the function instead, so a throw was a crash where a
-survivable fallback would have done. `CEmitter` and `LlvmEmitter` have *no fallback at
-all*: a C translation unit and a `.ll` module have exactly one producer each, so the
+here just as tightly. There a decline is caught by `CodeGenerator` and reported as a
+compile error naming the procedure and the reason, so a throw is a crash where a
+named diagnostic would have done. `CEmitter` and `LlvmEmitter` have no fallback
+either: a C translation unit and a `.ll` module have exactly one producer each, so the
 named refusal is the entire value either can offer for a program it cannot render, and
 a throw produces no output, no actionable exit code and no name for what stopped it.
 
@@ -1869,29 +2034,16 @@ in the fixture looking like far-pointer coverage and been none.
 
 Beyond widening that subset, the two items that would most change the picture:
 
-- **A native IR → x86-16 back end** that reproduces the same program output for a
-  subset. That is the fidelity proof that would let the IR path augment, and
-  eventually replace, the direct emitter. It exists and is live behind
-  `--x-backend` for integer functions (docs/X86-BACKEND.md); what it still
-  declines is now *measured* rather than guessed — `BackendCoverageTests` ranks
-  the blockers over the whole corpus, and the top one at any time is the next
-  increment. Both standing gaps are now closed - the data-layout bridge (a load
-  of a module-level global) and the runtime-label bridge (a call to an `rt_*`
-  helper, mapped per routine onto the DOS runtime's register convention in
-  `Backend/RuntimeAbi.cs`) - alongside signed division and spilling, which took
-  the corpus from 14 to 32 routed functions of 139. What ranks next is floating
-  point (the x87 stack), strings (the runtime's handle representation), and the
-  `main` body, which additionally needs the startup/exit sequence.
-- **Feeding the direct path's range facts into the IR — the analysis is DONE, one
-  consumer is not.** `Ir/Analysis/IrRangeAnalysis.cs` is the interval lattice restated
-  for SSA, and `Ir/Passes/RangeCheckElim.cs` spends it on the proofs that are pure
-  optimization for every back end at once: a subscript that cannot leave its
-  dimension, a sum that cannot overflow its type, a divisor that cannot be zero. What
-  it does not yet feed is the one proof that is target-specific in its *use* — "a
-  32-bit operation fits 16 bits" — which lives in `InstructionSelector.WordSizedRange`
-  and still computes its own, much weaker, interval. It is one leaf less weak than it
-  was — a widened CONSTANT contributes its value rather than its type's span, which is
-  what keeps the proof from depending on `instcombine` having run — but it still cannot
-  see a loop guard or an `IF` refinement, because those are properties of the CFG.
-  Rewiring it onto the analysis is the next increment and the prerequisite for the four
-  narrowing assertions in gate 3.
+- **The native IR → x86-16 back end** is no longer a subset: it is the only DOS code
+  generator and compiles every program ([X86-BACKEND.md](X86-BACKEND.md)). What is
+  next there is optimization quality rather than coverage.
+- **Range facts for the 16-bit target.** `Ir/Analysis/IrRangeAnalysis.cs` is the
+  interval lattice restated for SSA (the direct emitter's `IntervalRange`, which it
+  replaced, is deleted). `Ir/Passes/RangeCheckElim.cs` spends it on the proofs that are
+  pure optimization for every back end at once: a subscript that cannot leave its
+  dimension, a sum that cannot overflow its type, a divisor that cannot be zero.
+  `Ir/Passes/ProvenIntegerNarrowing.cs` spends it on the target-specific one, "a
+  32-bit operation fits 16 bits", for divides, remainders, compares and multiply
+  operands. `InstructionSelector.WordSizedRange`, which decides when a 32-bit operand
+  may be taken as a word, still computes its own weaker interval and cannot see a loop
+  guard or an `IF` refinement; moving it onto the analysis is the remaining step.

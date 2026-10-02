@@ -6,11 +6,11 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// The console domain, compiled both ways and compared on the SCREEN rather than on stdout - which is
-/// the only way most of it can be compared at all. <c>LOCATE</c>, <c>CSRLIN</c> and <c>CLS</c> put
-/// characters in particular cells and move a cursor; a stdout capture sees the characters and none of
-/// the positions, so two builds that disagree about where the text went agree about everything a
-/// stdout diff can ask. <see cref="Cpu8086.Screen"/> and <see cref="Cpu8086.Cursor"/> are what close
+/// The console domain, run and read on the SCREEN rather than on stdout - which is the only way most
+/// of it can be checked at all. <c>LOCATE</c>, <c>CSRLIN</c> and <c>CLS</c> put characters in
+/// particular cells and move a cursor; a stdout capture sees the characters and none of the
+/// positions, so a build that put the text in the wrong place passes everything a stdout diff can
+/// ask. <see cref="Cpu8086.Screen"/> and <see cref="Cpu8086.Cursor"/> are what close
 /// that, and every case here reads at least one of them.
 ///
 /// <para>
@@ -29,40 +29,28 @@ public sealed class BackendConsoleTests {
     return model;
   }
 
-  private sealed record Both(string Output, string Screen, int Row, int Column);
+  private sealed record Observed(string Output, string Screen, int Row, int Column);
 
-  /// <summary>Compiles both ways, runs both, asserts the routed build really took the named procedures, and returns what the direct one did.</summary>
-  private static Both RunBothWays(string source, bool optimize, string routedName = "main", Dialect dialect = Dialect.Pb36) {
-    var direct = new CodeGenerator(Bind(source, dialect)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source, dialect)) { Optimize = optimize, UseExperimentalBackend = true };
-    var directImage = direct.EmitExecutable();
-    var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain(routedName),
-      "the back end did not take the code under test, so this would compare the direct build with itself: "
-      + string.Join(" | ", routed.BackendDeclines.Select(d => d.Name + ": " + d.Reason)));
+  /// <summary>Compiles and runs the program, asserting the back end really took the named procedure.</summary>
+  private static Observed Run(string source, bool optimize, string routedName = "main", Dialect dialect = Dialect.Pb36) {
+    var generator = new CodeGenerator(Bind(source, dialect)) { Optimize = optimize};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain(routedName),
+      "the back end did not take the code under test: "
+      + string.Join(" | ", generator.BackendDeclines.Select(d => d.Name + ": " + d.Reason)));
 
-    static Both Execute(byte[] image, string which) {
-      try {
-        var cpu = Cpu8086.Run(image);
-        return new Both(cpu.Output, string.Join("|", cpu.Screen), cpu.Cursor.Row, cpu.Cursor.Column);
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        throw;
-      }
+    try {
+      var cpu = Cpu8086.Run(image);
+      return new Observed(cpu.Output, string.Join("|", cpu.Screen), cpu.Cursor.Row, cpu.Cursor.Column);
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      throw;
     }
-
-    var directRun = Execute(directImage, "direct");
-    var routedRun = Execute(routedImage, "routed");
-    Assert.That(routedRun.Output, Is.EqualTo(directRun.Output), "stdout");
-    Assert.That(routedRun.Screen, Is.EqualTo(directRun.Screen), "the 80x25 text page");
-    Assert.That((routedRun.Row, routedRun.Column), Is.EqualTo((directRun.Row, directRun.Column)), "the cursor");
-    return directRun;
   }
 
   /// <summary>The row the text landed on, or -1 - what a screen comparison is actually about.</summary>
-  private static int RowOf(Both run, string text) {
+  private static int RowOf(Observed run, string text) {
     var rows = run.Screen.Split('|');
     for (var row = 0; row < rows.Length; ++row)
       if (rows[row].Contains(text, StringComparison.Ordinal))
@@ -80,8 +68,8 @@ public sealed class BackendConsoleTests {
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
-  public void Run_GivenASemicolonPromptedInput_ThenBothPathsPrintTheQuestionMark(bool optimize) {
-    var run = RunBothWays("""
+  public void Run_GivenASemicolonPromptedInput_ThenTheQuestionMarkIsPrinted(bool optimize) {
+    var run = Run("""
       INPUT "Name"; n%
       PRINT "[";POS(0);"]"
       """, optimize);
@@ -96,8 +84,8 @@ public sealed class BackendConsoleTests {
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
-  public void Run_GivenACommaPromptedInput_ThenNeitherPathAddsAQuestionMark(bool optimize) {
-    var run = RunBothWays("""
+  public void Run_GivenACommaPromptedInput_ThenNoQuestionMarkIsAdded(bool optimize) {
+    var run = Run("""
       INPUT "Name", n%
       PRINT "[";POS(0);"]"
       """, optimize);
@@ -109,8 +97,8 @@ public sealed class BackendConsoleTests {
   [TestCase("LINE INPUT \"Who\"; s$", "Who? [")]
   [TestCase("LINE INPUT \"Who\", s$", "Who[")]
   [TestCase("LINE INPUT s$", "[")]
-  public void Run_GivenALineInput_ThenTheProgramsPromptIsWhatBothPathsPrint(string statement, string expected) {
-    var run = RunBothWays(statement + "\nPRINT \"[\"; s$; \"]\"\n", optimize: true);
+  public void Run_GivenALineInput_ThenThePromptFollowsTheSemicolonRule(string statement, string expected) {
+    var run = Run(statement + "\nPRINT \"[\"; s$; \"]\"\n", optimize: true);
 
     Assert.That(run.Output, Does.StartWith(expected));
   }
@@ -119,12 +107,12 @@ public sealed class BackendConsoleTests {
 
   /// <summary>
   /// Two runtime coordinates, and the text has to land in the cell they name. This is the case a
-  /// stdout diff cannot resolve at all: both builds print <c>hello</c> wherever they put it.
+  /// stdout diff cannot resolve at all: a build prints <c>hello</c> wherever it puts it.
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
-  public void Run_GivenALocateFromRuntimeCoordinates_ThenBothPathsWriteTheSameCells(bool optimize) {
-    var run = RunBothWays("""
+  public void Run_GivenALocateFromRuntimeCoordinates_ThenTheTextLandsInTheNamedCells(bool optimize) {
+    var run = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
       LOCATE Given%(4), Given%(10)
       PRINT "hello";
@@ -146,12 +134,12 @@ public sealed class BackendConsoleTests {
   /// A coordinate the selector cannot prove word-sized - a SINGLE, and a LONG past 16 bits. Both used
   /// to take the whole module body off the IR path, because <c>rt_locate</c>'s argument slot is a word
   /// register and the lowering handed it a 32-bit value; the coordinates are INTEGERs and now lower as
-  /// such. The rounding and the wrap are the direct emitter's, which is the reference.
+  /// such. The row and column are rounded with CINT and a LONG wraps to its low word.
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
-  public void Run_GivenALocateWithANonWordCoordinate_ThenItRoutesAndAgrees(bool optimize) {
-    var run = RunBothWays("""
+  public void Run_GivenALocateWithANonWordCoordinate_ThenItRoutesRoundedAndWrapped(bool optimize) {
+    var run = Run("""
       DECLARE FUNCTION Real!(BYVAL v!)
       DECLARE FUNCTION Wide&(BYVAL v&)
       LOCATE Real!(5.6), Real!(10.4)
@@ -174,14 +162,14 @@ public sealed class BackendConsoleTests {
 
   /// <summary>
   /// The <c>$OPTIMIZE</c>-visible fold: an earlier LOCATE is dead when the next one covers everything
-  /// it set. It is a whole-model pre-pass over the bound AST, so both paths inherit the same decision -
-  /// which is worth a test precisely because it would be easy for the routed path to fold a second
-  /// time, or to stop honouring the fold the pruner already made.
+  /// it set. It is a whole-model pre-pass over the bound AST - which is worth a test precisely because
+  /// it would be easy for the back end to fold a second time, or to stop honouring the fold the pruner
+  /// already made.
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
-  public void Run_GivenTwoAdjacentLocates_ThenOnlyTheSecondPositionSurvivesOnBothPaths(bool optimize) {
-    var run = RunBothWays("""
+  public void Run_GivenTwoAdjacentLocates_ThenOnlyTheSecondPositionSurvives(bool optimize) {
+    var run = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
       LOCATE Given%(5), Given%(10)
       LOCATE Given%(7), Given%(30)
@@ -202,8 +190,8 @@ public sealed class BackendConsoleTests {
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
-  public void Run_GivenACursorReadBetweenTwoLocates_ThenBothPathsKeepBoth(bool optimize) {
-    var run = RunBothWays("""
+  public void Run_GivenACursorReadBetweenTwoLocates_ThenBothLocatesAreKept(bool optimize) {
+    var run = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
       LOCATE Given%(5), Given%(10)
       a% = POS(0) : b% = CSRLIN
@@ -225,16 +213,15 @@ public sealed class BackendConsoleTests {
   /// <para>
   /// It used to be a decline test, and said so: "a CLS that starts lowering will fail this test rather
   /// than slip past unmeasured". It started lowering, and it did fail. The lowering is a call to the
-  /// same argumentless <c>rt_cls</c> the direct emitter calls, so what is asserted now is the thing
-  /// the decline was standing in for - both builds blank the same page and leave the cursor in the
-  /// same place. <see cref="RunBothWays"/> checks that <c>main</c> really routed, so this cannot
-  /// quietly go back to comparing the direct build with itself.
+  /// same argumentless <c>rt_cls</c> the direct emitter called, so what is asserted now is the thing
+  /// the decline was standing in for - the page is blank and the cursor is home. <see cref="Run"/>
+  /// checks that <c>main</c> really routed, so this cannot quietly stop measuring the lowering.
   /// </para>
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
-  public void Run_GivenCls_ThenBothPathsBlankTheScreenAndHomeTheCursor(bool optimize) {
-    var run = RunBothWays("""
+  public void Run_GivenCls_ThenTheScreenIsBlankedAndTheCursorHomed(bool optimize) {
+    var run = Run("""
       PRINT "before"
       CLS
       PRINT "after";
@@ -248,13 +235,13 @@ public sealed class BackendConsoleTests {
 
   /// <summary>
   /// Printing past the right margin wraps, and printing past the last row scrolls. Neither is in the
-  /// output byte stream - the characters are all there in both builds whatever the screen does with
-  /// them - so this is a screen assertion or it is nothing.
+  /// output byte stream - the characters are all there whatever the screen does with them - so this
+  /// is a screen assertion or it is nothing.
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
-  public void Run_GivenOutputPastTheLastRow_ThenBothPathsScrollTheSameWay(bool optimize) {
-    var run = RunBothWays("""
+  public void Run_GivenOutputPastTheLastRow_ThenTheScreenScrolls(bool optimize) {
+    var run = Run("""
       DECLARE FUNCTION Given%(BYVAL v%)
       n% = Given%(30)
       FOR i% = 1 TO n%
@@ -289,7 +276,7 @@ public sealed class BackendConsoleTests {
   [TestCase(true)]
   [TestCase(false)]
   public void Execute_GivenStdOut_WhenRouted_ThenItGoesBackToTheConsole(bool optimize) {
-    var run = RunBothWays("""
+    var run = Run("""
       OPEN "SO.TXT" FOR OUTPUT AS #1
       PRINT #1, "to the file"
       STDOUT "back";
@@ -308,26 +295,24 @@ public sealed class BackendConsoleTests {
   ///
   /// <para>
   /// Both forms are the routines LINE INPUT and <c>INPUT$(n, #f)</c> already use, asked for file zero,
-  /// so what is asserted is that they behave the same as the direct emitter's calls to the same
-  /// routines - the interpreter has no keyboard, and what a read with nothing to read DOES is the
-  /// runtime's business rather than either emitter's. A comparison is the whole of what can be
-  /// claimed here, and it is also the whole of what matters: the two must not diverge.
+  /// so what is asserted is that the calls reach those routines - the interpreter has no keyboard,
+  /// and what a read with nothing to read DOES is the runtime's business rather than the emitter's:
+  /// it faults.
   /// </para>
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
-  public void Execute_GivenStdIn_WhenRouted_ThenItMatchesTheDirectEmitter(bool optimize) {
-    var run = RunBothWays("""
+  public void Execute_GivenStdIn_WhenRouted_ThenAReadWithNothingToReadFaults(bool optimize) {
+    var run = Run("""
       DIM a$, b$
       STDIN LINE, a$
       STDIN 3, b$
       PRINT "["; a$; "|"; b$; "]"
       """, optimize);
 
-    // The interpreter has no keyboard and no DOS handle 0, so the read faults - and faults the SAME
-    // way on both paths, which is the claim. Asserting the fault rather than a value is what keeps
-    // this honest: a lowering that quietly did nothing would also reach the PRINT, and pass a test
-    // that only compared two outputs.
+    // The interpreter has no keyboard and no DOS handle 0, so the read faults. Asserting the fault
+    // rather than a value is what keeps this honest: a lowering that quietly did nothing would reach
+    // the PRINT instead.
     Assert.That(run.Output, Does.StartWith("RUNTIME ERROR"), "a console read with nothing to read faults");
   }
 }

@@ -7,7 +7,7 @@ public sealed class ProcedureErrorHandlerPreservationTests {
 
   [Test]
   public void Run_GivenTwoReturns_ThenSavesOnceAndRestoresBeforeEveryReturn() {
-    var function = new MFunction("handler") { VirtualRegisterCount = 2 };
+    var function = new X86MachineFunction("handler") { VirtualRegisterCount = 2 };
     function.StackSlots.Add(4);
     var entry = new MBlock("entry");
     var alternate = new MBlock("alternate");
@@ -36,7 +36,7 @@ public sealed class ProcedureErrorHandlerPreservationTests {
 
   [Test]
   public void Run_GivenNoBlocks_ThenLeavesTheFunctionAlone() {
-    var function = new MFunction("empty") { VirtualRegisterCount = 3 };
+    var function = new X86MachineFunction("empty") { VirtualRegisterCount = 3 };
 
     Assert.Multiple(() => {
       Assert.That(ProcedureErrorHandlerPreservation.Run(function), Is.Zero);

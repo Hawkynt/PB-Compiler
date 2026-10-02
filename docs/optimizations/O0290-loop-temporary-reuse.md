@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — `StringByteRead` is the IR half of the direct emitter's pb36 O0297/O0290, and `LoopTemporaryReuse` covers the fixed-size array-heap temporary in a counted loop; the general string case is not done |
-| **Stage** | Mid-end |
+| **Status** | 🟡 Partial — `LoopTemporaryReuse` covers the fixed-size array-heap temporary in a counted loop, and `StringByteRead` removes the one-character substring temporary of `ASC(MID$(s$, i, 1))`; the general string case is not done |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/LoopTemporaryReuse.cs` (`looptemp-reuse`); `Ir/Passes/StringByteRead.cs` (`strbyte`) |
 | **Related** | [O0068](O0068-array-zero-fill-elision.md), [O0286](O0286-allocation-elimination.md), [O0009](O0009-string-temp-economy.md), [O0329](O0329-array-contraction.md) |
 
 ## The idea

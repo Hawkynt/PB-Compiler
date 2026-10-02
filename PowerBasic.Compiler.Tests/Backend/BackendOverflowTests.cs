@@ -18,7 +18,7 @@ public sealed class BackendOverflowTests {
 
   [TestCase("32767", "RUNTIME ERROR")]
   [TestCase("1", "missed")]
-  public void Execute_GivenInvariantCheckedAddInsideLoop_ThenRoutedAndDirectAgree(
+  public void Execute_GivenInvariantCheckedAddInsideLoop_ThenErrorSixFiresOnlyWhenTheAddOverflows(
       string input, string expected) {
     var source = $$"""
       $ERROR OVERFLOW ON
@@ -36,18 +36,19 @@ public sealed class BackendOverflowTests {
       PRINT "missed"
       END
       """;
-    var direct = new CodeGenerator(Bind(source)) { UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source));
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the loop must exercise the routed body");
     Assert.Multiple(() => {
-      Assert.That(directCpu.Output, Does.Contain(expected));
-      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+      Assert.That(routedCpu.Output, Does.Contain(expected));
+      // 32767 + 1 overflows on the first pass, so the trap stops the program before the PRINT
+      if (expected != "missed")
+        Assert.That(routedCpu.Output, Does.Not.Contain("missed"), "the program ran on past the trap");
+      else
+        Assert.That(routedCpu.Output, Does.Not.Contain("RUNTIME ERROR"), "1 + 1 does not overflow");
     });
   }
 }

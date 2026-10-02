@@ -7,7 +7,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <summary>
 /// Stage 2 of the x86-16 back end (docs/X86-BACKEND.md): selecting the typed-SSA IR into the
 /// machine IR. This first increment covers the straight-line integer core and declines anything
-/// else; the tests inspect the selected <see cref="MFunction"/> directly (execution is a later stage).
+/// else; the tests inspect the selected <see cref="X86MachineFunction"/> directly (execution is a later stage).
 /// </summary>
 [TestFixture]
 public sealed class InstructionSelectorTests {

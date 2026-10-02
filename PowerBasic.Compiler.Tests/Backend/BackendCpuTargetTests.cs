@@ -10,14 +10,14 @@ namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
 /// The declared <c>$CPU</c> target decides how a transcendental is computed, and the x86-16 back end
-/// has to decide it the same way the direct emitter does.
+/// has to honour it.
 ///
 /// <para>
-/// The two paths emit into the SAME image - a program is routed function by function, not whole. So a
-/// disagreement here is not two compilers producing two answers, it is ONE program computing sine two
-/// different ways depending on which procedure asked. The back end used to call <c>rt_sin</c>
-/// unconditionally on the grounds that it declared no CPU floor, which was true of the back end and
-/// beside the point for the image.
+/// The back end used to call <c>rt_sin</c> unconditionally on the grounds that it declared no CPU
+/// floor, which was true of the back end and beside the point for the image: a program that says it
+/// runs on a 386 gets the 387 instruction, and one that says 8086 must not contain it. The 386 cases
+/// that can be run here are checked against the values the program must print, or against the same
+/// program built for an 8086.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -31,20 +31,16 @@ public sealed class BackendCpuTargetTests {
   private static readonly (string Name, byte[] Bytes)[] _x387 =
     [("FSIN", [0xD9, 0xFE]), ("FCOS", [0xD9, 0xFF])];
 
-  private static byte[] Compile(string source, bool routed) => Compile(source, routed, []);
-
-  private static byte[] Compile(string source, bool routed, params string[] requiredRoutes) {
+  private static byte[] Compile(string source, params string[] requiredRoutes) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
-    if (routed) {
-      Assert.That(cg.BackendRoutedNames, Does.Contain("main"), "the test must exercise routed code");
-      foreach (var requiredRoute in requiredRoutes)
-        Assert.That(cg.BackendRoutedNames, Does.Contain(requiredRoute), $"{requiredRoute} did not route");
-    }
+    Assert.That(cg.BackendRoutedNames, Does.Contain("main"), "the test must exercise routed code");
+    foreach (var requiredRoute in requiredRoutes)
+      Assert.That(cg.BackendRoutedNames, Does.Contain(requiredRoute), $"{requiredRoute} did not route");
     return image;
   }
 
@@ -68,38 +64,30 @@ public sealed class BackendCpuTargetTests {
     """;
 
   /// <summary>
-  /// Under an 8086 floor neither path may emit a 387 opcode. Genuine PBC 3.5 compiles SIN, COS and
+  /// Under an 8086 floor the image may not contain a 387 opcode. Genuine PBC 3.5 compiles SIN, COS and
   /// TAN with none of them, through one shared FPTAN routine, and an image that contains one would
   /// fault on the processor it says it is for.
   /// </summary>
   [Test]
-  public void Trig_GivenAn8086Target_ThenNeitherPathEmitsA387Opcode() {
-    foreach (var routed in new[] { false, true }) {
-      var image = Compile(string.Format(_TRIG, "8086"), routed);
-      foreach (var (name, bytes) in _x387)
-        Assert.That(Contains(image, bytes), Is.False,
-          $"{(routed ? "routed" : "direct")} image for an 8086 contains {name}");
-    }
+  public void Trig_GivenAn8086Target_ThenNoA387OpcodeIsEmitted() {
+    var image = Compile(string.Format(_TRIG, "8086"));
+    foreach (var (name, bytes) in _x387)
+      Assert.That(Contains(image, bytes), Is.False, $"image for an 8086 contains {name}");
   }
 
   /// <summary>
-  /// Under a 386 floor the single instruction is used - and by BOTH paths, which is the whole point.
-  /// Before the target reached the back end, this test would have passed for the direct image and
-  /// failed for the routed one.
+  /// Under a 386 floor the single instruction is used. Before the target reached the back end, the
+  /// back end called the runtime routine here regardless.
   /// </summary>
   [Test]
-  public void Trig_GivenA386Target_ThenBothPathsUseTheInstruction() {
-    foreach (var routed in new[] { false, true }) {
-      var image = Compile(string.Format(_TRIG, "80386"), routed);
-      Assert.That(Contains(image, [0xD9, 0xFE]), Is.True,
-        $"{(routed ? "routed" : "direct")} image for a 386 should contain FSIN");
-      Assert.That(Contains(image, [0xD9, 0xFF]), Is.True,
-        $"{(routed ? "routed" : "direct")} image for a 386 should contain FCOS");
-    }
+  public void Trig_GivenA386Target_ThenTheInstructionIsUsed() {
+    var image = Compile(string.Format(_TRIG, "80386"));
+    Assert.That(Contains(image, [0xD9, 0xFE]), Is.True, "image for a 386 should contain FSIN");
+    Assert.That(Contains(image, [0xD9, 0xFF]), Is.True, "image for a 386 should contain FCOS");
   }
 
   /// <summary>
-  /// And whichever way it is computed, the two paths must still print the same thing. An agreement
+  /// And whichever way it is computed, the program must still print the right values. An assertion
   /// about opcodes that did not survive execution would be worth nothing.
   ///
   /// <para>
@@ -109,11 +97,10 @@ public sealed class BackendCpuTargetTests {
   /// </para>
   /// </summary>
   [TestCase("8086")]
-  public void Trig_GivenEitherTarget_ThenTheTwoPathsAgreeWhenRun(string cpu) {
+  public void Trig_GivenATarget_ThenPrintsTheValuesWhenRun(string cpu) {
     var source = string.Format(_TRIG, cpu);
-    var direct = Cpu8086.Run(Compile(source, routed: false));
-    var routed = Cpu8086.Run(Compile(source, routed: true));
-    Assert.That(routed.Output, Is.EqualTo(direct.Output), $"$CPU {cpu}");
+    // SIN, COS and TAN of 0.5
+    Assert.That(Cpu8086.Run(Compile(source)).Output, Is.EqualTo(" .479425538604203  .877582561890373  .546302489843791 \r\n"), $"$CPU {cpu}");
   }
 
   /// <summary>
@@ -121,7 +108,7 @@ public sealed class BackendCpuTargetTests {
   /// to the CPU switch cannot quietly make one of them target-dependent as well.
   /// </summary>
   [TestCase("8086")]
-  public void Logarithms_GivenEitherTarget_ThenTheTwoPathsAgreeWhenRun(string cpu) {
+  public void Logarithms_GivenATarget_ThenPrintsTheValuesWhenRun(string cpu) {
     var source = $"""
       $CPU {cpu}
       DIM x AS DOUBLE
@@ -129,9 +116,8 @@ public sealed class BackendCpuTargetTests {
       PRINT LOG(x); EXP(x); ATN(x); SQR(x)
       END
       """;
-    var direct = Cpu8086.Run(Compile(source, routed: false));
-    var routed = Cpu8086.Run(Compile(source, routed: true));
-    Assert.That(routed.Output, Is.EqualTo(direct.Output), $"$CPU {cpu}");
+    // LOG, EXP, ATN and SQR of 2.5
+    Assert.That(Cpu8086.Run(Compile(source)).Output, Is.EqualTo(" .916290731874155  12.1824939607035  1.19028994968253  1.58113883008419 \r\n"), $"$CPU {cpu}");
   }
 
   /// <summary>
@@ -177,18 +163,18 @@ public sealed class BackendCpuTargetTests {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "S.BAS", Dialect.Pb36), "S.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
 
-    var generator = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = true };
+    var generator = new CodeGenerator(model) { Optimize = true};
     generator.EmitExecutable();
     // the program has to route, or this asserts about instructions nobody selected
     Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the module body did not route");
 
     var module = IrLowering.TryLowerModule(model);
     Assert.That(module, Is.Not.Null);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var fn in module!.Functions)
       if (!fn.IsDeclaration)
         IntegerRecovery.Run(fn);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var offenders = new List<string>();
     var shifts = 0;
@@ -213,7 +199,7 @@ public sealed class BackendCpuTargetTests {
   [TestCase("LEFT", "1", 31, "-2147483648")]
   [TestCase("RIGHT", "-2147483648", 31, "1")]
   [TestCase("RIGHT", "-1", 15, "131071")]
-  public void LongShift_GivenA386RoutedBackend_ThenMatchesThe8086DirectBoundaryValue(
+  public void LongShift_GivenA386Target_ThenMatchesThe8086BoundaryValue(
       string direction, string value, int count, string expected) {
     const string source = """
       $CPU {0}
@@ -228,20 +214,20 @@ public sealed class BackendCpuTargetTests {
       END FUNCTION
       """;
 
-    var direct = Cpu8086.Run(Compile(string.Format(source, "8086", value, direction, count), routed: false));
-    var routedImage = Compile(string.Format(source, "80386", value, direction, count), routed: true, "Shifted");
-    Assert.That(Contains(routedImage, [0x66, 0xC1]), Is.True, "the routed function did not use a dword shift");
-    var routed = Cpu8086.Run(routedImage);
+    var on8086 = Cpu8086.Run(Compile(string.Format(source, "8086", value, direction, count), "Shifted"));
+    var on386Image = Compile(string.Format(source, "80386", value, direction, count), "Shifted");
+    Assert.That(Contains(on386Image, [0x66, 0xC1]), Is.True, "the 386 function did not use a dword shift");
+    var on386 = Cpu8086.Run(on386Image);
 
     Assert.Multiple(() => {
-      Assert.That(direct.Output.Split("\r\n", StringSplitOptions.RemoveEmptyEntries)[0].Trim(),
-        Is.EqualTo(expected), "direct boundary result");
-      Assert.That(routed.Output, Is.EqualTo(direct.Output), "routed");
+      Assert.That(on8086.Output.Split("\r\n", StringSplitOptions.RemoveEmptyEntries)[0].Trim(),
+        Is.EqualTo(expected), "8086 boundary result");
+      Assert.That(on386.Output, Is.EqualTo(on8086.Output), "the 386 dword shift and the 8086 word pair agree");
     });
   }
 
   [Test]
-  public void LongLoop_GivenA386SpeedTarget_ThenRoutedEsiAndEdiResidencyMatchesTheDirectEmitter() {
+  public void LongLoop_GivenA386SpeedTarget_ThenTheCounterAndSumLiveInEsiAndEdi() {
     const string source = """
       $CPU 80386
       $OPTIMIZE SPEED
@@ -253,8 +239,7 @@ public sealed class BackendCpuTargetTests {
       PRINT s&
       END
       """;
-    var direct = Cpu8086.Run(Compile(source, routed: false));
-    var routedImage = Compile(source, routed: true);
+    var routedImage = Compile(source);
     var routed = Cpu8086.Run(routedImage);
 
     Assert.Multiple(() => {
@@ -262,7 +247,6 @@ public sealed class BackendCpuTargetTests {
         "the routed LONG counter should increment in ESI");
       Assert.That(Contains(routedImage, [0x66, 0x01, 0xF7]), Is.True,
         "the routed LONG accumulator should add ESI directly into EDI");
-      Assert.That(routed.Output, Is.EqualTo(direct.Output));
       var lines = routed.Output.Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
         .Select(line => line.Trim())
         .ToList();
@@ -273,7 +257,7 @@ public sealed class BackendCpuTargetTests {
   }
 
   [Test]
-  public void LongDivide_GivenA386Target_ThenDirectCdqIdivAndRoutedRuntimeAgree() {
+  public void LongDivide_GivenA386Target_ThenQuotientsAndRemaindersTruncateTowardZero() {
     const string source = """
       $CPU 80386
       $OPTIMIZE SPEED
@@ -286,18 +270,15 @@ public sealed class BackendCpuTargetTests {
         PRINT n& \ 7; n& MOD 7; n& \ -7; n& MOD -7
       END SUB
       """;
-    var directImage = Compile(source, routed: false);
-    var routedImage = Compile(source, routed: true, "Report");
+    var routedImage = Compile(source, "Report");
 
-    Assert.Multiple(() => {
-      Assert.That(Contains(directImage, [0x66, 0x99]), Is.True, "the direct 386 path should sign-extend EAX with CDQ");
-      Assert.That(Contains(directImage, [0x66, 0xF7]), Is.True, "the direct 386 path should use dword IDIV");
-      Assert.That(Cpu8086.Run(routedImage).Output, Is.EqualTo(Cpu8086.Run(directImage).Output));
-    });
+    // 100000007 = 7 * 14285715 + 2, and the remainder takes the dividend's sign
+    Assert.That(Cpu8086.Run(routedImage).Output, Is.EqualTo(
+      " 14285715  2 -14285715  2 \r\n-14285715 -2  14285715 -2 \r\n-1 -1  1 -1 \r\n"));
   }
 
   [Test]
-  public void LongRotate_GivenA386Target_ThenDirectAndRoutedBoundaryPatternsAgree() {
+  public void LongRotate_GivenA386Target_ThenBytesRotateAcrossTheWordBoundary() {
     const string source = """
       $CPU 80386
       $OPTIMIZE SPEED
@@ -308,15 +289,9 @@ public sealed class BackendCpuTargetTests {
       PRINT x&
       END
       """;
-    var directImage = Compile(source, routed: false);
-    var routedImage = Compile(source, routed: true);
-
-    var direct = Cpu8086.Run(directImage).Output;
-    var routed = Cpu8086.Run(routedImage).Output;
-    Assert.Multiple(() => {
-      Assert.That(direct, Is.EqualTo(" 878082066 \r\n 2014458966 \r\n"));
-      Assert.That(routed, Is.EqualTo(direct));
-    });
+    var routed = Cpu8086.Run(Compile(source)).Output;
+    // &H34567812 and then &H78123456
+    Assert.That(routed, Is.EqualTo(" 878082066 \r\n 2014458966 \r\n"));
   }
 
   [Test]
@@ -331,7 +306,7 @@ public sealed class BackendCpuTargetTests {
       PRINT a%(1); a%(3); a%(5)
       END
       """;
-    var image = Compile(source, routed: false);
+    var image = Compile(source);
 
     Assert.Multiple(() => {
       Assert.That(Contains(image, [0xF3, 0x66, 0xAB]), Is.True,

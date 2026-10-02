@@ -2,8 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ⬜ Planned |
-| **Stage** | Emitter / mid-end |
+| **Status** | ✅ Implemented on the IR path |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/FunctionSummaries.cs` — `Compute`, `RemoveDeadPureCalls` (pipeline pass `dead-pure-calls`); `Ir/Passes/Dce.cs`; `Ir/Analysis/IrEffects.cs` |
+| **Verified by** | `FunctionSummariesTests.DeadPureCall_GivenNothingUsesTheResult_ThenTheCallGoes`, `InlinerNoInlineTests` |
 | **Related** | [O0025](O0025-pure-function-folding.md), [O0002](O0002-dead-code-elimination.md), [O0161](O0161-function-summaries.md) |
 
 ## The idea
@@ -39,7 +41,24 @@ side is a literal or a copy, which a call is not.
 The store and the call both disappear; with no callers left,
 [O0022](O0022-dead-procedure-elimination.md) purges `Hash%` from the image.
 
-## What it needs
+## Now
+
+The call becomes removable once nothing uses its result — for a variable
+`Mem2Reg` promotes, as soon as its unread value is dropped. `FunctionSummaries.Compute` derives a per-procedure summary over
+the call graph, starting every defined body optimistic and adding the effects of
+its instructions and callees until a fixpoint; a body with an error handler or
+inline assembly is maximally conservative. `RemoveDeadPureCalls` then erases every
+direct call whose result has no users and whose callee's summary says it may be
+discarded, and `Dce` sweeps the argument computations that die with it. With no
+callers left, [O0022](O0022-dead-procedure-elimination.md) (`GlobalDce`) can drop
+the procedure.
+
+A callee may still read memory; what makes it non-discardable is a memory write,
+a possible trap, I/O, a throw or a block (`IrEffects`). The `$ERROR` concern below
+is therefore handled: a body that may raise Error 6 or 11 keeps its call. A
+`NOINLINE` callee is exempt, because the modifier promises the call survives.
+
+## What it needed
 
 - Extending the dead-store rule to accept a **pure call** as a removable
   right-hand side — the purity classifier already answers the question, and the
@@ -49,6 +68,9 @@ The store and the call both disappear; with no callers left,
   to be off, the same condition [O0023](O0023-dead-global-elimination.md) uses.
 
 ## Attempted 2026-08-06 — the wiring is not enough
+
+This attempt was on the retired syntax-level path (`CodeGen/Ssa` and the direct
+emitter), which no longer exists; it is kept as history.
 
 The premise checks out: `OptPureFold.ClassifyPure` really does compute a
 call-graph purity fixed point, and it is trusted far enough to EXECUTE those

@@ -32,8 +32,8 @@ namespace PowerBasic.Compiler.Tests.Backend;
 public sealed class BackendMemoryOrderingTests {
 
   /// <summary>
-  /// A LONG accumulator a routed SUB advances and then prints. The optimizer is off in one of the two
-  /// runs on purpose: with it on the inliner and the folding can remove the second read altogether,
+  /// A LONG accumulator a routed SUB advances and then prints. Each case also runs with the optimizer
+  /// off on purpose: with it on the inliner and the folding can remove the second read altogether,
   /// which is what kept the whole class out of sight.
   /// </summary>
   private const string _staticLongProgram = """
@@ -74,37 +74,32 @@ public sealed class BackendMemoryOrderingTests {
     return model;
   }
 
-  private static (string Direct, string Routed, IEnumerable<string> Names) RunBothWays(string source, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
-    var directImage = direct.EmitExecutable();
+  private static (string Routed, IEnumerable<string> Names) Run(string source, bool optimize) {
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    return (Cpu8086.Run(directImage).Output, Cpu8086.Run(routedImage).Output, routed.BackendRoutedNames.ToList());
+    return (Cpu8086.Run(routedImage).Output, routed.BackendRoutedNames.ToList());
   }
 
   [TestCase(true)]
   [TestCase(false)]
   public void Run_GivenAStaticLongAdvancedThenPrinted_WhenRouted_ThenItPrintsTheNewValue(bool optimize) {
-    var (direct, routed, names) = RunBothWays(_staticLongProgram, optimize);
+    var (routed, names) = Run(_staticLongProgram, optimize);
 
     Assert.Multiple(() => {
       Assert.That(names, Does.Contain("Bump"), "the back end did not take the procedure under test");
-      Assert.That(routed, Is.EqualTo(direct));
-      Assert.That(direct.Trim(), Is.EqualTo("10  20"), "each call prints the total it has just added to");
+      Assert.That(routed.Trim(), Is.EqualTo("10  20"), "each call prints the total it has just added to");
     });
   }
 
   [TestCase(true)]
   [TestCase(false)]
   public void Run_GivenASharedLongAdvancedThenPrinted_WhenRouted_ThenItPrintsTheNewValue(bool optimize) {
-    var (direct, routed, names) = RunBothWays(_sharedLongProgram, optimize);
+    var (routed, names) = Run(_sharedLongProgram, optimize);
 
     Assert.Multiple(() => {
       Assert.That(names, Does.Contain("Bump"));
-      Assert.That(routed, Is.EqualTo(direct));
-      Assert.That(direct.Trim(), Is.EqualTo("10  11"));
+      Assert.That(routed.Trim(), Is.EqualTo("10  11"));
     });
   }
 
@@ -117,7 +112,7 @@ public sealed class BackendMemoryOrderingTests {
   public void Select_GivenAWideGlobalAccess_ThenEveryMemoryOperandIsDeclaredAsOne() {
     var module = IrLowering.TryLowerModule(Bind(_staticLongProgram));
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset");
-    IrPassManager.Legalize().RunOnModule(module!);
+    IrMiddleEndPipeline.Legalize().RunOnModule(module!);
     var fn = module!.Functions.First(f => f.Name.Equals("Bump", StringComparison.OrdinalIgnoreCase));
 
     var machine = InstructionSelector.TrySelect(fn, out var reason);

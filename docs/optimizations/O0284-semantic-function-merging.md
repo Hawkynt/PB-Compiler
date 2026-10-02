@@ -62,11 +62,9 @@ eliminated bodies; exact-identical native bodies are still independently eligibl
 
 ## ABI-preserving entry-thunk form
 
-The native x86 backend is hybrid: some procedures may be routed through SSA/machine IR while neighbouring
-procedures are still emitted by the legacy generator. Changing the public signature of a routed function
-would therefore be unsound because a direct-emitted caller could keep using the old stack layout.
-
-`SemanticFunctionMerging.RunWithEntryThunks` solves that without requiring the whole program to route:
+The native x86 back end keeps the source ABI of every source-visible procedure, so it does not use the
+signature-changing form. `SemanticFunctionMerging.RunWithEntryThunks` merges without changing any
+source-visible signature:
 
 1. the source-visible procedures keep their original names and parameter lists;
 2. one private `__o0284_*_merge` helper receives the original arguments plus the varying context value;
@@ -85,7 +83,6 @@ is clean-room C# built against its own IR and backend abstractions.
 
 `CodeGenerator.SemanticMerge` activates the thunk form only when all of these are true:
 
-- the experimental native x86 backend is enabled;
 - optimization is enabled;
 - `$OPTIMIZE SIZE` is active;
 - the source procedure already passes the ordinary native-backend ABI/filter checks.
@@ -109,7 +106,7 @@ No fake `ProcedureSymbol` is introduced and no source ABI metadata is rewritten.
 ## Profitability and gate
 
 This is intentionally a `$OPTIMIZE SIZE` transformation. The whole-module standard pipeline exposes the
-signature-changing form through `IrPassManager.Standard(optimizeForSize: true)` and runs it after local
+signature-changing form through `IrMiddleEndPipeline.Standard(optimizeForSize: true)` and runs it after local
 simplification and interprocedural constant propagation have maximized structural congruence.
 
 The target-neutral whole-module cost model requires at least eight instructions in the representative and
@@ -140,17 +137,17 @@ supports the corresponding near-indirect call as well:
 
 This is intentionally a **near IR code-pointer** facility, not an implementation of PB36's source-level
 `ProcPtrType`. That source type is an eight-byte fat closure containing a far code pointer and environment;
-its existing legacy lowering remains the correct ABI for lambda/delegate calls.
+its existing far-call/environment lowering remains the correct ABI for lambda/delegate calls.
 
 ## Validation
 
-`BackendSemanticFunctionMergingTests` contains end-to-end native differential gates for both literal-context
-and varying-call-target merges. Each compiles the same `$OPTIMIZE SIZE` program twice, once through the
-direct emitter and once with the experimental x86 backend, and asserts that:
+`BackendSemanticFunctionMergingTests` contains end-to-end native gates for both literal-context and
+varying-call-target merges. Each compiles a `$OPTIMIZE SIZE` program and asserts that:
 
 - both source entry thunks remain routed;
 - exactly one private O0284 helper is present;
-- 8086 execution produces the same output and exit code as the direct emitter.
+- 8086 execution produces non-empty output, with the same output and exit code as a second compilation
+  of the same program.
 
 The IR suites separately cover signature-changing merges, ABI-preserving escaped addresses, recursive
 context forwarding, backend candidate filtering, and explicit call-target filtering. Backend call-routing

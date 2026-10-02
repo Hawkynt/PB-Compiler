@@ -15,19 +15,19 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class PassListDocumentationTests {
 
-  private static readonly string _passManager = Path.GetFullPath(Path.Combine(
+  private static readonly string _middleEnd = Path.GetFullPath(Path.Combine(
     TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..",
-    "PowerBasic.Compiler", "Ir", "Passes", "IrPassManager.cs"));
+    "PowerBasic.Compiler", "Ir", "Passes", "IrMiddleEndPipeline.cs"));
 
   [Test]
-  public void PassList_GivenTheStandardSummary_ThenItIsWrittenExactlyOnce() {
-    var text = File.ReadAllText(_passManager);
+  public void PipelinePolicy_GivenTheProductionMiddleEnd_ThenEachEntryPointIsDefinedOnce() {
+    var text = File.ReadAllText(_middleEnd);
 
     Assert.Multiple(() => {
-      Assert.That(Regex.Matches(text, @"Everything else in <see cref=""Standard""/> is optimization").Count,
-        Is.EqualTo(1), "the pass-list sentence was duplicated - two branches rewrote it and the merge kept both");
-      Assert.That(Regex.Matches(text, @"string/global module passes").Count,
-        Is.EqualTo(1), "the pass list itself appears more than once");
+      Assert.That(Regex.Matches(text, @"public static IrPassManager Standard\(").Count,
+        Is.EqualTo(1), "Standard policy must have one owner");
+      Assert.That(Regex.Matches(text, @"public static IrPassManager Legalize\(").Count,
+        Is.EqualTo(1), "Legalize policy must have one owner");
     });
   }
 }

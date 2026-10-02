@@ -86,24 +86,25 @@ jobs:
       - name: Build
         run: dotnet build PB-Compiler.slnx --configuration Release --no-restore
 
-      # Classic DOSBox runs the execution tests against the generated DOS
-      # binaries; installed on Linux only - the tests self-skip wherever it is
-      # absent. Its portable FPU computes in 64-bit doubles (the GitHub
-      # runners offer no GLX visual for DOSBox Staging, which would use the
-      # host's real 80-bit x87), so the few assertions that depend on
-      # extended-precision rounding self-skip under PBC_TEST_REDUCED_FPU.
+      # Classic DOSBox runs ordinary execution tests; DOSBox-X's Pentium-MMX
+      # profile runs the packed-kernel oracle. Both are installed on Linux only.
+      # The classic emulator's portable FPU computes in 64-bit doubles (the
+      # GitHub runners offer no GLX visual for DOSBox Staging, which would use
+      # the host's real 80-bit x87), so extended-precision assertions self-skip
+      # under PBC_TEST_REDUCED_FPU.
       - name: Install DOSBox (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y dosbox
+          sudo apt-get install -y dosbox dosbox-x
           echo "DOSBOX_EXE=$(command -v dosbox)" >> "$GITHUB_ENV"
+          echo "DOSBOX_MMX_EXE=$(command -v dosbox-x)" >> "$GITHUB_ENV"
           echo "SDL_VIDEODRIVER=dummy" >> "$GITHUB_ENV"
           echo "PBC_TEST_REDUCED_FPU=1" >> "$GITHUB_ENV"
 
-      # Core tier - REQUIRED: compiler unit tests + corpus gates + (on Linux)
-      # the DOSBox execution tests. Anything DOSBox-dependent self-skips when
-      # the emulator is unavailable, so this stays green on Windows runners too.
+      # Core tier - REQUIRED: compiler unit tests + corpus gates + DOSBox
+      # execution tests. DOSBox-dependent tests self-skip when their emulator
+      # is unavailable, so this tier also runs on Windows.
       - name: Core tests
         run: >
           dotnet test PowerBasic.Compiler.Tests

@@ -18,7 +18,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// treating a clobber as a write so the divide cannot drift past the MOV that reads its result out.
 ///
 /// The inline 16-bit form selects only a non-zero compile-time constant divisor. The 32-bit form uses
-/// the direct emitter's long-runtime helper, which accepts a runtime divisor and raises PowerBASIC
+/// the long-runtime helper, which accepts a runtime divisor and raises PowerBASIC
 /// Error 11 on zero.
 /// </summary>
 [TestFixture]
@@ -83,7 +83,7 @@ public sealed class BackendDivisionTests {
   }
 
   // the physical register the MOV right after the IDIV copies the result out of
-  private static Reg ResultRegister(MFunction m) {
+  private static Reg ResultRegister(X86MachineFunction m) {
     var instrs = m.AllInstructions.ToList();
     var after = instrs.SkipWhile(i => i.Opcode != MOpcode.Idiv).Skip(1);
     return after.Select(i => i.Operands.Count > 1 ? i.Operands[1] : null)
@@ -156,7 +156,7 @@ public sealed class BackendDivisionTests {
   }
 
   [Test]
-  public void Execute_GivenSigned32BitDivideAndRemainder_ThenRoutedAndDirectResultsMatchAtBoundaries() {
+  public void Execute_GivenSigned32BitDivideAndRemainder_ThenTheBoundaryResultsArePowerBasics() {
     const string source = """
       FUNCTION Quot&(BYVAL n&, BYVAL d&)
         Quot& = n& \ d&
@@ -174,17 +174,13 @@ public sealed class BackendDivisionTests {
       PRINT Quot&(m&, -1); Remain&(m&, -1)
       PRINT Quot&(m&, 3); Remain&(m&, 3)
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("Quot"));
     Assert.That(routed.BackendRoutedNames, Does.Contain("Remain"));
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
     Assert.That(routedCpu.Output.Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries),
       Is.EqualTo(new[] {
         "-14285715", "2", "-14285715", "-2", "-2147483648", "0", "-715827882", "-2",
@@ -204,16 +200,12 @@ public sealed class BackendDivisionTests {
       PRINT ERR
       END
       """;
-    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the error path must not be a fallback");
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
     Assert.That(routedCpu.Output.Trim(), Is.EqualTo("11"));
   }
 
@@ -228,7 +220,7 @@ public sealed class BackendDivisionTests {
       """;
 
     var model = Bind(source);
-    var routed = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(model) { Optimize = false};
 
     var image = routed.EmitExecutable();
 

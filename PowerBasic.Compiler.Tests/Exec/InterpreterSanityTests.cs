@@ -5,10 +5,10 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Tests.Exec;
 
 /// <summary>
-/// The interpreter checked against the ONE path already known to be right: the direct emitter, whose
-/// bytes the golden battery holds to PBC 3.50. If a program compiled by it prints the wrong number
-/// here, the interpreter is wrong - and an interpreter that is wrong turns a differential comparison
-/// into noise, so these come before any conclusion drawn from one.
+/// The interpreter checked on programs small enough that what BASIC prints for them is not in doubt:
+/// constant arithmetic, a subtraction's sign, a counted loop. If one of these prints the wrong number,
+/// suspect the interpreter before the compiler - an interpreter that is wrong turns every execution
+/// test into noise, so these come before any conclusion drawn from one.
 /// </summary>
 [TestFixture]
 public sealed class InterpreterSanityTests {
@@ -16,7 +16,7 @@ public sealed class InterpreterSanityTests {
   private static string Run(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var codegen = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = false };
+    var codegen = new CodeGenerator(model) { Optimize = true};
     var image = codegen.EmitExecutable();
     Assert.That(codegen.Errors, Is.Empty, string.Join("; ", codegen.Errors));
     return Cpu8086.Run(image).Output;
@@ -24,7 +24,7 @@ public sealed class InterpreterSanityTests {
 
   private static string RunUnoptimized(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    var codegen = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = false };
+    var codegen = new CodeGenerator(model) { Optimize = false};
     return Cpu8086.Run(codegen.EmitExecutable()).Output;
   }
 

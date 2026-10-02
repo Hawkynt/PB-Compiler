@@ -13,30 +13,23 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendMbf64Tests {
 
-  private static string Run(string source, Dialect dialect, bool optimize, bool routed) {
+  private static string Run(string source, Dialect dialect, bool optimize) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", dialect), "T.BAS", dialect);
     var model = Binder.Bind(unit, dialect);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model) {
       Optimize = optimize,
-      UseExperimentalBackend = routed,
-      RequireBackend = routed,
     };
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
-    if (routed)
-      Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the MBF64 body fell back");
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the MBF64 body fell back");
     return string.Join('|', Cpu8086.Run(image, exactFloatingPoint: true).Output
       .Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
       .Select(line => line.Trim()));
   }
 
-  private static void BothPathsAgree(string source, Dialect dialect, bool optimize, string expected) {
-    var routed = Run(source, dialect, optimize, routed: true);
-    Assert.That(routed, Is.EqualTo(Run(source, dialect, optimize, routed: false)),
-      "the direct and retargetable x86-16 emitters disagree");
-    Assert.That(routed, Is.EqualTo(expected));
-  }
+  private static void Prints(string source, Dialect dialect, bool optimize, string expected) =>
+    Assert.That(Run(source, dialect, optimize), Is.EqualTo(expected));
 
   private static readonly object[] _dialectsAndModes = [
     new object[] { Dialect.Basica, false },
@@ -51,7 +44,7 @@ public sealed class BackendMbf64Tests {
   /// </summary>
   [TestCaseSource(nameof(_dialectsAndModes))]
   public void Store_GivenDoubleOne_ThenTheCellUsesTheEightByteMbfEncoding(Dialect dialect, bool optimize) =>
-    BothPathsAgree("""
+    Prints("""
       10 X# = 1#
       20 P% = VARPTR(X#)
       30 FOR I% = 0 TO 7
@@ -65,7 +58,7 @@ public sealed class BackendMbf64Tests {
   /// then load forwarding must retain or eliminate both storage conversions as one boundary.
   /// </summary>
   [Test]
-  public void Copy_GivenOptimizedMbf64Scalars_ThenTheConversionsRemainAddressBound() => BothPathsAgree("""
+  public void Copy_GivenOptimizedMbf64Scalars_ThenTheConversionsRemainAddressBound() => Prints("""
     10 X# = 1#
     20 Y# = X#
     30 P% = VARPTR(Y#)
@@ -80,7 +73,7 @@ public sealed class BackendMbf64Tests {
   /// </summary>
   [TestCaseSource(nameof(_dialectsAndModes))]
   public void RoundTrip_GivenRepresentativeDoubles_ThenEveryCellBoundaryUsesMbf64(
-      Dialect dialect, bool optimize) => BothPathsAgree("""
+      Dialect dialect, bool optimize) => Prints("""
     10 Z# = 0#
     20 N# = -0.5#
     30 X# = 1#
@@ -110,7 +103,7 @@ public sealed class BackendMbf64Tests {
   /// </summary>
   [TestCaseSource(nameof(_dialectsAndModes))]
   public void Store_GivenAValueAboveTheMbf64Range_ThenItRaisesOverflow(
-      Dialect dialect, bool optimize) => BothPathsAgree("""
+      Dialect dialect, bool optimize) => Prints("""
     10 ON ERROR GOTO 50
     20 X# = 1D100
     30 PRINT "missed"
@@ -125,7 +118,7 @@ public sealed class BackendMbf64Tests {
   /// </summary>
   [TestCaseSource(nameof(_dialectsAndModes))]
   public void Store_GivenAValueBelowTheMbf64Range_ThenItUnderflowsToCanonicalZero(
-      Dialect dialect, bool optimize) => BothPathsAgree("""
+      Dialect dialect, bool optimize) => Prints("""
     10 X# = 1D-100
     20 P% = VARPTR(X#)
     30 S% = 0
@@ -142,7 +135,7 @@ public sealed class BackendMbf64Tests {
   /// </summary>
   [TestCaseSource(nameof(_dialectsAndModes))]
   public void Store_GivenAValueThatNeedsAllFiftySixSignificantBits_ThenTheLowFractionBitSurvives(
-      Dialect dialect, bool optimize) => BothPathsAgree("""
+      Dialect dialect, bool optimize) => Prints("""
     10 A# = 1#
     20 B# = 36028797018963968#
     30 X# = A# + A# / B#
@@ -159,7 +152,7 @@ public sealed class BackendMbf64Tests {
   /// </summary>
   [TestCaseSource(nameof(_dialectsAndModes))]
   public void Store_GivenExactMbf64Ties_ThenItRoundsToNearestEven(
-      Dialect dialect, bool optimize) => BothPathsAgree("""
+      Dialect dialect, bool optimize) => Prints("""
     10 A# = 1#
     20 B# = 72057594037927936#
     30 E# = A# / B#
@@ -178,7 +171,7 @@ public sealed class BackendMbf64Tests {
   /// </summary>
   [TestCaseSource(nameof(_dialectsAndModes))]
   public void StaticArray_GivenAValueThatNeedsAllFiftySixSignificantBits_ThenEachElementUsesMbf64(
-      Dialect dialect, bool optimize) => BothPathsAgree("""
+      Dialect dialect, bool optimize) => Prints("""
     10 DIM A#(0 TO 1)
     20 A#(0) = 1#
     30 A#(1) = A#(0) + A#(0) / 36028797018963968#
@@ -194,7 +187,7 @@ public sealed class BackendMbf64Tests {
   /// </summary>
   [TestCaseSource(nameof(_dialectsAndModes))]
   public void StaticArray_GivenAdjacentSingles_ThenEachElementUsesMbf32(
-      Dialect dialect, bool optimize) => BothPathsAgree("""
+      Dialect dialect, bool optimize) => Prints("""
     10 DIM A!(0 TO 1)
     20 A!(0) = 1!
     30 A!(1) = -.5!

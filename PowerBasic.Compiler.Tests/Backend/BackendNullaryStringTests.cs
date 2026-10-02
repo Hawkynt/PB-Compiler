@@ -19,8 +19,8 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <para>
 /// What the assertions can promise is a LENGTH, because the values themselves are the machine's.
 /// <c>DATE$</c> is <c>MM-DD-YYYY</c> and <c>TIME$</c> is <c>HH:MM:SS</c>, both fixed width; nothing
-/// has been typed, so <c>INKEY$</c> is empty; and the two that read DOS are compared against the
-/// direct emitter rather than against a number, which is the honest form of "the two paths agree".
+/// has been typed, so <c>INKEY$</c> is empty; and the two that read DOS answer what the interpreter's
+/// DOS holds - an empty command tail and <c>C:\PBC</c>.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -40,10 +40,10 @@ public sealed class BackendNullaryStringTests {
     PRINT LEN(s)
     """;
 
-  private static (string Output, bool Routed) Run(bool routed) {
+  private static (string Output, bool Routed) Run() {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(_source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model) { Optimize = false};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"),
@@ -51,21 +51,20 @@ public sealed class BackendNullaryStringTests {
   }
 
   [Test]
-  public void Execute_GivenTheParenthesisLessStringIntrinsics_WhenRouted_ThenTheyMatchTheDirectEmitter() {
-    var (routed, tookIt) = Run(routed: true);
+  public void Execute_GivenTheParenthesisLessStringIntrinsics_WhenRouted_ThenEachHasTheLengthTheMachineGives() {
+    var (routed, tookIt) = Run();
 
     Assert.That(tookIt, Is.True, "a body naming one of these must route now");
-    Assert.That(routed, Is.EqualTo(Run(routed: false).Output));
+    Assert.That(routed, Is.EqualTo("10 | 8 | 0 | 0 | 6"));
   }
 
   /// <summary>
-  /// The two fixed-width ones, pinned to a number as well as to the other path - a lowering that
-  /// answered with an empty handle would agree with nothing and still pass a comparison if the direct
-  /// emitter were asked the same wrong question.
+  /// The two fixed-width ones, pinned each to its own number - a lowering that answered with an empty
+  /// handle would fail here whatever the machine's clock says.
   /// </summary>
   [Test]
   public void Execute_GivenDateAndTime_WhenRouted_ThenTheyAreTheirFixedWidths() {
-    var (routed, _) = Run(routed: true);
+    var (routed, _) = Run();
     var lengths = routed.Split('|');
 
     Assert.That(lengths[0].Trim(), Is.EqualTo("10"), "DATE$ is MM-DD-YYYY");
@@ -81,13 +80,13 @@ public sealed class BackendNullaryStringTests {
   ///
   /// <para>
   /// ERDEV, ERDEV$ and SETMEM are deliberately answers rather than implementations - there is no
-  /// device-error reporting and no resizable string heap on either path, so the direct emitter answers
-  /// zero, an empty string and a large stable figure. Agreeing explicitly is what routing being
-  /// mandatory turns from a pointless stub into the only way the program compiles.
+  /// device-error reporting and no resizable string heap, so they answer zero, an empty string and a
+  /// large stable figure. Answering explicitly is what routing being mandatory turns from a pointless
+  /// stub into the only way the program compiles.
   /// </para>
   /// </summary>
   [Test]
-  public void Execute_GivenTheSmallIntrinsics_WhenRouted_ThenTheyMatchTheDirectEmitter() {
+  public void Execute_GivenTheSmallIntrinsics_WhenRouted_ThenEachAnswersItsDocumentedValue() {
     const string source = """
       DIM v AS INTEGER, s AS STRING, ok AS LONG
       v = 7
@@ -115,27 +114,18 @@ public sealed class BackendNullaryStringTests {
 
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var routedGen = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+    var routedGen = new CodeGenerator(model) { Optimize = false};
     var routedImage = routedGen.EmitExecutable();
     Assert.That(routedGen.Errors, Is.Empty, string.Join("; ", routedGen.Errors));
     Assert.That(routedGen.BackendRoutedNames, Does.Contain("main"), "the body must route");
 
-    var directGen = new CodeGenerator(Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36)) {
-      Optimize = false,
-      UseExperimentalBackend = false,
-    };
-    var directImage = directGen.EmitExecutable();
-    Assert.That(directGen.Errors, Is.Empty, string.Join("; ", directGen.Errors));
-
     var routed = Cpu8086.Run(routedImage).Output.Trim().Replace("\r\n", "|");
     Assert.Multiple(() => {
-      Assert.That(routed, Is.EqualTo(Cpu8086.Run(directImage).Output.Trim().Replace("\r\n", "|")));
       Assert.That(routed, Does.StartWith("3  3 "), "log2 8 and log10 1000");
       Assert.That(routed, Does.Contain(" 8  100 "), "2^3 and 10^2");
       Assert.That(routed, Does.Contain(" 0  0  0 "), "ERDEV, ERDEV$ and a cleared error are all nothing");
-      // the ADDRESS itself is each emitter's own - the two lay out frames differently - so what is
-      // asserted is the RELATIONSHIP, which holds on both: the low half of the 32-bit spelling is the
-      // 16-bit one. A LONG holds it because a frame offset near the top of the segment does not fit
+      // the ADDRESS itself is the frame layout's business, so what is asserted is the RELATIONSHIP:
+      // the low half of the 32-bit spelling is the 16-bit one. A LONG holds it because a frame offset near the top of the segment does not fit
       // an INTEGER, and truncating it compared -6 against 65530.
       Assert.That(routed, Does.Contain("-1 |-1 |-1 |"), "each 32-bit pointer's low half is the 16-bit one, and PEEK$ reads v");
       Assert.That(routed, Does.Contain(" 0  32767  32767 "), "nothing is typed, and free memory is the advisory figure");
@@ -146,11 +136,11 @@ public sealed class BackendNullaryStringTests {
   /// <summary>
   /// <c>USING$</c> whose FORMAT is not a literal. The literal form is read at compile time into fields
   /// and emitted through capture mode; a runtime one has nothing to read, so the runtime parses it
-  /// itself - for a single numeric field, which is the whole of what either path offers. Every other
-  /// shape declines on both sides.
+  /// itself - for a single numeric field, which is the whole of what is offered. Every other shape
+  /// declines.
   /// </summary>
   [Test]
-  public void Execute_GivenARuntimeUsingFormat_WhenRouted_ThenItMatchesTheDirectEmitter() {
+  public void Execute_GivenARuntimeUsingFormat_WhenRouted_ThenItRendersWhatTheLiteralFormatDoes() {
     const string source = """
       DIM f AS STRING
       f = "##.##"
@@ -162,22 +152,15 @@ public sealed class BackendNullaryStringTests {
 
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var routedGen = new CodeGenerator(model) { Optimize = false, UseExperimentalBackend = true };
+    var routedGen = new CodeGenerator(model) { Optimize = false};
     var routedImage = routedGen.EmitExecutable();
     Assert.That(routedGen.Errors, Is.Empty, string.Join("; ", routedGen.Errors));
     Assert.That(routedGen.BackendRoutedNames, Does.Contain("main"), "the body must route");
 
-    var directGen = new CodeGenerator(Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36)) {
-      Optimize = false,
-      UseExperimentalBackend = false,
-    };
-    var directImage = directGen.EmitExecutable();
-    Assert.That(directGen.Errors, Is.Empty, string.Join("; ", directGen.Errors));
-
     var routed = Cpu8086.Run(routedImage).Output.Trim().Replace("\r\n", "|");
     Assert.Multiple(() => {
-      Assert.That(routed, Is.EqualTo(Cpu8086.Run(directImage).Output.Trim().Replace("\r\n", "|")));
       Assert.That(routed, Does.StartWith("3.14| 3.14"), "the runtime format renders what the literal one does");
+      Assert.That(routed, Is.EqualTo("3.14| 3.14|   42"), "and the second field pads 42 to five columns");
     });
   }
 }

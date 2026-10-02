@@ -1,17 +1,49 @@
 # Direct-emitter retirement
 
-The DOS compiler is being migrated to one production path:
+## Production route status
+
+**Retirement is complete** (see [Completion](#completion) at the end). There is one code generator:
 
 ```text
-source -> parser/binder -> typed SSA IR -> middle-end -> x86-16 machine IR -> assembler/linker
+source -> parser/binder -> HIR -> MIR -> SSA -> optimized SSA -> Low IR
+       -> x86-16 selection/scheduling/allocation -> MachineEmitter -> assembler/linker
 ```
 
-`CodeGen/CodeGenerator*.cs` currently contains two different kinds of code which must not be deleted together:
+Routing through the IR back end is mandatory. A procedure body the back end declines is a compile
+error ("routing is mandatory and 'X' was not taken by the x86-16 back end: <reason>"), never a fallback.
+There is no routing selector left: `CodeGenerator.UseExperimentalBackend` and `RequireBackend` are gone,
+`pbc` rejects `--x-backend`, `--no-x-backend` and `--x-backend-strict` as retired controls, and the
+`PBC_X_BACKEND*` environment variables do nothing. Executable semantics pass through exactly one
+optimizer, `IrMiddleEndPipeline`.
 
-1. the **legacy direct emitter**, which lowers bound syntax straight to x86 while performing target-specific optimizations; and
-2. **whole-program DOS infrastructure** shared by the routed back end: image/data layout, runtime selection, OMF/PBU/PBL linking, labels, literal pools and executable construction.
+The boundaries are executable contracts, not labels in this document. Production advances the
+module through `OptimizedSsa` and `IrLowIrLegalization` before target selection. Every emitted source
+or generated body is recorded only after `X86ProductionEmitter` consumes its allocated machine
+product. The former `DosTrivialImage` fast path was removed because it returned hand-authored x86
+bytes after routing had been measured but before that machine product was emitted.
 
-The first is the retirement target. The second remains until equivalent target-facing infrastructure has been separated from the legacy syntax emitter.
+The retirement proof is held by tests with different failure modes:
+
+- `IrOnlyProductionPipelineTests` requires executable, COM and PBU bodies to reach verified Low IR
+  and to be emitted from their x86-16 machine products.
+- `ProductionBackendRetirementTests` rejects every retired syntax-emitter source file, the raw-byte
+  shortcut, legacy routing properties and command-line selectors.
+- `DialectBatteryTests` sends every statement form accepted by each of the nineteen declared
+  dialects through verified Low IR and x86-16 selection, scheduling and allocation.
+- `StatementSurfaceCensusTests` compiles the complete PB 3.6 reference surface through DOS emission,
+  while `BackendCoverageTests` and `MandatoryRoutingTests` reject corpus declines.
+- `BackendRuntimeCallTests` checks that every runtime ABI row resolves to a routine the DOS runtime
+  actually defines.
+
+`PowerBasic35Emitter`, `CEmitter` and `LlvmEmitter` are explicit source/hosted output targets. None is
+a DOS production fallback; the PB 3.5 class renders BASIC source and does not emit machine code.
+
+What stays in `CodeGen/CodeGenerator*.cs` is the whole-program DOS infrastructure the back end is
+driven from: image and data layout, runtime selection and trimming, OMF/PBU/PBL linking, labels,
+literal pools, inline assembly and executable construction.
+
+The sections below are the record of how the removal was gated and measured; their numbers and
+present-tense statements describe the state at the time each was written.
 
 ## Removal gates
 
@@ -38,12 +70,15 @@ done
 PBC_X_BACKEND_STRICT=1 dotnet test PowerBasic.Compiler.Tests -c Release --filter "Category!=Performance"
 ```
 
-**Gate 1 is met.** The corpus has **no routing declines**, from 127; the suite has **no failing tests** with routing mandatory, from 337. A third measurement was added along the way, because the first two together still missed things: `Compile_GivenEveryStatementForm` compiles every statement form the language has through BOTH emitters, and it is at **299 of 299** but `FILES`, which neither emitter generates.
+Routing is now mandatory in every build, so the `PBC_X_BACKEND_STRICT=1` prefix does nothing and the
+same commands work without it.
+
+**Gate 1 is met.** The corpus has **no routing declines**, from 127; the suite has **no failing tests** with routing mandatory, from 337. A third measurement was added along the way, because the first two together still missed things: `Compile_GivenEveryStatementForm` compiles every statement form the language has through the mandatory IR/x86-16 path, and it is at **300 of 300**, including both `FILES` spellings.
 
 ```text
 corpus (31 suites)        0 routing declines
 suite (strict)            0 failing of 6564
-statement census        299/299 except FILES
+statement census        300/300
 golden battery          568 pass / 0 fail / 0 skip
 round-trip              284 pass / 0 fail
 ```
@@ -83,7 +118,7 @@ Closed so far:
 - BYTE procedure ABI — BYTE/SBYTE retain PowerBASIC's word-sized call slot while the value itself is the low byte. Routed calls materialize that word before `PUSH`, routed definitions read the same slot, and byte FUNCTION results cross in AL. The routing gate uses 200 rather than a tiny value so unsigned BYTE semantics are observable rather than accidentally identical to INTEGER.
 - QUAD procedure ABI — a BYVAL QUAD remains eight signed-integer bytes on the stack and is copied into the routed backend's existing qword SSA cell on first use. Calls push the four words high-to-low. PowerBASIC's QUAD result channel is x87 ST(0), so routed returns use `FILD qword` and routed callers immediately recover the integer with `FISTP qword`; every signed 64-bit integer is exact in the x87 extended significand.
 - BYVAL FIX procedure parameters — FIX crosses the stack as the raw scaled signed i64 cell already used by routed FIX storage, not as an IEEE value. The callee performs the ordinary `rt_fix_down` read conversion, so the runtime-owned scale remains authoritative. `BackendFixBcdTests.Route_GivenByValFixParameter_ThenTheScaledQwordCrossesTheProcedureBoundary` sets `pbvFixDigits = 4`, observes `2.4692`, and compares routed execution with the direct emitter. A FIX FUNCTION result crosses at the other representation entirely; see its own entry below.
-- FASTCALL/WATCALL procedure definitions — the call side already placed leading arguments in AX,DX,BX(,CX) via `X86CallAbi`. The definition side needed only the other half of that contract: `LayoutFrame` had always assigned those parameters negative frame cells (`[BP-2]`, `[BP-4]`, …) and left them to a prologue spill that only the direct emitter performed. The routed prologue now pushes the same registers in parameter order, and `MachineEmitter` starts its own stack slots below that reservation so an alloca can never be handed parameter 0's address. From there they are ordinary frame parameters, so nothing after the prologue knows the convention was a register one, and `RET n` is already correct because `paramBytes` counts only the stack parameters. A multiword BYVAL argument stays rejected on both paths — splitting one value across a register pair needs per-compiler rules that neither emitter models — which makes it a front-end diagnostic rather than a routing class. Proven by `BackendRegisterConventionRoutingTests`, which executes routed against direct in both optimizer modes over five arguments (overflowing both register files), BYREF write-back, and a body with its own array storage sharing the frame; and by the recursive case in `CallingConventionTests`, where the callee reuses the very registers its own arguments arrived in.
+- FASTCALL/WATCALL procedure definitions — the routed prologue spills the same physical inputs as the direct one before allocating its own slots. FASTCALL remains word-only. WATCALL uses one shared allocator on both sides: words take AX/DX/BX/CX, LONGs take DX:AX or CX:BX, and failure to find a legal pair moves that and every later argument to the right-to-left stack overflow. Pair spills run high-to-low so the low word begins each contiguous little-endian frame cell. Watcom's caller, not its callee, removes overflow. `CallingConventionTests` executes the mixed word/LONG/pair-exhaustion case through both emitters and asserts the routed body was actually selected; `CInteropTests` pins the same mixed signature against a genuine Watcom object when the vintage toolchain is available.
 - FIX FUNCTION results — a FIX result crosses at the opposite representation from a FIX argument, and the asymmetry is the direct emitter's rather than a choice. An argument travels as the raw scaled i64 cell; a result is converted by the callee's epilogue (`FILD qword` then `rt_fixdn`) and returned as the NUMERIC value in ST(0), which the caller then re-quantizes with `rt_fixup` where it stores it. The routed path previously returned the raw cell, a second and incompatible convention that would have made a routed callee and a direct caller disagree by ten to the `pbvFixDigits` power. It now declares the F80 result, converts in `ReturnFromFunction`, and scales straight back at the call site so the surrounding FIX-typed expressions still see the cell — the same down/up pair the direct emitter emits, neither half foldable because the exponent is a runtime cell. `BackendFixBcdTests.Route_GivenFixFunctionResult_ThenTheNumericValueCrossesInSt0` moves `pbvFixDigits` to four before the calls and uses an argument not representable at two places, in both optimizer modes.
 - Array parameters — an array crosses as one near pointer to a DESCRIPTOR, never as element storage, and the descriptor's layout is the direct emitter's (`+0` segment, `+2` data offset, `+4` element size, `+6` rank, then a word lower bound and extent per dimension). That choice is what makes a mixed image work: the block belongs to the caller, so its shape is settled by the ABI rather than by whichever emitter compiled the callee. A routed caller fills a fresh block at the call site — which is also what the direct emitter does for a static array's shadow descriptor — and a routed callee widens the fields into an ordinary frame descriptor on entry, after which element addressing and `LBOUND`/`UBOUND` work unchanged. The block address stays two separate words rather than becoming a pointer, because the routed backend's far pointers all live in the single `rt_arrseg` heap segment while a static array's storage is in `DS`; a composed far pointer is an address former with no register to hold it, so the pair is combined at each use. `BackendArrayParameterRoutingTests` executes static, dynamic, two-arrays-through-one-parameter, forwarding a parameter onward, and a string-element read against the direct build in both optimizer modes. The paged and `ABSOLUTE` classes decline as arguments: their element addresses are not one segment plus one offset, so there is no data pointer the block could carry.
 - `CHAIN` in the module body — the IR already lowered both halves of the handoff (`LowerChain` streams the COMMON block out, `LowerChainCommonLoad` absorbs it at the head of the body), and the filter that refused it only ever matched a **top-level** `ChainStmt`. A `CHAIN` inside an `IF` was therefore already routing and already passing `BackendChainTests`, handoff bytes included, so the filter was removing the one shape that differed by nesting alone. `Run_GivenATopLevelChain_ThenTheModuleBodyStillRoutesAndAgreesWithTheDirectEmitter` runs both passes and compares the routed handoff file with the direct one byte for byte.
@@ -432,9 +467,24 @@ exploratory:
   and belongs to neither emitter.
 - Twelve pure-emission files delete outright. `CodeGenerator.cs` goes from 4458 lines to ~1200; what
   remains is the driver - `EmitExecutable`, `EmitUnit`, `DescribeImage`, frame layout, linking.
-- `EmitFarThunks` goes with it: only direct emission ever populated `_farThunks`.
-- The O6 "inlined at every call site, so purge it" pass goes too - its predicate already read
-  `!IsBackendRouted(p)`, so with everything routing it selected nothing.
+- `EmitFarThunks` does **not** go with it, and the bullet above already says so - the two
+  contradicted each other and the deletion bullet was the wrong one. A routed DELEGATE names its
+  adapter `thk_<proc>`, and `CalleeLabel` mints it by calling `ThunkOf`, which is what populates
+  `_farThunks`; so the routed path both registers and needs the thunks. This was true from the moment
+  closures began lowering, and a deletion that followed the old bullet would have taken every routed
+  delegate's entry point with it.
+- The O6 "inlined at every call site, so purge it" pass goes too, but it is a CONSEQUENCE of the
+  deletion rather than a step available before it. Its predicate reads `!IsBackendRouted(p)`, which
+  selects nothing only while everything routes - and `UseExperimentalBackend = false`, which 65 test
+  fixtures still set, makes it select everything again. It is dead when the direct path is gone, not
+  when routing is universal.
+
+**Re-verify each item before acting on it.** Both of the two bullets above were written when they were
+true and were false by the time they were read; the four shared symbols were re-checked at the same
+time and all four still hold (`TryDirectCell` at `CodeGenerator.Backend.cs`, `ContainsErrorHandling`
+beside it, `EmitStoreReadValue` reached from the shared `EmitDataArea`, `EmitFarThunks` as above). A
+plan for deleting code ages against the code it describes, and this one aged in the direction that
+breaks things quietly.
 - ISA emulation for inline assembly does NOT go, and must not: it is reached through a callback now
   and is shared infrastructure rather than direct-emitter code.
 ### What is left, measured rather than estimated
@@ -472,3 +522,23 @@ and is why the work is sequenced as gate 5 rather than as a cleanup.
 ## Reference architecture
 
 This split follows the same layering used by LLVM's code-generation pipeline: target-independent IR optimization is followed by target machine lowering, scheduling, target-specific machine optimizations and register allocation. x87 stack handling and ABI mechanics therefore belong in the x86 backend rather than in a target-neutral source emitter.
+
+## Completion
+
+The last step deleted what was left of the syntax-level compiler. The direct emitter's statement and
+expression emitters had already gone; this step removed every syntax-level optimizer pass with them:
+`OptCommonSubexpr`, `OptCopyProp`, `OptDeadGlobals`, `OptFloatDemotion`, `OptInlining`, `OptIpcp`,
+`OptLoopFusion`, `OptReachability`, `OptRegParm`, `IntervalRange`, `ValueFactReduction`, `KnownBits`
+and the whole `CodeGen/Ssa/` directory. It also removed `CodeGenerator.UseExperimentalBackend` and
+`RequireBackend`, so there is no longer a second path to select.
+
+Each deleted pass has an IR counterpart except one: CSE is `Gvn`, LICM is `Licm`, IPCP is
+`IpConstantProp`, inlining is `Inliner`, dead procedures are `GlobalDce`, float demotion is
+`FloatDemotion`, dead stores are `DeadStoreElim`, SCCP is `Sccp`, value ranges and known bits are
+`Ir/Analysis/IrRangeAnalysis` and `IrKnownBitsAnalysis`, and O0282/O0021 register parameters are
+`Ir/Passes/PrivateCallingConvention`. Loop fusion has no IR counterpart yet (`docs/ROADMAP.md`).
+
+Two syntax-level passes remain, `CodeGen/OptPruner` and `CodeGen/OptPureFold`, used only by the
+`--emit-basic` decompiler in `pbc/Driver.cs`. The complete syntax walker formerly
+`OptReachability.DescendantNodes` is now `Syntax/Ast/AstWalker.DescendantNodes`, used by the IR
+lowering and the code generator.

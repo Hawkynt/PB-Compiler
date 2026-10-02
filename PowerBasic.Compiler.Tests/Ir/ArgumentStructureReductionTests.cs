@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
@@ -57,6 +58,36 @@ public sealed class ArgumentStructureReductionTests {
       Assert.That(IrVerifier.Verify(module), Is.Empty);
     });
     Assert.That(ArgumentStructureReduction.Run(module), Is.Zero, "the signature rewrite must be idempotent");
+  }
+
+
+  [Test]
+  public void AnalysisAwareRun_RebuildsCachedModuleFactsAfterSignatureRewrite() {
+    var module = new IrModule("cached") { OwnsProcedureAbi = true };
+    var recordParameter = new IrArgument(IrType.Ptr, 0, "r");
+    var function = module.AddFunction(new IrFunction("Read", IrType.I16, [recordParameter]));
+    var entry = function.CreateBlock("entry");
+    entry.Append(new IrRet(entry.Append(new IrLoad(IrType.I16, recordParameter))));
+
+    var main = module.AddFunction(new IrFunction("main", IrType.I16));
+    var mainEntry = main.CreateBlock("entry");
+    var record = mainEntry.Append(new IrAlloca(IrType.I8) { Count = 2 });
+    var originalCall = mainEntry.Append(new IrCall(IrType.I16, function, [record]));
+    mainEntry.Append(new IrRet(originalCall));
+
+    var analyses = new IrModuleAnalysisManager(module);
+    var result = ArgumentStructureReduction.Run(module, analyses);
+
+    Assert.Multiple(() => {
+      Assert.That(result.Changes, Is.EqualTo(1));
+      Assert.That(function.Parameters.Single().Type, Is.EqualTo(IrType.I16));
+      Assert.That(originalCall.Parent, Is.Null);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.CallGraph), Is.True);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.FunctionSummaries), Is.True);
+      Assert.That(analyses.Get(IrModuleAnalyses.CallGraph).IsFullyVisible(function), Is.True,
+        "the cache left by the pass must describe the rewritten signature/call sites, not the old graph");
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
   }
 
   [Test]

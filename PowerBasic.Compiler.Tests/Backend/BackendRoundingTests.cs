@@ -53,29 +53,24 @@ public sealed class BackendRoundingTests {
     """;
 
   /// <summary>
-  /// <c>FIX</c>, <c>INT</c> and <c>CINT</c> of a runtime argument, run on both paths and compared -
-  /// plus the answer PowerBASIC gives, so a routed build that agrees with a broken direct one still
-  /// fails. The expectations are the printed line, leading blank on a non-negative number included.
+  /// <c>FIX</c>, <c>INT</c> and <c>CINT</c> of a runtime argument, run and compared with the answer
+  /// PowerBASIC gives. The expectations are the printed line, leading blank on a non-negative number
+  /// included.
   /// </summary>
   [TestCase("FIX(x#)", "#", "-1 -2  1  2 -1 ", TestName = "Fix truncates toward zero")]
   [TestCase("INT(x#)", "#", "-2 -3  1  2 -2 ", TestName = "Int floors")]
   [TestCase("CINT(x#)", "%", "-2 -2  2  2 -1 ", TestName = "Cint rounds to nearest, ties to even")]
-  public void Execute_GivenARoundingOfARuntimeArgument_ThenTheRoutedPathAnswersWhatTheDirectOneDoes(
+  public void Execute_GivenARoundingOfARuntimeArgument_ThenTheRoutedPathAnswersWhatPowerBasicDoes(
       string body, string suffix, string expected) {
     var source = Program(body, suffix);
-    var direct = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("Roll"),
-      "the back end must have taken the function - a fallback compares the direct path with itself");
-    Assert.That(directCpu.Output.Trim('\r', '\n'), Is.EqualTo(expected),
-      "the control: the direct emitter's answer is PowerBASIC's");
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+      "the back end must have taken the function");
+    Assert.That(routedCpu.Output.Trim('\r', '\n'), Is.EqualTo(expected), "the answer is PowerBASIC's");
   }
 
   /// <summary>
@@ -85,22 +80,17 @@ public sealed class BackendRoundingTests {
   [TestCase("FIX(x#)", "#", "-1 -2  1  2 -1 ")]
   [TestCase("INT(x#)", "#", "-2 -3  1  2 -2 ")]
   [TestCase("CINT(x#)", "%", "-2 -2  2  2 -1 ")]
-  public void Execute_GivenARoundingUnderOptimization_ThenTheRoutedPathStillAnswersWhatTheDirectOneDoes(
+  public void Execute_GivenARoundingUnderOptimization_ThenTheRoutedPathStillAnswersWhatPowerBasicDoes(
       string body, string suffix, string expected) {
     var source = Program(body, suffix);
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("Roll"),
-      "the back end must have taken the function - a fallback compares the direct path with itself");
-    Assert.That(directCpu.Output.Trim('\r', '\n'), Is.EqualTo(expected),
-      "the control: the direct emitter's answer is PowerBASIC's");
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
+      "the back end must have taken the function");
+    Assert.That(routedCpu.Output.Trim('\r', '\n'), Is.EqualTo(expected), "the answer is PowerBASIC's");
   }
 
   /// <summary>

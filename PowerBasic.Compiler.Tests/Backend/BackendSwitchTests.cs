@@ -158,6 +158,45 @@ public sealed class BackendSwitchTests {
   }
 
   [Test]
+  public void Select_GivenDenseWordTable_ThenIndexedJumpUsesAn8086AddressRegister() {
+    var selector = new IrArgument(IrType.I16, 0, "selector");
+    var fn = new IrFunction("DispatchTable", IrType.Void, [selector]);
+    var entry = fn.CreateBlock("entry");
+    var @default = fn.CreateBlock("default");
+    new IrBuilder(@default).Ret();
+    var sw = new IrSwitch(selector, @default);
+    for (var value = 0; value < 8; ++value) {
+      var target = fn.CreateBlock($"case{value}");
+      new IrBuilder(target).Ret();
+      sw.AddCase(value, target);
+    }
+    entry.Append(sw);
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+
+    var machine = InstructionSelector.TrySelect(fn, out var reason,
+      new SelectionTarget(Optimize: true, OptimizeSpeed: true));
+
+    Assert.That(machine, Is.Not.Null, $"table switch declined: {reason}");
+    var block = machine!.Blocks.Single(candidate =>
+      candidate.Instructions.Any(instruction => instruction.Opcode == MOpcode.JmpIndexed));
+    var at = block.Instructions.FindIndex(instruction => instruction.Opcode == MOpcode.JmpIndexed);
+    var indexed = block.Instructions[at];
+    Assert.Multiple(() => {
+      Assert.That(indexed.Operands[0],
+        Is.EqualTo(new MOperand.Register(MReg.Physical_(Reg.BX))),
+        "JmpIndexed becomes a memory-indirect JMP on x86-16, so its table base must be BX");
+      Assert.That(at, Is.GreaterThan(0));
+      Assert.That(block.Instructions[at - 1].Opcode, Is.EqualTo(MOpcode.Mov));
+      Assert.That(block.Instructions[at - 1].Operands,
+        Is.EqualTo(new MOperand[] {
+          new MOperand.Register(MReg.Physical_(Reg.BX)),
+          new MOperand.Register(MReg.Physical_(Reg.AX)),
+        }),
+        "the normalized AX index must cross explicitly into the address-capable BX register");
+    });
+  }
+
+  [Test]
   public void Select_GivenEightSparseWordCasesForSpeed_ThenBuildsABalancedDecisionTree() {
     var selector = new IrArgument(IrType.I16, 0, "selector");
     var fn = new IrFunction("DispatchTree", IrType.Void, [selector]);
@@ -223,27 +262,19 @@ public sealed class BackendSwitchTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenOnGotoBoundaries_ThenTheRoutedEmitterMatchesFallthroughAndEveryArm(bool optimize) {
-    var direct = new CodeGenerator(Bind(_onGotoProgram)) {
+  public void Execute_GivenOnGotoBoundaries_ThenTheRoutedEmitterTakesFallthroughAndEveryArm(bool optimize) {
+    var generator = new CodeGenerator(Bind(_onGotoProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = false,
-    };
-    var routed = new CodeGenerator(Bind(_onGotoProgram)) {
-      Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("Dispatch"),
-      "the ON GOTO procedure must not pass through the direct-emitter fallback");
-    Assert.That(routed.BackendRoutedNames, Does.Contain("DispatchLong"),
-      "the LONG-source ON GOTO procedure must not pass through the direct-emitter fallback");
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-    Assert.That(directCpu.Output.Trim().Replace("\r\n", "|"),
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("Dispatch"),
+      "the ON GOTO procedure must be taken by the back end");
+    Assert.That(generator.BackendRoutedNames, Does.Contain("DispatchLong"),
+      "the LONG-source ON GOTO procedure must be taken by the back end");
+    Assert.That(cpu.Output.Trim().Replace("\r\n", "|"),
       Is.EqualTo("default|default|one|two|three|default|" +
         "longDefault|longDefault|longOne|longTwo|longDefault|longOne"));
   }

@@ -11,8 +11,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <summary>
 /// PRINT of an unsigned DWORD. There is no unsigned 32-bit printer in the runtime - rt_print_i32 would
 /// render 4294967295 as -1 - so the value is staged in the frame as a zero-extended QWORD and FILDed
-/// into the 64-bit printer, where the zeroed high half makes it positive. That is the four MOVs and the
-/// FILD the direct emitter writes for exactly this case.
+/// into the 64-bit printer, where the zeroed high half makes it positive.
 /// </summary>
 [TestFixture]
 public sealed class BackendUnsignedPrintTests {
@@ -23,14 +22,14 @@ public sealed class BackendUnsignedPrintTests {
     return model;
   }
 
-  private static string Run(string source, bool routed) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+  private static string Run(string source) {
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
   }
 
-  /// <summary>Without this, the value cases could pass by falling back to the direct emitter.</summary>
+  /// <summary>Without this, the value cases could pass on a function the selector had declined.</summary>
   [Test]
   public void Print_GivenADword_ThenTheFunctionActuallyRoutes() {
     var module = IrLowering.TryLowerModule(Bind("""
@@ -39,11 +38,11 @@ public sealed class BackendUnsignedPrintTests {
       PRINT d
       """), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     var main = module.Functions.First(f => f.Name.Equals("main", StringComparison.OrdinalIgnoreCase));
     var m = InstructionSelector.TrySelect(main, out var reason);
@@ -66,11 +65,11 @@ public sealed class BackendUnsignedPrintTests {
       PRINT d
       """;
 
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)), value);
+    Assert.That(Run(source), Is.EqualTo(value));
   }
 
   [Test]
-  public void Print_GivenADwordToAFile_ThenBothPathsAgree() {
+  public void Print_GivenADwordToAFile_ThenTheFileHoldsTheUnsignedValue() {
     const string source = """
       DIM d AS DWORD
       OPEN "R.TXT" FOR OUTPUT AS #1
@@ -80,6 +79,11 @@ public sealed class BackendUnsignedPrintTests {
       PRINT "done"
       """;
 
-    Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)));
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true };
+    var image = cg.EmitExecutable();
+    Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
+    var cpu = Cpu8086.Run(image);
+    Assert.That(cpu.Output.Trim(), Is.EqualTo("done"));
+    Assert.That(cpu.FileContent("R.TXT"), Is.EqualTo(" 4294967295 \r\n"));
   }
 }

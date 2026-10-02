@@ -33,9 +33,9 @@ public sealed class DeadLoopEliminationTests {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
     Recover();
-    IrPassManager.Standard(forSpeed).RunOnModule(module!);
+    IrMiddleEndPipeline.Standard(forSpeed).RunOnModule(module!);
     Recover();
-    IrPassManager.Standard(forSpeed).RunOnModule(module!);
+    IrMiddleEndPipeline.Standard(forSpeed).RunOnModule(module!);
     return module!.Functions.Single(fn => fn.Name == "main");
 
     void Recover() {
@@ -120,6 +120,35 @@ public sealed class DeadLoopEliminationTests {
     Assert.That(main.AllInstructions.OfType<IrCall>()
       .Any(call => (call.Callee as IrFunction)?.Name == "rt_error"), Is.True,
       "the optimized IR must retain the loop-invariant Error 6 path:\n" + IrPrinter.Print(main));
+  }
+
+  [Test]
+  public void LoopWithPotentiallyTrappingDivision_WhenDeletingDeadLoops_ThenItSurvives() {
+    var divisor = new IrArgument(IrType.I16, 0, "divisor");
+    var fn = new IrFunction("f", IrType.Void, [divisor]);
+    var entry = fn.CreateBlock("entry");
+    var header = fn.CreateBlock("header");
+    var body = fn.CreateBlock("body");
+    var exit = fn.CreateBlock("exit");
+
+    new IrBuilder(entry).Br(header);
+    var headerBuilder = new IrBuilder(header);
+    var counter = headerBuilder.Phi(IrType.I16);
+    headerBuilder.CondBr(
+      headerBuilder.Cmp(IrCmpPred.Slt, counter, new IrConstantInt(IrType.I16, 4)),
+      body, exit);
+
+    var bodyBuilder = new IrBuilder(body);
+    var division = bodyBuilder.SDiv(new IrConstantInt(IrType.I16, 10), divisor);
+    var next = bodyBuilder.Add(counter, new IrConstantInt(IrType.I16, 1));
+    bodyBuilder.Br(header);
+    counter.AddIncoming(new IrConstantInt(IrType.I16, 0), entry);
+    counter.AddIncoming(next, body);
+    new IrBuilder(exit).Ret();
+
+    Assert.That(DeadLoopElimination.Run(fn), Is.Zero);
+    Assert.That(division.Parent, Is.SameAs(body));
+    Assert.That(HasLoop(fn), Is.True);
   }
 
   /// <summary>
@@ -226,7 +255,7 @@ public sealed class DeadLoopEliminationTests {
       END SUB
       """;
 
-    Assert.That(RunBothWays(source), Is.EqualTo("done 2"),
+    Assert.That(RunWalk(source), Is.EqualTo("done 2"),
       "n = 7 leaves on the first iteration, so only the n = 2 call may print");
   }
 
@@ -264,25 +293,20 @@ public sealed class DeadLoopEliminationTests {
       END SUB
       """;
 
-    Assert.That(RunBothWays(source), Is.EqualTo("done 2  10 |done 7  1"),
+    Assert.That(RunWalk(source), Is.EqualTo("done 2  10 |done 7  1"),
       "the loop runs out for n = 2 and breaks on the first iteration for n = 7");
   }
 
   /// <summary>
-  /// Runs the program through BOTH back ends and asserts they agree, answering with what they printed.
-  /// The routed path is where these two defects lived; the direct emitter is the reference.
+  /// Compiles and runs the program, answering with what it printed. The routed path is where these
+  /// two defects lived, so the procedure under test must have gone through it.
   /// </summary>
-  private static string RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
-    var directImage = direct.EmitExecutable();
-    var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
-    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain("Walk"), "the back end did not take the procedure under test");
-    var directOutput = Cpu8086.Run(directImage).Output.Trim().Replace("\r\n", "|");
-    Assert.That(Cpu8086.Run(routedImage).Output.Trim().Replace("\r\n", "|"), Is.EqualTo(directOutput));
-    return directOutput;
+  private static string RunWalk(string source) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("Walk"), "the back end did not take the procedure under test");
+    return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
   }
 
   /// <summary>
@@ -306,7 +330,7 @@ public sealed class DeadLoopEliminationTests {
     foreach (var fn in module!.Functions)
       if (!fn.IsDeclaration)
         IntegerRecovery.Run(fn);
-    IrPassManager.Standard(optimizeForSpeed: true).RunOnModule(module);
+    IrMiddleEndPipeline.Standard(optimizeForSpeed: true).RunOnModule(module);
     Assert.That(Run(IrBasicWriter.Write(module)), Is.EqualTo(Run(source)));
   }
 

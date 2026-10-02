@@ -47,7 +47,7 @@ public sealed class IrModuleLinkerTests {
       Assert.That(scale.IsDeclaration, Is.False, "linking must not consume the input definition");
     });
 
-    IrPassManager.Standard().RunOnModule(linked);
+    IrMiddleEndPipeline.Standard().RunOnModule(linked);
 
     var ret = linkedScale.AllInstructions.OfType<IrRet>().Single();
     Assert.Multiple(() => {
@@ -57,9 +57,10 @@ public sealed class IrModuleLinkerTests {
 
     var removed = GlobalDce.Run(linked);
     Assert.Multiple(() => {
-      Assert.That(removed, Is.EqualTo(1));
+      Assert.That(removed, Is.EqualTo(2));
       Assert.That(linked.FindFunction("DeadInUnit"), Is.Null, "whole-program DCE may now remove dead unit code");
-      Assert.That(linked.FindFunction("Scale"), Is.Not.Null, "the unit function called by main stays live");
+      Assert.That(linked.FindFunction("Scale"), Is.Null,
+        "an unused result from a pure cross-module call is removed before whole-program DCE");
       Assert.That(IrVerifier.Verify(linked), Is.Empty);
     });
   }

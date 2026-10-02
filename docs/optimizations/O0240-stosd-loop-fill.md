@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `TryEmitForIdiom` + the 386 widening |
+| **Status** | ⬜ Not implemented on the IR path |
+| **Stage** | IR middle end (planned) |
+| **Source** | None. The nearest current code is `Ir/Passes/LibraryCallRecognition.cs` ([O0330](O0330-library-call-recognition.md)), which handles byte-element fill loops only |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` + `$CPU 80386` |
 | **Verified by** | `tests/diff/DIFF75.BAS` |
 | **Split from** | [C0001](C0001-386-codegen.md) |
@@ -15,6 +15,11 @@ The constant `FOR`-loop array fill that [O0227](O0227-constant-fill-stosw.md)
 lowers to `REP STOSW` widens further to `REP STOSD` under `$CPU 80386`: the
 16-bit value is **broadcast into both halves of EAX**, so one store covers two
 elements.
+
+Not implemented on the IR path; the syntax-level version was retired with the
+direct emitter. `LibraryCallRecognition` turns a counted fill loop into an
+`llvm.memset` (`rt_memset`, `REP STOSB`) only when each element is one byte, so
+a 16-bit array fill stays a loop.
 
 ## Sample
 

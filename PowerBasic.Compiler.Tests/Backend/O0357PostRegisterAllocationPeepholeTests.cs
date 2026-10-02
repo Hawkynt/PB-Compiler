@@ -14,12 +14,12 @@ public sealed class O0357PostRegisterAllocationPeepholeTests {
       new MInstrEffect(WrittenRegs: [0], ReadRegs: source is MOperand.Register ? [1] : [],
         ReadsFlags: false, WritesFlags: false, ReadsMemory: source.IsMemoryAccess(), WritesMemory: false));
 
-  private static MFunction OneBlock(params MInstr[] instructions) {
-    var function = new MFunction("f") { VirtualRegisterCount = 4 };
+  private static X86MachineFunction OneBlock(params MInstr[] instructions) {
+    var function = new X86MachineFunction("f") { VirtualRegisterCount = 4 };
     var block = new MBlock("entry");
     block.Instructions.AddRange(instructions);
     function.Blocks.Add(block);
-    Peephole.Run(function);
+    MachineOptimizationState.Mark(function);
     return function;
   }
 

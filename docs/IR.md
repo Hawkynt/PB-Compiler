@@ -114,10 +114,11 @@ ABI crossings still decline rather than lose their format.
   type. Every pass should leave the IR verifiable.
 - `IrPrinter` — deterministic, LLVM-like text for snapshots and debugging.
 
-## Lowering (bound AST → IR)
+## Lowering (bound AST → HIR → IR)
 
-`IrLowering` produces clang-style alloca/load/store form (a later mem2reg pass
-promotes to SSA). `TryLowerModule` lowers the whole program; `TryLowerMainBody`
+`BoundAstToHir` first snapshots the program as an ordered set of high-level functions: `main`, then each unique declared, defined, or lifted procedure. It removes statement-group wrappers and represents assignments, termination, resolved direct calls, dynamic-array resizing and erasure as explicit HIR operations. Other statement families remain bound-node compatibility operations, and the `SemanticModel` side tables remain available while they migrate. `HirVerifier` checks the entry-point, procedure-identity, source-node and external-body contracts.
+
+`HirToMir` consumes those HIR functions and produces explicit CFG plus clang-style alloca/load/store form. `MirVerifier` checks the pre-SSA contract. The middle-end's `Mem2Reg` pass runs before the verified MIR-to-SSA stage transition; `IrVerifier` checks structural validity at that boundary. `TryLowerModule` lowers the whole program; `TryLowerMainBody`
 lowers just `@main`. Anything outside the supported subset makes the lowering
 **decline** (return `null`) rather than miscompile.
 

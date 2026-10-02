@@ -9,7 +9,7 @@ namespace PowerBasic.Compiler.Tests.Ir;
 
 /// <summary>
 /// <c>NOINLINE</c> is a contract with the programmer - "this stays a real call" - and the IR pipeline
-/// has to honour it for the same reason the direct emitter does.
+/// has to honour it for the same reason the direct emitter did.
 ///
 /// The shape it guards is a procedure that exists only to be an optimization barrier: an empty
 /// <c>SUB</c> taking a variable BYREF, so the optimizer cannot know what the variable holds afterwards.
@@ -74,7 +74,7 @@ public sealed class InlinerNoInlineTests {
   /// </summary>
   [Test]
   public void Emit_GivenANoInlineBarrier_WhenRoutedThroughTheBackend_ThenTheProcedureSurvivesAndTheProgramRuns() {
-    var cg = new CodeGenerator(Bind(_barrier.Replace("__", " NOINLINE"))) { Optimize = true, UseExperimentalBackend = true };
+    var cg = new CodeGenerator(Bind(_barrier.Replace("__", " NOINLINE"))) { Optimize = true};
     var image = cg.EmitExecutable();
 
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
@@ -122,7 +122,7 @@ public sealed class InlinerNoInlineTests {
       SUB Poke8(BYVAL v%)
         ! mov ax, 1
       END SUB
-      """)) { UseExperimentalBackend = true, Optimize = true };
+      """)) { Optimize = true };
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("done"));

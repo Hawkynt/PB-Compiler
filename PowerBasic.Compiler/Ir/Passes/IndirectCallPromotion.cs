@@ -1,37 +1,64 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
 /// O0271 — promotes the hottest profiled target of an indirect call to a guarded direct call.
 /// The miss path retains the original indirect call, so profile accuracy affects profitability only,
-/// never semantics. The new direct edge is deliberately exposed before inlining and interprocedural
-/// passes run, which is the point of the transform.
+/// never semantics. Legality stays in this transform; the dynamic-frequency/code-growth decision is
+/// delegated to <see cref="IIrCallCostModel"/>. The new direct edge is deliberately exposed before
+/// inlining and interprocedural passes run, which is the point of the transform.
 /// </summary>
 public static class IndirectCallPromotion {
 
-  // LLVM's default first-target profitability threshold: a candidate must account for at least 30%
-  // of the executions remaining at the site. O0271 emits one guard, so remaining == total here.
-  private const uint _MINIMUM_TARGET_PERCENT = 30;
-
   /// <summary>Promotes eligible indirect calls in <paramref name="module"/>; returns the number changed.</summary>
-  public static int Run(IrModule module) {
+  public static int Run(IrModule module, IIrCallCostModel? costModel = null) {
     ArgumentNullException.ThrowIfNull(module);
+    return Run(module, new IrModuleAnalysisManager(module), costModel).Changes;
+  }
 
-    var promoted = 0;
+  /// <summary>
+  /// Analysis-aware promotion. Exact singleton callees belong to O0279 and are excluded before profile
+  /// profitability is considered; O0271 only versions calls whose target remains incomplete.
+  /// </summary>
+  public static IrModulePassResult Run(
+      IrModule module,
+      IrModuleAnalysisManager analyses,
+      IIrCallCostModel? costModel = null) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(module, analyses.Module))
+      throw new ArgumentException("Module analysis manager belongs to a different module.", nameof(analyses));
+    costModel ??= IrDefaultCallCostModel.Instance;
+
+    var exactTargets = analyses.Get(IrModuleAnalyses.FunctionTargets);
+
+    // Decide the complete sweep before mutating anything. Promotion adds comparisons/direct calls that
+    // are themselves function-value users; allowing those new users to perturb later target/profitability
+    // decisions would make the result depend on traversal order and would consult stale cached facts.
+    var plans = new List<(IrFunction Function, IrCall Call, IrFunction Target)>();
     foreach (var function in module.Functions) {
       if (function.IsDeclaration || function.HasErrorHandler || function.HasInlineAsm)
         continue;
-
-      foreach (var call in function.AllInstructions.OfType<IrCall>().ToArray()) {
-        if (!TrySelectTarget(module, call, out var target))
+      foreach (var call in function.AllInstructions.OfType<IrCall>()) {
+        if (call.Callee is IrFunction || exactTargets.ResolveUnique(call.Callee) is not null)
           continue;
-        Promote(call, target, function);
-        ++promoted;
+        if (TrySelectTarget(module, call, costModel, out var target))
+          plans.Add((function, call, target));
       }
     }
-    return promoted;
+
+    foreach (var (function, call, target) in plans)
+      Promote(call, target, function);
+
+    return plans.Count == 0 ? IrModulePassResult.Unchanged : IrModulePassResult.Changed(plans.Count);
   }
 
-  private static bool TrySelectTarget(IrModule module, IrCall call, out IrFunction target) {
+  private static bool TrySelectTarget(
+      IrModule module,
+      IrCall call,
+      IIrCallCostModel costModel,
+      out IrFunction target) {
     target = null!;
     if (call.Parent is null || call.Callee is IrFunction || call.GetIndirectTargetProfile() is not { } profile)
       return false;
@@ -40,7 +67,7 @@ public static class IndirectCallPromotion {
     var hottest = ordered[0];
     if (ordered.Length > 1 && hottest.Count == ordered[1].Count)
       return false; // there is no single dominant target; do not make profile order a semantic choice
-    if ((UInt128)hottest.Count * 100 < (UInt128)profile.TotalCount * _MINIMUM_TARGET_PERCENT)
+    if (!costModel.PreferIndirectCallPromotion(hottest.Count, profile.TotalCount))
       return false;
     if (!module.Functions.Any(candidate => ReferenceEquals(candidate, hottest.Target)))
       return false; // stale profile naming a function from another module

@@ -10,9 +10,8 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// PB 3.2 CODE pointers on the retargetable path: <c>CODEPTR32</c> of a label, and the
 /// <c>GOTO DWORD</c> / <c>GOSUB DWORD</c> that jump through one.
 ///
-/// A code address is the one value whose NUMBER neither back end can be held to - the two emitters
-/// lay out instructions differently, so the same label is at different offsets in the two images.
-/// What can be held is everything the address is FOR: that jumping through it lands on that label and
+/// A code address is the one value whose NUMBER no test can be held to - it moves whenever the code
+/// layout does. What can be held is everything the address is FOR: that jumping through it lands on that label and
 /// not on the statement before it, that a computed choice between two of them reaches the one chosen,
 /// that <c>GOSUB DWORD</c> comes back to the statement after itself, and that the offset the 32-bit
 /// form carries in its low half is the offset the 16-bit <c>CODEPTR</c> answers on its own.
@@ -26,24 +25,17 @@ public sealed class BackendCodePointerTests {
     return model;
   }
 
-  private static (string Direct, string Routed, IEnumerable<string> RoutedNames) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
-    var directImage = direct.EmitExecutable();
+  private static (string Routed, IEnumerable<string> RoutedNames) Run(string source) {
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
     var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output;
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return (Cpu8086.Run(routedImage).Output, routed.BackendRoutedNames);
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return ("", routed.BackendRoutedNames);
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"), routed.BackendRoutedNames);
   }
 
   private static string[] Lines(string output) => output.Replace("\r", "")
@@ -57,7 +49,7 @@ public sealed class BackendCodePointerTests {
 
   [Test]
   public void GotoDword_GivenALabelsCodePointer_ThenControlLandsOnThatLabel() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       DIM g AS DWORD
       g = CODEPTR32(Second)
       GOTO DWORD g
@@ -68,7 +60,6 @@ public sealed class BackendCodePointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "second" }), "the statement between the jump and the label ran");
   }
 
@@ -79,7 +70,7 @@ public sealed class BackendCodePointerTests {
   /// </summary>
   [Test]
   public void GotoDword_GivenAChoiceBetweenTwoLabels_ThenTheAddressDecidesWhichIsReached() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       DIM g AS DWORD
       n% = 2
       IF n% = 1 THEN
@@ -99,7 +90,6 @@ public sealed class BackendCodePointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "second", "done" }));
   }
 
@@ -110,7 +100,7 @@ public sealed class BackendCodePointerTests {
   /// </summary>
   [Test]
   public void GosubDword_WhenTheTargetReturns_ThenControlResumesAfterTheCallSite() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       DIM g AS DWORD
       g = CODEPTR32(Body)
       GOSUB DWORD g
@@ -122,7 +112,6 @@ public sealed class BackendCodePointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     Assert.That(Lines(routed), Is.EqualTo(new[] { "body", "back" }));
   }
 
@@ -134,7 +123,7 @@ public sealed class BackendCodePointerTests {
   /// </summary>
   [Test]
   public void CodePtr32_GivenTheSameLabelAsCodePtr_ThenItsLowHalfIsTheSameOffset() {
-    var (direct, routed, names) = RunBothWays("""
+    var (routed, names) = Run("""
       DIM wide AS DWORD
       DIM near AS DWORD
       wide = CODEPTR32(Here) AND &HFFFF&
@@ -152,7 +141,6 @@ public sealed class BackendCodePointerTests {
       """);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
     // ...and two DIFFERENT labels are two different addresses, which is what stops "same" above from
     // passing on an implementation that answered one constant for every label
     Assert.That(Lines(routed), Is.EqualTo(new[] { "same", "distinct", "done" }));

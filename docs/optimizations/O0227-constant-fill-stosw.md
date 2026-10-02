@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `TryEmitForIdiom` |
+| **Status** | ⬜ Not implemented on the IR path |
+| **Stage** | — |
+| **Source** | None for word or wider elements. The byte-wide analogue is `Ir/Passes/LibraryCallRecognition.cs` (O0330), which turns a counted one-byte-per-iteration fill into `llvm.memset` → `rt_memset` (`REP STOSB`) |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
 | **Split from** | [O0020](O0020-idiom-replacement.md) (which is now the empty-loop closed form) |
 
@@ -13,6 +13,10 @@
 A constant-trip `FOR` loop whose body stores a **constant** into an array
 element indexed by the bare counter is a block fill, and the 8086 has an
 instruction for that.
+
+Not implemented on the IR path; the syntax-level version (`TryEmitForIdiom`) was
+retired with the direct emitter. `LibraryCallRecognition` only matches a store of
+one byte per iteration, so an `INTEGER` fill like the sample below stays a loop.
 
 ## Sample
 

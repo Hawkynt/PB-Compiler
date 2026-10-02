@@ -10,6 +10,7 @@ namespace PowerBasic.Compiler.Runtime;
 ///   Extract:   AX=main, DX=match, BL=0 substring / 1 any-set -> AX = handle (consumes both)
 ///   Tally:     AX=main, DX=match, BL flag as above -> AX = count (consumes both)
 ///   Dir:       AX=mask handle (0 = find-next), CX=attribute -> AX = name handle ("" = none; consumes)
+///   Files:     AX=mask handle -> prints a QB-compatible directory listing (consumes)
 ///   StrCmpRange: AX=left, DX=right (NOT consumed) -> AX = -1/0/1; reads the
 ///              rt_arpb block: collate +6, from +8, to +10, flags +12 (bit1 =
 ///              the FROM/TO range clamps the left side only)
@@ -21,6 +22,7 @@ public sealed partial class DosRuntime {
   public Label Extract { get; private set; } = null!;
   public Label Tally { get; private set; } = null!;
   public Label Dir { get; private set; } = null!;
+  public Label Files { get; private set; } = null!;
   public Label CurDir { get; private set; } = null!;
   public Label SortStr { get; private set; } = null!;
   public Label ScanStr { get; private set; } = null!;
@@ -31,6 +33,7 @@ public sealed partial class DosRuntime {
     this.EmitExtract(asm);
     this.EmitTally(asm);
     this.EmitDir(asm);
+    this.EmitFiles(asm);
     this.EmitCurDir(asm);
     this.EmitPokeStr(asm);
     this.EmitRename(asm);
@@ -1827,6 +1830,269 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.DX);
     asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
+    asm.Ret();
+  }
+
+  /// <summary>
+  /// FILES [mask$]: the QuickBASIC directory display. DOS supplies the current path, 8.3 entries,
+  /// directory attributes and free-space geometry; the runtime supplies the four 18-column fields.
+  /// </summary>
+  private void EmitFiles(Assembler asm) {
+    this.Files = asm.MarkLabel("rt_files");
+    var found = asm.DefineLabel();
+    var noRow = asm.DefineLabel();
+    var noMatch = asm.DefineLabel();
+    var done = asm.DefineLabel();
+
+    asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
+    asm.Push(Reg.DX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.BP);
+    asm.Push(Reg.ES);
+    asm.Mov(Mem.Word(asm.Lbl("rt_ext0")), Reg.AX);      // print calls may use AX before the mask does
+
+    asm.Call(asm.Lbl("rt_files_header"));
+    asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_dta")));
+    asm.Mov(Reg.AH, 0x1A);
+    asm.Int(0x21);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_ext0")));
+    asm.Call(asm.Lbl("rt_files_mask"));                 // copies and consumes the string handle
+
+    asm.Mov(Reg.CX, 0x10);                              // ordinary files plus subdirectories
+    asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.Mov(Reg.AH, 0x4E);
+    asm.Int(0x21);
+    asm.Jc(noMatch);
+
+    asm.Xor(Reg.BP, Reg.BP);                            // fields printed on the current row
+    asm.MarkLabel(found);
+    asm.Call(asm.Lbl("rt_files_entry"));
+    asm.Mov(Reg.AH, 0x4F);
+    asm.Int(0x21);
+    asm.Jnc(found);
+
+    asm.Test(Reg.BP, Reg.BP);
+    asm.Jz(noRow);
+    asm.Call(this.PrintNewLine);
+    asm.MarkLabel(noRow);
+    asm.Call(asm.Lbl("rt_files_footer"));
+    asm.Jmp(done);
+
+    asm.MarkLabel(noMatch);
+    asm.Mov(Reg.AX, 53);                                // BASIC's File not found
+    asm.Call(asm.Lbl("rt_raise"));
+
+    asm.MarkLabel(done);
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.BP);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+
+    this.EmitFilesHeader(asm);
+    this.EmitFilesMask(asm);
+    this.EmitFilesEntry(asm);
+    this.EmitFilesFooter(asm);
+  }
+
+  /// <summary>Prints DOS's current drive and path, always ending the header with one newline.</summary>
+  private void EmitFilesHeader(Assembler asm) {
+    var scan = asm.DefineLabel();
+    var output = asm.DefineLabel();
+
+    asm.MarkLabel("rt_files_header");
+    asm.Mov(Reg.AH, 0x19);
+    asm.Int(0x21);
+    asm.Add(Reg.AL, 'A');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec")), Reg.AL);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 1), ':');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 2), '\\');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 79), (Imm)0);
+    asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_dirspec"), 3));
+    asm.Xor(Reg.DX, Reg.DX);                            // DL=0: the default drive
+    asm.Mov(Reg.AH, 0x47);
+    asm.Int(0x21);
+
+    asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.Xor(Reg.CX, Reg.CX);
+    asm.MarkLabel(scan);
+    asm.Cmp(Reg.CX, 80);
+    asm.Jae(output);
+    asm.Mov(Reg.BX, Reg.SI);
+    asm.Add(Reg.BX, Reg.CX);
+    asm.Cmp(Mem.Byte(Reg.BX), (Imm)0);
+    asm.Je(output);
+    asm.Inc(Reg.CX);
+    asm.Jmp(scan);
+    asm.MarkLabel(output);
+    asm.Call(this.PrintStr);
+    asm.Call(this.PrintNewLine);
+    asm.Ret();
+  }
+
+  /// <summary>Copies the owned string mask to DOS's ASCIIZ buffer and releases its handle.</summary>
+  private void EmitFilesMask(Assembler asm) {
+    var copy = asm.DefineLabel();
+    var copied = asm.DefineLabel();
+    var defaultMask = asm.DefineLabel();
+    var done = asm.DefineLabel();
+
+    asm.MarkLabel("rt_files_mask");
+    asm.Test(Reg.AX, Reg.AX);
+    asm.Jz(defaultMask);
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.SI, Mem.Word(Reg.BX, asm.Lbl("rt_strtab")));
+    asm.Mov(Reg.CX, Mem.Word(Reg.BX, asm.Lbl("rt_strtab"), 2));
+    asm.Cmp(Reg.CX, 78);
+    asm.Jbe(copy);
+    asm.Mov(Reg.CX, 78);
+    asm.MarkLabel(copy);
+    asm.Push(Reg.AX);
+    asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.Jcxz(copied);
+    asm.MarkLabel("rt_files_mask_copy");
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Es());
+    asm.Mov(Mem.Byte(Reg.DI), Reg.AL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Loop(asm.Lbl("rt_files_mask_copy"));
+    asm.MarkLabel(copied);
+    asm.Mov(Mem.Byte(Reg.DI), (Imm)0);
+    asm.Pop(Reg.AX);
+    asm.Call(this.StrFree);
+    asm.Jmp(done);
+
+    asm.MarkLabel(defaultMask);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec")), '*');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 1), '.');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 2), '*');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 3), (Imm)0);
+    asm.MarkLabel(done);
+    asm.Ret();
+  }
+
+  /// <summary>Formats the current DTA name as one 17-character field and advances the 4-column row.</summary>
+  private void EmitFilesEntry(Assembler asm) {
+    var first = asm.DefineLabel();
+    var specialDot = asm.DefineLabel();
+    var baseLoop = asm.DefineLabel();
+    var extension = asm.DefineLabel();
+    var extensionLoop = asm.DefineLabel();
+    var suffix = asm.DefineLabel();
+    var regular = asm.DefineLabel();
+    var print = asm.DefineLabel();
+    var done = asm.DefineLabel();
+
+    asm.MarkLabel("rt_files_entry");
+    // The vendor leaves no padding after the final field. Defer a field's right-padding and its
+    // one-column separator until the next field proves there is something to separate it from.
+    asm.Test(Reg.BP, Reg.BP);
+    asm.Jz(first);
+    asm.Mov(Reg.CX, 18);
+    asm.Sub(Reg.CX, Mem.Word(asm.Lbl("rt_ext1")));
+    asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_spaces")));
+    asm.Call(this.PrintStr);
+    asm.MarkLabel(first);
+    asm.Push(Reg.DS);
+    asm.Pop(Reg.ES);
+    asm.Cld();
+    asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.Mov(Reg.CX, 17);
+    asm.Mov(Reg.AL, ' ');
+    asm.Rep();
+    asm.Stosb();
+
+    asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_dta"), 30));
+    asm.Cmp(Mem.Byte(Reg.SI), (Imm)'.');
+    asm.Je(specialDot);
+    asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.Mov(Reg.CX, 8);
+    asm.MarkLabel(baseLoop);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI));
+    asm.Cmp(Reg.AL, (Imm)0);
+    asm.Je(suffix);
+    asm.Cmp(Reg.AL, (Imm)'.');
+    asm.Je(extension);
+    asm.Mov(Mem.Byte(Reg.DI), Reg.AL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Loop(baseLoop);
+    asm.Cmp(Mem.Byte(Reg.SI), (Imm)'.');
+    asm.Jne(suffix);
+
+    asm.MarkLabel(extension);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 8), '.');
+    asm.Inc(Reg.SI);
+    asm.Mov(Reg.DI, Imm.OffsetOf(asm.Lbl("rt_dirspec"), 9));
+    asm.Mov(Reg.CX, 3);
+    asm.MarkLabel(extensionLoop);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI));
+    asm.Cmp(Reg.AL, (Imm)0);
+    asm.Je(suffix);
+    asm.Mov(Mem.Byte(Reg.DI), Reg.AL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Loop(extensionLoop);
+    asm.Jmp(suffix);
+
+    asm.MarkLabel(specialDot);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 8), '.');
+    asm.Inc(Reg.SI);
+    asm.Cmp(Mem.Byte(Reg.SI), (Imm)'.');
+    asm.Jne(suffix);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 9), '.');
+
+    asm.MarkLabel(suffix);
+    asm.Test(Mem.Byte(asm.Lbl("rt_dta"), 21), (Imm)0x10);
+    asm.Jz(regular);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 12), '<');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 13), 'D');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 14), 'I');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 15), 'R');
+    asm.Mov(Mem.Byte(asm.Lbl("rt_dirspec"), 16), '>');
+    asm.Mov(Reg.CX, 17);
+    asm.Jmp(print);
+    asm.MarkLabel(regular);
+    asm.Mov(Reg.CX, 12);
+
+    asm.MarkLabel(print);
+    asm.Mov(Mem.Word(asm.Lbl("rt_ext1")), Reg.CX);
+    asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_dirspec")));
+    asm.Call(this.PrintStr);
+    asm.Inc(Reg.BP);
+    asm.Cmp(Reg.BP, 4);
+    asm.Jne(done);
+    asm.Xor(Reg.BP, Reg.BP);
+    asm.Call(this.PrintNewLine);
+    asm.MarkLabel(done);
+    asm.Ret();
+  }
+
+  /// <summary>Prints DOS free bytes as a BASIC LONG, followed by the vendor's fixed suffix.</summary>
+  private void EmitFilesFooter(Assembler asm) {
+    asm.MarkLabel("rt_files_footer");
+    asm.Xor(Reg.DX, Reg.DX);                            // DL=0: the default drive
+    asm.Mov(Reg.AH, 0x36);
+    asm.Int(0x21);                                     // AX sectors/cluster, BX free, CX bytes/sector
+    asm.Mov(Reg.DI, Reg.CX);
+    asm.Xor(Reg.DX, Reg.DX);
+    asm.Xor(Reg.CX, Reg.CX);
+    asm.Call(this.LongMul);
+    asm.Mov(Reg.BX, Reg.DI);
+    asm.Xor(Reg.CX, Reg.CX);
+    asm.Call(this.LongMul);
+    asm.Call(this.PrintInt32);
+    asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_files_free")));
+    asm.Mov(Reg.CX, 10);
+    asm.Call(this.PrintStr);
+    asm.Call(this.PrintNewLine);
     asm.Ret();
   }
 

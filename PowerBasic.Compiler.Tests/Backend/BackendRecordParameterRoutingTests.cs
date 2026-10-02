@@ -44,19 +44,15 @@ public sealed class BackendRecordParameterRoutingTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Procedure_GivenByrefRecordParameter_ThenRoutedAndDirectExecutionAgree(bool optimize) {
-    var routed = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize, UseExperimentalBackend = true };
+  public void Procedure_GivenByrefRecordParameter_ThenMembersAreReadAndWrittenInTheCallersRecord(bool optimize) {
+    var routed = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("Sum"), "the record-taking function did not route");
     Assert.That(routed.BackendRoutedNames, Does.Contain("Bump"), "the record-mutating sub did not route");
 
-    var direct = new CodeGenerator(Bind(_SOURCE)) { Optimize = optimize, UseExperimentalBackend = false };
-    var directImage = direct.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-
-    var expected = Cpu8086.Run(directImage);
     var actual = Cpu8086.Run(routedImage);
-    Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((expected.Output, expected.ExitCode)));
+    // 2 + 3, then Bump adds 10 and 20 through the pointer, and the sum is read again: 12 + 23
+    Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((" 5 \r\n 12  23 \r\n 35 \r\n", 0)));
   }
 }

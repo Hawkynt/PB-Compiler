@@ -14,15 +14,15 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <c>IrLowering</c> used to learn about it only by executing that statement. Each procedure is
 /// lowered by its own <c>IrLowering</c> whose flags start clear, so the directive armed the check in
 /// the module body and in nothing else: a <c>SUB</c> multiplied its way past 32767 and printed the
-/// wrapped number where the direct emitter stops the program.
+/// wrapped number where PowerBASIC stops the program.
 /// </para>
 ///
 /// <para>
 /// <b>Measured by running the program, not by reading its bytes.</b> A byte assertion is how this
 /// stayed invisible - the trap was never lowered, so there was nothing in the image to be missing from
-/// a pattern nobody had looked for. Each case is executed under the interpreter and its output
-/// compared with the DIRECT emitter's, which is the reference; the raise count is a secondary
-/// diagnostic and never the assertion.
+/// a pattern nobody had looked for. Each case is executed under the interpreter and its output read
+/// for the trap or the wrapped value the source calls for; the raise count is a secondary diagnostic
+/// and never the only assertion.
 /// </para>
 ///
 /// <para>
@@ -41,13 +41,11 @@ public sealed class BackendErrorTrapTests {
     return model;
   }
 
-  private static byte[] Compile(string source, bool routed) {
-    var generator = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+  private static byte[] Compile(string source) {
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
-    if (routed)
-      Assert.That(generator.BackendRoutedNames, Is.Not.Empty,
-        "nothing was routed, so this compares the direct emitter with itself");
+    Assert.That(generator.BackendRoutedNames, Is.Not.Empty, "the back end declined every procedure");
     return image;
   }
 
@@ -58,17 +56,14 @@ public sealed class BackendErrorTrapTests {
   /// A trap that is missing does not merely print the wrong number - a FOR counter that wraps where it
   /// should have raised Error 6 never reaches its limit, and the interpreter gives up on it. Reported
   /// as a SKIP (the usual idiom here) that reads as "the interpreter cannot run this", which is
-  /// precisely the defect wearing an excuse; folded into the output it is a difference from the direct
-  /// build like any other.
+  /// precisely the defect wearing an excuse; folded into the output it is a difference from the
+  /// expected text like any other.
   /// </para>
   /// </summary>
   private static string Run(byte[] image) {
     var cpu = Cpu8086.Run(image, new Dictionary<string, byte[]>(), out var fault);
     return fault is null ? cpu.Output : cpu.Output + "\n[stopped: " + fault.Message + "]";
   }
-
-  private static (string Direct, string Routed) RunBothWays(string source)
-    => (Run(Compile(source, routed: false)), Run(Compile(source, routed: true)));
 
   /// <summary>How many <c>MOV AX, code / CALL</c> raise sequences the image holds.</summary>
   private static int CountRaise(byte[] image, byte code) {
@@ -136,30 +131,30 @@ public sealed class BackendErrorTrapTests {
   /// </summary>
   [Test]
   public void Execute_GivenCheckedMultiplyInsideAProcedure_WhenRouted_ThenTheOverflowStillTraps() {
-    var (direct, routed) = RunBothWays(_CHECKED_MULTIPLY);
+    var image = Compile(_CHECKED_MULTIPLY);
+    var output = Run(image);
 
     Assert.Multiple(() => {
-      Assert.That(routed, Does.Contain("RUNTIME ERROR"), "the Error 6 trap the directive armed is gone");
-      Assert.That(routed, Does.Not.Contain("-5536"), "the wrapped product was printed instead of trapping");
-      Assert.That(routed, Is.EqualTo(direct), "the two back ends disagree about a program that must stop");
-      Assert.That(CountRaise(Compile(_CHECKED_MULTIPLY, routed: true), 0x06), Is.Positive,
-        "and the raise really is in the routed image");
+      Assert.That(output, Does.Contain("RUNTIME ERROR"), "the Error 6 trap the directive armed is gone");
+      Assert.That(output, Does.Not.Contain("-5536"), "the wrapped product was printed instead of trapping");
+      Assert.That(CountRaise(image, 0x06), Is.Positive, "and the raise really is in the image");
     });
   }
 
   /// <summary>
   /// The control, and it is the half that makes the above a measurement rather than an assertion that
-  /// every program traps: with the directive OFF the product wraps, in both back ends, and no raise is
-  /// emitted at all.
+  /// every program traps: with the directive OFF the product wraps, the second call still runs, and no
+  /// raise is emitted at all.
   /// </summary>
   [Test]
   public void Execute_GivenUncheckedMultiplyInsideAProcedure_WhenRouted_ThenTheProductWrapsWithNoTrap() {
-    var (direct, routed) = RunBothWays(_UNCHECKED_MULTIPLY);
+    var image = Compile(_UNCHECKED_MULTIPLY);
+    var output = Run(image);
 
     Assert.Multiple(() => {
-      Assert.That(routed, Does.Not.Contain("RUNTIME ERROR"), "nothing armed a trap here");
-      Assert.That(routed, Is.EqualTo(direct), "the two back ends disagree");
-      Assert.That(CountRaise(Compile(_UNCHECKED_MULTIPLY, routed: true), 0x06), Is.Zero,
+      Assert.That(output, Does.Not.Contain("RUNTIME ERROR"), "nothing armed a trap here");
+      Assert.That(output, Does.Contain(" 14 "), "the second call, 7 * 2, still ran");
+      Assert.That(CountRaise(image, 0x06), Is.Zero,
         "an unarmed check must not reach the image");
     });
   }
@@ -171,13 +166,12 @@ public sealed class BackendErrorTrapTests {
   /// </summary>
   [Test]
   public void Execute_GivenCheckedSubscriptInsideAProcedure_WhenRouted_ThenTheOutOfRangeIndexStillTraps() {
-    var (direct, routed) = RunBothWays(_CHECKED_SUBSCRIPT);
+    var image = Compile(_CHECKED_SUBSCRIPT);
+    var output = Run(image);
 
     Assert.Multiple(() => {
-      Assert.That(routed, Does.Contain("RUNTIME ERROR"), "the Error 9 trap the directive armed is gone");
-      Assert.That(routed, Is.EqualTo(direct), "the two back ends disagree about a program that must stop");
-      Assert.That(CountRaise(Compile(_CHECKED_SUBSCRIPT, routed: true), 0x09), Is.Positive,
-        "and the raise really is in the routed image");
+      Assert.That(output, Does.Contain("RUNTIME ERROR"), "the Error 9 trap the directive armed is gone");
+      Assert.That(CountRaise(image, 0x09), Is.Positive, "and the raise really is in the image");
     });
   }
 
@@ -187,43 +181,47 @@ public sealed class BackendErrorTrapTests {
   /// </summary>
   [Test]
   public void Execute_GivenCheckedForCounterInsideAProcedure_WhenRouted_ThenTheWrappedCounterStillTraps() {
-    var (direct, routed) = RunBothWays(_CHECKED_COUNTER);
+    var output = Run(Compile(_CHECKED_COUNTER));
 
     Assert.Multiple(() => {
-      Assert.That(routed, Does.Contain("RUNTIME ERROR"), "the Error 6 trap the directive armed is gone");
-      Assert.That(routed, Does.Not.Contain("-32768"), "the counter wrapped instead of trapping");
-      Assert.That(routed, Is.EqualTo(direct), "the two back ends disagree about a program that must stop");
+      Assert.That(output, Does.Contain("RUNTIME ERROR"), "the Error 6 trap the directive armed is gone");
+      Assert.That(output, Does.Not.Contain("-32768"), "the counter wrapped instead of trapping");
     });
   }
 
   /// <summary>
   /// What the fix must NOT cost: a check the range analysis can prove will not fire is still elided.
   /// The counter runs 1 to 2 over an array dimensioned 1 to 2, so that subscript needs no guard, while
-  /// the subscript it produces is unknown and keeps one. Routed therefore emits FEWER raises than the
-  /// direct emitter and the program still stops - which is the whole point of the pass, and an
-  /// over-conservative repair would have shown up here as an equal count.
+  /// the subscript it produces is unknown and keeps one. The baseline is the same program with the
+  /// counter's bound read at run time, which makes the first subscript unprovable too: the proven build
+  /// must emit FEWER raises than that and still stop. An over-conservative repair shows up as an equal
+  /// count. (The baseline used to be the direct emitter; it is gone, and the analysis being measured
+  /// now lives only in the back end, so the comparison is between two programs, not two compilers.)
   /// </summary>
   [Test]
   public void Execute_GivenAProvablyInRangeSubscript_WhenRouted_ThenOnlyThatCheckIsElided() {
-    const string source = """
+    const string template = """
       $ERROR BOUNDS ON
       DIM a%(1 TO 5)
       DIM p%(1 TO 2)
-      FOR i% = 1 TO 2
+      n% = LEN(COMMAND$) + 2
+      FOR i% = 1 TO {0}
         x% = a%(p%(i%))
         PRINT x%
       NEXT i%
       END
       """;
-    var directImage = Compile(source, routed: false);
-    var routedImage = Compile(source, routed: true);
+    var provenImage = Compile(template.Replace("{0}", "2"));
+    var unprovenImage = Compile(template.Replace("{0}", "n%"));
 
     Assert.Multiple(() => {
-      Assert.That(Run(routedImage), Is.EqualTo(Run(directImage)),
+      Assert.That(Run(provenImage), Is.EqualTo(Run(unprovenImage)),
         "the out-of-range read must still stop the program");
-      Assert.That(CountRaise(routedImage, 0x09), Is.LessThan(CountRaise(directImage, 0x09)),
+      Assert.That(Run(provenImage), Does.Contain("RUNTIME ERROR"),
+        "the out-of-range read must raise Error 9 at all");
+      Assert.That(CountRaise(provenImage, 0x09), Is.LessThan(CountRaise(unprovenImage, 0x09)),
         "the provable check should still be elided");
-      Assert.That(CountRaise(routedImage, 0x09), Is.Positive, "and the unprovable one kept");
+      Assert.That(CountRaise(provenImage, 0x09), Is.Positive, "and the unprovable one kept");
     });
   }
 }

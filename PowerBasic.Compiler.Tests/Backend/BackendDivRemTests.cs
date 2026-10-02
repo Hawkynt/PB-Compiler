@@ -37,28 +37,19 @@ public sealed class BackendDivRemTests {
 
   [Test]
   public void Execute_GivenAdjacentSignedDivAndMod_WhenRouted_ThenOneIdivSuppliesBothResults() {
-    var direct = new CodeGenerator(Bind()) {
-      Optimize = true,
-      OptimizeSpeed = true,
-      UseExperimentalBackend = false,
-    };
     var routed = new CodeGenerator(Bind()) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = true,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedImage = routed.EmitExecutable();
     var routedCpu = Cpu8086.Run(routedImage);
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.Multiple(() => {
       Assert.That(routed.BackendRoutedNames, Is.SupersetOf(new[] { "DivideBoth", "main" }),
         "the quotient/remainder producer and its callers must stay routed");
       Assert.That(CountIdiv(routedImage), Is.EqualTo(1), "the procedure contains one IDIV, not one per result");
-      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
       Assert.That(Normalize(routedCpu.Output), Is.EqualTo("3 2|-3 -2|-3 2|3 -2"));
     });
   }

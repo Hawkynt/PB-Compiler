@@ -6,13 +6,11 @@ namespace PowerBasic.Compiler.Tests.Exec;
 /// <summary>
 /// A real-mode 8086 interpreter, enough of one to <b>run</b> the executables this compiler emits.
 ///
-/// It exists to answer one question the rest of the test suite cannot: does the retargetable IR path
-/// produce the same OBSERVABLE behaviour as the direct emitter? Byte-identity with PBC 3.50 is the
-/// direct emitter's job and the IR path will never match those bytes - it is a different code
-/// generator. What it must match is what the program PRINTS, and until something executes the image
-/// nobody can say whether it does. Every claim about the back end has rested on matched register
-/// conventions and static invariants; this turns them into a measurement
-/// (<see cref="Tests.Backend.BackendDifferentialTests"/>).
+/// It exists to answer one question the rest of the test suite cannot: does the emitted code compute
+/// what the program says? Static checks - matched register conventions, what selects, what
+/// allocates - say nothing about what the program PRINTS, and until something executes the image
+/// nobody can say whether it is right. This turns those claims into a measurement against the output
+/// the BASIC source calls for (<see cref="Tests.Backend.BackendDifferentialTests"/>).
 ///
 /// The design rule that matters more than coverage: <b>it fails loudly</b>. An unimplemented opcode,
 /// an unhandled DOS call, a runaway loop - all throw <see cref="Cpu8086Exception"/> naming what was
@@ -44,12 +42,16 @@ public sealed class Cpu8086 {
   private readonly Dictionary<string, byte[]> _executables = new(StringComparer.OrdinalIgnoreCase);
   private readonly Dictionary<ushort, byte[]> _emsHandles = [];
   private readonly EmsMapping?[] _emsMappings = new EmsMapping?[4];
+  private readonly List<FindEntry> _findEntries = [];
 
   /// <summary>Directories the program has created; there is no host file system behind this.</summary>
   private readonly HashSet<string> _directories = new(StringComparer.OrdinalIgnoreCase);
   private int _nextHandle = 5;                          // 0..4 are the standard handles
   private ushort _nextFreeSegment = 0x2000;             // where INT 21h/48h hands out blocks
   private ushort _nextEmsHandle = 1;
+  private ushort _dtaSegment;
+  private ushort _dtaOffset;
+  private int _findIndex;
   private int _execDepth;
   private byte _childExitCode;
 
@@ -69,6 +71,8 @@ public sealed class Cpu8086 {
   }
 
   private readonly record struct EmsMapping(ushort Handle, ushort LogicalPage);
+
+  private readonly record struct FindEntry(string Name, byte Attribute, int Size);
 
   // registers, in the encoding order the ModRM byte uses
   private readonly ushort[] _r = new ushort[8];         // AX CX DX BX SP BP SI DI
@@ -2103,6 +2107,20 @@ public sealed class Cpu8086 {
         return;
       }
       case 0x49 or 0x4A: this._cf = false; return;             // free / resize - the arena is never exhausted here
+      case 0x1A:                                               // set disk-transfer area to DS:DX
+        this._dtaSegment = this._ds;
+        this._dtaOffset = this._r[_DX];
+        this._cf = false;
+        return;
+      case 0x4E: this.FindFirst(); return;                      // find first matching directory entry
+      case 0x4F: this.FindNext(); return;                       // continue the active directory search
+      case 0x36:                                               // get free disk space
+        this._r[_AX] = 8;                                      // sectors per cluster
+        this._r[_BX] = 64000;                                  // available clusters: 250 MiB free
+        this._r[_CX] = 512;                                    // bytes per sector
+        this._r[_DX] = 65000;                                  // total clusters
+        this._cf = false;
+        return;
       // directory calls. There is no real file system behind this interpreter, only the in-memory
       // file map, so a directory is just a name that has been created - enough for a program to make
       // one, remove it, and be told which of those succeeded.
@@ -2157,6 +2175,100 @@ public sealed class Cpu8086 {
       default:
         throw new Cpu8086Exception($"unhandled DOS call AH={ah:X2}h (AX={this._r[_AX]:X4})");
     }
+  }
+
+  /// <summary>Begins DOS's DTA-based 8.3 wildcard walk over the deterministic in-memory disk.</summary>
+  private void FindFirst() {
+    var mask = DosBaseName(this.CString(Linear(this._ds, this._r[_DX])));
+    if (mask.Length == 0)
+      mask = "*.*";
+
+    this._findEntries.Clear();
+    if ((this._r[_CX] & 0x10) != 0) {
+      foreach (var name in new[] { ".", ".." }.Concat(
+        this._directories.OrderBy(name => name, StringComparer.OrdinalIgnoreCase))) {
+        var dosName = DosName(name);
+        if (DosWildcardMatch(dosName, mask))
+          this._findEntries.Add(new(dosName, 0x10, 0));
+      }
+    }
+    foreach (var file in this._byName.Values.OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)) {
+      var dosName = DosName(file.Name);
+      if (DosWildcardMatch(dosName, mask))
+        this._findEntries.Add(new(dosName, 0, file.Bytes.Count));
+    }
+
+    this._findIndex = 0;
+    this.WriteFindResult(notFoundError: 2);
+  }
+
+  /// <summary>Advances the active DTA search, returning DOS error 18 after its final entry.</summary>
+  private void FindNext() {
+    ++this._findIndex;
+    this.WriteFindResult(notFoundError: 18);
+  }
+
+  private void WriteFindResult(ushort notFoundError) {
+    if (this._findIndex >= this._findEntries.Count) {
+      this._r[_AX] = notFoundError;
+      this._cf = true;
+      return;
+    }
+
+    var at = Linear(this._dtaSegment, this._dtaOffset);
+    for (var i = 0; i < 44; ++i)
+      this.WriteByte(at + i, 0);
+    var entry = this._findEntries[this._findIndex];
+    this.WriteByte(at + 21, entry.Attribute);
+    this.WriteWord(at + 26, (ushort)entry.Size);
+    this.WriteWord(at + 28, (ushort)(entry.Size >> 16));
+    for (var i = 0; i < entry.Name.Length; ++i)
+      this.WriteByte(at + 30 + i, (byte)entry.Name[i]);
+    this._cf = false;
+  }
+
+  private static string DosBaseName(string path) {
+    var cut = Math.Max(path.LastIndexOf('\\'), Math.Max(path.LastIndexOf('/'), path.LastIndexOf(':')));
+    return (cut >= 0 ? path[(cut + 1)..] : path).ToUpperInvariant();
+  }
+
+  private static string DosName(string path) {
+    var name = DosBaseName(path);
+    if (name is "." or "..")
+      return name;
+    var dot = name.LastIndexOf('.');
+    var stem = dot > 0 ? name[..dot] : name;
+    var extension = dot > 0 ? name[(dot + 1)..] : "";
+    return stem[..Math.Min(stem.Length, 8)]
+      + (extension.Length == 0 ? "" : "." + extension[..Math.Min(extension.Length, 3)]);
+  }
+
+  /// <summary>DOS 8.3 wildcard matching; unlike a host glob, <c>*.*</c> also matches extensionless names.</summary>
+  private static bool DosWildcardMatch(string name, string pattern) {
+    pattern = pattern.ToUpperInvariant();
+    if (pattern is "*" or "*.*")
+      return true;
+
+    var nameIndex = 0;
+    var patternIndex = 0;
+    var star = -1;
+    var retry = 0;
+    while (nameIndex < name.Length) {
+      if (patternIndex < pattern.Length && (pattern[patternIndex] == '?' || pattern[patternIndex] == name[nameIndex])) {
+        ++nameIndex;
+        ++patternIndex;
+      } else if (patternIndex < pattern.Length && pattern[patternIndex] == '*') {
+        star = patternIndex++;
+        retry = nameIndex;
+      } else if (star >= 0) {
+        patternIndex = star + 1;
+        nameIndex = ++retry;
+      } else
+        return false;
+    }
+    while (patternIndex < pattern.Length && pattern[patternIndex] == '*')
+      ++patternIndex;
+    return patternIndex == pattern.Length;
   }
 
   private void Bios10() {

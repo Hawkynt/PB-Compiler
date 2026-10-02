@@ -79,12 +79,14 @@ public sealed class CommandArityTests {
     Refuses(body, Dialect.Pb35);
 
   /// <summary>
-  /// The same two under QuickBASIC, where BC 4.50 accepts them. The split is the point: a table with
-  /// one column would have had to be wrong here or wrong above.
+  /// Counts accepted under QuickBASIC. COLOR and LOCATE expose the family split above; FILES pins
+  /// both sides of its optional filespec.
   /// </summary>
   [TestCase("COLOR")]
   [TestCase("LOCATE")]
-  public void Bind_GivenABareKeywordBcAccepts_WhenQb45_ThenNoDiagnostic(string body) =>
+  [TestCase("FILES")]
+  [TestCase("FILES \"*.BAS\"")]
+  public void Bind_GivenACountBcAccepts_WhenQb45_ThenNoDiagnostic(string body) =>
     Accepts(body, Dialect.Qb45);
 
   /// <summary>Where the two families agree, they are still both enforced.</summary>
@@ -93,6 +95,11 @@ public sealed class CommandArityTests {
   [TestCase("PALETTE 1")]
   public void Bind_GivenACountBothFamiliesRefuse_WhenQb45_ThenRefused(string body) =>
     Refuses(body, Dialect.Qb45);
+
+  /// <summary>BC 4.50 refuses the first argument count beyond FILES's optional filespec.</summary>
+  [Test]
+  public void Bind_GivenTwoFilespecs_WhenQb45_ThenRefused() =>
+    Refuses("FILES \"*.BAS\", \"*.TXT\"", Dialect.Qb45);
 
   /// <summary>
   /// PALETTE takes none or two, never one - the case a min/max pair could not express, and the reason

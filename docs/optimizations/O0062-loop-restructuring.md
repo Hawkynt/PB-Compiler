@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — `DO`/`FOR` rotation, affine integer IV simplification and adjacent-`FOR` fusion are done; wider-counter/runtime-step `FOR` rotation and general SCEV-style IV handling remain |
-| **Stage** | Mid-end / emitter |
+| **Status** | 🟡 Partial — machine-level loop rotation and affine integer IV simplification are done; loop fusion is not implemented on the IR path; rotation of loops with a multi-instruction header test and general SCEV-style IV handling remain |
+| **Stage** | IR middle end + x86 back end (instruction selection) |
+| **Source** | `Ir/Passes/InductionVariableSimplification.cs`; `Backend/MachineLoopRotation.cs` (run from `Backend/InstructionSelector.cs` under `$OPTIMIZE SPEED`). No loop-fusion pass exists |
 | **IR** | ✅ `Ir/Passes/InductionVariableSimplification.cs` — profitable same-width integer `a*i+b` values over a canonical counted loop become loop-carried recurrences; wired as `ivsimplify` immediately before `phicong` |
 | **Verified by** | `PowerBasic.Compiler.Tests/Ir/InductionVariableSimplificationTests.cs` — affine recurrence, modulo-width wrap, nonlinear/cheap/phi-edge declines, and standard-pipeline verification |
 | **Related** | [O0028](O0028-loop-invariant-code-motion.md), [O0030](O0030-induction-variable-strength-reduction.md), [O0007](O0007-loop-unrolling.md), [O0111](O0111-redundant-induction-variables.md) |
@@ -34,7 +35,7 @@ FOR i% = 0 TO 99 : b%(i%) = a%(i%) * 2 : NEXT
 
 Two loops, 200 iterations of loop overhead, and `a%()` is walked twice.
 
-## Now — fusion
+## Fusion (retired)
 
 ```basic
 FOR i% = 0 TO 99
@@ -43,19 +44,19 @@ FOR i% = 0 TO 99
 NEXT
 ```
 
-`OptLoopFusion` (a Tier-1 pre-pass, after `OptPruner` makes loops adjacent) merges
+Not implemented on the IR path; the syntax-level version was retired with the
+direct emitter. The retired `OptLoopFusion` pre-pass merged
 two adjacent `FOR` loops over the **same counter with identical bounds** whose
 bodies are fusion-simple — only scalar or **counter-indexed**-array assignments,
 no I/O, calls, control flow or non-counter subscripts. Because every array
 subscript is exactly the counter, a value the first loop writes and the second
 reads is the same element the fused iteration just produced, so the `b(i)=a(i)*2`
-chain is legal; a run of such loops collapses into one (verified: three loops —
-fill, derive, sum — fuse, oracle byte-identical). The **only** rejected shape is a
+chain is legal; a run of such loops collapsed into one (three loops —
+fill, derive, sum — fused, oracle byte-identical). The **only** rejected shape was a
 scalar carry — the second body reading a scalar the first writes, or the first
 reading one the second writes — which also drops the non-associative
-shared-accumulator case. A regression test confirms the merge fires and the carry
-case does not. Runs under `--optimize` (the golden gate, being `--no-optimize`,
-never fuses).
+shared-accumulator case.
+It ran under `--optimize` only.
 
 ## IR induction-variable simplification
 
@@ -95,55 +96,38 @@ equal or differ only by a constant offset instead of carrying redundant phis.
 
 ## `DO` and `FOR` rotation
 
-`FOR` loops rotate the same way: the register-resident SI-counter path
-(`TryEmitForCounterInRegister`, which claims most SPEED loops), its 386 `LONG`
-sibling (`TryEmitForLongCounterInRegister`, counter in ESI), and the fast Int16
-fallback (`EmitForInt16Fast`) all emit an entry guard plus a bottom test that
-re-tests the just-incremented counter in place with the inverse condition
-(`stop-if-past` → `continue-if-not-past`). The compare runs the same N+1 times and
-the counter wraps identically, so the increment-then-test end value (QUIRK 2.28)
-and every trip count are unchanged — verified byte-identical against the genuine
-oracle over ascending / descending / zero-trip / `STEP` / negative-start and the
-`BYTE`/`WORD` (unsigned, wrapping) counters; a regression test confirms the SI
-counter is compared at both ends. The wider-counter (`LONG`/float, runtime-step)
-`FOR` shapes still take the top-tested path.
-
-## `DO` rotation
-
-Under `$OPTIMIZE SPEED`, a pre-tested `DO WHILE`/`DO UNTIL … LOOP` (a pre-condition,
-no post-condition) is emitted as one entry guard plus a bottom test:
+Under `$OPTIMIZE SPEED`, `MachineLoopRotation` runs on the selected machine code
+of every function. It matches a pre-tested loop whose header is exactly
+`CMP; Jcc; JMP` with two predecessors and a single latch that ends in `JMP header`,
+and copies that compare-and-branch suffix into the latch:
 
 ```asm
-    ; DO WHILE i < n
-    <test; jump done if false>   ; entry guard, once
+    ; DO WHILE i < n  /  FOR i% = 1 TO n
+    <test; jump done if false>   ; header, now only the entry guard
 top:
     <body>
     <test; jump top if true>     ; bottom test - no per-iteration JMP
 done:
 ```
 
-`EmitDoLoopControl` (shared by the plain `EmitDoLoop` and the SI/DI
-register-resident `TryEmitDoLoopInRegister`, so it fires for essentially every
-`DO` loop) drops the unconditional `jmp top` each pass. The condition is evaluated
-the **same N+1 times** — one entry, one after each body — so any side effect is
-preserved exactly; only the jump disappears. A zero-trip loop is correctly skipped
-by the entry guard. Verified byte-identical against the genuine oracle and
-self-differential (rotated == the golden-faithful build) over `WHILE`, `UNTIL` and
-zero-trip cases; a regression test confirms the bound is compared at both ends.
+The latch's unconditional `jmp header` disappears. The condition is still
+evaluated the **same N+1 times** — once on entry, once after each body — so any
+side effect, the increment-then-test end value (QUIRK 2.28) and every trip count
+are unchanged; a zero-trip loop is skipped by the header. A header with more than
+that one compare (step-sign dispatch, 32-bit or x87 compares) is left top-tested.
+Inline-assembly functions are not rotated.
 
 ## Still planned
 
-- **The remaining FOR shapes** — the memory-counter `LONG`/float paths and the
-  runtime-step loops, whose multi-branch bound test (step-sign dispatch, 32-bit /
-  x87 compares) would each need its inverse form at the bottom. The
-  constant-step, register-resident Int16 and `LONG` counters (the common cases)
-  already rotate.
+- **The remaining loop shapes** — loops whose header test is more than one
+  `CMP`/`Jcc` (runtime-step dispatch, 32-bit / x87 compares) would each need
+  their multi-branch test duplicated at the bottom.
 - **General IV analysis** — the implemented IR slice handles constant-coefficient,
   same-width integer affine values of a canonical counted counter. Runtime
   coefficients, casted/mixed-width recurrences, non-constant starts/steps and
   general Scalar-Evolution equivalence remain the wider [O0110](O0110-general-induction-variables.md)
   problem.
-- **Wider fusion** — the current pass rejects a subscript that is not exactly the
+- **Fusion** — no IR pass; the retired pass rejected a subscript that is not exactly the
   counter (`a(i-1)`, `a(2*i)`) and any non-counter-indexed access, so a
   cross-iteration or affine-index dependence declines rather than being proven
   safe; loops with differing-but-compatible bounds (one a sub-range of the other)

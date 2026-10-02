@@ -75,8 +75,8 @@ public sealed class UnitLinkTests {
   }
 
   private static byte[] CompileMain(string source, IReadOnlyList<PbuFile> units,
-      IReadOnlyList<PblFile> libraries, out List<Diagnostic> errors, bool routed = false) {
-    var generator = new CodeGenerator(Bind(source, "MAIN.BAS")) { UseExperimentalBackend = routed };
+      IReadOnlyList<PblFile> libraries, out List<Diagnostic> errors) {
+    var generator = new CodeGenerator(Bind(source, "MAIN.BAS"));
     var exe = generator.EmitExecutable(units, libraries);
     errors = generator.Errors;
     return exe;
@@ -176,7 +176,7 @@ public sealed class UnitLinkTests {
       """;
 
     var unit = CompileUnit(_MATH_UNIT_SOURCE, "MATHUNIT");
-    CompileMain(mismatched, [unit], [], out var errors, routed: true);
+    CompileMain(mismatched, [unit], [], out var errors);
 
     Assert.That(errors.Select(e => e.Message), Has.Some.Contains("signature mismatch"));
   }
@@ -190,7 +190,7 @@ public sealed class UnitLinkTests {
       """;
 
     var unit = CompileUnit(_MATH_UNIT_SOURCE, "MATHUNIT");
-    CompileMain(callsMissing, [unit], [], out var errors, routed: true);
+    CompileMain(callsMissing, [unit], [], out var errors);
 
     Assert.That(errors.Select(e => e.Message), Has.Some.Contains("unresolved symbol"));
   }
@@ -203,13 +203,13 @@ public sealed class UnitLinkTests {
       CALL Missing(n%)
       """;
 
-    var generator = new CodeGenerator(Bind(source, "MAIN.BAS")) { UseExperimentalBackend = true };
+    var generator = new CodeGenerator(Bind(source, "MAIN.BAS"));
     generator.EmitExecutable();
 
     Assert.Multiple(() => {
       Assert.That(generator.Errors.Select(e => e.Message), Has.Some.Contains("external procedure"));
       Assert.That(generator.BackendRoutedNames, Does.Not.Contain("main"));
-      Assert.That(generator.BackendDeclines.Any(d => d.Name == "main" && d.Reason.Contains("no link symbol")),
+      Assert.That(generator.BackendDeclines.Any(d => d.Name == "main" && d.Reason.Contains("external procedure Missing")),
         Is.True, string.Join("; ", generator.BackendDeclines));
     });
   }

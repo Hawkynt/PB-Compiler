@@ -80,8 +80,8 @@ public sealed class BackendCodePtrTests {
   }
 
   /// <summary>
-  /// The premise: before this the module body declined, and the answers above would have been the
-  /// direct emitter's - correct, and proving nothing about this back end.
+  /// The premise: before this the module body declined, and the answers above would have come from a
+  /// fallback - correct, and proving nothing about this back end.
   /// </summary>
   [Test]
   public void Route_GivenCodePtrOfAProcedure_ThenTheModuleBodyIsTakenByTheBackEnd() {

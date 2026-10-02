@@ -15,7 +15,9 @@ public sealed class IrLinkException(string message) : Exception(message);
 /// <para>
 /// Globals have no external-declaration form in the IR and are therefore module-private storage. Name
 /// collisions are kept distinct by deterministic suffixing instead of accidentally coalescing two
-/// unrelated cells. The input modules are never mutated.
+/// unrelated cells - with one exception: a RUNTIME cell (<c>rt_err</c>, <c>rt_rndseed</c>, the output
+/// column, ...) is the runtime's, one per program, and every module that names it means that one
+/// cell, so <c>rt_*</c> globals of one type are coalesced. The input modules are never mutated.
 /// </para>
 /// </summary>
 public static class IrModuleLinker {
@@ -73,11 +75,15 @@ public static class IrModuleLinker {
       var parameters = source.Parameters
         .Select(parameter => new IrArgument(parameter.Type, parameter.Index, parameter.Name))
         .ToArray();
-      var linked = result.AddFunction(new IrFunction(source.Name, source.ReturnType, parameters) {
-        IsVarArgs = source.IsVarArgs,
-        // NOINLINE is a programmer contract. If any declaration carries it, the combined symbol does too.
-        NoInline = group.Any(function => function.NoInline),
-      });
+      // NOINLINE is a programmer contract. If any declaration carries it, the combined symbol does too.
+      var noInline = group.Any(function => function.NoInline);
+      var linked = result.AddFunction(source.HasConvention
+        ? new IrFunction(source.Name, source.ReturnType, parameters) {
+          Convention = source.Convention, IsVarArgs = source.IsVarArgs, NoInline = noInline, ReturnsClosure = source.ReturnsClosure,
+        }
+        : new IrFunction(source.Name, source.ReturnType, parameters) {
+          IsVarArgs = source.IsVarArgs, NoInline = noInline, ReturnsClosure = source.ReturnsClosure,
+        });
 
       definitions[name] = defined.FirstOrDefault();
       linkedFunctions[name] = linked;
@@ -86,8 +92,16 @@ public static class IrModuleLinker {
     }
 
     var usedNames = result.Functions.Select(function => function.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var runtimeCells = new Dictionary<string, IrGlobalVariable>(StringComparer.Ordinal);
     for (var moduleIndex = 0; moduleIndex < modules.Count; ++moduleIndex)
       foreach (var global in modules[moduleIndex].Globals) {
+        if (IsRuntimeCell(global) && runtimeCells.TryGetValue(global.Name, out var shared)) {
+          if (!shared.ValueType.SameStorage(global.ValueType) || shared.Count != global.Count)
+            throw new IrLinkException(
+              $"runtime cell '{global.Name}' is {shared.ValueType} in one module and {global.ValueType} in '{modules[moduleIndex].Name}'");
+          valueMap[global] = shared;
+          continue;
+        }
         var name = UniqueGlobalName(global.Name, moduleIndex, usedNames);
         var linked = result.AddGlobal(new IrGlobalVariable(name, global.ValueType) {
           IsZeroInitialized = global.IsZeroInitialized,
@@ -96,6 +110,8 @@ public static class IrModuleLinker {
           Count = global.Count,
         });
         valueMap[global] = linked;
+        if (IsRuntimeCell(global))
+          runtimeCells[global.Name] = linked;
       }
 
     foreach (var name in functionOrder) {
@@ -119,6 +135,9 @@ public static class IrModuleLinker {
 
     return result;
   }
+
+  /// <summary>A cell the runtime owns - one per program, whichever module names it.</summary>
+  private static bool IsRuntimeCell(IrGlobalVariable global) => global.Name.StartsWith("rt_", StringComparison.Ordinal);
 
   private static bool SameSignature(IrFunction left, IrFunction right) {
     if (!left.ReturnType.Equals(right.ReturnType)

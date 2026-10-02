@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
@@ -68,6 +69,48 @@ public sealed class O0307MiddleEndTests {
     Assert.That(entry.Terminator, Is.TypeOf<IrRet>());
     Assert.That(caller.AllInstructions.OfType<IrCall>().Single(), Is.SameAs(indirect));
     Assert.That(IrVerifier.Verify(caller), Is.Empty);
+  }
+
+
+  [Test]
+  public void SpeculativeDevirtualization_GivenExactSharedSingletonTarget_ThenItLeavesTheCallForWpdWithoutAGuard() {
+    var module = new IrModule("test");
+    var targetArgument = new IrArgument(IrType.I32, 0, "value");
+    var target = module.AddFunction(new IrFunction("target", IrType.I32, [targetArgument]) { NoInline = true });
+    new IrBuilder(target.CreateBlock("entry")).Ret(targetArgument);
+
+    var callback = new IrArgument(IrType.Ptr, 0, "callback");
+    var value = new IrArgument(IrType.I32, 1, "value");
+    var invoke = module.AddFunction(new IrFunction("invoke", IrType.I32, [callback, value]));
+    var invokeEntry = invoke.CreateBlock("entry");
+    var indirect = invokeEntry.Append(new IrCall(IrType.I32, callback, [value]));
+    invokeEntry.Append(new IrRet(indirect));
+
+    var main = module.AddFunction(new IrFunction("main", IrType.Void));
+    var mainEntry = main.CreateBlock("entry");
+    mainEntry.Append(new IrCall(IrType.I32, invoke, [target, new IrConstantInt(IrType.I32, 1)]));
+    mainEntry.Append(new IrCall(IrType.I32, invoke, [target, new IrConstantInt(IrType.I32, 2)]));
+    mainEntry.Append(new IrRet());
+
+    var analyses = new IrModuleAnalysisManager(module);
+    var speculative = SpeculativeDevirtualization.Run(module, analyses);
+
+    Assert.Multiple(() => {
+      Assert.That(speculative.Changes, Is.Zero);
+      Assert.That(invokeEntry.Terminator, Is.TypeOf<IrRet>(),
+        "a complete singleton proof must not be replaced by a speculative guard");
+      Assert.That(indirect.Callee, Is.SameAs(callback));
+      Assert.That(analyses.IsCached(IrModuleAnalyses.FunctionTargets), Is.True);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.CallGraph), Is.True);
+    });
+
+    var proven = WholeProgramDevirtualization.Run(module, analyses);
+
+    Assert.Multiple(() => {
+      Assert.That(proven.Changes, Is.EqualTo(1));
+      Assert.That(indirect.Callee, Is.SameAs(target));
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
   }
 
   [Test]

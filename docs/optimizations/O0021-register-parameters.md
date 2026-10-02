@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (leading word-sized `BYVAL` scalars, AX/DX/BX/CX) |
-| **Stage** | Whole-program analysis + emitter (both sides of the call) |
-| **Source** | `CodeGen/OptRegParm.cs`, `CodeGen/CodeGenerator.Procs.cs` (`ConventionRegisters`) |
+| **Status** | ✅ Implemented (word values plus Watcom LONG pairs in AX/DX/BX/CX) |
+| **Stage** | IR module pass (after the call graph is final) + x86 back end (both sides of the call) |
+| **Source** | `Ir/Passes/PrivateCallingConvention.cs`; `Backend/X86CallAbi.cs`; `Backend/MachineEmitter.cs` |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED`, `pb36` only |
 | **Related** | [O0006](O0006-inlining.md), [O0018](O0018-interprocedural-constant-propagation.md), [O0282](O0282-internal-calling-convention.md), [docs/LINKER.md](../LINKER.md) (`WATCALL`) |
 
@@ -12,15 +12,17 @@
 
 When the compiler owns **every** call site of a procedure — it is defined in a
 self-contained module and its address is never taken via `CODEPTR`/`CALL DWORD`
-— its leading word-sized `BYVAL` scalar parameters travel in registers
-(AX, DX, BX, CX) instead of on the stack, reusing the existing `WATCALL`
-lowering. Caller and callee flip together, so the behavior is identical and the
-per-call push/pop traffic disappears along with the frame slots.
+— its word-sized `BYVAL` scalar parameters travel in AX, DX, BX and CX instead
+of on the stack. A LONG uses Watcom's DX:AX or CX:BX pair when one remains;
+failure to find a legal pair sends that argument and every later one to the
+stack. Caller and callee flip together, so behavior is unchanged while avoidable
+call traffic disappears.
 
-O0282 now owns the per-procedure policy around this mechanism: an address escape
-fences the escaped target instead of disabling unrelated procedures, and one-word
-BYREF near pointers can use the same register slots. O0021 remains the original
-word-sized `BYVAL` lowering.
+`PrivateCallingConvention` switches the definition and every call site to
+`WATCALL` together in the IR, and the back end reads both from there. O0282 owns
+the per-procedure policy around this mechanism: an address escape fences the
+escaped target instead of disabling unrelated procedures, and one-word BYREF
+near pointers can use the same register slots.
 
 ## Sample
 
@@ -79,16 +81,19 @@ The `pb36` spelling of the same thing by hand would be a `WATCALL` declaration.
   procedures may still specialize under O0282's per-procedure ownership proof.
 - Typed procedure-pointer dispatch remains a conservative module-wide fence until
   its complete target set is represented and can be proven.
-- It is **skipped when external units or libraries are linked** — they may call
-  with the stack convention and were compiled without this knowledge.
+- It is **skipped when external units or libraries are linked**, or when the
+  module is compiled as a unit (`IrModule.OwnsProcedureAbi`) — such callers use
+  the stack convention and were compiled without this knowledge. Inline assembly
+  anywhere in the program disables it too, since a text `CALL` is a caller the
+  IR cannot see.
 - It is not applied to non-`pb36` dialects at all, so the golden output of every
   historic dialect is untouched.
 - Caller and callee always flip together, per procedure, in the same compilation.
 
 ## Limits
 
-LONG, float and pointer arguments in register *pairs* are the remaining piece
-(see [O0282](O0282-internal-calling-convention.md)); the general internal calling
+Float and far-pointer arguments in register pairs remain (see
+[O0282](O0282-internal-calling-convention.md)); the general internal calling
 convention also composes with BYREF collapse and dead-parameter elimination
 ([O0069](O0069-dead-parameter-elimination.md)) and segment-register allocation
 ([O0071](O0071-segment-register-allocation.md)).

@@ -25,11 +25,11 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendDesugaredStatementTests {
 
-  private static (string Output, IEnumerable<string> Routed) Run(string source, bool optimize, bool routed) {
+  private static (string Output, IEnumerable<string> Routed) Run(string source, bool optimize) {
     var model = Binder.Bind(
       Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), generator.BackendRoutedNames.ToList());
@@ -62,13 +62,10 @@ public sealed class BackendDesugaredStatementTests {
       END SUB
       """;
 
-    var (output, routed) = Run(source, optimize, routed: true);
+    var (output, routed) = Run(source, optimize);
     Assert.That(routed, Does.Contain("Work"), "the body with the USING block must route now");
-    Assert.Multiple(() => {
-      Assert.That(output, Is.EqualTo(Run(source, optimize, routed: false).Output));
-      Assert.That(output, Is.EqualTo("in 7  0 |out 1"),
-        "the field was written, and Dispose ran once and only on the way out");
-    });
+    Assert.That(output, Is.EqualTo("in 7  0 |out 1"),
+      "the field was written, and Dispose ran once and only on the way out");
   }
 
   /// <summary>
@@ -93,11 +90,8 @@ public sealed class BackendDesugaredStatementTests {
       PRINT c.N
       """;
 
-    var (output, routed) = Run(source, optimize, routed: true);
+    var (output, routed) = Run(source, optimize);
     Assert.That(routed, Does.Contain("main"));
-    Assert.Multiple(() => {
-      Assert.That(output, Is.EqualTo(Run(source, optimize, routed: false).Output));
-      Assert.That(output, Is.EqualTo("17"), "both calls reached the same record");
-    });
+    Assert.That(output, Is.EqualTo("17"), "both calls reached the same record");
   }
 }

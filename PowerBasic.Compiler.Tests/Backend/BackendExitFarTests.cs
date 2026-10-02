@@ -16,7 +16,7 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// caller. It is PB's other non-local jump, the same shape as <c>ON ERROR</c> and armed the same way:
 /// inline code, because a CALL would capture its own frame instead of the one being marked.
 ///
-/// Everything here RUNS both images rather than inspecting either. A landing point is reached by an
+/// Everything here RUNS the image rather than inspecting it. A landing point is reached by an
 /// edge no instruction chose, and "the stack is where it was" is not a property static inspection can
 /// report - the failure mode of getting it wrong is a program that runs and then returns to nowhere,
 /// which only shows up when something executes.
@@ -24,26 +24,24 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendExitFarTests {
 
-  private static (string Output, IEnumerable<string> Routed) Run(string source, bool routed) {
+  private static (string Output, IEnumerable<string> Routed) Run(string source) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true, UseExperimentalBackend = routed };
+    var cg = new CodeGenerator(model) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return (Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|"), cg.BackendRoutedNames.ToList());
   }
 
   /// <summary>
-  /// Both emitters, and the exact text. The routing assertion is not decoration: a program the back
-  /// end declined would be emitted by the DIRECT path under both settings and agree with itself
-  /// perfectly, which is the one way this fixture could pass while testing nothing.
+  /// The exact text, and that the back end took every procedure the case is about rather than
+  /// declining it.
   /// </summary>
-  private static void BothPathsAgree(string source, string expected, params string[] mustRoute) {
-    var (routed, names) = Run(source, routed: true);
+  private static void Prints(string source, string expected, params string[] mustRoute) {
+    var (output, names) = Run(source);
     foreach (var name in mustRoute.DefaultIfEmpty("main"))
       Assert.That(names, Does.Contain(name), $"the back end has to have taken {name}");
-    Assert.That(routed, Is.EqualTo(Run(source, routed: false).Output), "the two emitters disagree");
-    Assert.That(routed, Is.EqualTo(expected));
+    Assert.That(output, Is.EqualTo(expected));
   }
 
   /// <summary>
@@ -53,7 +51,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenABareExitFarInASub_ThenTheRestOfTheSubAndTheCallerAreSkipped() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Leave()
       PRINT "before"
       EXIT FAR AT Home
@@ -75,7 +73,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenNestedCalls_ThenEveryFrameBetweenIsAbandonedAtOnce() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Noisy(BYVAL n%)
       EXIT FAR AT Unwound
       Noisy 3
@@ -99,7 +97,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenAnExitFarInsideALoop_ThenTheLoopIsLeftUnfinished() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Counter()
       EXIT FAR AT Done
       Counter
@@ -124,7 +122,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenAFunctionThatAssignsItsResultThenExitsFar_ThenTheCallerNeverReceivesIt() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE FUNCTION Give%()
       r% = 111
       EXIT FAR AT Landed
@@ -147,7 +145,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenAProcedureThatAlsoReturnsNormally_ThenTheOrdinaryReturnStillWorks() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Maybe(BYVAL n%)
       EXIT FAR AT Landed
       Maybe 1
@@ -171,7 +169,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenTwoArmedPoints_ThenTheMostRecentOneWins() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Leave()
       EXIT FAR AT First
       PRINT "armed first"
@@ -197,7 +195,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenAnArmThatNeverFires_ThenTheProgramRunsUnchanged() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Quiet()
       a% = 5
       EXIT FAR AT Never
@@ -218,7 +216,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenAnExitFarInTheModuleBody_ThenItJumpsToTheArmedLabel() =>
-    BothPathsAgree("""
+    Prints("""
       PRINT "start"
       EXIT FAR AT Target
       EXIT FAR
@@ -236,7 +234,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenAProcedureThatArmsTheUnwindPoint_ThenItResumesInsideItselfAndStillReturns() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Outer()
       DECLARE SUB Inner()
       PRINT "start"
@@ -264,7 +262,7 @@ public sealed class BackendExitFarTests {
   /// </summary>
   [Test]
   public void Route_GivenLocalsWrittenBeforeTheArm_ThenTheyStillReadCorrectlyAfterLanding() =>
-    BothPathsAgree("""
+    Prints("""
       DECLARE SUB Churn(BYVAL n%)
       x% = 1234
       y% = -9

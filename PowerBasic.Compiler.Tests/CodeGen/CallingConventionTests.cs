@@ -6,9 +6,9 @@ using PowerBasic.Compiler.Syntax.Ast;
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
 /// <summary>
-/// Register calling conventions (docs/LINKER.md): WATCALL (Watcom: args in AX,DX,BX,CX,
-/// callee-clean overflow, name <c>name_</c>) and FASTCALL (Microsoft/Borland: AX,DX,BX,
-/// callee-clean overflow, name <c>@name</c>). These round-trip tests define a procedure
+/// Register calling conventions (docs/LINKER.md): WATCALL uses Watcom's typed AX,DX,BX,CX
+/// allocator with caller-clean overflow and <c>name_</c>. FASTCALL is the current common word-only
+/// AX,DX,BX surface with callee-clean overflow and <c>@name</c>. These round-trip tests define a procedure
 /// with the convention and call it - exercising both the call-site register loading and
 /// the define-side register-spill prologue in one program (run unoptimized so the call is
 /// real, not inlined). DOSBox-gated; the real-foreign-object proofs live in CInteropTests.
@@ -53,7 +53,7 @@ public sealed class CallingConventionTests {
 
   [Test]
   public void Execute_GivenWatcallRoundTrip_WhenFiveArgs_ThenFourRegistersPlusStackOverflow() {
-    // a,b,c,d -> AX,DX,BX,CX ; e -> stack ; callee cleans the one overflow word (RET 2)
+    // a,b,c,d -> AX,DX,BX,CX ; e -> stack ; caller cleans the one overflow word
     const string source = """
       DECLARE FUNCTION calc WATCALL (BYVAL a AS INTEGER, BYVAL b AS INTEGER, BYVAL c AS INTEGER, BYVAL d AS INTEGER, BYVAL e AS INTEGER) AS INTEGER
       PRINT calc(50, 8, 4, 2, 1)
@@ -90,72 +90,7 @@ public sealed class CallingConventionTests {
     Assert.That(Run(source), Is.EqualTo(" 36\n"));
   }
 
-  // ---- $OPTIMIZE SPEED internal register parameter passing (OptRegParm) -----
-
-  private static SemanticModel BindPb36(string source) {
-    var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
-    var model = Binder.Bind(unit, Dialect.Pb36);
-    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    return model;
-  }
-
-  [Test]
-  public void RegParm_GivenWordParamProcWeOwn_WhenApplied_ThenConvertedToRegisterConvention() {
-    var model = BindPb36("""
-      DECLARE FUNCTION addw(BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-      PRINT addw(2, 3)
-      FUNCTION addw(BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-        addw = a + b
-      END FUNCTION
-      """);
-    OptRegParm.Apply(model);
-    Assert.That(model.Procedures["addw"].CallConv, Is.EqualTo(CallConvention.Watcall),
-      "an in-module word-parameter procedure should be lifted to the register convention");
-  }
-
-  [Test]
-  public void RegParm_GivenLongParam_WhenApplied_ThenStaysStackConvention() {
-    var model = BindPb36("""
-      DECLARE FUNCTION f(BYVAL x AS LONG) AS LONG
-      PRINT f(1)
-      FUNCTION f(BYVAL x AS LONG) AS LONG
-        f = x
-      END FUNCTION
-      """);
-    OptRegParm.Apply(model);
-    Assert.That(model.Procedures["f"].CallConv, Is.EqualTo(CallConvention.Basic),
-      "a non-word parameter is outside the common-case register model - keep the stack convention");
-  }
-
-  [Test]
-  public void RegParm_GivenProcedureAddressTaken_WhenApplied_ThenDisabledWholesale() {
-    var model = BindPb36("""
-      DECLARE FUNCTION addw(BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-      DIM p AS INTEGER
-      p = CODEPTR(addw)
-      PRINT addw(2, 3)
-      FUNCTION addw(BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-        addw = a + b
-      END FUNCTION
-      """);
-    OptRegParm.Apply(model);
-    Assert.That(model.Procedures["addw"].CallConv, Is.EqualTo(CallConvention.Basic),
-      "a taken address means an opaque indirect call may exist - register passing must be disabled");
-  }
-
-  [Test]
-  public void RegParm_GivenExplicitConvention_WhenApplied_ThenLeftUntouched() {
-    var model = BindPb36("""
-      DECLARE FUNCTION g CDECL ALIAS "_g" (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-      PRINT g(2, 3)
-      FUNCTION g CDECL ALIAS "_g" (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
-        g = a + b
-      END FUNCTION
-      """);
-    OptRegParm.Apply(model);
-    Assert.That(model.Procedures["g"].CallConv, Is.EqualTo(CallConvention.Cdecl),
-      "an explicitly declared convention must never be overridden");
-  }
+  // ---- $OPTIMIZE SPEED internal register parameter passing (O0282) --------
 
   private static string RunOptSpeed(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
@@ -200,31 +135,53 @@ public sealed class CallingConventionTests {
     Assert.That(RunOptSpeed(source), Is.EqualTo(" 35\n"));
   }
 
-  private static (CodeGenerator Generator, byte[] Image) Compile(string source, bool routed) {
+  private static (CodeGenerator Generator, byte[] Image) Compile(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model);
     return (generator, generator.EmitExecutable());
   }
 
-  // Pinned for BOTH emission paths on purpose. The check used to live in the direct emitter's
-  // EmitProcedure, so with the x86-16 back end routing enabled (PBC_X_BACKEND / --x-backend) this
-  // program compiled clean - a rejected program silently accepted. It now sits in LayoutFrame, which
-  // both paths call.
-  [TestCase(true)]
-  [TestCase(false)]
-  public void Compile_GivenRegisterConventionWithLongParam_ThenDiagnostic(bool routed) {
-    // a LONG does not fit the common-case word model; reject rather than silently miscompile
+  // The check used to live in the retired emitter's procedure path, so the x86-16 back end could
+  // silently accept a shape it did not implement. It now sits in shared frame layout.
+  [Test]
+  public void Compile_GivenFastcallWithLongParam_ThenDiagnostic() {
+    // FASTCALL still combines incompatible vendor identities; reject LONG until those are split.
     const string source = """
-      DECLARE FUNCTION f WATCALL (BYVAL x AS LONG) AS LONG
+      DECLARE FUNCTION f FASTCALL (BYVAL x AS LONG) AS LONG
       PRINT f(1)
-      FUNCTION f WATCALL (BYVAL x AS LONG) AS LONG
+      FUNCTION f FASTCALL (BYVAL x AS LONG) AS LONG
         f = x
       END FUNCTION
       """;
-    Assert.That(Compile(source, routed).Generator.Errors.Select(e => e.Message), Has.Some.Contains("word-sized"),
+    Assert.That(Compile(source).Generator.Errors.Select(e => e.Message), Has.Some.Contains("word-sized"),
       "expected a diagnostic rejecting the non-word register-convention parameter");
+  }
+
+  /// <summary>
+  /// Given Watcom's exact 16-bit allocation sequence, the first word consumes AX, the LONG then uses
+  /// CX:BX (high:low), and the next word uses the still-free DX. The following LONG cannot fit either
+  /// legal pair, so it and every later argument travel right-to-left on the stack.
+  /// </summary>
+  [Test]
+  public void Execute_GivenWatcallLongPairs_WhenProduced_ThenMatchesDocumentedAllocation() {
+    const string source = """
+      DECLARE FUNCTION mix WATCALL (BYVAL a AS INTEGER, BYVAL b AS LONG, BYVAL c AS INTEGER, BYVAL d AS LONG, BYVAL e AS INTEGER) AS LONG
+      PRINT mix(3, 70000, 5, 900000, 7)
+      FUNCTION mix WATCALL (BYVAL a AS INTEGER, BYVAL b AS LONG, BYVAL c AS INTEGER, BYVAL d AS LONG, BYVAL e AS INTEGER) AS LONG NOINLINE
+        mix = b + d + a * 1000 + c * 100 + e
+      END FUNCTION
+      """;
+
+    var (generator, image) = Compile(source);
+
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendRoutedNames, Does.Contain("mix"),
+        "the WATCALL body must reach the mandatory x86-16 route");
+      Assert.That(Exec.Cpu8086.Run(image).Output.Trim(), Is.EqualTo("973507"));
+    });
   }
 
   /// <summary>
@@ -235,8 +192,7 @@ public sealed class CallingConventionTests {
   ///
   /// <para>
   /// This replaces a test that asserted the opposite. WATCALL/FASTCALL lay their leading arguments at
-  /// negative offsets, and those are now filled by the routed prologue's own push sequence rather
-  /// than only by the direct emitter's.
+  /// negative offsets, and those are filled by the production prologue's own push sequence.
   /// </para>
   /// </summary>
   [TestCase("WATCALL")]
@@ -253,7 +209,7 @@ public sealed class CallingConventionTests {
         END IF
       END FUNCTION
       """;
-    var (routed, _) = Compile(source, routed: true);
+    var (routed, _) = Compile(source);
     Assert.That(routed.Errors, Is.Empty, "codegen: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("sub2"),
       $"{convention} must route now that the prologue spills its register arguments");
@@ -261,8 +217,7 @@ public sealed class CallingConventionTests {
 
   /// <summary>
   /// The other half of the same rule: the stack-only conventions do route. Pinning this keeps the
-  /// routing from silently regressing to the direct emitter, which would still pass the behavioural
-  /// test below while quietly leaving the class unrouted.
+  /// class from silently declining, which would still pass the behavioural test below.
   /// </summary>
   [TestCase("CDECL")]
   [TestCase("STDCALL")]
@@ -278,7 +233,7 @@ public sealed class CallingConventionTests {
         END IF
       END FUNCTION
       """;
-    var (routed, _) = Compile(source, routed: true);
+    var (routed, _) = Compile(source);
     Assert.That(routed.Errors, Is.Empty, "codegen: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("sub2"),
       $"{convention} is a stack-only convention the back end emits, so it must route");
@@ -287,16 +242,16 @@ public sealed class CallingConventionTests {
   /// <summary>
   /// The behavioural half of the routing rule, run on the in-process 8086 interpreter so it needs no
   /// emulator: the recursion makes the self-call survive inlining, and every convention must answer
-  /// 13 whether routing is on or off. Before the fix the routed builds printed 0 (WATCALL/FASTCALL -
-  /// arguments read out of an unfilled frame) and 12 (CDECL/STDCALL - arguments swapped by the
-  /// reversed push order).
+  /// 13 - sub2(20, 7) steps both arguments down seven times. Before the fix the routed builds printed
+  /// 0 (WATCALL/FASTCALL - arguments read out of an unfilled frame) and 12 (CDECL/STDCALL - arguments
+  /// swapped by the reversed push order).
   /// </summary>
   [TestCase("WATCALL")]
   [TestCase("FASTCALL")]
   [TestCase("CDECL")]
   [TestCase("STDCALL")]
   [TestCase("")]
-  public void Execute_GivenRecursiveConventionFunction_WhenRoutedOrDirect_ThenSameResult(string convention) {
+  public void Execute_GivenRecursiveConventionFunction_ThenItAnswersThirteen(string convention) {
     var source = $"""
       DECLARE FUNCTION sub2 {convention} (BYVAL a AS INTEGER, BYVAL b AS INTEGER) AS INTEGER
       PRINT sub2(20, 7)
@@ -308,12 +263,8 @@ public sealed class CallingConventionTests {
         END IF
       END FUNCTION
       """;
-    var (routedGenerator, routedImage) = Compile(source, routed: true);
-    var (_, directImage) = Compile(source, routed: false);
-    Assert.That(routedGenerator.Errors, Is.Empty, "codegen: " + string.Join("; ", routedGenerator.Errors));
-    Assert.Multiple(() => {
-      Assert.That(Exec.Cpu8086.Run(directImage).Output.Trim(), Is.EqualTo("13"), "direct");
-      Assert.That(Exec.Cpu8086.Run(routedImage).Output.Trim(), Is.EqualTo("13"), "routed");
-    });
+    var (generator, image) = Compile(source);
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    Assert.That(Exec.Cpu8086.Run(image).Output.Trim(), Is.EqualTo("13"));
   }
 }

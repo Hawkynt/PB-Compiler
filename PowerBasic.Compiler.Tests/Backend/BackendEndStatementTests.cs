@@ -23,11 +23,11 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendEndStatementTests {
 
-  private static (string Output, int Exit, IEnumerable<string> Routed) Run(string source, bool optimize, bool routed) {
+  private static (string Output, int Exit, IEnumerable<string> Routed) Run(string source, bool optimize) {
     var model = Binder.Bind(
       Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     var cpu = Cpu8086.Run(image);
@@ -52,11 +52,9 @@ public sealed class BackendEndStatementTests {
       END FUNCTION
       """;
 
-    var (output, exit, routed) = Run(source, optimize, routed: true);
+    var (output, exit, routed) = Run(source, optimize);
     Assert.That(routed, Does.Contain("main"));
-    var direct = Run(source, optimize, routed: false);
     Assert.Multiple(() => {
-      Assert.That((output, exit), Is.EqualTo((direct.Output, direct.Exit)));
       Assert.That(exit, Is.EqualTo(3), "END n sets the errorlevel DOS reports");
       Assert.That(output, Is.EqualTo("bye"));
     });
@@ -76,18 +74,16 @@ public sealed class BackendEndStatementTests {
       Stop2
       PRINT "never"
       END
-      SUB Stop2()
+      SUB Stop2() NOINLINE
         PRINT "in"
         END 7
         PRINT "unreached"
       END SUB
       """;
 
-    var (output, exit, routed) = Run(source, optimize, routed: true);
+    var (output, exit, routed) = Run(source, optimize);
     Assert.That(routed, Does.Contain("Stop2"), "the procedure containing END must route now");
-    var direct = Run(source, optimize, routed: false);
     Assert.Multiple(() => {
-      Assert.That((output, exit), Is.EqualTo((direct.Output, direct.Exit)));
       Assert.That(output, Is.EqualTo("start|in"), "nothing after the END ran, in either scope");
       Assert.That(exit, Is.EqualTo(7));
     });

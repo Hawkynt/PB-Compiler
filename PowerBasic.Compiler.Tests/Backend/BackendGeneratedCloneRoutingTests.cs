@@ -8,7 +8,8 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <summary>
 /// End-to-end O0283 coverage for the case that exposed definition-side ABI loss: specialization makes
 /// a private IR definition that has no ProcedureSymbol, and the routed backend must still emit and call
-/// it with the source procedure's stack convention.
+/// it with the source procedure's stack convention. The reference is the same program built with the
+/// optimizer off, where no clone exists: the specialized build must print exactly what it prints.
 /// </summary>
 [TestFixture]
 public sealed class BackendGeneratedCloneRoutingTests {
@@ -46,30 +47,28 @@ public sealed class BackendGeneratedCloneRoutingTests {
 
   [TestCase("CDECL")]
   [TestCase("STDCALL")]
-  public void Execute_GivenSpecializedStackConvention_WhenCloneSurvivesInlining_ThenGeneratedBodyRoutesAndAgrees(
+  public void Execute_GivenSpecializedStackConvention_WhenCloneSurvivesInlining_ThenGeneratedBodyRoutesAndMatchesTheUnoptimizedBuild(
       string convention) {
     var source = Source(convention);
 
     var routed = new CodeGenerator(Bind(source)) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = true,
     };
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
     Assert.That(routed.BackendGeneratedRoutedNames,
       Has.Some.StartsWith("F__o0283_ctx"), "O0283 clone was not emitted by the routed backend");
 
-    var direct = new CodeGenerator(Bind(source)) {
-      Optimize = true,
-      OptimizeSpeed = true,
-      UseExperimentalBackend = false,
-    };
-    var directImage = direct.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
+    var unoptimized = new CodeGenerator(Bind(source)) { Optimize = false };
+    var unoptimizedImage = unoptimized.EmitExecutable();
+    Assert.That(unoptimized.Errors, Is.Empty, "unoptimized: " + string.Join("; ", unoptimized.Errors));
+    Assert.That(unoptimized.BackendGeneratedRoutedNames, Has.None.StartsWith("F__o0283_ctx"),
+      "the reference build must not specialize, or it compares the clone with itself");
 
-    var expected = Cpu8086.Run(directImage);
+    var expected = Cpu8086.Run(unoptimizedImage);
     var actual = Cpu8086.Run(routedImage);
+    Assert.That(actual.Output, Does.EndWith(" 99 \r\n"), "the program ran to its last PRINT");
     Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((expected.Output, expected.ExitCode)));
   }
 }

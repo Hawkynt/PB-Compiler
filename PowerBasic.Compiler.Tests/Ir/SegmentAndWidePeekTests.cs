@@ -25,14 +25,14 @@ public sealed class SegmentAndWidePeekTests {
     return model;
   }
 
-  private static string Run(string source, bool routed) {
-    var cg = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = routed };
+  private static string Run(string source) {
+    var cg = new CodeGenerator(Bind(source)) { Optimize = true};
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output;
   }
 
-  private static readonly (string Name, string Source)[] _programs = [
+  private static readonly (string Name, string Source, string Expected)[] _programs = [
     // POKE writes bytes; PEEKI reads the word they form, so the two halves and the whole must agree
     ("word read over two poked bytes", """
       DEF SEG = &HA000
@@ -42,7 +42,7 @@ public sealed class SegmentAndWidePeekTests {
       PRINT PEEK(100); PEEK(101)
       DEF SEG
       END
-      """),
+      """, "4660 | 52  18"),
     ("dword read over four poked bytes", """
       DEF SEG = &HA000
       POKE 200, &H78
@@ -52,7 +52,8 @@ public sealed class SegmentAndWidePeekTests {
       PRINT PEEKL(200)
       DEF SEG
       END
-      """),
+      """, "305419896"),   // &H12345678
+    // the interpreter loads DGROUP at paragraph 256 and the string heap is the 64 KiB after it
     ("segments", """
       DIM v AS INTEGER
       DIM s AS STRING
@@ -60,7 +61,7 @@ public sealed class SegmentAndWidePeekTests {
       s = "x"
       PRINT VARSEG(v); STRSEG(s)
       END
-      """),
+      """, "256  4352"),
     // asking where something lives must not read it, and must not disturb it
     ("the operand is not evaluated", """
       DIM v AS INTEGER
@@ -68,21 +69,21 @@ public sealed class SegmentAndWidePeekTests {
       PRINT VARSEG(v)
       PRINT v
       END
-      """),
+      """, "256 | 7"),
   ];
 
   [Test]
   public void Lowering_GivenTheWiderFamily_ThenTheModuleLowers() {
-    foreach (var (name, source) in _programs) {
+    foreach (var (name, source, _) in _programs) {
       var module = IrLowering.TryLowerModule(Bind(source), out var why);
       Assert.That(module, Is.Not.Null, $"'{name}' declined: {why}");
     }
   }
 
   [Test]
-  public void Routed_GivenTheWiderFamily_ThenItBehavesAsTheDirectEmitterDoes() {
-    foreach (var (name, source) in _programs)
-      Assert.That(Run(source, routed: true), Is.EqualTo(Run(source, routed: false)), $"program '{name}'");
+  public void Run_GivenTheWiderFamily_ThenEachProgramPrintsItsExpectedOutput() {
+    foreach (var (name, source, expected) in _programs)
+      Assert.That(Run(source).Trim().Replace("\r\n", "|"), Is.EqualTo(expected), $"program '{name}'");
   }
 
   /// <summary>
@@ -99,5 +100,5 @@ public sealed class SegmentAndWidePeekTests {
       PRINT PEEKI(300)
       DEF SEG
       END
-      """, routed: true).Trim(), Is.EqualTo("4660"));   // &H1234
+      """).Trim(), Is.EqualTo("4660"));   // &H1234
 }

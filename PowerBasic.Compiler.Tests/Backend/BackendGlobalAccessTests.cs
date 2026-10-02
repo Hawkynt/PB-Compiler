@@ -27,7 +27,7 @@ public sealed class BackendGlobalAccessTests {
   private const string _sharedGlobalProgram = """
     DIM g AS SHARED INTEGER
 
-    FUNCTION AddG%(BYVAL v%)
+    FUNCTION AddG%(BYVAL v%) NOINLINE
       AddG% = v% + g
     END FUNCTION
 
@@ -38,18 +38,18 @@ public sealed class BackendGlobalAccessTests {
   private const string _sharedArrayAndStaticsProgram = """
     DIM tally(3) AS SHARED INTEGER
 
-    FUNCTION Touch%(BYVAL index%)
+    FUNCTION Touch%(BYVAL index%) NOINLINE
       tally(index%) = tally(index%) + 10
       Touch% = tally(index%)
     END FUNCTION
 
-    FUNCTION First%()
+    FUNCTION First%() NOINLINE
       STATIC count AS INTEGER
       count = count + 1
       First% = count
     END FUNCTION
 
-    FUNCTION Second%()
+    FUNCTION Second%() NOINLINE
       STATIC count AS INTEGER
       count = count + 10
       Second% = count
@@ -100,11 +100,11 @@ public sealed class BackendGlobalAccessTests {
   private static IrModule Optimized(SemanticModel model) {
     var module = IrLowering.TryLowerModule(model);
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset");
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     return module;
   }
 
@@ -153,7 +153,7 @@ public sealed class BackendGlobalAccessTests {
     Assert.That(DataCells(firstMachine!), Is.Not.EquivalentTo(DataCells(secondMachine!)),
       "same-named STATIC locals in different procedures must not alias");
 
-    static IReadOnlyList<string> DataCells(MFunction fn) => fn.AllInstructions
+    static IReadOnlyList<string> DataCells(X86MachineFunction fn) => fn.AllInstructions
       .SelectMany(i => i.Operands)
       .OfType<MOperand.DataCell>()
       .Select(cell => cell.Name)
@@ -229,13 +229,13 @@ public sealed class BackendGlobalAccessTests {
       Grab
       END
 
-      SUB Grab
+      SUB Grab NOINLINE
         DIM t AS STRING
         READ t
         PRINT t
       END SUB
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     _ = routed.EmitExecutable();
 
@@ -248,69 +248,48 @@ public sealed class BackendGlobalAccessTests {
 
   [Test]
   public void Emit_GivenRoutedGlobalAccess_ThenTheImageAssemblesAndTheBackEndTookTheFunction() {
-    var direct = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(_sharedGlobalProgram)) { Optimize = true};
 
-    var directImage = direct.EmitExecutable();
     var routedImage = routed.EmitExecutable();
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routedImage, Is.Not.Empty);
     // an unresolved data reference would have thrown while the fixups resolved
     Assert.That(routed.BackendRoutedNames, Does.Contain("AddG"),
       "the back end did not take the global-reading function");
-    Assert.That(directImage, Is.Not.Empty);
   }
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenSharedArrayAndPersistentStatics_ThenBothEmittersAgreeWithoutFallback(bool optimize) {
-    var direct = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
-      Optimize = optimize,
-      UseExperimentalBackend = false,
-    };
+  public void Execute_GivenSharedArrayAndPersistentStatics_ThenPrintsTheSharedAndStaticValues(bool optimize) {
     var routed = new CodeGenerator(Bind(_sharedArrayAndStaticsProgram)) {
       Optimize = optimize,
-      UseExperimentalBackend = true,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames,
       Is.SupersetOf(new[] { "Touch", "First", "Second", "main" }),
-      "the feature under test must not pass through the direct-emitter fallback");
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-    Assert.That(directCpu.Output.Trim().Replace("\r\n", "|"), Is.EqualTo("12  12 | 1  2  10  3  20"));
+      "the feature under test must not be dropped from the back end");
+    Assert.That(routedCpu.Output.Trim().Replace("\r\n", "|"), Is.EqualTo("12  12 | 1  2  10  3  20"));
   }
 
   [Test]
   public void Execute_GivenSharedScalarSwap_WhenRouted_ThenXchgUpdatesBothObservedCells() {
-    var direct = new CodeGenerator(Bind(_sharedSwapProgram)) {
-      Optimize = true,
-      OptimizeSpeed = true,
-      UseExperimentalBackend = false,
-    };
     var routed = new CodeGenerator(Bind(_sharedSwapProgram)) {
       Optimize = true,
       OptimizeSpeed = true,
-      UseExperimentalBackend = true,
     };
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
     var routedImage = routed.EmitExecutable();
     var routedCpu = Cpu8086.Run(routedImage);
 
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.Multiple(() => {
       Assert.That(routed.BackendRoutedNames, Is.SupersetOf(new[] { "Show", "main" }),
         "both the exchange and its observer must stay on the routed path");
       Assert.That(routedImage, Does.Contain((byte)0x87), "the crossed stores fold to XCHG r16,r/m16");
-      Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
       Assert.That(routedCpu.Output.Trim(), Is.EqualTo("2  1"));
     });
   }

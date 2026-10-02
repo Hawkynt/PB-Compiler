@@ -11,6 +11,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 public static class DosBoxRunner {
 
   public static string? Executable { get; } = Locate();
+  private static string? MmxExecutable { get; } = LocateMmx();
 
   private static string? Locate() {
     var env = Environment.GetEnvironmentVariable("DOSBOX_EXE");
@@ -24,6 +25,11 @@ public static class DosBoxRunner {
         return candidate;
 
     return null;
+  }
+
+  private static string? LocateMmx() {
+    var env = Environment.GetEnvironmentVariable("DOSBOX_MMX_EXE");
+    return !string.IsNullOrEmpty(env) && File.Exists(env) ? env : null;
   }
 
 
@@ -70,18 +76,21 @@ public static class DosBoxRunner {
   /// upgrade. <see cref="_ALLOW_DISPLAY"/> opts back in for anyone who does not mind.
   /// </para>
   /// </summary>
-  private static readonly Lazy<(string Label, (string Name, string? Value)[] Vars)?> _headless = new(() => {
+  private static readonly Lazy<(string Label, (string Name, string? Value)[] Vars)?> _headless = new(() => FindHeadless(Executable));
+  private static readonly Lazy<(string Label, (string Name, string? Value)[] Vars)?> _mmxHeadless = new(() => FindHeadless(MmxExecutable));
+
+  private static (string Label, (string Name, string? Value)[] Vars)? FindHeadless(string? executable) {
     // dosbox-staging on Windows quits before the autoexec under the dummy driver, so that host
     // takes itself out of the choice entirely and is left exactly as the caller set it up.
-    if (Executable == null || RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+    if (executable == null || RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
       return ("the environment as given", []);
     foreach (var candidate in _candidates)
-      if (StartsCleanly(candidate.Vars))
+      if (StartsCleanly(executable, candidate.Vars))
         return candidate;
     if (Environment.GetEnvironmentVariable(_ALLOW_DISPLAY) == "1")
       return ("the desktop, by request", []);
     return null;
-  });
+  }
 
   /// <summary>
   /// Whether the emulator gets past starting its video under <paramref name="vars"/>, probed with
@@ -96,9 +105,9 @@ public static class DosBoxRunner {
   /// that works never returns at all. That deadlock is invisible in a test run. It looks like a
   /// slow suite, right up until the run is killed with nothing to show.
   /// </summary>
-  private static bool StartsCleanly((string Name, string? Value)[] vars) {
+  private static bool StartsCleanly(string executable, (string Name, string? Value)[] vars) {
     try {
-      var probe = new ProcessStartInfo(Executable!, "-c exit") {
+      var probe = new ProcessStartInfo(executable, "-c exit") {
         UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
       };
       Apply(vars, probe);
@@ -151,19 +160,36 @@ public static class DosBoxRunner {
   /// their own ProcessStartInfo and were the only ones still failing after this was introduced.
   /// </summary>
   public static ProcessStartInfo Launch(string arguments) {
-    Assume.That(_headless.Value, Is.Not.Null,
-      $"{Executable} has no way to run without a display on this host, so the execution tests skip "
-      + $"rather than open a window each. Set {_ALLOW_DISPLAY}=1 to let it use the desktop, or point "
-      + "DOSBOX_EXE at a build that runs headless.");
+    return Launch(Executable, _headless.Value, arguments, "DOSBOX_EXE");
+  }
 
-    var psi = new ProcessStartInfo(Executable!, arguments) { UseShellExecute = false };
-    Apply(_headless.Value!.Value.Vars, psi);
+  private static ProcessStartInfo LaunchMmx(string arguments)
+    => Launch(MmxExecutable, _mmxHeadless.Value, arguments, "DOSBOX_MMX_EXE");
+
+  private static ProcessStartInfo Launch(
+      string? executable,
+      (string Label, (string Name, string? Value)[] Vars)? headless,
+      string arguments,
+      string executableVariable) {
+    var testKind = executableVariable == "DOSBOX_MMX_EXE" ? "MMX execution tests" : "execution tests";
+    Assume.That(executable, Is.Not.Null, $"{executableVariable} is not set - {testKind} skipped");
+    Assume.That(headless, Is.Not.Null,
+      $"{executable} has no way to run without a display on this host, so the execution tests skip "
+      + $"rather than open a window each. Set {_ALLOW_DISPLAY}=1 to let it use the desktop, or point "
+      + $"{executableVariable} at a build that runs headless.");
+
+    var psi = new ProcessStartInfo(executable!, arguments) { UseShellExecute = false };
+    Apply(headless!.Value.Vars, psi);
     return psi;
   }
 
   /// <summary>Runs <paramref name="exeBytes"/> in DOSBox; returns the redirected stdout text.</summary>
   public static string Run(byte[] exeBytes, int timeoutMs = 60000)
     => RunWithFiles(exeBytes, [], timeoutMs).Output;
+
+  /// <summary>Runs an MMX-targeted executable under the configured Pentium-MMX DOSBox-X instance.</summary>
+  public static string RunMmx(byte[] exeBytes, int timeoutMs = 60000)
+    => RunWithFiles(exeBytes, [], timeoutMs, null, null, mmx: true).Output;
 
   /// <summary>
   /// R1/R2 screen-capture oracle: runs <paramref name="exeBytes"/> WITHOUT stdout redirection
@@ -229,7 +255,16 @@ public static class DosBoxRunner {
   /// <paramref name="extraFiles"/> are placed beside it before the run.
   /// </summary>
   public static (string Output, Dictionary<string, string> Files) RunWithFiles(byte[] exeBytes, IReadOnlyList<string> fetchFiles, int timeoutMs = 60000, string? stdinText = null, IReadOnlyDictionary<string, string>? extraFiles = null) {
-    Assume.That(Executable, Is.Not.Null, "DOSBox not found - execution test skipped");
+    return RunWithFiles(exeBytes, fetchFiles, timeoutMs, stdinText, extraFiles, mmx: false);
+  }
+
+  private static (string Output, Dictionary<string, string> Files) RunWithFiles(
+      byte[] exeBytes,
+      IReadOnlyList<string> fetchFiles,
+      int timeoutMs,
+      string? stdinText,
+      IReadOnlyDictionary<string, string>? extraFiles,
+      bool mmx) {
 
     var dir = Path.Combine(Path.GetTempPath(), "pbc-test-" + Guid.NewGuid().ToString("N")[..8]);
     Directory.CreateDirectory(dir);
@@ -251,6 +286,7 @@ public static class DosBoxRunner {
       File.WriteAllText(conf, $"""
         [sdl]
         window_position = 9000,9000
+        {(mmx ? "[cpu]\ncputype=pentium_mmx\n" : "")}
         [dosbox]
         ems=true
         [autoexec]
@@ -267,7 +303,9 @@ public static class DosBoxRunner {
       // CreateNoWindow makes dosbox-staging hang before the autoexec; instead
       // the [sdl] windowposition above parks the window off-screen (dosbox-x)
       // so local runs do not disturb the desktop.
-      var psi = Launch($"-conf \"{conf}\"");
+      var psi = mmx
+        ? LaunchMmx($"-conf \"{conf}\"")
+        : Launch($"-conf \"{conf}\"");
 
       using var process = Process.Start(psi)!;
       var sentinel = Path.Combine(dir, "DONE.TXT");

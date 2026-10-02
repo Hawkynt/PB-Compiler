@@ -12,8 +12,25 @@ public enum X86StackCleanup { Caller, Callee }
 /// <summary>The return-address width used by a 16-bit x86 call.</summary>
 public enum X86CallDistance { Near, Far }
 
-/// <summary>The BP-relative incoming-parameter layout of a stack-only x86-16 function definition.</summary>
-public readonly record struct X86DefinitionStackLayout(int[] ParameterOffsets, int ParameterBytes);
+/// <summary>The BP-relative incoming-parameter layout of an x86-16 function definition.</summary>
+public readonly record struct X86DefinitionStackLayout(int[] ParameterOffsets, int ParameterBytes,
+    IReadOnlyList<Reg>? RegisterSpills = null) {
+
+  /// <summary>
+  /// The argument registers a register convention's prologue pushes, in parameter order, to give the
+  /// leading parameters the negative offsets in <see cref="ParameterOffsets"/>. Empty for a stack ABI.
+  /// </summary>
+  public IReadOnlyList<Reg> Spills => this.RegisterSpills ?? [];
+}
+
+/// <summary>One register-carried argument and its little-endian word registers (low word first).</summary>
+public readonly record struct X86RegisterArgumentPlacement(int ArgumentIndex, IReadOnlyList<Reg> WordRegisters);
+
+/// <summary>The register prefix and first stack argument selected for a WATCALL signature.</summary>
+public sealed record X86RegisterArgumentLayout(
+    IReadOnlyList<X86RegisterArgumentPlacement> RegisterArguments,
+    int FirstStackArgument,
+    int? UnsupportedRegisterArgumentIndex = null);
 
 /// <summary>
 /// The concrete x86-16 rules selected from a source-level calling-convention identity. Register
@@ -44,7 +61,7 @@ public sealed record X86CallAbi(
   private static readonly X86CallAbi _FASTCALL = new(IrCallConvention.Fastcall,
     X86StackArgumentOrder.LeftToRight, X86StackCleanup.Callee, X86CallDistance.Near, _FASTCALL_REGISTERS);
   private static readonly X86CallAbi _WATCALL = new(IrCallConvention.Watcall,
-    X86StackArgumentOrder.RightToLeft, X86StackCleanup.Callee, X86CallDistance.Near, _WATCALL_REGISTERS);
+    X86StackArgumentOrder.RightToLeft, X86StackCleanup.Caller, X86CallDistance.Near, _WATCALL_REGISTERS);
   /// <summary>The environment far pointer a pb36 closure call hands its callee - offset, then segment.</summary>
   private static readonly IReadOnlyList<Reg> _CLOSURE_ENV_REGISTERS = Array.AsReadOnly(new[] { Reg.BX, Reg.CX });
   private static readonly X86CallAbi _BASIC_CLOSURE = new(IrCallConvention.BasicClosure,
@@ -63,11 +80,50 @@ public sealed record X86CallAbi(
   };
 
   /// <summary>
+  /// Applies Watcom's documented 16-bit register allocator. One-word values take the first free
+  /// register from AX,DX,BX,CX. Two-word values take DX:AX or CX:BX (high:low); they never take an
+  /// arbitrary adjacent pair. Once a value cannot use a legal register or pair, it and every later
+  /// argument use the stack. A null word count marks a shape whose register rule is not modelled.
+  /// </summary>
+  public static X86RegisterArgumentLayout PlanWatcallArguments(IReadOnlyList<int?> argumentWordCounts) {
+    ArgumentNullException.ThrowIfNull(argumentWordCounts);
+
+    var placements = new List<X86RegisterArgumentPlacement>();
+    var available = new[] { true, true, true, true };
+    for (var i = 0; i < argumentWordCounts.Count; ++i) {
+      if (argumentWordCounts[i] is not { } wordCount)
+        return new(placements, i, i);
+
+      int[]? selected = null;
+      if (wordCount == 1) {
+        var register = Array.FindIndex(available, value => value);
+        if (register >= 0)
+          selected = [register];
+      } else if (wordCount == 2) {
+        if (available[0] && available[1])
+          selected = [0, 1];
+        else if (available[2] && available[3])
+          selected = [2, 3];
+      } else
+        return new(placements, i, i);
+
+      if (selected is null)
+        return new(placements, i);
+
+      foreach (var register in selected)
+        available[register] = false;
+      placements.Add(new(i, selected.Select(index => _WATCALL_REGISTERS[index]).ToArray()));
+    }
+
+    return new(placements, argumentWordCounts.Count);
+  }
+
+  /// <summary>
   /// Derives the complete incoming stack layout of an IR function definition. This is deliberately
   /// definition-side: generated functions have no <c>ProcedureSymbol</c>, but their IR signature and
-  /// <see cref="IrFunction.Convention"/> are sufficient for every stack-only ABI the routed backend
-  /// supports. Register conventions still decline until the prologue has an explicit register spill
-  /// plan rather than pretending their arguments live at positive BP offsets.
+  /// <see cref="IrFunction.Convention"/> are sufficient for every ABI the routed backend supports. A
+  /// register convention's leading word parameters get the negative offsets of the cells its prologue
+  /// pushes them into (<see cref="X86DefinitionStackLayout.Spills"/>).
   /// </summary>
   public static bool TryDefinitionStackLayout(IrFunction function,
       out X86DefinitionStackLayout layout, out string? declineReason) {
@@ -80,11 +136,6 @@ public sealed record X86CallAbi(
       declineReason = $"far definition ABI is not supported ({function.Convention})";
       return false;
     }
-    if (abi.ArgumentRegisters.Count > 0) {
-      declineReason = $"register definition ABI is not supported ({function.Convention})";
-      return false;
-    }
-
     var sizes = new int[function.Parameters.Count];
     for (var i = 0; i < sizes.Length; ++i)
       if (StackSlotSize(function.Parameters[i].Type) is not { } size) {
@@ -93,19 +144,57 @@ public sealed record X86CallAbi(
       } else
         sizes[i] = size;
 
+    X86RegisterArgumentLayout registerLayout;
+    if (function.Convention == IrCallConvention.Watcall) {
+      registerLayout = PlanWatcallArguments(function.Parameters
+        .Select(parameter => WatcallWordCount(parameter.Type)).ToArray());
+      if (registerLayout.UnsupportedRegisterArgumentIndex is { } unsupported) {
+        declineReason = $"register parameter {unsupported} is not a word or LONG "
+          + $"({function.Parameters[unsupported].Type})";
+        return false;
+      }
+    } else {
+      var registerCount = Math.Min(abi.ArgumentRegisters.Count, sizes.Length);
+      var placements = Enumerable.Range(0, registerCount)
+        .Select(index => new X86RegisterArgumentPlacement(index, new[] { abi.ArgumentRegisters[index] }))
+        .ToArray();
+      registerLayout = new(placements, registerCount);
+    }
+
+    // Register parameters are spilled below BP. Within a multiword value the high register is pushed
+    // first, leaving its low word at the parameter's base offset in ordinary little-endian order.
     var offsets = new int[sizes.Length];
+    var spillBytes = 0;
+    var spills = new List<Reg>();
+    foreach (var placement in registerLayout.RegisterArguments) {
+      var index = placement.ArgumentIndex;
+      if (sizes[index] != placement.WordRegisters.Count * 2) {
+        declineReason = $"register parameter {index} is not one word ({function.Parameters[index].Type})";
+        return false;
+      }
+      spillBytes += sizes[index];
+      offsets[index] = -spillBytes;
+      spills.AddRange(placement.WordRegisters.Reverse());
+    }
+
     var offset = 4;
-    IEnumerable<int> order = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft
-      ? Enumerable.Range(0, sizes.Length)
-      : Enumerable.Range(0, sizes.Length).Reverse();
+    var stack = Enumerable.Range(registerLayout.FirstStackArgument, sizes.Length - registerLayout.FirstStackArgument);
+    IEnumerable<int> order = abi.StackArgumentOrder == X86StackArgumentOrder.RightToLeft ? stack : stack.Reverse();
     foreach (var index in order) {
       offsets[index] = offset;
       offset += sizes[index];
     }
 
-    layout = new X86DefinitionStackLayout(offsets, offset - 4);
+    layout = new X86DefinitionStackLayout(offsets, offset - 4, spills);
     return true;
   }
+
+  private static int? WatcallWordCount(IrType type) => type switch {
+    { IsInteger: true, Bits: 8 or 16 } => 1,
+    { IsPointer: true, IsFarPointer: false } => 1,
+    { IsInteger: true, Bits: 32 } => 2,
+    _ => null,
+  };
 
   /// <summary>Bytes one IR argument occupies in the routed 16-bit stack ABI, or null when unsupported.</summary>
   private static int? StackSlotSize(IrType type) => type switch {

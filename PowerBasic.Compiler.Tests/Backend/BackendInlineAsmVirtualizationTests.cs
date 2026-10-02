@@ -1,29 +1,24 @@
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// Inline assembly the declared CPU cannot execute must not route.
+/// Inline assembly the declared CPU cannot execute must be virtualized inside the production route.
 ///
 /// <para>
-/// The direct emitter does not pass such an instruction through - it EMULATES it, lowering the
-/// packed-integer surface onto plain 8086 instructions. The routed path has no such lowering:
-/// <c>IrInlineAsm</c> carries the text and the machine emitter assembles it verbatim. Routing a body
-/// that needs emulating therefore produces an image containing an instruction the machine the source
-/// NAMED cannot execute, and nothing reports it.
+/// <c>IrInlineAsm</c> carries the text into machine IR, whose emission callback applies the target ISA
+/// policy. That policy lowers the packed-integer surface onto instructions the declared CPU supports.
 /// </para>
 /// <para>
-/// This is the regression that came in with default-on routing and was not caught, because the
-/// fixtures that would have caught it were pinned to the direct emitter as "assertions about emitted
-/// code". They were not: an image that faults on its target is a behaviour, not a shape. The check
-/// here is deliberately on the PRODUCTION configuration - no <c>UseExperimentalBackend</c> in sight -
-/// so it cannot be hidden the same way twice.
+/// An image that faults on its declared target is a behavioural defect, not merely a byte-shape
+/// difference. These checks therefore compile through the production configuration.
 /// </para>
 /// <para>
-/// The fix is not a decline. <see cref="Backend.MachineEmitter"/> takes the target's ISA policy as a
-/// callback, so the routed path reaches the SAME emulator the direct emitter uses and keeps the body.
+/// The fix is not a decline. The hosted target machine emitter takes the target's ISA policy as a
+/// callback, so the routed path reaches the target emulator and keeps the body.
 /// Declining would also have been correct and would have cost the routing every program with a line
 /// of portable SIMD in it.
 /// </para>
@@ -33,13 +28,11 @@ public sealed class BackendInlineAsmVirtualizationTests {
 
   private const string _body = "$OPTIMIZE SPEED\nDIM a%, b%\na% = 3 : b% = 4\n! MOV AX, a%\n! PADDW MM0, MM1\n! MOV b%, AX\nPRINT b%\nEND";
 
-  private static (byte[] Image, IReadOnlyList<string> Routed) Compile(string cpu, bool? routed = null) {
+  private static (byte[] Image, IReadOnlyList<string> Routed) Compile(string cpu) {
     var source = $"$CPU {cpu}\n{_body}";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var generator = new CodeGenerator(model) { Optimize = true };
-    if (routed is { } force)
-      generator.UseExperimentalBackend = force;
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return (image, generator.BackendRoutedNames.ToList());
@@ -54,10 +47,10 @@ public sealed class BackendInlineAsmVirtualizationTests {
   }
 
   /// <summary>
-  /// The values are the point. A target without MMX must not receive the MMX encoding, whichever
-  /// emitter produced the image - and <c>$CPU SSE2</c> is in the list on purpose: SSE2 does not bring
-  /// the MMX register file with it here, so it emulates too. A guard keyed on "is this 8086" rather
-  /// than on the instruction's actual feature requirement would pass the first two and miss this one.
+  /// The values are the point. A target without MMX must not receive the MMX encoding - and
+  /// <c>$CPU SSE2</c> is in the list on purpose: SSE2 does not bring the MMX register file
+  /// with it here, so it emulates too. A guard keyed on "is this 8086" rather than on the
+  /// instruction's actual feature requirement would pass the first two and miss this one.
   /// </summary>
   [TestCase("8086")]
   [TestCase("80386")]
@@ -70,7 +63,7 @@ public sealed class BackendInlineAsmVirtualizationTests {
         $"$CPU {cpu} got a raw PADDW; the declared target cannot execute it");
       Assert.That(routed, Does.Contain("main"),
         "emulating it is the routed path's job now, so the body must still route - a decline here "
-        + "would mean the ISA policy callback stopped reaching MachineEmitter");
+        + "would mean the ISA policy callback stopped reaching the hosted target machine emitter");
     });
   }
 
@@ -89,18 +82,30 @@ public sealed class BackendInlineAsmVirtualizationTests {
   }
 
   /// <summary>
-  /// Both emitters must reach the same conclusion about the same instruction, which is the property
-  /// that stops them drifting apart again. Not byte identity - the two lay a program out differently
-  /// and always have - but the one thing that matters here: neither emits an encoding the declared
-  /// target cannot execute.
+  /// Recompiling through the single production route must remain deterministic and must never emit an
+  /// encoding the declared target cannot execute.
   /// </summary>
   [TestCase("8086")]
   [TestCase("80386")]
   [TestCase("SSE2")]
-  public void Compile_GivenInlineAsmAboveTheDeclaredCpu_ThenNeitherEmitterPassesItThrough(string cpu) {
+  public void Compile_GivenInlineAsmAboveTheDeclaredCpu_ThenRepeatedProductionBuildsStayVirtualized(string cpu) {
     Assert.Multiple(() => {
-      Assert.That(ContainsPaddw(Compile(cpu, routed: true).Image), Is.False, $"routed, $CPU {cpu}");
-      Assert.That(ContainsPaddw(Compile(cpu, routed: false).Image), Is.False, $"direct, $CPU {cpu}");
+      Assert.That(ContainsPaddw(Compile(cpu).Image), Is.False, $"first build, $CPU {cpu}");
+      Assert.That(ContainsPaddw(Compile(cpu).Image), Is.False, $"second build, $CPU {cpu}");
     });
+  }
+
+  /// <summary>
+  /// And the emulated image runs. Leaving the encoding out is only half the promise; the other half
+  /// is that what replaced it executes on the declared target and leaves the program's own state
+  /// alone - the PADDW touches only MM0, so AX still carries a%'s 3 into b%. SSE2's emulation is
+  /// written in SSE, which the interpreter does not execute, so that target is left to the test above.
+  /// </summary>
+  [TestCase("8086")]
+  [TestCase("80386")]
+  public void Run_GivenInlineAsmAboveTheDeclaredCpu_ThenTheEmulatedProgramPrintsTheUntouchedWord(string cpu) {
+    var (image, _) = Compile(cpu);
+
+    Assert.That(Cpu8086.Run(image).Output.Trim(), Is.EqualTo("3"), $"$CPU {cpu}");
   }
 }

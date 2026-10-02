@@ -155,13 +155,13 @@ public sealed class O0064LeaFusionTests {
   private static MInstr FlagOverwrite(MReg register) => new(MOpcode.Cmp,
     [new MOperand.Register(register), new MOperand.Immediate(7)], _compareEffect);
 
-  private static MFunction OneBlock(params MInstr[] instructions) {
-    var function = new MFunction("o0064") { VirtualRegisterCount = 4 };
+  private static X86MachineFunction OneBlock(params MInstr[] instructions) {
+    var function = new X86MachineFunction("o0064") { VirtualRegisterCount = 4 };
     var block = new MBlock("entry");
     block.Instructions.AddRange(instructions);
     function.Blocks.Add(block);
     return function;
   }
 
-  private static void MarkOptimized(MFunction function) => Peephole.Run(function);
+  private static void MarkOptimized(X86MachineFunction function) => MachineOptimizationState.Mark(function);
 }

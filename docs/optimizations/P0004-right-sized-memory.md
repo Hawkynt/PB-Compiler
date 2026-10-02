@@ -40,9 +40,6 @@ Resident: 64 KiB
   the single main segment
 ```
 
-For the [P0007](P0007-trivial-io-lowering.md) fast path the image is a 25-byte
-raw file whose entire footprint is one paragraph plus the DOS PSP.
-
 ## Equivalent BASIC
 
 Unchanged. A program that *does* use strings still gets its heap — the

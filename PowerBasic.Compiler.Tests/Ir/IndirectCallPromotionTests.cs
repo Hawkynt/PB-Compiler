@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
@@ -7,13 +8,25 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class IndirectCallPromotionTests {
 
+  private sealed class AlwaysPromoteCost : IIrCallCostModel {
+    public bool PreferIndirectCallPromotion(ulong targetCount, ulong totalCount) => true;
+  }
+
+  private sealed class NeverPromoteCost : IIrCallCostModel {
+    public bool PreferIndirectCallPromotion(ulong targetCount, ulong totalCount) => false;
+  }
+
   private static IrConstantInt Const(long value) => new(IrType.I16, value);
 
+  /// <param name="pinTarget">
+  /// Declares the target NOINLINE, for a test that runs the whole pipeline: "hot" is pure, and a pure
+  /// call with a constant argument is answered at compile time (O0025) before anything can see it.
+  /// </param>
   private static (IrModule Module, IrFunction Target, IrFunction Caller, IrArgument Handler, IrCall Call, IrBinary Use)
-      Program() {
+      Program(bool pinTarget = false) {
     var module = new IrModule("t");
     var targetParameter = new IrArgument(IrType.I16, 0, "x");
-    var target = module.AddFunction(new IrFunction("hot", IrType.I16, [targetParameter]));
+    var target = module.AddFunction(new IrFunction("hot", IrType.I16, [targetParameter]) { NoInline = pinTarget });
     var targetEntry = target.AddBlock(new IrBasicBlock("entry"));
     targetEntry.Append(new IrRet(targetEntry.Append(new IrBinary(IrBinaryOp.Add, targetParameter, Const(1)))));
 
@@ -61,6 +74,34 @@ public sealed class IndirectCallPromotionTests {
     Assert.That(IndirectCallPromotion.Run(module) > 0, Is.EqualTo(expected));
   }
 
+
+  [Test]
+  public void Run_GivenCustomCostModel_ThenProfitabilityIsSeparatedFromLegality() {
+    var (allowedModule, allowedTarget, _, _, allowedCall, _) = Program();
+    allowedCall.SetIndirectTargetProfile(
+      new IrIndirectCallProfile(100, new IrIndirectCallTarget(allowedTarget, 1)));
+
+    var (vetoedModule, vetoedTarget, _, _, vetoedCall, _) = Program();
+    vetoedCall.SetIndirectTargetProfile(
+      new IrIndirectCallProfile(100, new IrIndirectCallTarget(vetoedTarget, 99)));
+
+    Assert.Multiple(() => {
+      Assert.That(IndirectCallPromotion.Run(allowedModule, new AlwaysPromoteCost()), Is.EqualTo(1),
+        "an otherwise legal candidate may be admitted by target profitability even below the historical threshold");
+      Assert.That(IndirectCallPromotion.Run(vetoedModule, new NeverPromoteCost()), Is.Zero,
+        "a legal hot candidate may be declined without changing the transform's legality rules");
+    });
+  }
+
+  [Test]
+  public void Run_GivenIllegalForeignTarget_ThenCostModelCannotOverrideLegality() {
+    var (module, _, _, _, call, _) = Program();
+    var foreign = new IrFunction("foreign", IrType.I16, [new IrArgument(IrType.I16, 0, "x")]);
+    call.SetIndirectTargetProfile(new IrIndirectCallProfile(100, new IrIndirectCallTarget(foreign, 99)));
+
+    Assert.That(IndirectCallPromotion.Run(module, new AlwaysPromoteCost()), Is.Zero);
+  }
+
   [Test]
   public void Run_GivenTwoEquallyHotTargets_ThenDeclinesInsteadOfDependingOnProfileOrder() {
     var (module, target, _, _, call, _) = Program();
@@ -82,6 +123,49 @@ public sealed class IndirectCallPromotionTests {
     call.SetIndirectTargetProfile(new IrIndirectCallProfile(100, new IrIndirectCallTarget(stale, 90)));
 
     Assert.That(IndirectCallPromotion.Run(module), Is.Zero);
+  }
+
+
+  [Test]
+  public void AnalysisAwareRun_GivenExactSingletonTarget_ThenLeavesTheCallForWpdWithoutProfileGuard() {
+    var module = new IrModule("t");
+    var x = new IrArgument(IrType.I16, 0, "x");
+    var target = module.AddFunction(new IrFunction("target", IrType.I16, [x]));
+    new IrBuilder(target.CreateBlock("entry")).Ret(x);
+
+    var callback = new IrArgument(IrType.Ptr, 0, "callback");
+    var value = new IrArgument(IrType.I16, 1, "value");
+    var invoke = module.AddFunction(new IrFunction("invoke", IrType.I16, [callback, value]));
+    var invokeEntry = invoke.CreateBlock("entry");
+    var indirect = invokeEntry.Append(new IrCall(IrType.I16, callback, [value]));
+    indirect.SetIndirectTargetProfile(new IrIndirectCallProfile(
+      100, new IrIndirectCallTarget(target, 100)));
+    invokeEntry.Append(new IrRet(indirect));
+
+    var main = module.AddFunction(new IrFunction("main", IrType.Void));
+    var mainEntry = main.CreateBlock("entry");
+    mainEntry.Append(new IrCall(IrType.I16, invoke, [target, Const(1)]));
+    mainEntry.Append(new IrCall(IrType.I16, invoke, [target, Const(2)]));
+    mainEntry.Append(new IrRet());
+
+    var analyses = new IrModuleAnalysisManager(module);
+    var promoted = IndirectCallPromotion.Run(module, analyses);
+
+    Assert.Multiple(() => {
+      Assert.That(promoted.Changes, Is.Zero);
+      Assert.That(invokeEntry.Terminator, Is.TypeOf<IrRet>(),
+        "an exact target should not pay for a profile guard and fallback");
+      Assert.That(indirect.Callee, Is.SameAs(callback));
+      Assert.That(analyses.IsCached(IrModuleAnalyses.FunctionTargets), Is.True);
+      Assert.That(analyses.IsCached(IrModuleAnalyses.CallGraph), Is.True);
+    });
+
+    var devirtualized = WholeProgramDevirtualization.Run(module, analyses);
+    Assert.Multiple(() => {
+      Assert.That(devirtualized.Changes, Is.EqualTo(1));
+      Assert.That(indirect.Callee, Is.SameAs(target));
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
   }
 
   [Test]
@@ -159,10 +243,10 @@ public sealed class IndirectCallPromotionTests {
 
   [Test]
   public void StandardPipeline_GivenProfiledIndirectCall_ThenRunsPromotionAsAModulePass() {
-    var (module, target, caller, handler, call, _) = Program();
+    var (module, target, caller, handler, call, _) = Program(pinTarget: true);
     call.SetIndirectTargetProfile(new IrIndirectCallProfile(100, new IrIndirectCallTarget(target, 90)));
 
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
 
     Assert.Multiple(() => {
       Assert.That(caller.AllInstructions.OfType<IrCall>().Any(item => ReferenceEquals(item.Callee, target)), Is.True);

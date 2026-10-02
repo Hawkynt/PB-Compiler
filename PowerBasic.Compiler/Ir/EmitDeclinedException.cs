@@ -7,11 +7,9 @@ namespace PowerBasic.Compiler.Ir;
 /// trace out of the compiler.
 ///
 /// <para>
-/// It matters MORE here than on the x86-16 path, where a decline is caught by <c>CodeGenerator</c>
-/// and the direct emitter compiles the function instead - so a throw there was a crash where a
-/// silent fallback would have done. These two back ends have <b>no fallback at all</b>: the only
-/// thing a decline buys is the diagnostic that names the construct, and a throw produces no output,
-/// no actionable exit code and no name.
+/// The hosted C and LLVM targets are explicit alternate renderers, not DOS fallbacks. A decline from
+/// any production target therefore buys only a diagnostic that names the construct; it never grants
+/// permission to emit the body through another path.
 /// </para>
 ///
 /// <para>

@@ -365,7 +365,7 @@ public sealed partial class Assembler {
     if (!this.IsForwardableCell(instr))
       return null;
 
-    if (store && instr.MemBase is Label && this.HasOpcode(instr, 0xA3))
+    if (store && instr.MemBase is { Label: not null } && this.HasOpcode(instr, 0xA3))
       return 0;                                             // MOV [label],AX accumulator short form
     if (!this.HasOpcode(instr, store ? (byte)0x89 : (byte)0x8B))
       return null;
@@ -392,10 +392,10 @@ public sealed partial class Assembler {
   }
 
   private bool IsForwardableCell(SchedInstr instr) =>
-    IsFrameCell(instr) || instr.MemBase is Label && !this.HasSegmentOverride(instr);
+    IsFrameCell(instr) || instr.MemBase is { Label: not null } && !this.HasSegmentOverride(instr);
 
   /// <summary>Only the frame is inherently SS-relative; direct labels qualify only without a segment override.</summary>
-  private static bool IsFrameCell(SchedInstr instr) => "BP".Equals(instr.MemBase);
+  private static bool IsFrameCell(SchedInstr instr) => instr.MemBase is { IsFrame: true };
 
   private bool HasSegmentOverride(SchedInstr instr) => instr.Length > 0 && this._buffer[instr.Start] is
     0x26 or 0x2E or 0x36 or 0x3E or 0x64 or 0x65;

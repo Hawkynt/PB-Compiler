@@ -512,6 +512,8 @@ public sealed partial class DosRuntime {
     asm.Db(0x0D, 0x0A);
     asm.MarkLabel("rt_spaces");
     asm.Db(new string(' ', 16));
+    asm.MarkLabel("rt_files_free");
+    asm.Db("Bytes free");
     this.EmitErrorMessages(asm);
     asm.Align(2);
     asm.MarkLabel("rt_const_ten_m64");

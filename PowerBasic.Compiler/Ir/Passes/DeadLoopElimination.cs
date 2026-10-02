@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -18,8 +20,8 @@ namespace PowerBasic.Compiler.Ir.Passes;
 ///   <item>the trip count must be a known finite number, because deleting a loop that never ends
 ///   replaces a program that hangs with one that does not, and that is a change in behaviour even
 ///   though nobody wanted the hang;</item>
-///   <item>the body must contain no store, call or inline assembly - those are the effects the
-///   printed output is made of;</item>
+///   <item>every instruction in the body must be discardable according to the central effect
+///   contract; stores, traps, calls with unknown effects and inline assembly therefore keep it;</item>
 ///   <item>nothing defined inside, the counter and the phis included, may be read outside. The
 ///   counter's exit value is <c>limit + step</c> and could be computed, but computing it is
 ///   <see cref="RecurrenceClosedForm"/>'s job, and this pass declining until that has happened is
@@ -129,7 +131,7 @@ public static class DeadLoopElimination {
   /// the branching is what is being deleted - but everything <see cref="Dce"/> refuses to remove is.
   /// </summary>
   private static bool HasEffect(IrInstruction instruction)
-    => instruction is IrStore or IrCall or IrInlineAsm;
+    => !IrEffects.ForInstruction(instruction).CanDiscard;
 
   /// <summary>
   /// Sends every edge <paramref name="block"/> has into <paramref name="header"/> to

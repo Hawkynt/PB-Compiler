@@ -13,14 +13,12 @@ namespace PowerBasic.Compiler.Tests.Backend;
 ///
 /// <para>
 /// The block's layout is the DIRECT emitter's, deliberately: it belongs to the caller, so its shape
-/// is settled by the ABI rather than by whichever emitter compiled the callee. That is what lets a
-/// routed callee be handed a descriptor a directly-emitted caller wrote, and the reverse.
+/// is settled by the ABI rather than by whichever emitter compiled the callee.
 /// </para>
 /// <para>
-/// Every case executes the routed image against the direct one under the 8086 interpreter, and
-/// asserts the procedure ROUTED first - without that the two builds would be the same image compared
-/// with itself. No array here is indexed from zero, because a descriptor read that dropped the lower
-/// bound still prints numbers.
+/// Every case asserts the procedure ROUTED, then executes the image under the 8086 interpreter at
+/// both optimization settings and checks what it prints. No array here is indexed from zero,
+/// because a descriptor read that dropped the lower bound still prints numbers.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -32,20 +30,14 @@ public sealed class BackendArrayParameterRoutingTests {
     return model;
   }
 
-  private static void AssertRoutedMatchesDirect(string source, string procedure, bool optimize) {
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
+  private static void AssertPrints(string source, string procedure, bool optimize, string expected) {
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
     Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
-    Assert.That(routed.BackendRoutedNames, Does.Contain(procedure),
-      $"{procedure} did not route - the comparison below would have compiled the same image twice");
+    Assert.That(routed.BackendRoutedNames, Does.Contain(procedure), $"{procedure} did not route");
 
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var directImage = direct.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-
-    var expected = Cpu8086.Run(directImage);
     var actual = Cpu8086.Run(routedImage);
-    Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((expected.Output, expected.ExitCode)));
+    Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((expected, 0)));
   }
 
   /// <summary>
@@ -68,7 +60,7 @@ public sealed class BackendArrayParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Route_GivenStaticArrayArgument_ThenElementsCrossTheBoundary(bool optimize)
-    => AssertRoutedMatchesDirect(_staticArray, "S", optimize);
+    => AssertPrints(_staticArray, "S", optimize, " 11  33  22 \r\n");
 
   /// <summary>
   /// A DYNAMIC array argument, whose descriptor is filled in at run time by the REDIM rather than at
@@ -89,7 +81,7 @@ public sealed class BackendArrayParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Route_GivenDynamicArrayArgument_ThenTheCallersFarBlockIsWritten(bool optimize)
-    => AssertRoutedMatchesDirect(_dynamicArray, "S", optimize);
+    => AssertPrints(_dynamicArray, "S", optimize, " 7  70 \r\n");
 
   /// <summary>
   /// The bounds themselves, which the callee can only get from the descriptor. Declaring 3 TO 7 makes
@@ -107,7 +99,7 @@ public sealed class BackendArrayParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Route_GivenArrayParameter_ThenBoundsComeFromTheCallersDescriptor(bool optimize)
-    => AssertRoutedMatchesDirect(_bounds, "S", optimize);
+    => AssertPrints(_bounds, "S", optimize, " 3  7 \r\n");
 
   /// <summary>
   /// Two different arrays through the SAME parameter, with different lower bounds and different
@@ -127,7 +119,7 @@ public sealed class BackendArrayParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Route_GivenTwoArraysThroughOneParameter_ThenEachCallSeesItsOwnDescriptor(bool optimize)
-    => AssertRoutedMatchesDirect(_twoArrays, "S", optimize);
+    => AssertPrints(_twoArrays, "S", optimize, " 99  99 \r\n");
 
   /// <summary>
   /// Forwarding a parameter onward. The inner callee must be handed the ORIGINAL caller's segment and
@@ -151,12 +143,12 @@ public sealed class BackendArrayParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Route_GivenArrayParameterForwarded_ThenTheOriginalDescriptorTravelsOn(bool optimize)
-    => AssertRoutedMatchesDirect(_forwarded, "Outer", optimize);
+    => AssertPrints(_forwarded, "Outer", optimize, " 45 \r\n");
 
   /// <summary>
   /// A STRING array parameter READ. A string element is a handle - one word - so reading it through
-  /// the far element address is an ordinary scalar load, and this executes against the direct build
-  /// rather than merely being accepted: an address that lost its segment would read the program's own
+  /// the far element address is an ordinary scalar load, and this executes the build rather than
+  /// merely accepting it: an address that lost its segment would read the program's own
   /// data and print something, which is exactly the failure mode a routing assertion alone misses.
   /// </summary>
   private const string _stringArrayRead = """
@@ -172,7 +164,7 @@ public sealed class BackendArrayParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Route_GivenStringArrayParameterRead_ThenTheHandleCrossesCorrectly(bool optimize)
-    => AssertRoutedMatchesDirect(_stringArrayRead, "S", optimize);
+    => AssertPrints(_stringArrayRead, "S", optimize, "abcd\r\n");
 
   /// <summary>
   /// Assigning INTO a string array parameter. A string element is a HANDLE - one word - so the far
@@ -200,7 +192,7 @@ public sealed class BackendArrayParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Route_GivenStringArrayParameterAssignment_ThenTheCallersHandlesAreReplaced(bool optimize)
-    => AssertRoutedMatchesDirect(_stringArrayAssignment, "S", optimize);
+    => AssertPrints(_stringArrayAssignment, "S", optimize, "zz|cd|abcd\r\n");
 
   /// <summary>
   /// The bodies that used to exhaust the register allocator. None of them is exotic: bounds plus a
@@ -231,7 +223,7 @@ public sealed class BackendArrayParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Route_GivenBoundsAndAReadModifyWrite_ThenTheAllocatorStillFindsRegisters(bool optimize)
-    => AssertRoutedMatchesDirect(_boundsAndReadModifyWrite, "S", optimize);
+    => AssertPrints(_boundsAndReadModifyWrite, "S", optimize, " 1  4 \r\n 70 \r\n");
 
   private const string _summingLoop = """
     FUNCTION Total%(a%()) NOINLINE
@@ -254,7 +246,7 @@ public sealed class BackendArrayParameterRoutingTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Route_GivenALoopOverTheWholeArray_ThenBothCallersGetTheirOwnBounds(bool optimize)
-    => AssertRoutedMatchesDirect(_summingLoop, "Total", optimize);
+    => AssertPrints(_summingLoop, "Total", optimize, " 6  40 \r\n");
 
   private const string _severalElementsAndBounds = """
     SUB S(a%()) NOINLINE
@@ -271,6 +263,6 @@ public sealed class BackendArrayParameterRoutingTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Route_GivenSeveralElementsAndBothBounds_ThenTheRoutedImageStillAgrees(bool optimize)
-    => AssertRoutedMatchesDirect(_severalElementsAndBounds, "S", optimize);
+  public void Route_GivenSeveralElementsAndBothBounds_ThenEachReadsFromTheCallersDescriptor(bool optimize)
+    => AssertPrints(_severalElementsAndBounds, "S", optimize, " 3  5 \r\n 11  22 \r\n 11  33  22 \r\n");
 }

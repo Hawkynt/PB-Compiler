@@ -14,6 +14,26 @@ namespace PowerBasic.Compiler.Ir.Passes;
 public static class RedundantMemory {
 
   public static int Run(IrFunction fn) {
+    ArgumentNullException.ThrowIfNull(fn);
+    return IrFunctionPassPipeline.RunStandalone(fn, "memopt", Run);
+  }
+
+  /// <summary>
+  /// Analysis-aware production entry. Forwarding/removing loads changes value and memory facts but
+  /// not CFG topology, so only CFG-derived analyses survive a successful rewrite.
+  /// </summary>
+  internal static IrPassResult Run(IrFunction fn, IrAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(fn);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(fn, analyses.Function))
+      throw new ArgumentException("Analysis manager belongs to a different function.", nameof(analyses));
+    var removed = RunCore(fn, analyses.Get(IrAnalyses.PointerIdentity));
+    return removed == 0
+      ? IrPassResult.Unchanged
+      : IrPassResult.ChangedPreservingSets(removed, IrAnalysisSets.Cfg);
+  }
+
+  private static int RunCore(IrFunction fn, IrPointerIdentityAnalysis identities) {
     var removed = 0;
     foreach (var block in fn.Blocks) {
       var stored = new Dictionary<IrValue, IrValue>(ReferenceEqualityComparer.Instance);   // *ptr currently holds
@@ -43,8 +63,8 @@ public static class RedundantMemory {
           }
           case IrStore store: {
             var p = store.Pointer;
-            Invalidate(stored, p, store.Value.Type);
-            Invalidate(loaded, p, store.Value.Type);
+            Invalidate(stored, p, store.Value.Type, identities);
+            Invalidate(loaded, p, store.Value.Type, identities);
             if (!store.Value.Type.IsMbf)
               stored[p] = store.Value;
             break;
@@ -59,9 +79,14 @@ public static class RedundantMemory {
     return removed;
   }
 
-  private static void Invalidate(Dictionary<IrValue, IrValue> cache, IrValue writtenPointer, IrType writtenType) {
+  private static void Invalidate(
+      Dictionary<IrValue, IrValue> cache,
+      IrValue writtenPointer,
+      IrType writtenType,
+      IrPointerIdentityAnalysis identities) {
     foreach (var key in cache.Keys.ToList())
-      if (IrAliasAnalysis.MayAlias(key, cache[key].Type, writtenPointer, writtenType))
+      if (IrAliasAnalysis.MayAlias(
+            key, cache[key].Type, writtenPointer, writtenType, identities))
         cache.Remove(key);
   }
 }

@@ -114,6 +114,33 @@ public sealed class LinkOracleTests {
 
   private static PbuFile AddOneUnit() => OmfToPbu.Convert(OmfReader.ReadObject(AddOneObj()));
 
+
+  /// <summary>
+  /// Compiles the same _addone ABI from BASIC through the mandatory HIR/IR/x86-16 unit path.
+  /// This is the artifact whose OMF serialization the genuine DOS linker must consume.
+  /// </summary>
+  private static PbuFile IrCompiledAddOneUnit() {
+    const string source = """
+      $COMPILE UNIT
+      FUNCTION addone CDECL ALIAS "_addone" (BYVAL x AS LONG) AS LONG
+        addone = x + 1
+      END FUNCTION
+      """;
+    var syntax = Parser.Parse(Lexer.Tokenize(source, "ADDONE.BAS", Dialect.Pb36), "ADDONE.BAS", Dialect.Pb36);
+    var model = Binder.Bind(syntax, Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { Optimize = true };
+    var unit = generator.EmitUnit("ADDONE");
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendDeclines, Is.Empty);
+      Assert.That(generator.BackendRoutedNames, Does.Contain("addone"));
+      Assert.That(unit.Exports.Select(export => export.Name), Does.Contain("_addone"),
+        "a defined ALIAS is the public OMF/link symbol, not merely an external-call decoration");
+    });
+    return unit;
+  }
+
   [Test]
   public void Link_GivenSameObjectLinkedByGenuineLinkExe_ThenOursMatchesTheGenuineResult() {
     // --- given: a genuine LINK.EXE and DOSBox are available -------------------
@@ -183,6 +210,33 @@ public sealed class LinkOracleTests {
     // --- then: genuine LINK.EXE found _addone via our dictionary and the program ran to 42 ----
     Assert.That(result.Trim(), Is.EqualTo("42"),
       $"genuine LINK.EXE resolving _addone from our emitted .LIB should print 42 but produced [{Escape(result)}]");
+  }
+
+
+  [Test]
+  public void Link_GivenIrCompiledObject_ThenGenuineLinkExeConsumesItAndRuns() {
+    var link = GenuineLinkExe();
+    Assume.That(link, Is.Not.Null, "genuine LINK.EXE unavailable (no toolchain key/openssl) - oracle skipped");
+    Assume.That(DosBoxRunner.Executable, Is.Not.Null, "DOSBox not found - oracle skipped");
+
+    var obj = OmfWriter.WriteObject(IrCompiledAddOneUnit());
+    var result = RunGenuineLink(link!, MainObj(), obj);
+
+    Assert.That(result.Trim(), Is.EqualTo("42"),
+      $"genuine LINK.EXE linking the IR/x86-16 generated object should print 42 but produced [{Escape(result)}]");
+  }
+
+  [Test]
+  public void Link_GivenIrCompiledLibrary_ThenGenuineLinkExeFindsItsDictionarySymbolAndRuns() {
+    var link = GenuineLinkExe();
+    Assume.That(link, Is.Not.Null, "genuine LINK.EXE unavailable (no toolchain key/openssl) - oracle skipped");
+    Assume.That(DosBoxRunner.Executable, Is.Not.Null, "DOSBox not found - oracle skipped");
+
+    var lib = OmfLibraryWriter.WriteLibrary([IrCompiledAddOneUnit()]);
+    var result = RunGenuineLinkLib(link!, MainObj(), lib);
+
+    Assert.That(result.Trim(), Is.EqualTo("42"),
+      $"genuine LINK.EXE resolving the IR/x86-16 generated library should print 42 but produced [{Escape(result)}]");
   }
 
   private static string Escape(string s) => s.Replace("\r", "\\r").Replace("\n", "\\n");

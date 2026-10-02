@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Ir;
+using PowerBasic.Compiler.Ir.Analysis;
 using PowerBasic.Compiler.Ir.Passes;
 
 namespace PowerBasic.Compiler.Tests.Ir;
@@ -38,6 +39,27 @@ public sealed class IntegerRecoveryTests {
     Assert.That(add.Type, Is.EqualTo(IrType.I16));
     Assert.That(add.Lhs, Is.InstanceOf<IrBinary>().And.Property("Op").EqualTo(IrBinaryOp.Mul));
     Assert.That(((IrBinary)add.Lhs).Lhs, Is.SameAs(a), "the recovered multiply reads the original i16 argument directly");
+  }
+
+  [Test]
+  public void Run_GivenSharedAnalysisManager_ThenPreservesCfgOnly() {
+    var a = new IrArgument(IrType.I16, 0);
+    var fn = new IrFunction("F", IrType.I16, [a]);
+    var entry = fn.CreateBlock("entry");
+    var fa = entry.Append(new IrCast(IrCastOp.SIToFP, a, IrType.F32));
+    var product = entry.Append(new IrBinary(IrBinaryOp.FMul, fa, new IrConstantFloat(IrType.F32, 2)));
+    var cast = entry.Append(new IrCast(IrCastOp.FPToSI, product, IrType.I16));
+    entry.Append(new IrRet(cast));
+    var analyses = new IrAnalysisManager(fn);
+
+    var result = IntegerRecovery.Run(fn, analyses);
+
+    Assert.Multiple(() => {
+      Assert.That(result.Changes, Is.EqualTo(1));
+      Assert.That(result.PreservedAnalyses.IsPreserved(IrAnalyses.Dominators), Is.True);
+      Assert.That(result.PreservedAnalyses.IsPreserved(IrAnalyses.Loops), Is.True);
+      Assert.That(result.PreservedAnalyses.IsPreserved(IrAnalyses.Ranges), Is.False);
+    });
   }
 
   [Test]

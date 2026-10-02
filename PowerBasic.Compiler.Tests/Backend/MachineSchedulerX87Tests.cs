@@ -27,7 +27,7 @@ public sealed class MachineSchedulerX87Tests {
 
   [Test]
   public void Schedule_GivenAnX87Sequence_ThenItsOrderIsPreserved() {
-    var fn = new MFunction("f");
+    var fn = new X86MachineFunction("f");
     var block = new MBlock("entry");
     fn.Blocks.Add(block);
     block.Instructions.AddRange([

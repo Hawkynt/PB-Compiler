@@ -107,7 +107,7 @@ public sealed class OverflowCheckLoweringTests {
       b% = a% + a%
       PRINT b%
       """);
-    IrPassManager.Standard().RunOnModule(m);
+    IrMiddleEndPipeline.Standard().RunOnModule(m);
 
     Assert.That(RaisesSix(m), Is.True, "folding the check away would silently disarm it");
   }

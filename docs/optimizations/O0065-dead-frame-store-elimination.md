@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — IR whole-function private-frame stores are eliminated; the late assembler also removes guaranteed straight-line overwrites; post-selection/register-allocation spill death still needs backend-private slot metadata |
-| **Stage** | IR mid-end + assembler fallback |
-| **IR** | ✅ `Ir/Passes/DeadStoreElim.cs` |
+| **Status** | 🟡 Partial — IR whole-function private-frame stores are eliminated; the back end removes a spill-slot store overwritten in the same block before any read; the late assembler also removes guaranteed straight-line overwrites; a spill store that is simply never read again is still kept |
+| **Stage** | IR mid-end + x86 back end + assembler |
+| **Source** | `Ir/Passes/DeadStoreElim.cs`; `Backend/LateLoadStoreOptimization.cs`; `Asm/Assembler.LoadForward.cs` — `RunDeadFrameStoreElimination` |
 | **Related** | [O0034](O0034-redundant-load-elimination.md), [O0048](O0048-ir-dead-store-elimination.md), [O0060](O0060-memory-ssa.md) |
 
 ## The idea
@@ -27,9 +27,15 @@ intra-block overwrite scan.
 An `IrAlloca` qualifies for the whole-function rule only when:
 
 - it is compiler-generated storage (`IsSourceVariable == false`);
-- its pointer use graph contains only loads, stores through the pointer, and GEPs;
-- no derived pointer is passed to a call, returned, stored as a value, cast, merged,
-  or otherwise escapes the explicit memory graph.
+- its pointer use graph contains only loads, stores through the pointer, GEPs, and
+  pointer-preserving bitcasts;
+- no derived pointer is passed to a call, returned, stored as a value, converted through
+  an integer, merged, bound to opaque assembly, or otherwise escapes the explicit memory graph.
+
+The capture proof is now supplied by shared `IrPointerEscapeAnalysis`, while
+`IrPointerIdentityAnalysis` maps loads/stores back to their root alloca across GEPs and
+pointer-preserving bitcasts. O0065 still owns the separate policy that source-variable
+allocas are excluded.
 
 For every store into such an object, the pass asks whether **any** load derived
 from the same alloca may alias the bytes written by the store. If none can, the
@@ -88,8 +94,9 @@ possible read of the private object directly.
 
 ## Assembler fallback
 
-The direct emitter still has a conservative late form that composes after
-[O0034](O0034-redundant-load-elimination.md). It removes an older plain full-word
+The assembler has a conservative late form that composes after
+[O0034](O0034-redundant-load-elimination.md), enabled for optimized standalone
+programs. It removes an older plain full-word
 frame store when all of these hold:
 
 - it is `MOV [BP+disp], r16` or `MOV WORD PTR [BP+disp], imm16`;
@@ -131,8 +138,11 @@ instruction-record offsets remain synchronized.
 ## Remaining backend work
 
 The IR proof does not retroactively cover spill stores introduced **after** the
-middle end by register allocation/instruction selection. Likewise, the direct
-emitter cannot infer that a final machine-level frame store is dead merely because
+middle end by register allocation/instruction selection. `LateLoadStoreOptimization`
+covers the local case: within one basic block it drops a store to an
+allocator-created spill slot that a later store to the same slot overwrites before
+any read, and facts die at calls, inline assembly and unknown memory writes.
+Likewise, the assembler cannot infer that a final machine-level frame store is dead merely because
 no later *recorded* instruction reads it: `LEA`, `PUSH mem`, read-modify-write forms,
 indirect operations and other unrecorded instructions may still observe the cell.
 

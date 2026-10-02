@@ -31,7 +31,7 @@ public sealed class AggregateZeroCostTests {
     var module = Lower(source, dialect);
 
     // When the standard pipeline runs, verify every intermediate representation as well as the end.
-    var pipeline = IrPassManager.Standard();
+    var pipeline = IrMiddleEndPipeline.Standard();
     pipeline.VerifyEachPass = true;
     pipeline.RunOnModule(module);
 

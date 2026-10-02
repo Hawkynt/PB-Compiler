@@ -1,3 +1,5 @@
+using PowerBasic.Compiler.Ir.Analysis;
+
 namespace PowerBasic.Compiler.Ir.Passes;
 
 /// <summary>
@@ -33,13 +35,29 @@ public static class IpConstantProp {
 
   /// <summary>Propagates as far as it can through <paramref name="module"/>; returns how many values it replaced.</summary>
   public static int Run(IrModule module) {
+    ArgumentNullException.ThrowIfNull(module);
+    return RunCore(module, IrCallGraph.Build(module));
+  }
+
+  /// <summary>Analysis-aware module-pass entry using the shared cached call graph.</summary>
+  public static IrModulePassResult Run(IrModule module, IrModuleAnalysisManager analyses) {
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(analyses);
+    if (!ReferenceEquals(module, analyses.Module))
+      throw new ArgumentException("Module analysis manager belongs to a different module.", nameof(analyses));
+
+    var changes = RunCore(module, analyses.Get(IrModuleAnalyses.CallGraph));
+    return changes == 0 ? IrModulePassResult.Unchanged : IrModulePassResult.Changed(changes);
+  }
+
+  private static int RunCore(IrModule module, IrCallGraph callGraph) {
     var replaced = 0;
     for (var changed = true; changed;) {
       changed = false;
       foreach (var function in module.Functions.ToList()) {
-        if (function.IsDeclaration || function.HasErrorHandler || !IsFullyVisible(module, function))
+        if (function.IsDeclaration || function.HasErrorHandler || !callGraph.IsFullyVisible(function))
           continue;
-        var took = PropagateArguments(module, function) + PropagateResult(module, function);
+        var took = PropagateArguments(function, callGraph) + PropagateResult(function, callGraph);
         if (took > 0) {
           replaced += took;
           changed = true;
@@ -56,23 +74,10 @@ public static class IpConstantProp {
   /// argument, after which the call sites are no longer enumerable.
   /// </summary>
   internal static bool IsFullyVisible(IrModule module, IrFunction function) {
-    if (function.Name.Equals("main", StringComparison.OrdinalIgnoreCase))
-      return false;
-    foreach (var user in function.Users)
-      if (user is not IrCall call || !ReferenceEquals(call.Callee, function))
-        return false;
-
-    // A call from a function no longer in the module would be invisible to the sweep below.
-    foreach (var user in function.Users) {
-      var owner = user.Parent?.Parent;
-      if (owner is null || !module.Functions.Contains(owner))
-        return false;
-    }
-    return true;
+    ArgumentNullException.ThrowIfNull(module);
+    ArgumentNullException.ThrowIfNull(function);
+    return IrCallGraph.Build(module).IsFullyVisible(function);
   }
-
-  private static IEnumerable<IrCall> CallsTo(IrFunction function)
-    => function.Users.OfType<IrCall>().Where(c => ReferenceEquals(c.Callee, function));
 
   /// <summary>Two constants agree only when the same declared type carries the same bits.</summary>
   private static bool Same(IrValue a, IrValue b) => (a, b) switch {
@@ -83,8 +88,8 @@ public static class IpConstantProp {
 
   private static bool IsConstant(IrValue value) => value is IrConstantInt or IrConstantFloat;
 
-  private static int PropagateArguments(IrModule module, IrFunction function) {
-    var calls = CallsTo(function).ToList();
+  private static int PropagateArguments(IrFunction function, IrCallGraph callGraph) {
+    var calls = callGraph.DirectCallsTo(function).ToList();
     if (calls.Count == 0)
       return 0;
 
@@ -116,7 +121,7 @@ public static class IpConstantProp {
     return replaced;
   }
 
-  private static int PropagateResult(IrModule module, IrFunction function) {
+  private static int PropagateResult(IrFunction function, IrCallGraph callGraph) {
     if (function.ReturnType.Kind == IrTypeKind.Void)
       return 0;
 
@@ -134,7 +139,7 @@ public static class IpConstantProp {
       return 0;
 
     var replaced = 0;
-    foreach (var call in CallsTo(function).ToList()) {
+    foreach (var call in callGraph.DirectCallsTo(function).ToList()) {
       if (call.HasNoUsers)
         continue;
       call.ReplaceAllUsesWith(agreed);              // the call itself stays: the body may still print

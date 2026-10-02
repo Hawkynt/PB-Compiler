@@ -50,7 +50,7 @@ public sealed class BackendRegisterPressureTests {
   /// constant propagation cannot fold the array away and leave a test of nothing.
   /// </summary>
   private const string _fourSimultaneousLongAccumulators = """
-    SUB Accumulate(BYVAL seed%)
+    SUB Accumulate(BYVAL seed%) NOINLINE
       DIM a%(1 TO 8)
       FOR i% = 1 TO 8
         a%(i%) = i% * seed%
@@ -72,7 +72,7 @@ public sealed class BackendRegisterPressureTests {
   /// stays an argument.
   /// </summary>
   private const string _longLiveAcrossACall = """
-    FUNCTION Scaled&(BYVAL base%)
+    FUNCTION Scaled&(BYVAL base%) NOINLINE
       value& = base%
       value& = value& * 1000
       PRINT "step"
@@ -90,28 +90,25 @@ public sealed class BackendRegisterPressureTests {
     return model;
   }
 
-  private static MFunction Select(string source, string function) {
+  private static X86MachineFunction Select(string source, string function) {
     var module = IrLowering.TryLowerModule(Bind(source), out var why);
     Assert.That(module, Is.Not.Null, "outside the IR lowering's subset: " + why);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
     foreach (var f in module!.Functions)
       if (!f.IsDeclaration)
         IntegerRecovery.Run(f);
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     var fn = module.Functions.First(f => f.Name.Equals(function, StringComparison.OrdinalIgnoreCase));
     var machine = InstructionSelector.TrySelect(fn, out var reason);
     Assert.That(machine, Is.Not.Null, $"{function} declined at selection: {reason}");
     return machine!;
   }
 
-  private static (Cpu8086 Direct, Cpu8086 Routed, CodeGenerator Generator) RunBothWays(string source) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
+  private static (Cpu8086 Routed, CodeGenerator Generator) Run(string source) {
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
     var routedCpu = Cpu8086.Run(routed.EmitExecutable());
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
-    return (directCpu, routedCpu, routed);
+    return (routedCpu, routed);
   }
 
   [Test]
@@ -126,19 +123,18 @@ public sealed class BackendRegisterPressureTests {
   }
 
   [Test]
-  public void Run_GivenAnUnrolled32BitAccumulation_ThenTheSumExceedsSixteenBitsOnBothBackEnds() {
-    var (direct, routed, generator) = RunBothWays(_longAccumulationOverAStaticArray);
+  public void Run_GivenAnUnrolled32BitAccumulation_ThenTheSumExceedsSixteenBits() {
+    var (routed, generator) = Run(_longAccumulationOverAStaticArray);
 
     Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the back end did not take the accumulation");
-    // the value, not just the agreement: 3000 * 55 is past 65535, so a sum carried in one 16-bit
+    // 3000 * 55 is past 65535, so a sum carried in one 16-bit
     // register would print 33928 and a truncated low word 34464
     Assert.That(routed.Output.Trim(), Is.EqualTo("sum 165000"));
-    Assert.That(routed.Output, Is.EqualTo(direct.Output));
   }
 
   [Test]
   public void Run_GivenFourSimultaneousLongAccumulators_ThenEachKeepsItsOwnValue() {
-    var (direct, routed, generator) = RunBothWays(_fourSimultaneousLongAccumulators);
+    var (routed, generator) = Run(_fourSimultaneousLongAccumulators);
 
     Assert.That(generator.BackendRoutedNames, Does.Contain("Accumulate"),
       "the back end did not take the four-accumulator procedure");
@@ -149,18 +145,16 @@ public sealed class BackendRegisterPressureTests {
         "3000  7000  11000  15000  36000",
         "6000  14000  22000  30000  72000",
       }));
-    Assert.That(routed.Output, Is.EqualTo(direct.Output));
   }
 
   [Test]
   public void Run_GivenALongLiveAcrossACall_ThenBothOfItsWordsSurvive() {
-    var (direct, routed, generator) = RunBothWays(_longLiveAcrossACall);
+    var (routed, generator) = Run(_longLiveAcrossACall);
 
     Assert.That(generator.BackendRoutedNames, Does.Contain("Scaled"),
       "the back end did not take the function whose LONG spans a call");
     // 70 * 1000 + 7 and 80 * 1000 + 7: both past 65535, so a lost high word prints 4471 and 14471
     Assert.That(routed.Output.Split('\n').Select(line => line.Trim()).Where(line => line.Length > 0),
       Is.EqualTo(new[] { "step", "70007", "step", "80007" }));
-    Assert.That(routed.Output, Is.EqualTo(direct.Output));
   }
 }

@@ -58,13 +58,13 @@ public sealed class BackendAbsoluteArrayTests {
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenAnAtArray_WhenRouted_ThenEveryStoreLandsInTheNamedSegment(bool optimize) {
-    var routed = new CodeGenerator(Bind(_videoProgram)) { Optimize = optimize, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(_videoProgram)) { Optimize = optimize};
 
     var cpu = Cpu8086.Run(routed.EmitExecutable());
 
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.That(routed.BackendRoutedNames, Does.Contain("main"),
-      "the module body must not fall back to the direct emitter - then this would test that instead");
+      "the back end must take the module body under test");
     // 16706 = 0x4142 and 12345 = 0x3039, little-endian, at the first and last element of eight words
     Assert.That(Bytes(cpu, 0xB800, 0, 4), Is.EqualTo(new byte[] { 0x42, 0x41, 0x02, 0x00 }));
     Assert.That(Bytes(cpu, 0xB800, 14, 2), Is.EqualTo(new byte[] { 0x39, 0x30 }));
@@ -74,15 +74,15 @@ public sealed class BackendAbsoluteArrayTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Execute_GivenAnAtArray_WhenRouted_ThenItAgreesWithTheDirectEmitter(bool optimize) {
-    var direct = new CodeGenerator(Bind(_videoProgram)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(_videoProgram)) { Optimize = optimize, UseExperimentalBackend = true };
+  public void Execute_GivenAnAtArray_WhenRouted_ThenEveryWordOfTheViewHoldsItsElement(bool optimize) {
+    var generator = new CodeGenerator(Bind(_videoProgram)) { Optimize = optimize};
 
-    var directCpu = Cpu8086.Run(direct.EmitExecutable());
-    var routedCpu = Cpu8086.Run(routed.EmitExecutable());
+    var cpu = Cpu8086.Run(generator.EmitExecutable());
 
-    Assert.That(routedCpu.Output, Is.EqualTo(directCpu.Output));
-    Assert.That(Bytes(routedCpu, 0xB800, 0, 16), Is.EqualTo(Bytes(directCpu, 0xB800, 0, 16)));
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    // the loop stores i% * 3 - 1 = 2, 5, 8, 11, 14, 17 between the two literal ends
+    Assert.That(Bytes(cpu, 0xB800, 0, 16), Is.EqualTo(new byte[] {
+      0x42, 0x41, 0x02, 0x00, 0x05, 0x00, 0x08, 0x00, 0x0B, 0x00, 0x0E, 0x00, 0x11, 0x00, 0x39, 0x30 }));
   }
 
   /// <summary>
@@ -102,7 +102,7 @@ public sealed class BackendAbsoluteArrayTests {
       alt%(5) = 222
       PRINT vid%(1)
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var cpu = Cpu8086.Run(routed.EmitExecutable());
 
@@ -125,7 +125,7 @@ public sealed class BackendAbsoluteArrayTests {
       a%({subscript}) = 4660
       PRINT a%({subscript})
       """;
-    var routed = new CodeGenerator(Bind(source)) { Optimize = true, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = true};
 
     var cpu = Cpu8086.Run(routed.EmitExecutable());
 
@@ -170,7 +170,7 @@ public sealed class BackendAbsoluteArrayTests {
   [Test]
   public void Lower_GivenEraseOfAnAbsoluteArray_ThenItLowersAndRoutes() {
     const string source = "DIM DYNAMIC a%(0 TO 7) AT &HB800\na%(0) = 1\nERASE a%\nPRINT \"ok\"";
-    var routed = new CodeGenerator(Bind(source)) { Optimize = false, UseExperimentalBackend = true };
+    var routed = new CodeGenerator(Bind(source)) { Optimize = false};
 
     var image = routed.EmitExecutable();
 

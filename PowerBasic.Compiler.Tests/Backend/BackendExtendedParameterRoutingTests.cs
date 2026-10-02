@@ -32,21 +32,17 @@ public sealed class BackendExtendedParameterRoutingTests {
 
   [TestCase(false)]
   [TestCase(true)]
-  public void Procedure_GivenTwoExtParametersAndExtResult_ThenRoutedDefinitionMatchesDirectExecution(bool optimize) {
-    var routed = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = true };
+  public void Procedure_GivenTwoExtParametersAndExtResult_ThenTheRoutedCallReturnsTheBlend(bool optimize) {
+    var routed = new CodeGenerator(Bind()) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
-    Assert.That(routed.Errors, Is.Empty, "routed: " + string.Join("; ", routed.Errors));
+    Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
     Assert.Multiple(() => {
       Assert.That(routed.BackendRoutedNames, Does.Contain("Blend"), "the EXT-taking function did not route");
       Assert.That(routed.BackendRoutedNames, Does.Contain("main"), "the EXT caller did not route");
     });
 
-    var direct = new CodeGenerator(Bind()) { Optimize = optimize, UseExperimentalBackend = false };
-    var directImage = direct.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, "direct: " + string.Join("; ", direct.Errors));
-
-    var expected = Cpu8086.Run(directImage);
+    // 1.25 * 2 + 2.5
     var actual = Cpu8086.Run(routedImage);
-    Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((expected.Output, expected.ExitCode)));
+    Assert.That((actual.Output, actual.ExitCode), Is.EqualTo((" 5 \r\n", 0)));
   }
 }

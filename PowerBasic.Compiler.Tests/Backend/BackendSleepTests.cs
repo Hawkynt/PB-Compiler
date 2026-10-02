@@ -29,11 +29,11 @@ namespace PowerBasic.Compiler.Tests.Backend;
 [TestFixture]
 public sealed class BackendSleepTests {
 
-  private static (byte[] Image, IEnumerable<string> Routed) Compile(string source, bool optimize, bool routed) {
+  private static (byte[] Image, IEnumerable<string> Routed) Compile(string source, bool optimize) {
     var model = Binder.Bind(
       Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = optimize, UseExperimentalBackend = routed };
+    var generator = new CodeGenerator(model) { Optimize = optimize};
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     return (image, generator.BackendRoutedNames.ToList());
@@ -57,42 +57,37 @@ public sealed class BackendSleepTests {
   public void Execute_GivenANonZeroSleep_WhenRouted_ThenItDelaysAndReturns(bool optimize) {
     var source = _Opaque + "\nSLEEP Count#(1)\nPRINT \"awake\"\n" + _Epilogue;
 
-    var (image, routed) = Compile(source, optimize, routed: true);
+    var (image, routed) = Compile(source, optimize);
     Assert.That(routed, Does.Contain("main"), "a body containing SLEEP must route now");
     var output = Cpu8086.Run(image).Output.Trim();
 
-    Assert.That(output, Is.EqualTo(Cpu8086.Run(Compile(source, optimize, routed: false).Image).Output.Trim()));
     Assert.That(output, Is.EqualTo("awake"), "the delay ended on the tick counter, with no key involved");
   }
 
   /// <summary>
   /// The other arm, and the one that says the branch exists. A zero count must reach the KEY wait,
   /// which this interpreter cannot serve and says so - where a build that delayed instead would print
-  /// "awake" and pass every comparison the case above can make.
+  /// "awake" and pass every check the case above can make.
   /// </summary>
   [TestCase(true)]
   [TestCase(false)]
   public void Execute_GivenAZeroSleep_WhenRouted_ThenItWaitsForAKeyRatherThanDelaying(bool optimize) {
     var source = _Opaque + "\nSLEEP Count#(0)\nPRINT \"awake\"\n" + _Epilogue;
 
-    var (image, routed) = Compile(source, optimize, routed: true);
+    var (image, routed) = Compile(source, optimize);
     Assert.That(routed, Does.Contain("main"));
 
     var blocked = Assert.Throws<Cpu8086Exception>(() => Cpu8086.Run(image));
     Assert.That(blocked!.Message, Does.Contain("INT 16h"), "the zero count took the key wait");
-    // and the direct emitter reaches the same wait, from its own inline INT
-    Assert.That(Assert.Throws<Cpu8086Exception>(
-      () => Cpu8086.Run(Compile(source, optimize, routed: false).Image))!.Message, Does.Contain("INT 16h"));
   }
 
   /// <summary>
-  /// <c>SLEEP</c> with no argument at all: the key wait with no test in front of it, which is what the
-  /// direct emitter emits for it too. Written separately because the parser makes it a different
+  /// <c>SLEEP</c> with no argument at all: the key wait with no test in front of it. Written separately because the parser makes it a different
   /// statement rather than a zero-valued one, and a lowering that required an argument would decline.
   /// </summary>
   [Test]
   public void Execute_GivenABareSleep_WhenRouted_ThenItWaitsForAKey() {
-    var (image, routed) = Compile("SLEEP\nPRINT \"awake\"\n", optimize: false, routed: true);
+    var (image, routed) = Compile("SLEEP\nPRINT \"awake\"\n", optimize: false);
 
     Assert.That(routed, Does.Contain("main"));
     Assert.That(Assert.Throws<Cpu8086Exception>(() => Cpu8086.Run(image))!.Message, Does.Contain("INT 16h"));

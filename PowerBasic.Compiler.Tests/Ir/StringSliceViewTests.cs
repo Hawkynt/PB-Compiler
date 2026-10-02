@@ -183,7 +183,7 @@ public sealed class StringSliceViewTests {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", dialect), "T.BAS", dialect);
     var module = IrLowering.TryLowerModule(Binder.Bind(unit, dialect));
     if (module is not null)
-      IrPassManager.Standard().RunOnModule(module);
+      IrMiddleEndPipeline.Standard().RunOnModule(module);
     return module;
   }
 }

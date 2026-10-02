@@ -6,7 +6,7 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.Backend;
 
 /// <summary>
-/// <c>DATA</c>/<c>READ</c>/<c>RESTORE</c> over both back ends. The corpus reads DATA in two programs
+/// <c>DATA</c>/<c>READ</c>/<c>RESTORE</c> through the x86-16 back end. The corpus reads DATA in two programs
 /// and neither of them runs off the end, which is the whole reason the routed path could walk past the
 /// blob for as long as it did.
 ///
@@ -15,8 +15,8 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// laid out next, and the two bytes there are read as an item LENGTH. So an unchecked READ hands the
 /// target a value out of an unrelated object and advances the cursor by it - the failure is a wrong
 /// ANSWER, and only then a missing diagnostic. Genuine PBC 3.50 raises error 4 and leaves the target
-/// untouched (checked with <c>scripts/diff-one.sh … pb35</c>), which is what the direct emitter's
-/// <c>rt_readdata</c> does by comparing <c>rt_dataptr</c> against <c>rt_dataend</c>.
+/// untouched (checked with <c>scripts/diff-one.sh … pb35</c>), which is what <c>rt_readdata</c> does
+/// by comparing <c>rt_dataptr</c> against <c>rt_dataend</c>.
 /// </para>
 /// </summary>
 [TestFixture]
@@ -28,24 +28,17 @@ public sealed class BackendDataReadTests {
     return model;
   }
 
-  private static (string Direct, string Routed, IEnumerable<string> RoutedNames) RunBothWays(string source, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
-    var directImage = direct.EmitExecutable();
+  private static (string Output, IEnumerable<string> RoutedNames) Run(string source, bool optimize) {
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output;
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return (Cpu8086.Run(routedImage).Output, routed.BackendRoutedNames);
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return ("", []);
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"), routed.BackendRoutedNames);
   }
 
   /// <summary>
@@ -56,7 +49,7 @@ public sealed class BackendDataReadTests {
   [TestCase(true, TestName = "Run_GivenAReadPastTheLastDataItem_WhenOptimized_ThenErrorFourIsRaisedAndTheTargetIsUntouched")]
   [TestCase(false, TestName = "Run_GivenAReadPastTheLastDataItem_WhenUnoptimized_ThenErrorFourIsRaisedAndTheTargetIsUntouched")]
   public void Run_GivenAReadPastTheLastDataItem_ThenErrorFourIsRaisedAndTheTargetIsUntouched(bool optimize) {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DATA 1, 2
       DIM i AS INTEGER
       ON ERROR GOTO Trap
@@ -71,9 +64,8 @@ public sealed class BackendDataReadTests {
         RESUME NEXT
       """, optimize);
 
-    Assert.That(names, Does.Contain("main"), "the module body did not route, so this compares one image with itself");
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Replace("\r", ""), Is.EqualTo("a 1 \nb 2 \nerr 4 \nc 2 \ndone\n"),
+    Assert.That(names, Does.Contain("main"), "the module body did not route");
+    Assert.That(output.Replace("\r", ""), Is.EqualTo("a 1 \nb 2 \nerr 4 \nc 2 \ndone\n"),
       "and that is the answer genuine PBC 3.50 gives");
   }
 
@@ -81,10 +73,10 @@ public sealed class BackendDataReadTests {
   /// The reads that stay inside the pool, so the bounds check cannot be paid for by breaking them:
   /// every scalar width, a string item, <c>RESTORE &lt;label&gt;</c> and bare <c>RESTORE</c>.
   /// </summary>
-  [TestCase(true, TestName = "Run_GivenTypedReadsAndRestore_WhenOptimized_ThenBothPathsAgree")]
-  [TestCase(false, TestName = "Run_GivenTypedReadsAndRestore_WhenUnoptimized_ThenBothPathsAgree")]
-  public void Run_GivenTypedReadsAndRestore_ThenBothPathsAgree(bool optimize) {
-    var (direct, routed, names) = RunBothWays("""
+  [TestCase(true, TestName = "Run_GivenTypedReadsAndRestore_WhenOptimized_ThenEachItemIsReadAtItsOwnType")]
+  [TestCase(false, TestName = "Run_GivenTypedReadsAndRestore_WhenUnoptimized_ThenEachItemIsReadAtItsOwnType")]
+  public void Run_GivenTypedReadsAndRestore_ThenEachItemIsReadAtItsOwnType(bool optimize) {
+    var (output, names) = Run("""
       DATA 10, 20, hello, 3.5, -7
       Second:
       DATA 99, world, 1.25
@@ -108,9 +100,7 @@ public sealed class BackendDataReadTests {
       """, optimize);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct, Does.Contain("hello"));
-    Assert.That(direct, Does.Contain("world"));
+    Assert.That(output.Replace("\r", ""), Is.EqualTo(" 10 \n 20 \nhello\n 3.5 \n-7 \n 99 \nworld\n 1.25 \n 10 \n"));
   }
 
   /// <summary>
@@ -128,7 +118,7 @@ public sealed class BackendDataReadTests {
   [TestCase(true, TestName = "Run_GivenDataInsideABlock_WhenOptimized_ThenItIsInThePoolInSourceOrder")]
   [TestCase(false, TestName = "Run_GivenDataInsideABlock_WhenUnoptimized_ThenItIsInThePoolInSourceOrder")]
   public void Run_GivenDataInsideABlock_ThenItIsInThePoolInSourceOrder(bool optimize) {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DIM x AS INTEGER
       DIM a AS INTEGER
       DIM b AS INTEGER
@@ -152,8 +142,7 @@ public sealed class BackendDataReadTests {
       """, optimize);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Replace("\r", ""), Is.EqualTo(" 1  2  7  8 \n 7  8 \n"),
+    Assert.That(output.Replace("\r", ""), Is.EqualTo(" 1  2  7  8 \n 7  8 \n"),
       "the nested items are in the pool where they are written, and the nested label points at them");
   }
 
@@ -166,7 +155,7 @@ public sealed class BackendDataReadTests {
   [TestCase(true, TestName = "Run_GivenAReadIntoAFixedString_WhenOptimized_ThenTheItemIsPaddedIntoTheBuffer")]
   [TestCase(false, TestName = "Run_GivenAReadIntoAFixedString_WhenUnoptimized_ThenTheItemIsPaddedIntoTheBuffer")]
   public void Run_GivenAReadIntoAFixedString_ThenTheItemIsPaddedIntoTheBuffer(bool optimize) {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DATA ab, abcdefg
       DIM s AS STRING * 4
       READ s
@@ -177,8 +166,7 @@ public sealed class BackendDataReadTests {
       """, optimize);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(routed, Is.EqualTo(direct));
-    Assert.That(direct.Replace("\r", ""), Is.EqualTo("[ab  ]\n[abcd]\n"),
+    Assert.That(output.Replace("\r", ""), Is.EqualTo("[ab  ]\n[abcd]\n"),
       "a short item is blank-padded to the declared width and a long one is truncated to it");
   }
 
@@ -199,11 +187,11 @@ public sealed class BackendDataReadTests {
   [TestCase(true, TestName = "Run_GivenAReadInsideAProcedure_WhenOptimized_ThenItSharesTheModuleCursor")]
   [TestCase(false, TestName = "Run_GivenAReadInsideAProcedure_WhenUnoptimized_ThenItSharesTheModuleCursor")]
   public void Run_GivenAReadInsideAProcedure_ThenItSharesTheModuleCursor(bool optimize) {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DATA 11, 22, 33
       DECLARE SUB Take()
       DIM v AS INTEGER
-      SUB Take()
+      SUB Take() NOINLINE
         DIM a AS INTEGER
         DIM b AS INTEGER
         READ a
@@ -224,8 +212,7 @@ public sealed class BackendDataReadTests {
       Assert.That(names, Does.Contain("Take"),
         "the procedure did not route, so nothing here measures a shared cursor");
       Assert.That(names, Does.Contain("main"));
-      Assert.That(routed, Is.EqualTo(direct));
-      Assert.That(direct.Replace("\r", ""), Is.EqualTo("main 11 \nsub 22 \nsub 11 \nmain 22 \n"),
+      Assert.That(output.Replace("\r", ""), Is.EqualTo("main 11 \nsub 22 \nsub 11 \nmain 22 \n"),
         "one cursor: the SUB continues where main stopped, and its RESTORE rewinds main's next read");
     });
   }

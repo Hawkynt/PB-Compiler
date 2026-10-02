@@ -13,7 +13,7 @@ public sealed class MathIntrinsicTests {
   private static IrModule LowerOptimized(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35), "T.BAS", Dialect.Pb35);
     var module = IrLowering.TryLowerModule(Binder.Bind(unit, Dialect.Pb35))!;
-    IrPassManager.Standard().RunOnModule(module);
+    IrMiddleEndPipeline.Standard().RunOnModule(module);
     return module;
   }
 

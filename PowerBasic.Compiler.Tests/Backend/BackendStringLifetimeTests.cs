@@ -31,24 +31,17 @@ public sealed class BackendStringLifetimeTests {
     return model;
   }
 
-  private static (string Direct, string Routed, IEnumerable<string> RoutedNames) RunBothWays(string source, bool optimize) {
-    var direct = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = false };
-    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize, UseExperimentalBackend = true };
-    var directImage = direct.EmitExecutable();
+  private static (string Output, IEnumerable<string> RoutedNames) Run(string source, bool optimize) {
+    var routed = new CodeGenerator(Bind(source)) { Optimize = optimize};
     var routedImage = routed.EmitExecutable();
-    Assert.That(direct.Errors, Is.Empty, string.Join("; ", direct.Errors));
     Assert.That(routed.Errors, Is.Empty, string.Join("; ", routed.Errors));
 
-    string Execute(byte[] image, string which) {
-      try {
-        return Cpu8086.Run(image).Output;
-      } catch (Cpu8086Exception e) {
-        Assert.Ignore($"the interpreter cannot run the {which} image: {e.Message}");
-        return "";
-      }
+    try {
+      return (Cpu8086.Run(routedImage).Output, routed.BackendRoutedNames);
+    } catch (Cpu8086Exception e) {
+      Assert.Ignore($"the interpreter cannot run the image: {e.Message}");
+      return ("", []);
     }
-
-    return (Execute(directImage, "direct"), Execute(routedImage, "routed"), routed.BackendRoutedNames);
   }
 
   /// <summary>
@@ -69,7 +62,7 @@ public sealed class BackendStringLifetimeTests {
   [TestCase(true, TestName = "Run_GivenAStringSelectWithTwoArms_WhenOptimized_ThenTheSubjectSurvivesEveryComparison")]
   [TestCase(false, TestName = "Run_GivenAStringSelectWithTwoArms_WhenUnoptimized_ThenTheSubjectSurvivesEveryComparison")]
   public void Run_GivenAStringSelectWithTwoArms_ThenTheSubjectSurvivesEveryComparison(bool optimize) {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       OPEN "D.TXT" FOR OUTPUT AS #1
       PRINT #1, "gamma"
       CLOSE #1
@@ -85,8 +78,7 @@ public sealed class BackendStringLifetimeTests {
       """, optimize);
 
     Assert.That(names, Does.Contain("main"), "the back end did not take the module body under test");
-    Assert.That(direct.Trim(), Is.EqualTo("?"), "gamma matches neither arm, so CASE ELSE is the answer");
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output.Trim(), Is.EqualTo("?"), "gamma matches neither arm, so CASE ELSE is the answer");
   }
 
   /// <summary>
@@ -94,8 +86,8 @@ public sealed class BackendStringLifetimeTests {
   /// is where a subject released once too FEW rather than once too many would show, as a leak.
   /// </summary>
   [Test]
-  public void Run_GivenAStringSelectInALoop_ThenEveryIterationAgreesAndTheHeapHolds() {
-    var (direct, routed, names) = RunBothWays("""
+  public void Run_GivenAStringSelectInALoop_ThenEveryIterationTakesCaseElseAndTheHeapHolds() {
+    var (output, names) = Run("""
       OPEN "D.TXT" FOR OUTPUT AS #1
       PRINT #1, "0123456789012345678901234567890123456789"
       PRINT #1, "400"
@@ -120,23 +112,23 @@ public sealed class BackendStringLifetimeTests {
       """, optimize: true);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(direct, Does.Contain("done"), "the direct build finishes, so the comparison is about the routed one");
-    Assert.That(direct, Does.Contain("4000"), "no arm matches, so every iteration takes CASE ELSE");
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output, Does.Contain("done"));
+    Assert.That(output, Does.Contain("4000"), "no arm matches, so every iteration takes CASE ELSE");
+    Assert.That(output.Replace("\r\n", "|"), Is.EqualTo(" 4000  200 |done|"));
   }
 
   /// <summary>
   /// <c>MID$(s$, i, n) = v$</c> read the target as a borrowed COPY, handed that to the runtime, and
   /// stored the edited copy back - leaving the handle the variable HELD released by nobody. One per
   /// statement, so it takes a churning loop to see it: 600 edits of a 120-byte string exhaust the
-  /// 64 KiB heap and the routed build says OUT OF STRING SPACE where the direct one prints its answer.
+  /// 64 KiB heap and the leaking build says OUT OF STRING SPACE where a correct one prints its answer.
   ///
   /// <c>REPLACE</c> next door already freed through the cell; this is that same call, which is what
   /// makes the fix a one-liner rather than a design.
   /// </summary>
   [Test]
   public void Run_GivenMidStatementInAChurningLoop_ThenTheReplacedHandleIsReleased() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       OPEN "D.TXT" FOR OUTPUT AS #1
       PRINT #1, "0123456789012345678901234567890123456789"
       PRINT #1, "600"
@@ -155,9 +147,9 @@ public sealed class BackendStringLifetimeTests {
       """, optimize: true);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(direct, Does.Contain("done"));
-    Assert.That(routed, Does.Not.Contain("OUT OF STRING SPACE"), "the routed build leaked one block per MID$ statement");
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output, Does.Contain("done"));
+    Assert.That(output, Does.Not.Contain("OUT OF STRING SPACE"), "the routed build leaked one block per MID$ statement");
+    Assert.That(output.Replace("\r\n", "|"), Is.EqualTo(" 120 [0123ZZZ78901]|done|"));
   }
 
   /// <summary>
@@ -167,7 +159,7 @@ public sealed class BackendStringLifetimeTests {
   /// </summary>
   [Test]
   public void Run_GivenAscAssignmentInAChurningLoop_ThenTheReplacedHandleIsReleased() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       OPEN "D.TXT" FOR OUTPUT AS #1
       PRINT #1, "0123456789012345678901234567890123456789"
       PRINT #1, "600"
@@ -187,15 +179,15 @@ public sealed class BackendStringLifetimeTests {
       """, optimize: true);
 
     Assert.That(names, Does.Contain("main"));
-    Assert.That(direct, Does.Contain("done"));
-    Assert.That(routed, Does.Not.Contain("OUT OF STRING SPACE"), "the routed build leaked one block per ASC assignment");
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output, Does.Contain("done"));
+    Assert.That(output, Does.Not.Contain("OUT OF STRING SPACE"), "the routed build leaked one block per ASC assignment");
+    Assert.That(output.Replace("\r\n", "|"), Is.EqualTo(" 120 [0123A5678901]|done|"));
   }
 
   [TestCase(true, TestName = "Run_GivenDynamicStringSwap_WhenOptimized_ThenHandlesTransferWithoutFallback")]
   [TestCase(false, TestName = "Run_GivenDynamicStringSwap_WhenUnoptimized_ThenHandlesTransferWithoutFallback")]
   public void Run_GivenDynamicStringSwap_WhenCompiled_ThenHandlesTransferWithoutFallback(bool optimize) {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE SUB Exchange()
       Exchange
       END
@@ -219,10 +211,10 @@ public sealed class BackendStringLifetimeTests {
 
     Assert.That(names, Is.SupersetOf(new[] { "Exchange", "main" }),
       "the string handle exchange and its caller must stay on the routed path");
-    Assert.That(direct, Does.Contain("right:left"));
-    Assert.That(direct, Does.Contain("[full][]"));
-    Assert.That(direct, Does.Contain("two:one"));
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output, Does.Contain("right:left"));
+    Assert.That(output, Does.Contain("[full][]"));
+    Assert.That(output, Does.Contain("two:one"));
+    Assert.That(output.Replace("\r\n", "|"), Is.EqualTo("right:left|[full][]|two:one|"));
   }
 
   [TestCase(true,
@@ -230,7 +222,7 @@ public sealed class BackendStringLifetimeTests {
   [TestCase(false,
     TestName = "Run_GivenStringParametersAndResult_WhenUnoptimized_ThenTheProcedureABITransfersOwnership")]
   public void Run_GivenStringParametersAndResult_ThenTheProcedureAbiTransfersOwnership(bool optimize) {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE SUB Mutate(value$)
       DECLARE FUNCTION Join$(BYVAL left$, right$)
       DIM text AS STRING
@@ -251,13 +243,12 @@ public sealed class BackendStringLifetimeTests {
 
     Assert.That(names, Is.SupersetOf(new[] { "Mutate", "Join", "main" }),
       "both string conventions and their caller must stay on the routed path");
-    Assert.That(direct.Replace("\r\n", "|").Trim(), Is.EqualTo("AB:A|A!|"));
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output.Replace("\r\n", "|").Trim(), Is.EqualTo("AB:A|A!|"));
   }
 
   [Test]
   public void Run_GivenStringArrayElementsPassedByRef_ThenNearWritesThroughAndFarCopiesIn() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE SUB Mutate(value$)
       DIM nearValues$(1 TO 2)
       nearValues$(2) = "near"
@@ -274,15 +265,14 @@ public sealed class BackendStringLifetimeTests {
       """, optimize: true);
 
     Assert.That(names, Is.SupersetOf(new[] { "Mutate", "main" }));
-    Assert.That(direct.Trim(), Is.EqualTo("near!:far"),
+    Assert.That(output.Trim(), Is.EqualTo("near!:far"),
       "a near element is an addressable lvalue; a far element uses BASIC's copy-in temporary");
-    Assert.That(routed, Is.EqualTo(direct));
   }
 
   [TestCase(true, TestName = "Run_GivenOwnedStringsInRepeatedCalls_WhenOptimized_ThenEveryReturnReleasesThem")]
   [TestCase(false, TestName = "Run_GivenOwnedStringsInRepeatedCalls_WhenUnoptimized_ThenEveryReturnReleasesThem")]
   public void Run_GivenOwnedStringsInRepeatedCalls_ThenEveryReturnReleasesThem(bool optimize) {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE SUB Work(BYVAL seed$)
       OPEN "D.TXT" FOR OUTPUT AS #1
       PRINT #1, "0123456789012345678901234567890123456789"
@@ -304,15 +294,15 @@ public sealed class BackendStringLifetimeTests {
       """, optimize);
 
     Assert.That(names, Is.SupersetOf(new[] { "Work", "main" }));
-    Assert.That(direct, Does.Contain("done"));
-    Assert.That(routed, Does.Not.Contain("OUT OF STRING SPACE"),
+    Assert.That(output, Does.Contain("done"));
+    Assert.That(output, Does.Not.Contain("OUT OF STRING SPACE"),
       "each call owns both its BYVAL copy and its local result, so each return must release both");
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output.Replace("\r\n", "|"), Is.EqualTo("done|"));
   }
 
   [Test]
   public void Run_GivenRepeatedByRefStringExpressions_ThenTheCallerReleasesEachCopyInTemporary() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE SUB Observe(value$)
       OPEN "D.TXT" FOR OUTPUT AS #1
       PRINT #1, "0123456789012345678901234567890123456789"
@@ -333,15 +323,15 @@ public sealed class BackendStringLifetimeTests {
       """, optimize: true);
 
     Assert.That(names, Is.SupersetOf(new[] { "Observe", "main" }));
-    Assert.That(direct, Does.Contain("done"));
-    Assert.That(routed, Does.Not.Contain("OUT OF STRING SPACE"),
+    Assert.That(output, Does.Contain("done"));
+    Assert.That(output, Does.Not.Contain("OUT OF STRING SPACE"),
       "a BYREF expression is a caller-owned copy-in temporary and must be released after the call");
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output.Replace("\r\n", "|"), Is.EqualTo("done|"));
   }
 
   [Test]
   public void Run_GivenDiscardedStringFunctionResults_ThenEveryOwnedResultIsReleased() {
-    var (direct, routed, names) = RunBothWays("""
+    var (output, names) = Run("""
       DECLARE FUNCTION Make$(seed$)
       OPEN "D.TXT" FOR OUTPUT AS #1
       PRINT #1, "0123456789012345678901234567890123456789"
@@ -363,9 +353,9 @@ public sealed class BackendStringLifetimeTests {
       """, optimize: true);
 
     Assert.That(names, Is.SupersetOf(new[] { "Make", "main" }));
-    Assert.That(direct, Does.Contain("done"));
-    Assert.That(routed, Does.Not.Contain("OUT OF STRING SPACE"),
+    Assert.That(output, Does.Contain("done"));
+    Assert.That(output, Does.Not.Contain("OUT OF STRING SPACE"),
       "a statement-position string result has no later consumer, so the caller owns its release");
-    Assert.That(routed, Is.EqualTo(direct));
+    Assert.That(output.Replace("\r\n", "|"), Is.EqualTo("done|"));
   }
 }

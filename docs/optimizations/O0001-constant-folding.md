@@ -3,32 +3,35 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter, over the bound AST |
-| **IR** | ✅ `Sccp` + `InstCombine` + `IrConstFold` in `IrPassManager.Standard()`; verified by `PortedMidEndOptimizationsTests` |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` — `#region O1`, `TryEmitFolded`, `FoldsWithoutWrap` |
+| **Stage** | IR middle end |
+| **Source** | `Ir/IrConstFold.cs` — `TryFold`, `Wrap`; applied by `Ir/Passes/InstCombine.cs` and `Ir/Passes/Sccp.cs` in `IrMiddleEndPipeline.Standard()` |
+| **Verified by** | `PortedMidEndOptimizationsTests` |
 | **Gate** | `--optimize` (on by default for `pb36`) |
 | **Related** | [O0017](O0017-sccp.md) (cross-block constants), [O0025](O0025-pure-function-folding.md), [O0033](O0033-constant-store.md), [O0043](O0043-ir-instcombine.md) |
 
 ## What it is
 
 An expression whose value the compiler can compute — literals, `CONST` equates
-and operators over them — is not computed at run time. The emitter asks the
-constant folder for the value, wraps it to the expression's **bound type**, and
-emits a single literal load in place of the whole tree.
+and operators over them — is not computed at run time. `IrConstFold.TryFold`
+evaluates any binary operation, comparison or cast whose operands are all
+constants and returns the result as a constant; `InstCombine` replaces the
+instruction with it, and `Sccp` does the same for values that only become
+constant through the control flow.
 
-The wrap matters: `WrapToType` reproduces exactly what the 16- or 32-bit ALU
-would have left in the destination, so the folded literal is bit-equal to the
-value the program would have computed.
+The wrap matters: `Wrap` sign-extends the result from the instruction's own
+bit width, reproducing exactly what the 16- or 32-bit ALU would have left in
+the destination, so the folded constant is bit-equal to the value the program
+would have computed.
 
 ## When it fires
 
-- The expression is integral-typed (or a string concatenation of literals — see
-  [O0009](O0009-string-temp-economy.md)) and every leaf is a literal or equate.
-- Every **computed** node's value fits its own type (`FoldsWithoutWrap`). This
-  guard exists because the dialects differ: PB 2.0+ computes `+ - *` in floating
-  point and never wraps mid-tree, but QuickBASIC, Turbo Basic and anything under
-  `$COMPAT` wrap in place, where `32767 + 18` really is `-32751`. If any node
-  leaves its type, the fold is abandoned and the genuine arithmetic emitted.
+- Every operand of the instruction is a constant. Literals and equates are
+  constants from lowering on; a folded result feeds the next instruction, so a
+  whole tree collapses bottom-up.
+- The dialect question — whether `32767 + 18` wraps to `-32751` or is computed
+  wider — is settled before folding: lowering emits each operation at the type
+  the binder gave it (floating expressions at the x87's 80-bit width), and the
+  folder evaluates exactly that instruction at exactly that width.
 - Calls are never folded here — that is [O0025](O0025-pure-function-folding.md).
 
 ## Sample
@@ -87,19 +90,20 @@ PRINT h%; q%
 
 ## Why it is safe
 
-The folder is pure — it evaluates only operators over literal values, never a
-call, an array read or anything that could trap. The result is wrapped to the
-node's own type, and the `FoldsWithoutWrap` check rejects any tree whose
-intermediate would have wrapped, so the emitted literal is the value the
-un-folded code would have produced on every dialect.
+The folder is pure — it evaluates only operators over constant values, never a
+call, an array read or anything that could trap. Operations whose result would
+trap or be undefined are declined: division or remainder by zero,
+`INT_MIN / -1`, out-of-range shift counts and out-of-range float-to-integer
+conversions stay in the code for the runtime to handle. Integer results are
+wrapped to the instruction's own type, so the constant is the value the
+un-folded code would have produced.
 
 ## Limits
 
-- Float-typed trees are left alone here; a constant *stored* into an integral
-  cell is handled by [O0033](O0033-constant-store.md), which reproduces the x87
-  store semantics (including the integer-indefinite sentinel for an out-of-range
-  4-byte store).
-- Shift-right and rotate are not folded (their result depends on operand width
-  and signedness, which the type-less folder does not know); shift-left is.
+- Float arithmetic is folded only when the result is exact in a 64-bit double
+  (tested with two-sum and fused multiply-add); otherwise the 80-bit x87 result
+  could differ in the last bit, so the operation is left to the target. A
+  constant *stored* into an integral cell is covered by
+  [O0033](O0033-constant-store.md).
 - Constants that only become known across statements or blocks are
   [O0017](O0017-sccp.md)'s job.

@@ -42,7 +42,7 @@ public sealed partial class LinearScanAllocator {
   /// <para>
   /// Without this a base was drawn from <see cref="_addressing"/> like any other, and SI or DI is a
   /// legal answer there - so an indexed access whose base was allocated after BX had gone would emit
-  /// <c>[SI+DI]</c> and end the compilation inside <c>MachineEmitter.EmitInstruction</c>, where
+  /// <c>[SI+DI]</c> and end the compilation inside the hosted target machine lowering, where
   /// nothing can decline any more. Measured over the whole corpus, all 53 indexed operands do get BX
   /// today, which is why nothing had met it: there is never more than one indexed base live at once,
   /// and BX is simply the first addressing register the pool offers. That is luck rather than a
@@ -72,7 +72,7 @@ public sealed partial class LinearScanAllocator {
   /// It is a PREFERENCE and never a constraint, and the distinction is the whole safety argument.
   /// <c>SI</c> and <c>DI</c> are two of the three registers that may address memory, so reserving one
   /// across a loop is exactly the move that once left the spiller with nowhere to put an address
-  /// value. <see cref="TryResident"/> therefore falls back to the ordinary pool order for any value
+  /// value. <see cref="TryCoalesced"/> therefore falls back to the ordinary pool order for any value
   /// the pair cannot take, and to the whole plain policy on the untouched function when the preferred
   /// sweep does not answer at all - so the set of functions that allocate is unchanged and only the
   /// assignment differs (<c>BackendResidencyTests</c> measures that over the corpus).
@@ -89,10 +89,10 @@ public sealed partial class LinearScanAllocator {
   /// other value a fresh stack slot. This mutates <paramref name="function"/>, which is why it lives
   /// here: the allocator owns the function's register story.
   /// </summary>
-  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function) => Allocate(function, out _);
+  public static IReadOnlyDictionary<int, Reg>? Allocate(X86MachineFunction function) => Allocate(function, out _);
 
   /// <summary>The same, for a given target and objective - which is what turns the residency preference on.</summary>
-  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target)
+  public static IReadOnlyDictionary<int, Reg>? Allocate(X86MachineFunction function, SelectionTarget target)
     => Allocate(function, target, out _);
 
   /// <summary>
@@ -100,11 +100,11 @@ public sealed partial class LinearScanAllocator {
   /// just answer null, which left "register pressure" as the whole diagnosis for every function that
   /// selected and did not route - a black box in the middle of the coverage census.
   /// </summary>
-  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, out string? reason)
+  public static IReadOnlyDictionary<int, Reg>? Allocate(X86MachineFunction function, out string? reason)
     => Allocate(function, SelectionTarget.Baseline, out reason);
 
   /// <summary>The same, for a given target and objective.</summary>
-  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target, out string? reason)
+  public static IReadOnlyDictionary<int, Reg>? Allocate(X86MachineFunction function, SelectionTarget target, out string? reason)
     => Allocate(function, target, out reason, out _);
 
   /// <summary>
@@ -119,20 +119,20 @@ public sealed partial class LinearScanAllocator {
   /// the function first.
   /// </para>
   /// </summary>
-  public static IReadOnlyDictionary<int, Reg>? Allocate(MFunction function, SelectionTarget target,
+  public static IReadOnlyDictionary<int, Reg>? Allocate(X86MachineFunction function, SelectionTarget target,
       out string? reason, out int rounds, int? moveBudget = null) {
     rounds = 0;
-    if (target is { Optimize: true, OptimizeSpeed: true }
-        && TryResident(function, target, moveBudget, ref rounds) is { } resident) {
+    if (target.Optimize
+        && TryCoalesced(function, target, preferLoopResidents: target.OptimizeSpeed, moveBudget, ref rounds) is { } coalesced) {
       reason = null;
-      return resident;
+      return coalesced;
     }
     return AllocatePlain(function, target, moveBudget, ref rounds, out reason);
   }
 
   /// <summary>
-  /// The <c>$OPTIMIZE SPEED</c> attempt: coalesce the out-of-SSA copies away, then allocate preferring
-  /// <c>SI</c>/<c>DI</c> for whatever is live all the way round a loop.
+  /// The optimized attempt: coalesce the out-of-SSA copies away, then allocate - under
+  /// <c>$OPTIMIZE SPEED</c> preferring <c>SI</c>/<c>DI</c> for whatever is live all the way round a loop.
   ///
   /// <para>
   /// It works on a COPY and commits only on success, which is the whole reason the two policies can be
@@ -142,9 +142,15 @@ public sealed partial class LinearScanAllocator {
   /// plain policy makes, and neither may - so the plain policy runs on the untouched function whenever
   /// this one does not answer, and the set of functions that route is exactly what it was.
   /// </para>
+  /// <para>
+  /// Coalescing used to be SPEED-only along with the preference, but the two answer different
+  /// questions. The preference picks WHICH register a loop value gets, a speed trade. Coalescing
+  /// deletes the copy a two-address machine puts in front of every ADD, which is smaller as well as
+  /// faster: without it <c>y% = x% + 1</c> was <c>MOV CX,AX / INC CX</c> under the default objective.
+  /// </para>
   /// </summary>
-  private static IReadOnlyDictionary<int, Reg>? TryResident(MFunction function, SelectionTarget target,
-      int? moveBudget, ref int rounds) {
+  private static IReadOnlyDictionary<int, Reg>? TryCoalesced(X86MachineFunction function, SelectionTarget target,
+      bool preferLoopResidents, int? moveBudget, ref int rounds) {
     var candidate = function.Clone();
     CopyCoalescer.Run(candidate);
     var progress = Spiller.Progress.Of(candidate);
@@ -154,7 +160,8 @@ public sealed partial class LinearScanAllocator {
       var asmHeld = AsmHeldByIndex(candidate, out var asmConflict);
       if (asmConflict is not null)
         return null;                             // the plain policy reports it; this one just stands aside
-      if (LivenessAnalysis.LoopCarried(candidate) is { Count: > 0 } carried
+      if (preferLoopResidents
+          && LivenessAnalysis.LoopCarried(candidate) is { Count: > 0 } carried
           && TryAllocate(candidate, asmHeld, target, carried) is { } assignment) {
         function.Adopt(candidate);
         return assignment;
@@ -203,10 +210,10 @@ public sealed partial class LinearScanAllocator {
   /// for reasons that have nothing to do with looping.
   /// </para>
   /// </summary>
-  private static int BudgetFor(MFunction function)
+  private static int BudgetFor(X86MachineFunction function)
     => Math.Min(function.VirtualRegisterCount + 64, _MOVE_CEILING);
 
-  private static IReadOnlyDictionary<int, Reg>? AllocatePlain(MFunction function, SelectionTarget target,
+  private static IReadOnlyDictionary<int, Reg>? AllocatePlain(X86MachineFunction function, SelectionTarget target,
       int? moveBudget, ref int rounds, out string? reason) {
     var progress = Spiller.Progress.Of(function);
     for (var budget = moveBudget ?? BudgetFor(function); budget > 0; --budget) {
@@ -246,7 +253,7 @@ public sealed partial class LinearScanAllocator {
   /// to memory itself. Splitting is two moves rather than one so that a rejected split of a range
   /// caught across a clobber still leaves the pressure split to be tried.
   /// </summary>
-  private static readonly Func<MFunction, bool>[] _spillerMoves =
+  private static readonly Func<X86MachineFunction, bool>[] _spillerMoves =
     [Spiller.RematerializeOne, Spiller.SpillOne, Spiller.SplitCrossingOne, Spiller.SplitPressureOne];
 
   /// <summary>
@@ -263,7 +270,7 @@ public sealed partial class LinearScanAllocator {
   /// <para>
   /// <b>Why each component is there.</b> Every move CONSUMES its subject: the id is replaced everywhere
   /// by fresh ones (rematerialize, reload, split) or by a frame cell (spill), and every id a move mints
-  /// is recorded in <see cref="MFunction.MovedValues"/> at birth. So the FIRST move on any value lowers
+  /// is recorded in <see cref="X86MachineFunction.MovedValues"/> at birth. So the FIRST move on any value lowers
   /// the untouched count and nothing can ever raise it, which is the whole argument for every move that
   /// happens once. The three moves that may legitimately repeat each need a component of their own:
   /// splitting a range that still crosses a clobber has to remove a crossing; rematerializing a value
@@ -286,7 +293,7 @@ public sealed partial class LinearScanAllocator {
   /// nothing simply never applies.
   /// </para>
   /// </summary>
-  private static bool AdvanceSpiller(MFunction function, ref Spiller.Progress progress) {
+  private static bool AdvanceSpiller(X86MachineFunction function, ref Spiller.Progress progress) {
     foreach (var move in _spillerMoves) {
       var candidate = function.Clone();
       if (!move(candidate))
@@ -305,7 +312,7 @@ public sealed partial class LinearScanAllocator {
   /// What stopped the last sweep: the first interval that found no register, and the reason the
   /// spiller then refused to move it to memory.
   /// </summary>
-  private static string Blocker(MFunction function, IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld,
+  private static string Blocker(X86MachineFunction function, IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld,
       SelectionTarget target) {
     var addressing = AddressRegisters(function);
     var byteRegisters = ByteRegisters(function);
@@ -346,7 +353,7 @@ public sealed partial class LinearScanAllocator {
   /// for the plain sweep); <paramref name="asmHeld"/> the registers an inline-asm statement is
   /// holding for a later one to read.
   /// </summary>
-  private static IReadOnlyDictionary<int, Reg>? TryAllocate(MFunction function,
+  private static IReadOnlyDictionary<int, Reg>? TryAllocate(X86MachineFunction function,
       IReadOnlyDictionary<int, IReadOnlyList<Reg>> asmHeld, SelectionTarget target,
       HashSet<int>? resident = null) {
     var liveness = LivenessAnalysis.Analyze(function);
@@ -359,6 +366,8 @@ public sealed partial class LinearScanAllocator {
     var inFlightAt = InFlightByIndex(function);       // ...and the ones already carrying a value to a named reader
     var sizes = RegisterSizes(function);
     var dwordInductions = DwordInductionRegisters(function);
+    var copyHints = target.Optimize ? CopyHints(function) : [];
+    var byIndex = copyHints.Count > 0 ? function.AllInstructions.ToList() : [];
     var assignment = new Dictionary<int, Reg>();
     var free = new List<Reg>(_pool);                 // registers currently available, preferred order preserved
     var active = new List<LivenessAnalysis.LiveInterval>();  // live intervals holding a register, kept sorted by End
@@ -382,6 +391,22 @@ public sealed partial class LinearScanAllocator {
       var size = sizes.GetValueOrDefault(interval.VirtualId, MRegSize.Word);
       var legal = LegalFor(interval.VirtualId, size, addressVregs, byteRegisters, target);
       bool Usable(Reg r) => System.Array.IndexOf(legal, r) >= 0 && !unsafeRegs.Contains(r);
+      // A staging move claims its whole destination set as clobbers, so a value can never be parked in
+      // a register a LATER staging move overwrites. The value's own staging move is the exception: when
+      // its last use is exactly MOV hinted,v, holding it in the hinted register already is the move. So
+      // the hint is safe when that is the only clobber of the register anywhere in the value's range.
+      bool HintSurvivesItsOwnStaging(Reg hint) {
+        if (System.Array.IndexOf(legal, hint) < 0 || interval.End >= byIndex.Count
+            || byIndex[interval.End] is not { Opcode: MOpcode.Mov, Condition: null } last
+            || last.Operands is not [MOperand.Register { Reg: { IsVirtual: false } into }, MOperand.Register { Reg: var read }]
+            || WholeRegister(into.Physical) != hint || !read.IsVirtual || read.VirtualId != interval.VirtualId)
+          return false;
+        var before = ClobberedOver(clobbersAt, liveAt, interval, interval.End - 1);
+        before.UnionWith(ClobberedOver(pinnedAt, liveAt, interval, interval.End - 1));
+        before.UnionWith(ClobberedOver(inFlightAt, liveAt, interval, interval.End));
+        before.UnionWith(ClobberedOver(asmHeld, liveAt, interval, interval.End));
+        return !before.Contains(hint);
+      }
       var slot = -1;
       if (resident is not null && resident.Contains(interval.VirtualId)) {
         var preferences = size == MRegSize.Dword && !dwordInductions.Contains(interval.VirtualId)
@@ -391,6 +416,9 @@ public sealed partial class LinearScanAllocator {
           if (Usable(preferred) && (slot = free.IndexOf(preferred)) >= 0)
             break;
       }
+      if (slot < 0 && copyHints.TryGetValue(interval.VirtualId, out var hinted)
+          && (Usable(hinted) || HintSurvivesItsOwnStaging(hinted)))
+        slot = free.IndexOf(hinted);
       if (slot < 0)
         slot = free.FindIndex(Usable);              // the preference is spent - take the ordinary order
       if (slot < 0)
@@ -399,6 +427,7 @@ public sealed partial class LinearScanAllocator {
       var reg = free[slot];
       free.RemoveAt(slot);
       assignment[interval.VirtualId] = SizedRegister(reg, size);
+
       active.Add(interval);
       active.Sort((x, y) => x.End.CompareTo(y.End));
     }
@@ -446,7 +475,7 @@ public sealed partial class LinearScanAllocator {
   /// is the pinned move itself is the value being moved, and <c>MOV AX, AX</c> is not a loss.
   /// </para>
   /// </summary>
-  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> PinnedByIndex(MFunction function) {
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> PinnedByIndex(X86MachineFunction function) {
     var map = new Dictionary<int, IReadOnlyList<Reg>>();
     var index = 0;
     foreach (var block in function.Blocks)
@@ -499,7 +528,7 @@ public sealed partial class LinearScanAllocator {
   /// clobber as "the old value ends here", and there it would end a promise the text is still keeping.
   /// </para>
   /// </summary>
-  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> InFlightByIndex(MFunction function) {
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> InFlightByIndex(X86MachineFunction function) {
     var map = new Dictionary<int, List<Reg>>();
     var index = 0;
     foreach (var block in function.Blocks) {
@@ -558,7 +587,7 @@ public sealed partial class LinearScanAllocator {
       : register;
 
   /// <summary>Maps each global instruction index (same numbering as the liveness pass) to the registers it clobbers.</summary>
-  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> ClobbersByIndex(MFunction function) {
+  private static IReadOnlyDictionary<int, IReadOnlyList<Reg>> ClobbersByIndex(X86MachineFunction function) {
     var map = new Dictionary<int, IReadOnlyList<Reg>>();
     var index = 0;
     foreach (var block in function.Blocks)
@@ -575,7 +604,7 @@ public sealed partial class LinearScanAllocator {
   /// addressing-capable), with the bases of INDEXED operands kept apart: those have a smaller legal
   /// set still, because 16-bit addressing pairs an index only with BX or BP.
   /// </summary>
-  private static (HashSet<int> Base, HashSet<int> Index, HashSet<int> IndexedBase) AddressRegisters(MFunction function) {
+  private static (HashSet<int> Base, HashSet<int> Index, HashSet<int> IndexedBase) AddressRegisters(X86MachineFunction function) {
     var bases = new HashSet<int>();
     var indices = new HashSet<int>();
     var indexedBases = new HashSet<int>();
@@ -593,7 +622,7 @@ public sealed partial class LinearScanAllocator {
     return (bases, indices, indexedBases);
   }
 
-  private static HashSet<int> ByteRegisters(MFunction function) {
+  private static HashSet<int> ByteRegisters(X86MachineFunction function) {
     var result = new HashSet<int>();
     foreach (var instruction in function.AllInstructions)
       foreach (var operand in instruction.Operands)
@@ -611,7 +640,7 @@ public sealed partial class LinearScanAllocator {
     return result;
   }
 
-  private static Dictionary<int, MRegSize> RegisterSizes(MFunction function) {
+  private static Dictionary<int, MRegSize> RegisterSizes(X86MachineFunction function) {
     var sizes = new Dictionary<int, MRegSize>();
     void Record(MReg? register) {
       if (register is { IsVirtual: true } value)
@@ -636,7 +665,7 @@ public sealed partial class LinearScanAllocator {
   /// Native dword values advanced by a constant. These are loop induction variables rather than
   /// accumulators, so the residency convention gives them ESI first and the other carried dword EDI.
   /// </summary>
-  private static HashSet<int> DwordInductionRegisters(MFunction function) => function.AllInstructions
+  private static HashSet<int> DwordInductionRegisters(X86MachineFunction function) => function.AllInstructions
     .Where(instruction => instruction.Opcode is MOpcode.Add or MOpcode.Sub
       && instruction.Operands is [MOperand.Register { Reg: { IsVirtual: true, Size: MRegSize.Dword } register },
         MOperand.Immediate])
@@ -664,6 +693,28 @@ public sealed partial class LinearScanAllocator {
     return addressing.IndexedBase.Contains(virtualId) ? _indexedBase
       : addressing.Base.Contains(virtualId) ? _addressing
       : _pool;
+  }
+
+  /// <summary>
+  /// The physical register each virtual is copied straight into or out of - the AX a value is handed
+  /// to a runtime routine in, the AX a result arrives in. Allocating the virtual THERE, when it is free
+  /// and legal for the whole range, turns the copy into a self-move the peephole deletes: a truth value
+  /// computed for PRINT was SBB CX,CX / MOV AX,CX, where SBB AX,AX is the whole thing. It is only a
+  /// preference, tried before the ordinary order, so it can never cost an allocation.
+  /// </summary>
+  private static Dictionary<int, Reg> CopyHints(X86MachineFunction function) {
+    var hints = new Dictionary<int, Reg>();
+    foreach (var instr in function.AllInstructions) {
+      if (instr.Opcode != MOpcode.Mov || instr.Condition is not null
+          || instr.Operands is not [MOperand.Register { Reg: var to }, MOperand.Register { Reg: var from }]
+          || to.Size != from.Size || to.Size is not (MRegSize.Word or MRegSize.Byte))
+        continue;
+      if (to.IsVirtual == from.IsVirtual)
+        continue;
+      var (virtualReg, physical) = to.IsVirtual ? (to, from.Physical) : (from, to.Physical);
+      hints.TryAdd(virtualReg.VirtualId, WholeRegister(physical));
+    }
+    return hints;
   }
 
   private static Reg SizedRegister(Reg register, MRegSize size)

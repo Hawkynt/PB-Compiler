@@ -1357,12 +1357,8 @@ internal static class DataLayoutTransformCore {
     var regionInstructions = producer.Region.Concat(consumer.Region)
       .SelectMany(b => b.Instructions).ToList();
     var writes = regionInstructions.OfType<IrStore>().ToList();
-    var hasOpaqueWrites = regionInstructions.Any(i => i switch {
-      IrInlineAsm => true,
-      IrCall { Callee: IrFunction callee } when callee.IsDeclaration && FunctionSummaries.IsPureExternal(callee.Name) => false,
-      IrCall => true,
-      _ => false,
-    });
+    var hasOpaqueWrites = regionInstructions.Any(i =>
+      (i is IrCall or IrInlineAsm) && IrEffects.ForInstruction(i).DefinesMemory);
     return Clone(value, out clone, 0);
 
     bool Clone(IrValue current, out IrValue? result, int depth) {

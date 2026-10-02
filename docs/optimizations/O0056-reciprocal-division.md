@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | 🟡 Partial — 16-bit signed `\`/`MOD` by a positive constant (under `$OPTIMIZE SPEED`) reciprocal-multiplies; 32-bit `LONG`, unsigned, and negative non-power-of-two constants remain |
 | **Stage** | IR middle end + target selection (extends [O0004](O0004-strength-reduction.md)) |
+| **Source** | `Ir/Passes/VerifiedArithmeticLowering.cs` — `LowerSignedDivision`, `LowerSignedReciprocal`, `VerifySignedReciprocal`; `Backend/InstructionSelector.ReciprocalDivision.cs` — `TrySelectSignedMulHigh` |
 | **Related** | [O0004](O0004-strength-reduction.md), [R0003](R0003-string-engine.md) |
 
 ## The idea
@@ -59,9 +60,6 @@ selector recognizes the single-use `sext -> i32 mul -> ashr 16 -> trunc` shape a
 selects the high DX half of one accumulator `IMUL`, so routed native code does not
 fall through to the 32-bit multiply helper.
 
-The direct emitter keeps its existing O0056 sequence as the non-routed fallback;
-the arithmetic decision itself is no longer native-only.
-
 ### Why it is exact
 
 The `(multiplier, shift, add-back)` plan is **brute-force-checked at compile time
@@ -86,6 +84,5 @@ The speed gate is intentional; ordinary/size-oriented optimization keeps the com
   portable high-half spelling (or an explicit target-independent primitive).
 - **Unsigned** (`WORD`/`DWORD`) — the unsigned magic variant; today a `WORD`
   operand promotes to `LONG`, so it takes the `LONG` divide path.
-- **Negative non-power-of-two signed constants** — the previous emitter optimization
-  only covered positive divisors, and the IR migration deliberately preserves that
-  scope instead of silently expanding O0056 while moving it.
+- **Negative non-power-of-two signed constants** — the reciprocal plan is only
+  built for positive divisors.

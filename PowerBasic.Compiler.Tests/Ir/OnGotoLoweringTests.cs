@@ -34,7 +34,7 @@ public sealed class OnGotoLoweringTests {
   [Test]
   public void OnGoto_WithConstantSelector_FoldsToTheChosenArm() {
     var module = LowerModule("n% = 2\n" + Program);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
     var text = LlvmEmitter.Emit(module!);
@@ -45,7 +45,7 @@ public sealed class OnGotoLoweringTests {
   [Test]
   public void OnGoto_OutOfRangeSelector_FallsThrough() {
     var module = LowerModule("n% = 9\n" + Program);
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
     // selector 9 has no case -> falls through, x stays 0
@@ -55,11 +55,11 @@ public sealed class OnGotoLoweringTests {
   [Test]
   public void OnGoto_GivenLongSelector_ThenDispatchesOnItsCoercedWord() {
     var module = LowerModule("n& = 65537\n" + Program.Replace("ON n% GOTO", "ON n& GOTO"));
-    IrPassManager.Standard().RunOnModule(module!);
+    IrMiddleEndPipeline.Standard().RunOnModule(module!);
 
     Assert.That(IrVerifier.Verify(module!), Is.Empty);
     Assert.That(LlvmEmitter.Emit(module!), Does.Contain("@rt_print_i16(i16 11)"),
-      "the direct emitter coerces 65537& to INTEGER 1 before ON GOTO dispatch");
+      "65537& is coerced to INTEGER 1 before ON GOTO dispatch");
   }
 
   [Test]

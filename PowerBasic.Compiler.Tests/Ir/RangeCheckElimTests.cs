@@ -27,7 +27,7 @@ public sealed class RangeCheckElimTests {
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var module = IrLowering.TryLowerModule(model, out var why);
     Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
-    IrPassManager.Standard(optimizeForSpeed: true).RunOnModule(module!);
+    IrMiddleEndPipeline.Standard(optimizeForSpeed: true).RunOnModule(module!);
     return module!;
   }
 

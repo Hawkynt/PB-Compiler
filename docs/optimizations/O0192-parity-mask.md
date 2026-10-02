@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.Optimize.cs` (modulo lowering, compare-to-zero path) |
+| **Stage** | IR scalar simplification (`InstCombine`), before [O0191](O0191-modulo-power-of-two.md) expands the remainder |
+| **Source** | `Ir/Passes/InstCombine.cs` — `SimplifyBinary` (`SRem` case), `IsZeroTest` |
 | **Gate** | `--optimize` |
 | **Verified by** | scenario `ParityTestIsAMask`, oracle-verified over negative dividends and MOD 2/4/8 |
 | **Split from** | [O0004](O0004-strength-reduction.md) |
@@ -17,8 +17,14 @@ The everyday even/odd test `IF n MOD 2 = 0` does not need the remainder's
 ([O0191](O0191-modulo-power-of-two.md)) changes the remainder's value but never
 whether it is zero.
 
-So the condition becomes a bare `AND` driving the branch on its own flags:
+So the condition can become a bare `AND` driving the branch on its own flags:
 three instructions where the full modulo was eight.
+
+On the IR it is a rewrite of the remainder itself: a signed `x SREM 2^k` whose
+every user compares it with zero becomes `x AND (2^k-1)`, which each compare then
+tests. It runs in `InstCombine`, ahead of `VerifiedArithmeticLowering`, so the
+sign-biased expansion of [O0191](O0191-modulo-power-of-two.md) is never built for
+it. A remainder whose value is used keeps its sign and its full lowering.
 
 ## Sample
 
@@ -27,7 +33,7 @@ DIM n%
 IF n% MOD 2 = 0 THEN PRINT "even"
 ```
 
-## With the optimizer
+## Intended output
 
 ```asm
     mov     ax, [n]

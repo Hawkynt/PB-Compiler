@@ -15,7 +15,8 @@ public readonly record struct SelectionTarget(
   bool OptimizeSpeed = false,
   bool OptimizeSize = false,
   CodeGen.TargetCost? Cost = null,
-  int CpuLevel = 86) {
+  int CpuLevel = 86,
+  MachineTargetFamily TargetFamily = MachineTargetFamily.X86_16) {
 
   /// <summary>Whether 80186 instructions may be selected.</summary>
   public bool Cpu186OrLater => this.CpuLevel >= 186;
