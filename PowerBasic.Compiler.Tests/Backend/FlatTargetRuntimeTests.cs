@@ -23,6 +23,16 @@ public sealed class FlatTargetRuntimeTests {
       e = 2 / 3
       PRINT e; ROUND(2.5, 0); ROUND(-2.5, 0); ROUND(1.2345, 2)
       """, " .666666666666667  3 -3  1.23"),
+    ("quotient-and-remainder", """
+      FOR i% = 1 TO 4
+        READ n&, d&
+        q& = n& \ d&
+        PRINT "q";
+        r& = n& MOD d&
+        PRINT q&; r&
+      NEXT
+      DATA 17, 5, -17, 5, 17, -5, -2147483647, -1
+      """, "q 3  2\nq-3 -2\nq-3  2\nq 2147483647  0"),
     ("file-ext-tab-input", """
       DIM e AS EXT, n%
       e = 1 / 7
