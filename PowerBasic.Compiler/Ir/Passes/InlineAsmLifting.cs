@@ -33,8 +33,14 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <c>SAR</c>, <c>CLC</c>, <c>STC</c>, <c>CMC</c>, <c>JMP</c>, <c>Jcc</c>, <c>SETcc</c>, <c>CMOVcc</c>,
 /// <c>NOP</c>; MMX
 /// <c>MOVD</c>, <c>MOVQ</c>, <c>PADDB/W/D/Q</c>, <c>PSUBB/W/D/Q</c>, <c>PAND</c>, <c>PANDN</c>, <c>POR</c>,
-/// <c>PXOR</c>, <c>EMMS</c>; SSE2 <c>MOVDQA</c>/<c>MOVDQU</c> and the same packed operations on
-/// <c>XMM</c>; SSSE3 <c>PSHUFB</c>.
+/// <c>PXOR</c>, <c>PCMPEQB/W/D</c>, <c>PCMPGTB/W/D</c>, <c>PMULLW</c>, <c>PMULHW</c>, <c>PMADDWD</c>,
+/// <c>PADDS</c>/<c>PSUBS</c>/<c>PADDUS</c>/<c>PSUBUS</c> on bytes and words, <c>PSLL</c>/<c>PSRL</c>
+/// W/D/Q and <c>PSRAW</c>/<c>PSRAD</c> by an immediate or a register, <c>PUNPCKL</c>/<c>PUNPCKH</c>
+/// BW/WD/DQ, <c>PACKSSWB</c>, <c>PACKSSDW</c>, <c>PACKUSWB</c>, <c>EMMS</c>; SSE's integer additions
+/// <c>PMULHUW</c>, <c>PMINUB</c>, <c>PMAXUB</c>, <c>PMINSW</c>, <c>PMAXSW</c>, <c>PAVGB</c>,
+/// <c>PAVGW</c>, <c>PSHUFW</c>; SSE2 <c>MOVDQA</c>/<c>MOVDQU</c>, the same packed operations on
+/// <c>XMM</c>, <c>PUNPCKLQDQ</c>/<c>PUNPCKHQDQ</c>, <c>PSHUFD</c>, <c>PSHUFLW</c>, <c>PSHUFHW</c>;
+/// SSSE3 <c>PSHUFB</c>.
 /// </para>
 /// </summary>
 public static class InlineAsmLifting {
@@ -184,6 +190,53 @@ public static class InlineAsmLifting {
         case "PXOR": return this.Lanes(operands, 8, IrBinaryOp.Xor);
         case "PANDN": return this.AndNot(operands);
         case "PSHUFB": return this.Pshufb(operands);
+        case "PCMPEQB": return this.LaneWise(operands, 1, (a, b, t) => this.Mask(IrCmpPred.Eq, a, b, t));
+        case "PCMPEQW": return this.LaneWise(operands, 2, (a, b, t) => this.Mask(IrCmpPred.Eq, a, b, t));
+        case "PCMPEQD": return this.LaneWise(operands, 4, (a, b, t) => this.Mask(IrCmpPred.Eq, a, b, t));
+        case "PCMPGTB": return this.LaneWise(operands, 1, (a, b, t) => this.Mask(IrCmpPred.Sgt, a, b, t));
+        case "PCMPGTW": return this.LaneWise(operands, 2, (a, b, t) => this.Mask(IrCmpPred.Sgt, a, b, t));
+        case "PCMPGTD": return this.LaneWise(operands, 4, (a, b, t) => this.Mask(IrCmpPred.Sgt, a, b, t));
+        case "PMULLW": return this.LaneWise(operands, 2, (a, b, t) => this.Add(new IrBinary(IrBinaryOp.Mul, a, b)));
+        case "PMULHW": return this.LaneWise(operands, 2, (a, b, t) => this.HighProduct(a, b, IrCastOp.SExt));
+        case "PMULHUW": return this.LaneWise(operands, 2, (a, b, t) => this.HighProduct(a, b, IrCastOp.ZExt));
+        case "PADDSB": return this.LaneWise(operands, 1, (a, b, t) => this.Saturate(IrBinaryOp.Add, a, b, signed: true));
+        case "PADDSW": return this.LaneWise(operands, 2, (a, b, t) => this.Saturate(IrBinaryOp.Add, a, b, signed: true));
+        case "PSUBSB": return this.LaneWise(operands, 1, (a, b, t) => this.Saturate(IrBinaryOp.Sub, a, b, signed: true));
+        case "PSUBSW": return this.LaneWise(operands, 2, (a, b, t) => this.Saturate(IrBinaryOp.Sub, a, b, signed: true));
+        case "PADDUSB": return this.LaneWise(operands, 1, (a, b, t) => this.Saturate(IrBinaryOp.Add, a, b, signed: false));
+        case "PADDUSW": return this.LaneWise(operands, 2, (a, b, t) => this.Saturate(IrBinaryOp.Add, a, b, signed: false));
+        case "PSUBUSB": return this.LaneWise(operands, 1, (a, b, t) => this.Saturate(IrBinaryOp.Sub, a, b, signed: false));
+        case "PSUBUSW": return this.LaneWise(operands, 2, (a, b, t) => this.Saturate(IrBinaryOp.Sub, a, b, signed: false));
+        case "PMINUB": return this.LaneWise(operands, 1, (a, b, t) => this.Pick(IrCmpPred.Ult, a, b));
+        case "PMAXUB": return this.LaneWise(operands, 1, (a, b, t) => this.Pick(IrCmpPred.Ugt, a, b));
+        case "PMINSW": return this.LaneWise(operands, 2, (a, b, t) => this.Pick(IrCmpPred.Slt, a, b));
+        case "PMAXSW": return this.LaneWise(operands, 2, (a, b, t) => this.Pick(IrCmpPred.Sgt, a, b));
+        case "PAVGB": return this.LaneWise(operands, 1, (a, b, t) => this.Average(a, b));
+        case "PAVGW": return this.LaneWise(operands, 2, (a, b, t) => this.Average(a, b));
+        case "PSLLW": return this.PackedShift(operands, 2, IrBinaryOp.Shl);
+        case "PSLLD": return this.PackedShift(operands, 4, IrBinaryOp.Shl);
+        case "PSLLQ": return this.PackedShift(operands, 8, IrBinaryOp.Shl);
+        case "PSRLW": return this.PackedShift(operands, 2, IrBinaryOp.LShr);
+        case "PSRLD": return this.PackedShift(operands, 4, IrBinaryOp.LShr);
+        case "PSRLQ": return this.PackedShift(operands, 8, IrBinaryOp.LShr);
+        case "PSRAW": return this.PackedShift(operands, 2, IrBinaryOp.AShr);
+        case "PSRAD": return this.PackedShift(operands, 4, IrBinaryOp.AShr);
+        case "PUNPCKLBW": return this.Unpack(operands, 1, high: false);
+        case "PUNPCKLWD": return this.Unpack(operands, 2, high: false);
+        case "PUNPCKLDQ": return this.Unpack(operands, 4, high: false);
+        case "PUNPCKLQDQ": return this.Unpack(operands, 8, high: false);
+        case "PUNPCKHBW": return this.Unpack(operands, 1, high: true);
+        case "PUNPCKHWD": return this.Unpack(operands, 2, high: true);
+        case "PUNPCKHDQ": return this.Unpack(operands, 4, high: true);
+        case "PUNPCKHQDQ": return this.Unpack(operands, 8, high: true);
+        case "PACKSSWB": return this.Pack(operands, 2, signedResult: true);
+        case "PACKSSDW": return this.Pack(operands, 4, signedResult: true);
+        case "PACKUSWB": return this.Pack(operands, 2, signedResult: false);
+        case "PMADDWD": return this.MultiplyAdd(operands);
+        case "PSHUFD": return this.Shuffle(operands, 4, 0);
+        case "PSHUFW": return this.Shuffle(operands, 2, 0);
+        case "PSHUFLW": return this.Shuffle(operands, 2, 0);
+        case "PSHUFHW": return this.Shuffle(operands, 2, 8);
         default:
           return false;
       }
@@ -594,6 +647,166 @@ public static class InlineAsmLifting {
         var result = this.Add(new IrBinary(op, a, right[i]));
         this.Add(new IrStore(result, this.LaneAddress(destination, i * lane)));
       }
+      return true;
+    }
+
+    /// <summary>A lane-by-lane operation over the snapshot of both operands.</summary>
+    private bool LaneWise(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, Func<IrValue, IrValue, IrType, IrValue> apply) {
+      var (destination, source, width) = this.Packed(operands);
+      var type = Integer(lane);
+      var (left, right) = (this.LoadLanes(destination, type, lane, width), this.LoadLanes(source, type, lane, width));
+      var results = left.Select((a, i) => apply(a, right[i], type)).ToList();
+      this.StoreLanes(destination, results, lane);
+      return true;
+    }
+
+    private List<IrValue> LoadLanes(Place place, IrType type, int lane, int width) {
+      var lanes = new List<IrValue>();
+      for (var offset = 0; offset < width; offset += lane)
+        lanes.Add(this.Add(new IrLoad(type, this.LaneAddress(place, offset))));
+      return lanes;
+    }
+
+    private void StoreLanes(Place place, IReadOnlyList<IrValue> lanes, int lane) {
+      for (var i = 0; i < lanes.Count; ++i)
+        this.Add(new IrStore(lanes[i], this.LaneAddress(place, i * lane)));
+    }
+
+    private IrValue Widen(IrValue value, IrCastOp op, IrType type) => this.Add(new IrCast(op, value, type));
+    private IrValue Narrow(IrValue value, IrType type) => this.Add(new IrCast(IrCastOp.Trunc, value, type));
+
+    /// <summary>All ones where the comparison holds, zero where it does not.</summary>
+    private IrValue Mask(IrCmpPred predicate, IrValue a, IrValue b, IrType type)
+      => this.Add(new IrSelect(this.Compare(predicate, a, b), new IrConstantInt(type, -1), new IrConstantInt(type, 0)));
+
+    private IrValue Pick(IrCmpPred predicate, IrValue a, IrValue b) => this.Add(new IrSelect(this.Compare(predicate, a, b), a, b));
+
+    /// <summary>The upper half of a word product, the words taken as signed or unsigned.</summary>
+    private IrValue HighProduct(IrValue a, IrValue b, IrCastOp extend) {
+      var product = this.Add(new IrBinary(IrBinaryOp.Mul, this.Widen(a, extend, IrType.I32), this.Widen(b, extend, IrType.I32)));
+      return this.Narrow(this.Add(new IrBinary(IrBinaryOp.LShr, product, new IrConstantInt(IrType.I32, 16))), a.Type);
+    }
+
+    /// <summary>A sum or difference clamped to the lane's signed or unsigned range, computed in 32 bits.</summary>
+    private IrValue Saturate(IrBinaryOp op, IrValue a, IrValue b, bool signed) {
+      var extend = signed ? IrCastOp.SExt : IrCastOp.ZExt;
+      var exact = this.Add(new IrBinary(op, this.Widen(a, extend, IrType.I32), this.Widen(b, extend, IrType.I32)));
+      return this.Clamp(exact, a.Type, signed);
+    }
+
+    private IrValue Clamp(IrValue exact, IrType lane, bool signed) {
+      var bits = lane.Bits;
+      var (low, high) = signed ? (-(1L << (bits - 1)), (1L << (bits - 1)) - 1) : (0L, (1L << bits) - 1);
+      var lowConstant = new IrConstantInt(exact.Type, low);
+      var highConstant = new IrConstantInt(exact.Type, high);
+      var floored = this.Add(new IrSelect(this.Compare(IrCmpPred.Slt, exact, lowConstant), lowConstant, exact));
+      var clamped = this.Add(new IrSelect(this.Compare(IrCmpPred.Sgt, floored, highConstant), highConstant, floored));
+      return this.Narrow(clamped, lane);
+    }
+
+    /// <summary>PAVGB/PAVGW: the unsigned mean, rounded up.</summary>
+    private IrValue Average(IrValue a, IrValue b) {
+      var sum = this.Add(new IrBinary(IrBinaryOp.Add,
+        this.Add(new IrBinary(IrBinaryOp.Add, this.Widen(a, IrCastOp.ZExt, IrType.I32), this.Widen(b, IrCastOp.ZExt, IrType.I32))),
+        new IrConstantInt(IrType.I32, 1)));
+      return this.Narrow(this.Add(new IrBinary(IrBinaryOp.LShr, sum, new IrConstantInt(IrType.I32, 1))), a.Type);
+    }
+
+    /// <summary>
+    /// PSLL/PSRL/PSRA by an immediate or by the low quadword of a register or memory operand. A count
+    /// past the lane's width empties a logical shift and fills an arithmetic one with the sign.
+    /// </summary>
+    private bool PackedShift(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, IrBinaryOp op) {
+      if (operands.Count != 2)
+        throw new NotLiftableException("expects two operands");
+      var destination = this.PlaceOf(operands[0], 0);
+      if (destination is not VectorPlace { Bytes: var width })
+        throw new NotLiftableException("a packed shift writes an MMX or XMM register");
+      var countPlace = this.PlaceOf(operands[1], width);
+      var type = Integer(lane);
+      var bits = lane * 8;
+      var lanes = this.LoadLanes(destination, type, lane, width);
+      IrValue count = countPlace switch {
+        ImmediatePlace { Value: var value } => new IrConstantInt(IrType.I64, value & 0xFF),
+        VectorPlace or MemoryPlace => this.Add(new IrLoad(IrType.I64, this.LaneAddress(countPlace, 0))),
+        _ => throw new NotLiftableException("a packed shift counts by an immediate, a register or memory"),
+      };
+      // past the width the count saturates: bits - 1 for an arithmetic shift, an empty lane otherwise
+      var outOfRange = this.Compare(IrCmpPred.Ugt, count, new IrConstantInt(IrType.I64, bits - 1));
+      var inRange = this.Add(new IrSelect(outOfRange, new IrConstantInt(IrType.I64, bits - 1), count));
+      var amount = lane == 8 ? inRange : this.Narrow(inRange, type);
+      var results = lanes.Select(IrValue (value) => {
+        var shifted = this.Add(new IrBinary(op, value, amount));
+        return op == IrBinaryOp.AShr ? shifted : this.Add(new IrSelect(outOfRange, new IrConstantInt(type, 0), shifted));
+      }).ToList();
+      this.StoreLanes(destination, results, lane);
+      return true;
+    }
+
+    /// <summary>PUNPCKL/PUNPCKH: the lanes of one half of each operand, interleaved destination first.</summary>
+    private bool Unpack(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, bool high) {
+      var (destination, source, width) = this.Packed(operands);
+      if (lane == 8 && width != 16)
+        throw new NotLiftableException("PUNPCKLQDQ/PUNPCKHQDQ take XMM registers");
+      var type = Integer(lane);
+      var left = this.LoadLanes(destination, type, lane, width);
+      var right = this.LoadLanes(source, type, lane, width);
+      var start = high ? left.Count / 2 : 0;
+      var results = new List<IrValue>();
+      for (var i = 0; i < left.Count / 2; ++i) {
+        results.Add(left[start + i]);
+        results.Add(right[start + i]);
+      }
+      this.StoreLanes(destination, results, lane);
+      return true;
+    }
+
+    /// <summary>PACKSSWB/PACKSSDW/PACKUSWB: each operand's lanes narrowed to half their width with saturation, destination first.</summary>
+    private bool Pack(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, bool signedResult) {
+      var (destination, source, width) = this.Packed(operands);
+      var type = Integer(lane);
+      var narrow = Integer(lane / 2);
+      var wide = this.LoadLanes(destination, type, lane, width).Concat(this.LoadLanes(source, type, lane, width));
+      var results = wide.Select(value => this.Clamp(this.Widen(value, IrCastOp.SExt, IrType.I64), narrow, signedResult)).ToList();
+      this.StoreLanes(destination, results, lane / 2);
+      return true;
+    }
+
+    /// <summary>PMADDWD: signed word products, adjacent pairs summed into doublewords.</summary>
+    private bool MultiplyAdd(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      var (destination, source, width) = this.Packed(operands);
+      var left = this.LoadLanes(destination, IrType.I16, 2, width);
+      var right = this.LoadLanes(source, IrType.I16, 2, width);
+      IrValue Product(int i) => this.Add(new IrBinary(IrBinaryOp.Mul,
+        this.Widen(left[i], IrCastOp.SExt, IrType.I32), this.Widen(right[i], IrCastOp.SExt, IrType.I32)));
+      var results = new List<IrValue>();
+      for (var i = 0; i < left.Count; i += 2)
+        results.Add(this.Add(new IrBinary(IrBinaryOp.Add, Product(i), Product(i + 1))));
+      this.StoreLanes(destination, results, 4);
+      return true;
+    }
+
+    /// <summary>
+    /// PSHUFD/PSHUFW/PSHUFLW/PSHUFHW: four lanes of the source chosen by the immediate's bit pairs,
+    /// written to the destination's lanes at <paramref name="start"/>; PSHUFLW and PSHUFHW copy the
+    /// other half unchanged.
+    /// </summary>
+    private bool Shuffle(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane, int start) {
+      if (operands.Count != 3 || this.PlaceOf(operands[2], 1) is not ImmediatePlace { Value: var order })
+        throw new NotLiftableException("expects a register, a source and an immediate order");
+      var destination = this.PlaceOf(operands[0], 0);
+      if (destination is not VectorPlace { Bytes: var width })
+        throw new NotLiftableException("a shuffle writes an MMX or XMM register");
+      var source = this.PlaceOf(operands[1], width);
+      if (source is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("a shuffle reads a register or memory");
+      var type = Integer(lane);
+      var all = this.LoadLanes(source, type, lane, width);
+      var results = new List<IrValue>(all);
+      var first = start / lane;
+      for (var i = 0; i < 4; ++i)
+        results[first + i] = all[first + (int)((order >> (2 * i)) & 3)];
+      this.StoreLanes(destination, results.Take(width / lane).ToList(), lane);
       return true;
     }
 

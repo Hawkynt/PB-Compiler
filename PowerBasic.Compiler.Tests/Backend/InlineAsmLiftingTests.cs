@@ -91,6 +91,61 @@ public sealed class InlineAsmLiftingTests {
       ! EMMS
       PRINT HEX$(lo&); " "; HEX$(x&)
       """),
+    ("mmx-compare-multiply-saturate", """
+      DIM a&, b&, r1&, r2&, r3&, r4&, r5&
+      a& = &H7FF08001
+      b& = &H0010FF02
+      ! MOVD MM0, a&
+      ! MOVD MM1, b&
+      ! MOVQ MM2, MM0
+      ! PCMPGTW MM2, MM1
+      ! MOVD r1&, MM2
+      ! MOVQ MM2, MM0
+      ! PMULLW MM2, MM1
+      ! MOVD r2&, MM2
+      ! MOVQ MM2, MM0
+      ! PMULHW MM2, MM1
+      ! MOVD r3&, MM2
+      ! MOVQ MM2, MM0
+      ! PADDSW MM2, MM1
+      ! MOVD r4&, MM2
+      ! MOVQ MM2, MM0
+      ! PCMPEQB MM2, MM1
+      ! MOVD r5&, MM2
+      ! EMMS
+      PRINT HEX$(r1&); " "; HEX$(r2&); " "; HEX$(r3&); " "; HEX$(r4&); " "; HEX$(r5&)
+      """),
+    ("mmx-shift-unpack-pack", """
+      DIM a&, b&, r1&, r2&, r3&, r4&, r5&, r6&, r7&
+      a& = &H8421F00F
+      b& = &H12345678
+      ! MOVD MM0, a&
+      ! MOVD MM1, b&
+      ! MOVQ MM2, MM0
+      ! PSRAW MM2, 3
+      ! MOVD r1&, MM2
+      ! MOVQ MM2, MM0
+      ! PSRLD MM2, 5
+      ! MOVD r2&, MM2
+      ! MOVQ MM2, MM0
+      ! PSLLW MM2, 17
+      ! MOVD r3&, MM2
+      ! MOVQ MM2, MM0
+      ! PUNPCKLBW MM2, MM1
+      ! MOVD r4&, MM2
+      ! PSRLQ MM2, 32
+      ! MOVD r5&, MM2
+      ! MOVQ MM2, MM0
+      ! PACKSSWB MM2, MM1
+      ! MOVD r6&, MM2
+      ! MOVQ MM2, MM1
+      ! PACKUSWB MM2, MM0
+      ! PSRLQ MM2, 32
+      ! MOVD r7&, MM2
+      ! EMMS
+      PRINT HEX$(r1&); " "; HEX$(r2&); " "; HEX$(r3&); " "; HEX$(r4&)
+      PRINT HEX$(r5&); " "; HEX$(r6&); " "; HEX$(r7&)
+      """),
     ("flags-and-conditions", """
       DIM lo&, hi&, m&, c&, k%
       ! MOV EAX, -1
@@ -199,6 +254,57 @@ public sealed class InlineAsmLiftingTests {
       PRINT e%; b%; l%; g%
       """;
     Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)), Is.EqualTo(Vice.Normalize(" 1  1  0  0 \n")));
+  }
+
+  /// <summary>
+  /// Packed operations the 8086's emulation does not take yet, so there is nothing to run them against
+  /// there; the stated results are what the same operations print through the host compiler's SSE2
+  /// intrinsics (<c>_mm_subs_epu8</c>, <c>_mm_madd_epi16</c>, <c>_mm_shuffle_epi32</c>, ...).
+  /// </summary>
+  [TestCase("x86-32")]
+  [TestCase("x64")]
+  [TestCase("6502")]
+  public void Run_GivenPackedOperationsWithoutAn8086Emulation_ThenTheyMatchTheHardware(string platform) {
+    const string source = """
+      DIM a&, b&, r1&, r2&, r3&, r4&, r5&, r6&, r7&, r8&
+      a& = &H7FF08001
+      b& = &H0010FF02
+      ! MOVD MM0, a&
+      ! MOVD MM1, b&
+      ! MOVQ MM2, MM0
+      ! PSUBUSB MM2, MM1
+      ! MOVD r1&, MM2
+      ! MOVQ MM2, MM0
+      ! PADDUSB MM2, MM1
+      ! MOVD r2&, MM2
+      ! MOVQ MM2, MM0
+      ! PMADDWD MM2, MM1
+      ! MOVD r3&, MM2
+      ! EMMS
+      a& = &H11223344
+      b& = &H80FF0102
+      ! MOVD XMM0, a&
+      ! MOVD XMM1, b&
+      ! PUNPCKLDQ XMM0, XMM1
+      ! PUNPCKLQDQ XMM0, XMM0
+      ! PSHUFD XMM2, XMM0, 27
+      ! MOVD r4&, XMM2
+      ! PSHUFLW XMM3, XMM0, 177
+      ! MOVD r5&, XMM3
+      ! MOVDQA XMM3, XMM0
+      ! PMAXUB XMM3, XMM1
+      ! MOVD r6&, XMM3
+      ! MOVDQA XMM3, XMM0
+      ! PMINSW XMM3, XMM1
+      ! MOVD r7&, XMM3
+      ! MOVDQA XMM3, XMM0
+      ! PAVGB XMM3, XMM1
+      ! MOVD r8&, XMM3
+      PRINT HEX$(r1&); " "; HEX$(r2&); " "; HEX$(r3&)
+      PRINT HEX$(r4&); " "; HEX$(r5&); " "; HEX$(r6&); " "; HEX$(r7&); " "; HEX$(r8&)
+      """;
+    Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)),
+      Is.EqualTo(Vice.Normalize("7FE00000 7FFFFF03 86FE02\n80FF0102 33441122 80FF3344 80FF0102 49911A23\n")));
   }
 
   [Test]
