@@ -3,8 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.cs` — `AlignLoopTop` |
+| **Stage** | x86-16 back end (emission) |
+| **Verified by** | `LoopAlignmentTests` |
+| **Source** | `Backend/MachineEmitter.cs` (loop headers, gated by `TargetCost.AlignHotLoops`) |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` + `$CPU 80486`/`80586` |
 | **Split from** | [O0041](O0041-branch-layout.md) (which is now the branch shape) |
 

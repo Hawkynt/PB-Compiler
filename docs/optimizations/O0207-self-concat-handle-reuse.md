@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator` (string assignment path) |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/StringAppendInPlace.cs` (the copy and its free cancel) |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF83.BAS` |
+| **Verified by** | none asserts it yet |
 | **Split from** | [O0009](O0009-string-temp-economy.md) (which is now literal concat folding) |
 
 ## What it is

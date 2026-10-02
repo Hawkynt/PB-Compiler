@@ -4,9 +4,9 @@
 |---|---|
 | **Status** | ✅ Implemented |
 | **Stage** | Whole-program shape recognition, before runtime selection |
-| **Source** | `CodeGen/CodeGenerator.Trivial.cs` |
+| **Source** | `Emit/DosTrivialImage.cs` — `TryBuild` (called from `CodeGen/CodeGenerator.cs`) |
 | **Gate** | `--optimize` |
-| **Verified by** | execution in DOSBox (25-byte hello world) |
+| **Verified by** | `OptimizerTests.Emit_GivenConstantNumericPrint_*` |
 | **Related** | [P0001](P0001-runtime-trimming.md), [P0005](P0005-com-output.md), [R0001](R0001-fast-text-output.md) |
 
 ## What it is

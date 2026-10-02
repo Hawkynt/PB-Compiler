@@ -59,6 +59,7 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("unroll", (fn, _) => Conservative(() => LoopUnroll.Run(fn, runtimeUnrolling: optimizeForSpeed)))
     .InFunctionPhase(IrMiddleEndPhase.ScalarSimplification)
     .AddAnalyzed("instcombine", (fn, _) => Conservative(() => InstCombine.Run(fn)))
+    .AddAnalyzed("knownbits", KnownBitsSimplify.Run)
     .AddAnalyzedWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
     .AddAnalyzed("sccp", (fn, _) => Conservative(() => Sccp.Run(fn)))
     .AddAnalyzed("correlate", CorrelatedValueProp.Run)

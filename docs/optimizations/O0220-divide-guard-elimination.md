@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter, on the value lattice |
-| **Source** | `CodeGen/CodeGenerator.cs` — `DivisorNonZero` |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/RangeCheckElim.cs` — the divisor-zero compare decided by `IrRangeAnalysis`; a repeated divisor check folds through `CorrelatedValueProp` once the first raise is known not to return |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF80.BAS` |
+| **Verified by** | `RangeCheckElimTests.Elim_GivenACounterDivisor_WhenOptimized_ThenTheZeroGuardIsGone` |
 | **Split from** | [O0016](O0016-value-fact-analysis.md) |
 
 ## What it is

@@ -2,8 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Done — every case folds, `x \ -1` included (on a proven `x <> MININT`) |
-| **Stage** | Emitter |
+| **Status** | 🟡 Partial — `\ 1` and `MOD 1` fold (`InstCombine`); `MOD -1`, `\ -1` as a negation and fact-based divisors do not |
+| **Stage** | IR middle end |
+| **Verified by** | `DivideByMinusOneTests` |
+| **Source** | `Ir/Passes/InstCombine.cs` |
 | **Related** | [O0004](O0004-strength-reduction.md), [O0016](O0016-value-fact-analysis.md), [O0056](O0056-reciprocal-division.md) |
 
 ## The idea

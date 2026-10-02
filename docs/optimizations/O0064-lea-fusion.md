@@ -3,7 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented — `PostRegisterAllocationPeepholes` fuses the LEA forms after register allocation |
-| **Stage** | Emitter (instruction selection) |
+| **Stage** | x86-16 back end |
+| **Verified by** | `O0064LeaFusionTests` |
+| **Source** | `Backend/PostRegisterAllocationPeepholes.cs` (386 scaled LEA); `Backend/MachineCombiner.cs` (16-bit `MOV`+`ADD imm` → `LEA [r+disp]`) |
 | **Related** | [O0004](O0004-strength-reduction.md), [O0061](O0061-reassociation.md), [C0001](C0001-386-codegen.md) |
 
 ## The idea

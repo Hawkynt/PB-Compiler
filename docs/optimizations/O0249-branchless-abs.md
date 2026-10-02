@@ -3,7 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Done (the `ABS()` intrinsic and the `IF x < 0 THEN x = -x` spelling, on a 16-bit value) |
-| **Stage** | Emitter |
+| **Stage** | IR middle end + x86-16 back end |
+| **Verified by** | `IfConversionTests.Run_GivenAConditionalNegateDiamond_*`; `BackendIdiomTests.Select_GivenTheBranchlessAbsShape_*` |
+| **Source** | `Ir/Passes/IfConversion.cs` — `TryConvertAbs`; `Backend/InstructionSelector.Idioms.cs` — `AbsShape` (`CWD`/`XOR`/`SUB`) |
 | **Related** | [O0108](O0108-branchless-select.md), [O0077](O0077-negation-idioms.md), [O0258](O0258-vector-abs.md) |
 | **Split from** | [O0108](O0108-branchless-select.md) |
 
