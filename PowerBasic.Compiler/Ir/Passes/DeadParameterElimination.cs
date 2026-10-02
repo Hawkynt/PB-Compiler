@@ -192,6 +192,7 @@ public static class DeadParameterElimination {
 
   private static bool CanRewrite(IrModule module, IrFunction function) {
     if (function.IsDeclaration
+        || function.MayGainCallers
         || function.IsVarArgs
         || function.HasErrorHandler
         || function.HasInlineAsm

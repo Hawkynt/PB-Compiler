@@ -169,6 +169,14 @@ public sealed class IrFunction : IrGlobalValue {
   /// </summary>
   public bool HasInlineAsm { get; set; }
 
+  /// <summary>
+  /// True when callers this module does not show yet may still be added - a portable-runtime routine
+  /// defined before the middle end, which the runtime entries defined after it call too. Such a
+  /// function's body must keep answering every argument its signature admits, so no pass may
+  /// specialize it to the callers it can see (<see cref="Analysis.IrCallGraph.IsFullyVisible"/>).
+  /// </summary>
+  public bool MayGainCallers { get; set; }
+
   public IrArgument AddParameter(IrArgument argument) {
     argument.Parent = this;
     this._parameters.Add(argument);

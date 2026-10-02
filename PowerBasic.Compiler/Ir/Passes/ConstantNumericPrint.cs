@@ -9,7 +9,8 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// replaces the formatter call with an ordinary string print of those bytes.
 ///
 /// <para>
-/// It is exact because the DOS runtime's own number printers end in that same string print: they render
+/// It is exact because the runtime's own number printers - the DOS runtime's and the portable one's
+/// alike - end in that same string print: they render
 /// into a buffer and hand the buffer to the routine a literal goes to, so the column bookkeeping and
 /// the zone arithmetic of a following comma see the same thing. Only whole numbers qualify, and a
 /// real only while it is small enough that every dialect prints it without an exponent (fewer than

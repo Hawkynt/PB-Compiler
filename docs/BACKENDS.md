@@ -153,8 +153,8 @@ pbc --platform x86-32 --emit-obj P.BAS  # -> P.o, exporting pb_main and pb_start
 Nothing but `pbc` is involved: no C compiler, assembler or linker. The IR goes through the hosted
 middle end (`RunHostedModule`, the one `--emit-c` uses), `Runtime/Portable/PortableRuntime` defines
 the `rt_*` functions the module calls into it - before the middle end, so the optimizer sees runtime
-and program together, and again after it for the calls it introduced - and `Backend/X86Native`
-compiles the lot.
+and program together, and again after it for the calls it introduced and for the entries the
+runtime-aware passes rewrite (see `docs/PIPELINE.md`) - and `Backend/X86Native` compiles the lot.
 
 - **`X86Assembler`** is the instruction set as types, for both modes: `X86Reg`, `X86Width`,
   `X86Mem`, the ALU/shift/x87 groups as enums, immediates under their own method names (a literal `0`
