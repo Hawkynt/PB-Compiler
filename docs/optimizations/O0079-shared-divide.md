@@ -2,8 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Done (adjacent `q = n\d` / `m = n MOD d` over a runtime divisor) |
-| **Stage** | Emitter |
+| **Status** | ✅ Done (`q = n\d` / `m = n MOD d` over the same operands in one block, on every native back end) |
+| **Stage** | IR query + every native back end |
+| **Source** | `Ir/IrDivRem.cs` — `PartnerOf`; x86-16: `Backend/InstructionSelector.cs` (`SelectDivide` captures both of `IDIV`'s results); x86-32/x64: `Backend/X86Native` (`Divide` stores `AX` and `DX`); 6502: `Backend/Mos6502` (the divide routine's quotient and remainder cells). The pair lands in one block because a raised error never returns in the IR, so the second divisor check folds away (`CorrelatedValueProp`) |
+| **Verified by** | `FlatTargetSharedDivideTests` (one `IDIV` for both), `FlatTargetRuntimeTests` (answers held to DOS) |
 | **Related** | [O0003](O0003-common-subexpression-elimination.md), [O0004](O0004-strength-reduction.md), [O0056](O0056-reciprocal-division.md) |
 
 ## The idea
