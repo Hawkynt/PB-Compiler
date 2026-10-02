@@ -46,6 +46,18 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// hardware keeps them; AVX2's own <c>VEXTRACTI128</c>, <c>VINSERTI128</c>, <c>VPBROADCASTB/W/D/Q</c>,
 /// <c>VPERMQ</c>, <c>VPERM2I128</c>, <c>VZEROUPPER</c> and <c>VZEROALL</c> complete the set.
 /// </para>
+/// <para>
+/// Floating point: SSE and SSE2 <c>ADD</c>/<c>SUB</c>/<c>MUL</c>/<c>DIV</c>/<c>MIN</c>/<c>MAX</c>/<c>SQRT</c>
+/// in their <c>PS</c>, <c>SS</c>, <c>PD</c> and <c>SD</c> forms, <c>AND</c>/<c>ANDN</c>/<c>OR</c>/<c>XOR</c>
+/// <c>PS</c>/<c>PD</c>, <c>MOVAPS</c>/<c>MOVUPS</c>/<c>MOVAPD</c>/<c>MOVUPD</c>, <c>MOVSS</c>, <c>MOVSD</c>,
+/// <c>CVTSI2SS</c>/<c>SD</c>, <c>CVT(T)SS2SI</c>/<c>SD2SI</c>, <c>CVTSS2SD</c>, <c>CVTSD2SS</c>,
+/// <c>CVTDQ2PS</c>, <c>CVT(T)PS2DQ</c>, <c>(U)COMISS</c>/<c>SD</c>, and the VEX form of each. Exceptions
+/// are masked, as the hardware's default leaves them: a zero divisor answers a signed infinity or the
+/// default NaN and a negative root the default NaN, computed as bits so that a machine whose floats
+/// are BASIC's never divides by zero. That machine is the 6502, and what it still does differently is
+/// stated rather than hidden: its floats have no infinity, NaN or denormal to take IN, an overflow is
+/// error 6, and a result too small for the format is zero.
+/// </para>
 /// </summary>
 public static class InlineAsmLifting {
 
@@ -77,6 +89,8 @@ public static class InlineAsmLifting {
   /// <summary>The register statics, made on first use.</summary>
   private sealed class Registers(IrModule module) {
     private readonly Dictionary<string, IrGlobalVariable> _cells = [];
+
+    public IrModule Module => module;
 
     public IrGlobalVariable General(Reg register) => this.Cell($"asm.r{register.WordSlot() & 7}", IrType.I32, 1);
     public IrGlobalVariable Mmx(Reg register) => this.Cell($"asm.mm{register.Index() & 7}", IrType.I8, 8);
@@ -244,6 +258,54 @@ public static class InlineAsmLifting {
         case "PSHUFW": return this.Shuffle(operands, 2, 0);
         case "PSHUFLW": return this.Shuffle(operands, 2, 0);
         case "PSHUFHW": return this.Shuffle(operands, 2, 8);
+        case "ADDPS": return this.FloatLanes(operands, IrType.F32, scalar: false, (a, b) => this.Add(new IrBinary(IrBinaryOp.FAdd, a, b)));
+        case "SUBPS": return this.FloatLanes(operands, IrType.F32, scalar: false, (a, b) => this.Add(new IrBinary(IrBinaryOp.FSub, a, b)));
+        case "MULPS": return this.FloatLanes(operands, IrType.F32, scalar: false, (a, b) => this.Add(new IrBinary(IrBinaryOp.FMul, a, b)));
+        case "DIVPS": return this.FloatLanes(operands, IrType.F32, scalar: false, this.Divide);
+        case "MINPS": return this.FloatLanes(operands, IrType.F32, scalar: false, (a, b) => this.Pick(IrCmpPred.Folt, a, b));
+        case "MAXPS": return this.FloatLanes(operands, IrType.F32, scalar: false, (a, b) => this.Pick(IrCmpPred.Fogt, a, b));
+        case "ADDSS": return this.FloatLanes(operands, IrType.F32, scalar: true, (a, b) => this.Add(new IrBinary(IrBinaryOp.FAdd, a, b)));
+        case "SUBSS": return this.FloatLanes(operands, IrType.F32, scalar: true, (a, b) => this.Add(new IrBinary(IrBinaryOp.FSub, a, b)));
+        case "MULSS": return this.FloatLanes(operands, IrType.F32, scalar: true, (a, b) => this.Add(new IrBinary(IrBinaryOp.FMul, a, b)));
+        case "DIVSS": return this.FloatLanes(operands, IrType.F32, scalar: true, this.Divide);
+        case "MINSS": return this.FloatLanes(operands, IrType.F32, scalar: true, (a, b) => this.Pick(IrCmpPred.Folt, a, b));
+        case "MAXSS": return this.FloatLanes(operands, IrType.F32, scalar: true, (a, b) => this.Pick(IrCmpPred.Fogt, a, b));
+        case "ADDPD": return this.FloatLanes(operands, IrType.F64, scalar: false, (a, b) => this.Add(new IrBinary(IrBinaryOp.FAdd, a, b)));
+        case "SUBPD": return this.FloatLanes(operands, IrType.F64, scalar: false, (a, b) => this.Add(new IrBinary(IrBinaryOp.FSub, a, b)));
+        case "MULPD": return this.FloatLanes(operands, IrType.F64, scalar: false, (a, b) => this.Add(new IrBinary(IrBinaryOp.FMul, a, b)));
+        case "DIVPD": return this.FloatLanes(operands, IrType.F64, scalar: false, this.Divide);
+        case "MINPD": return this.FloatLanes(operands, IrType.F64, scalar: false, (a, b) => this.Pick(IrCmpPred.Folt, a, b));
+        case "MAXPD": return this.FloatLanes(operands, IrType.F64, scalar: false, (a, b) => this.Pick(IrCmpPred.Fogt, a, b));
+        case "ADDSD": return this.FloatLanes(operands, IrType.F64, scalar: true, (a, b) => this.Add(new IrBinary(IrBinaryOp.FAdd, a, b)));
+        case "SUBSD": return this.FloatLanes(operands, IrType.F64, scalar: true, (a, b) => this.Add(new IrBinary(IrBinaryOp.FSub, a, b)));
+        case "MULSD": return this.FloatLanes(operands, IrType.F64, scalar: true, (a, b) => this.Add(new IrBinary(IrBinaryOp.FMul, a, b)));
+        case "DIVSD": return this.FloatLanes(operands, IrType.F64, scalar: true, this.Divide);
+        case "MINSD": return this.FloatLanes(operands, IrType.F64, scalar: true, (a, b) => this.Pick(IrCmpPred.Folt, a, b));
+        case "MAXSD": return this.FloatLanes(operands, IrType.F64, scalar: true, (a, b) => this.Pick(IrCmpPred.Fogt, a, b));
+        case "SQRTPS": return this.SquareRoot(operands, IrType.F32, scalar: false);
+        case "SQRTSS": return this.SquareRoot(operands, IrType.F32, scalar: true);
+        case "SQRTPD": return this.SquareRoot(operands, IrType.F64, scalar: false);
+        case "SQRTSD": return this.SquareRoot(operands, IrType.F64, scalar: true);
+        case "ANDPS" or "ANDPD": return this.Lanes(operands, 8, IrBinaryOp.And);
+        case "ORPS" or "ORPD": return this.Lanes(operands, 8, IrBinaryOp.Or);
+        case "XORPS" or "XORPD": return this.Lanes(operands, 8, IrBinaryOp.Xor);
+        case "ANDNPS" or "ANDNPD": return this.AndNot(operands);
+        case "MOVAPS" or "MOVUPS" or "MOVAPD" or "MOVUPD": return this.MoveVector(operands, 0);
+        case "MOVSS": return this.MoveScalar(operands, 4);
+        case "MOVSD" when operands.Count > 0: return this.MoveScalar(operands, 8);
+        case "CVTSI2SS": return this.FromInteger(operands, IrType.F32);
+        case "CVTSI2SD": return this.FromInteger(operands, IrType.F64);
+        case "CVTTSS2SI": return this.ToInteger(operands, IrType.F32, IrCastOp.FPToSI);
+        case "CVTTSD2SI": return this.ToInteger(operands, IrType.F64, IrCastOp.FPToSI);
+        case "CVTSS2SI": return this.ToInteger(operands, IrType.F32, IrCastOp.FPToSIRound);
+        case "CVTSD2SI": return this.ToInteger(operands, IrType.F64, IrCastOp.FPToSIRound);
+        case "CVTSS2SD": return this.Reformat(operands, IrType.F32, IrType.F64);
+        case "CVTSD2SS": return this.Reformat(operands, IrType.F64, IrType.F32);
+        case "CVTDQ2PS": return this.ConvertLanes(operands, IrType.I32, IrType.F32, IrCastOp.SIToFP);
+        case "CVTTPS2DQ": return this.ConvertLanes(operands, IrType.F32, IrType.I32, IrCastOp.FPToSI);
+        case "CVTPS2DQ": return this.ConvertLanes(operands, IrType.F32, IrType.I32, IrCastOp.FPToSIRound);
+        case "COMISS" or "UCOMISS": return this.CompareScalar(operands, IrType.F32);
+        case "COMISD" or "UCOMISD": return this.CompareScalar(operands, IrType.F64);
         // AVX2's own, reached only through the V prefix below
         case "EXTRACTI128" when this._vex: return this.Extract128(operands);
         case "INSERTI128" when this._vex: return this.Insert128(operands);
@@ -258,7 +320,10 @@ public static class InlineAsmLifting {
         // a VEX form is its legacy instruction with a separate first source, and a vector register it
         // writes is zeroed above its own width, up to the widest register there is
         case ['V', .. var legacy] when !this._vex && (legacy.StartsWith('P') || legacy is "MOVD" or "MOVQ" or "MOVDQA" or "MOVDQU"
-            or "EXTRACTI128" or "INSERTI128" or "ZEROUPPER" or "ZEROALL"):
+            or "EXTRACTI128" or "INSERTI128" or "ZEROUPPER" or "ZEROALL"
+            || legacy.EndsWith("PS", StringComparison.Ordinal) || legacy.EndsWith("PD", StringComparison.Ordinal)
+            || legacy.EndsWith("SS", StringComparison.Ordinal) || legacy.EndsWith("SD", StringComparison.Ordinal)
+            || legacy.StartsWith("CVT", StringComparison.Ordinal) || legacy.Contains("COMIS", StringComparison.Ordinal)):
           this._vex = true;
           try {
             if (!this.Lift(legacy, operands))
@@ -891,6 +956,200 @@ public static class InlineAsmLifting {
         results.Add(this.Add(new IrSelect(zeroed, new IrConstantInt(IrType.I8, 0), picked)));
       }
       this.StoreLanes(destination, results, 1);
+      return true;
+    }
+
+    // --- floating point ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// A floating-point operation on every lane, or under <paramref name="scalar"/> on the lowest only,
+    /// the others then taken from the first source (the destination itself without VEX).
+    /// </summary>
+    private bool FloatLanes(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrType type, bool scalar, Func<IrValue, IrValue, IrValue> apply) {
+      var (destination, leftPlace, rightPlace, width) = this.Packed(operands);
+      var lane = type.Bits / 8;
+      var span = scalar ? lane : width;
+      var left = this.LoadLanes(leftPlace, type, lane, span);
+      var right = this.LoadLanes(rightPlace, type, lane, span);
+      var upper = scalar && !ReferenceEquals(leftPlace, destination) ? this.LoadLanes(leftPlace, IrType.I32, 4, width - lane, lane) : null;
+      this.StoreLanes(destination, left.Select((a, i) => apply(a, right[i])).ToList(), lane);
+      if (upper is not null)
+        for (var i = 0; i < upper.Count; ++i)
+          this.Add(new IrStore(upper[i], this.LaneAddress(destination, lane + i * 4)));
+      return true;
+    }
+
+    /// <summary>The square root of every lane of the source, or of the lowest under <paramref name="scalar"/>.</summary>
+    private bool SquareRoot(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrType type, bool scalar) {
+      var sqrt = this.Intrinsic($"llvm.sqrt.f{type.Bits}", type, type);
+      if (scalar)
+        return this.FloatLanes(operands, type, scalar: true, (_, b) => this.Root(sqrt, b));
+      // the packed form has one source, under VEX as well
+      if (operands.Count != 2 || this.PlaceOf(operands[0], 0) is not VectorPlace { Bytes: var width } destination)
+        throw new NotLiftableException("expects a vector destination and a source");
+      var source = this.PlaceOf(operands[1], width);
+      if (source is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("reads a register or memory");
+      var lane = type.Bits / 8;
+      var roots = this.LoadLanes(source, type, lane, width).Select(value => this.Root(sqrt, value)).ToList();
+      this.StoreLanes(destination, roots, lane);
+      return true;
+    }
+
+    /// <summary>
+    /// A quotient as the hardware gives it with its exceptions masked: a zero divisor answers infinity
+    /// signed as the operands are, or the default NaN for 0/0, instead of dividing - a machine whose
+    /// floats have no infinity (the 6502's are BASIC's, where a zero divisor is error 11) never sees
+    /// the division. The answer is the lane's bits.
+    /// </summary>
+    private IrValue Divide(IrValue a, IrValue b) {
+      var type = a.Type;
+      var bits = Integer(type.Bits / 8);
+      var zero = new IrConstantFloat(type, 0);
+      var byZero = this.Compare(IrCmpPred.Foeq, b, zero);
+      var quotient = this.Add(new IrBinary(IrBinaryOp.FDiv, a, this.Add(new IrSelect(byZero, new IrConstantFloat(type, 1), b))));
+      var sign = this.Add(new IrBinary(IrBinaryOp.And,
+        this.Add(new IrBinary(IrBinaryOp.Xor, this.Add(new IrCast(IrCastOp.BitCast, a, bits)), this.Add(new IrCast(IrCastOp.BitCast, b, bits)))),
+        new IrConstantInt(bits, type.Bits == 32 ? unchecked((int)0x80000000) : long.MinValue)));
+      var infinity = this.Add(new IrBinary(IrBinaryOp.Or, sign, new IrConstantInt(bits, type.Bits == 32 ? 0x7F800000 : 0x7FF0000000000000)));
+      var special = this.Add(new IrSelect(this.Compare(IrCmpPred.Foeq, a, zero), DefaultNan(bits), infinity));
+      return this.Add(new IrSelect(byZero, special, this.Add(new IrCast(IrCastOp.BitCast, quotient, bits))));
+    }
+
+    /// <summary>A square root as the hardware gives it: the default NaN for a negative operand, which is never passed on.</summary>
+    private IrValue Root(IrFunction sqrt, IrValue value) {
+      var type = value.Type;
+      var bits = Integer(type.Bits / 8);
+      var negative = this.Compare(IrCmpPred.Folt, value, new IrConstantFloat(type, 0));
+      var root = this.Add(new IrCall(type, sqrt, [this.Add(new IrSelect(negative, new IrConstantFloat(type, 0), value))]));
+      return this.Add(new IrSelect(negative, DefaultNan(bits), this.Add(new IrCast(IrCastOp.BitCast, root, bits))));
+    }
+
+    /// <summary>x86's default NaN, the "real indefinite": sign set, quiet, no payload.</summary>
+    private static IrConstantInt DefaultNan(IrType bits)
+      => new(bits, bits.Bits == 32 ? unchecked((int)0xFFC00000) : unchecked((long)0xFFF8000000000000));
+
+    private IrFunction Intrinsic(string name, IrType result, params IrType[] parameters) {
+      return registers.Module.FindFunction(name)
+        ?? registers.Module.AddFunction(new IrFunction(name, result, parameters.Select((type, i) => new IrArgument(type, i)).ToList()));
+    }
+
+    /// <summary>
+    /// MOVSS/MOVSD: between registers the lowest lane alone moves (under VEX the rest comes from the
+    /// second operand); from memory the register is zeroed above it; to memory only the lane is stored.
+    /// </summary>
+    private bool MoveScalar(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int lane) {
+      if (this._vex && operands.Count == 3)
+        return this.FloatLanes(operands, lane == 4 ? IrType.F32 : IrType.F64, scalar: true, (_, b) => b);
+      if (operands.Count != 2)
+        throw new NotLiftableException("expects two operands");
+      var destination = this.PlaceOf(operands[0], lane);
+      var source = this.PlaceOf(operands[1], lane);
+      if (destination is not (VectorPlace or MemoryPlace) || source is not (VectorPlace or MemoryPlace)
+          || (destination is MemoryPlace && source is MemoryPlace))
+        throw new NotLiftableException("moves between an XMM register and an XMM register or memory");
+      var value = this.Add(new IrLoad(Integer(lane), this.LaneAddress(source, 0)));
+      this.Add(new IrStore(value, this.LaneAddress(destination, 0)));
+      if (destination is VectorPlace vector && source is MemoryPlace)
+        this.ZeroBytes(vector, lane, vector.Bytes);
+      return true;
+    }
+
+    /// <summary>The XMM operands of a scalar conversion: destination, the source of the upper lanes, and the converted operand.</summary>
+    private (VectorPlace Destination, Place Upper, Place Source) ScalarConversion(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int sourceBytes) {
+      var count = this._vex ? 3 : 2;
+      if (operands.Count != count || this.PlaceOf(operands[0], 0) is not VectorPlace destination)
+        throw new NotLiftableException($"expects an XMM destination and {count - 1} sources");
+      var upper = this._vex ? this.PlaceOf(operands[1], 16) : destination;
+      return (destination, upper, this.PlaceOf(operands[count - 1], sourceBytes));
+    }
+
+    /// <summary>Writes <paramref name="value"/> to the lowest lane and the rest of the XMM register from <paramref name="upper"/>.</summary>
+    private void StoreScalar(VectorPlace destination, Place upper, IrValue value) {
+      var lane = value.Type.Bits / 8;
+      var rest = ReferenceEquals(upper, destination) ? null : this.LoadLanes(upper, IrType.I32, 4, 16 - lane, lane);
+      this.Add(new IrStore(value, this.LaneAddress(destination, 0)));
+      if (rest is not null)
+        for (var i = 0; i < rest.Count; ++i)
+          this.Add(new IrStore(rest[i], this.LaneAddress(destination, lane + i * 4)));
+    }
+
+    /// <summary>CVTSI2SS/CVTSI2SD: a 32-bit integer from a register or memory into the lowest lane.</summary>
+    private bool FromInteger(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrType type) {
+      var (destination, upper, source) = this.ScalarConversion(operands, 4);
+      if (source is not (GeneralPlace { Bytes: 4 } or MemoryPlace))
+        throw new NotLiftableException("converts a 32-bit register or memory");
+      var integer = source is MemoryPlace memory ? this.Add(new IrLoad(IrType.I32, memory.Address)) : this.Read(source, 4);
+      this.StoreScalar(destination, upper, this.Add(new IrCast(IrCastOp.SIToFP, integer, type)));
+      return true;
+    }
+
+    /// <summary>
+    /// CVT(T)SS2SI/CVT(T)SD2SI: the lowest lane into a 32-bit register, truncated or rounded to
+    /// nearest-even; a value outside the 32-bit range, or a NaN, gives the hardware's 80000000h.
+    /// </summary>
+    private bool ToInteger(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrType type, IrCastOp conversion) {
+      if (operands.Count != 2 || this.PlaceOf(operands[0], 4) is not GeneralPlace { Bytes: 4 } destination)
+        throw new NotLiftableException("converts into a 32-bit register");
+      var source = this.PlaceOf(operands[1], type.Bits / 8);
+      if (source is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("converts an XMM register or memory");
+      var value = this.Add(new IrLoad(type, this.LaneAddress(source, 0)));
+      this.Write(destination, this.ToInt32(value, conversion));
+      return true;
+    }
+
+    private IrValue ToInt32(IrValue value, IrCastOp conversion) {
+      var type = value.Type;
+      // in range when -2^31 - 1 < x < 2^31 for a truncation, -2^31 - 0.5 <= x < 2^31 - 0.5 for a rounding; a NaN is never in range
+      var (low, high) = conversion == IrCastOp.FPToSI ? (-2147483649.0, 2147483648.0) : (-2147483648.5, 2147483647.5);
+      var fits = this.Add(new IrBinary(IrBinaryOp.And,
+        this.Compare(conversion == IrCastOp.FPToSI ? IrCmpPred.Fogt : IrCmpPred.Foge, value, new IrConstantFloat(type, low)),
+        this.Compare(IrCmpPred.Folt, value, new IrConstantFloat(type, high))));
+      var safe = this.Add(new IrSelect(fits, value, new IrConstantFloat(type, 0)));
+      var converted = this.Add(new IrCast(conversion, safe, IrType.I32));
+      return this.Add(new IrSelect(fits, converted, new IrConstantInt(IrType.I32, int.MinValue)));
+    }
+
+    /// <summary>CVTSS2SD/CVTSD2SS: the lowest lane widened or rounded to the other precision.</summary>
+    private bool Reformat(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrType from, IrType to) {
+      var (destination, upper, source) = this.ScalarConversion(operands, from.Bits / 8);
+      if (source is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("converts an XMM register or memory");
+      var value = this.Add(new IrLoad(from, this.LaneAddress(source, 0)));
+      this.StoreScalar(destination, upper, this.Add(new IrCast(to.Bits > from.Bits ? IrCastOp.FPExt : IrCastOp.FPTrunc, value, to)));
+      return true;
+    }
+
+    /// <summary>CVTDQ2PS/CVTTPS2DQ/CVTPS2DQ: every 32-bit lane converted.</summary>
+    private bool ConvertLanes(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrType from, IrType to, IrCastOp conversion) {
+      if (operands.Count != 2 || this.PlaceOf(operands[0], 0) is not VectorPlace { Bytes: var width } destination)
+        throw new NotLiftableException("expects a vector destination and a source");
+      var source = this.PlaceOf(operands[1], width);
+      if (source is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("reads a register or memory");
+      var converted = this.LoadLanes(source, from, 4, width)
+        .Select(value => to.IsFloat ? this.Add(new IrCast(conversion, value, to)) : this.ToInt32(value, conversion)).ToList();
+      this.StoreLanes(destination, converted, 4);
+      return true;
+    }
+
+    /// <summary>COMISS/UCOMISS/COMISD/UCOMISD: ZF, CF (and PF, not modelled) from an ordered compare; unordered sets both; OF and SF clear.</summary>
+    private bool CompareScalar(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, IrType type) {
+      if (operands.Count != 2)
+        throw new NotLiftableException("expects two operands");
+      var left = this.PlaceOf(operands[0], 0);
+      var right = this.PlaceOf(operands[1], type.Bits / 8);
+      if (left is not VectorPlace || right is not (VectorPlace or MemoryPlace))
+        throw new NotLiftableException("compares an XMM register with an XMM register or memory");
+      var a = this.Add(new IrLoad(type, this.LaneAddress(left, 0)));
+      var b = this.Add(new IrLoad(type, this.LaneAddress(right, 0)));
+      var ordered = this.Add(new IrBinary(IrBinaryOp.Or, this.Compare(IrCmpPred.Foge, a, b), this.Compare(IrCmpPred.Folt, a, b)));
+      var unordered = this.Add(new IrBinary(IrBinaryOp.Xor, ordered, IrBuilder.ConstBool(true)));
+      this.SetFlag('Z', this.Add(new IrBinary(IrBinaryOp.Or, unordered, this.Compare(IrCmpPred.Foeq, a, b))));
+      this.SetFlag('C', this.Add(new IrBinary(IrBinaryOp.Or, unordered, this.Compare(IrCmpPred.Folt, a, b))));
+      this.SetFlag('O', IrBuilder.ConstBool(false));
+      this.SetFlag('S', IrBuilder.ConstBool(false));
       return true;
     }
 

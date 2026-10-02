@@ -401,6 +401,148 @@ public sealed class InlineAsmLiftingTests {
       + "8E0C0A88 8B0A0988 F0E0D0C 0 0\n")));
   }
 
+  /// <summary>
+  /// SSE and SSE2 floating point, packed and scalar, with the conversions and an ordered compare
+  /// feeding a jump. Stated results, from the host compiler's intrinsics on the same inputs; the
+  /// 8086's emulation has no floating-point SIMD. The 6502 has no FPU and computes every lane in
+  /// software, so this is also what holds its rounding to IEEE's.
+  /// </summary>
+  [TestCase("x86-32")]
+  [TestCase("x64")]
+  [TestCase("6502")]
+  public void Run_GivenSseFloatingPoint_ThenEachLaneMatchesTheHardware(string platform) {
+    const string source = """
+      DIM a&, b&, c&, d&, r1&, r2&, r3&, r4&, r5&, r6&, r7&, r8&, r9&, i1&, i2&, h1&, i3&, h2&, l2&, q0&, q1&, q3&, f1&, v0&, above%
+      a& = &H3FC00000
+      b& = &HC0100000
+      c& = &H40400000
+      d& = &H3DCCCCCD
+      ! MOVD XMM0, a&
+      ! MOVD XMM1, b&
+      ! PUNPCKLDQ XMM0, XMM1
+      ! MOVD XMM2, c&
+      ! MOVD XMM3, d&
+      ! PUNPCKLDQ XMM2, XMM3
+      ! PUNPCKLQDQ XMM0, XMM2
+      ! PSHUFD XMM1, XMM0, 27
+      ! MOVAPS XMM2, XMM0
+      ! ADDPS XMM2, XMM1
+      ! MOVD r1&, XMM2
+      ! PSHUFD XMM2, XMM2, 85
+      ! MOVD r2&, XMM2
+      ! MOVAPS XMM2, XMM0
+      ! DIVPS XMM2, XMM1
+      ! MOVD r3&, XMM2
+      ! MOVAPS XMM2, XMM0
+      ! MULPS XMM2, XMM1
+      ! PSHUFD XMM2, XMM2, 255
+      ! MOVD r4&, XMM2
+      ! SQRTPS XMM2, XMM0
+      ! PSHUFD XMM2, XMM2, 170
+      ! MOVD r5&, XMM2
+      ! MOVAPS XMM2, XMM0
+      ! MINPS XMM2, XMM1
+      ! PSHUFD XMM2, XMM2, 85
+      ! MOVD r6&, XMM2
+      ! MOVUPS XMM2, XMM0
+      ! MAXPS XMM2, XMM1
+      ! PSHUFD XMM2, XMM2, 85
+      ! MOVD r7&, XMM2
+      ! MOVAPS XMM2, XMM0
+      ! ADDSS XMM2, XMM1
+      ! MOVD r8&, XMM2
+      ! PSHUFD XMM2, XMM2, 85
+      ! MOVD r9&, XMM2
+      ! PSHUFD XMM2, XMM0, 85
+      ! CVTTSS2SI EAX, XMM2
+      ! MOV i1&, EAX
+      ! CVTSS2SI EAX, XMM0
+      ! MOV i2&, EAX
+      ! XORPS XMM5, XMM5
+      ! CVTSS2SD XMM5, XMM0
+      ! MULSD XMM5, XMM5
+      ! MOV EAX, 7
+      ! CVTSI2SD XMM6, EAX
+      ! ADDSD XMM5, XMM6
+      ! PSHUFD XMM6, XMM5, 85
+      ! MOVD h1&, XMM6
+      ! CVTTSD2SI EAX, XMM5
+      ! MOV i3&, EAX
+      ! MOV EAX, 1
+      ! CVTSI2SD XMM5, EAX
+      ! MOV EAX, 3
+      ! CVTSI2SD XMM6, EAX
+      ! DIVSD XMM5, XMM6
+      ! MOVD l2&, XMM5
+      ! PSHUFD XMM6, XMM5, 85
+      ! MOVD h2&, XMM6
+      ! CVTPS2DQ XMM3, XMM0
+      ! MOVD q0&, XMM3
+      ! PSHUFD XMM4, XMM3, 85
+      ! MOVD q1&, XMM4
+      ! PSHUFD XMM4, XMM3, 255
+      ! MOVD q3&, XMM4
+      ! CVTDQ2PS XMM4, XMM3
+      ! PSHUFD XMM4, XMM4, 85
+      ! MOVD f1&, XMM4
+      ! VMULPS XMM4, XMM0, XMM1
+      ! MOVD v0&, XMM4
+      ! COMISS XMM0, XMM1
+      ! JBE notabove
+      above% = 1
+      notabove:
+      PRINT HEX$(r1&); " "; HEX$(r2&); " "; HEX$(r3&); " "; HEX$(r4&); " "; HEX$(r5&)
+      PRINT HEX$(r6&); " "; HEX$(r7&); " "; HEX$(r8&); " "; HEX$(r9&); i1&; i2&
+      PRINT HEX$(h1&); i3&; " "; HEX$(h2&); " "; HEX$(l2&)
+      PRINT HEX$(q0&); " "; HEX$(q1&); " "; HEX$(q3&); " "; HEX$(f1&); " "; HEX$(v0&); above%
+      """;
+    Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)), Is.EqualTo(Vice.Normalize(
+      "3FCCCCCD 3F400000 41700000 3E19999A 3FDDB3D7\n"
+      + "C0100000 40400000 3FCCCCCD C0100000-2  2 \n"
+      + "40228000 9  3FD55555 55555555\n"
+      + "2 FFFE 0 C0000000 3E19999A 1 \n")));
+  }
+
+  /// <summary>
+  /// With exceptions masked, as they are by default, a zero divisor answers a signed infinity or
+  /// the default NaN and a negative square root the default NaN - on the 6502 too, whose floats are
+  /// BASIC's and would otherwise stop the program with error 11 or 5.
+  /// </summary>
+  [TestCase("x86-32")]
+  [TestCase("x64")]
+  [TestCase("6502")]
+  public void Run_GivenADivisionByZeroOrANegativeRoot_ThenTheLaneIsWhatTheHardwareAnswers(string platform) {
+    const string source = """
+      DIM a&, b&, r0&, r1&, r2&, s1&, d0&, d1&
+      a& = &H3FC00000
+      b& = &HC0100000
+      ! MOVD XMM0, a&
+      ! MOVD XMM1, b&
+      ! PUNPCKLDQ XMM0, XMM1
+      ! XORPS XMM3, XMM3
+      ! MOVAPS XMM2, XMM0
+      ! DIVPS XMM2, XMM3
+      ! MOVD r0&, XMM2
+      ! PSHUFD XMM2, XMM2, 85
+      ! MOVD r1&, XMM2
+      ! PSHUFD XMM2, XMM3, 0
+      ! DIVPS XMM2, XMM3
+      ! MOVD r2&, XMM2
+      ! SQRTPS XMM4, XMM0
+      ! PSHUFD XMM4, XMM4, 85
+      ! MOVD s1&, XMM4
+      ! CVTSS2SD XMM5, XMM0
+      ! XORPD XMM6, XMM6
+      ! DIVSD XMM5, XMM6
+      ! MOVD d0&, XMM5
+      ! PSHUFD XMM5, XMM5, 85
+      ! MOVD d1&, XMM5
+      PRINT HEX$(r0&); " "; HEX$(r1&); " "; HEX$(r2&); " "; HEX$(s1&); " "; HEX$(d1&); " "; HEX$(d0&)
+      """;
+    Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)),
+      Is.EqualTo(Vice.Normalize("7F800000 FF800000 FFC00000 FFC00000 7FF00000 0\n")));
+  }
+
   [Test]
   public void Compile_GivenAnInstructionNotLiftedYet_ThenItIsDeclinedByName() {
     var work = Directory.CreateTempSubdirectory("pbc-lift-");
