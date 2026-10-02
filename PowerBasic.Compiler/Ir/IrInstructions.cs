@@ -178,15 +178,23 @@ public sealed class IrInlineAsm(string text) : IrInstruction(IrType.Void) {
   public List<string> Names { get; } = [];
 
   /// <summary>
+  /// The byte size of the variable each name binds, in the same order as <see cref="Names"/>, or 0
+  /// where it has none to state (a label, a string handle, a record) - what an unsized memory operand
+  /// such as <c>ADD a&amp;, 7</c> is as wide as.
+  /// </summary>
+  public List<int> Sizes { get; } = [];
+
+  /// <summary>
   /// True when every identifier the assembler asked about was bound to storage this instruction now
   /// carries. False means something was left unresolved - a BASIC label, an equate, a name the model
   /// does not know - and a back end must decline rather than emit text it cannot fully resolve.
   /// </summary>
   public bool Routable { get; set; }
 
-  /// <summary>Records that <paramref name="name"/> denotes the storage <paramref name="pointer"/> addresses.</summary>
-  public void Bind(string name, IrValue pointer) {
+  /// <summary>Records that <paramref name="name"/> denotes the storage <paramref name="pointer"/> addresses, <paramref name="size"/> bytes of it.</summary>
+  public void Bind(string name, IrValue pointer, int size = 0) {
     this.Names.Add(name);
+    this.Sizes.Add(size);
     this.AddOperand(pointer);
   }
 }

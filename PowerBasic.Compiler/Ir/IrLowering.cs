@@ -780,7 +780,7 @@ public sealed partial class IrLowering {
       // a VARIABLE first, exactly as the direct emitter's resolver orders it: a label sharing a
       // variable's spelling is the variable, on both paths
       if (this.AsmVariable(name) is { } symbol)
-        node.Bind(name, this.SlotFor(symbol));
+        node.Bind(name, this.SlotFor(symbol), symbol.Type is ScalarType scalar ? scalar.ByteSize : 0);
       else if (this._labels.TryGetValue(name, out var target))
         node.Bind(name, new IrBlockAddress(target));
       else if (Runtime.InlineAsmExports.Canonical(name) is null)
