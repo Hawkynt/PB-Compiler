@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-01 04:35 UTC by index_codebase.py.
+Generated 2026-10-02 05:41 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1204 files, 10945 symbols.
+1205 files, 10947 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -868,9 +868,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Noisy(BYVAL n%)` — PowerBasic.Compiler.Tests/Backend/FlatTargetNonLocalJumpTests.cs:112
 - method `Counter()` — PowerBasic.Compiler.Tests/Backend/FlatTargetNonLocalJumpTests.cs:128
 
-### FlatTargetRuntimeTests.cs  `C#, 58 lines`
-- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/FlatTargetRuntimeTests.cs:2
-- class `FlatTargetRuntimeTests` — Portable-runtime entries whose answers are the DOS runtime's by definition - RND's sequence, — PowerBasic.Compiler.Tests/Backend/FlatTargetRuntimeTests.cs:10
+### FlatTargetRuntimeTests.cs  `C#, 62 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/FlatTargetRuntimeTests.cs:3
+- class `FlatTargetRuntimeTests` — Portable-runtime entries whose answers are the DOS runtime's by definition - RND's sequence, — PowerBasic.Compiler.Tests/Backend/FlatTargetRuntimeTests.cs:11
 
 ### FlatTargetUnitTests.cs  `C#, 148 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/FlatTargetUnitTests.cs:5
@@ -1112,7 +1112,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Cli` — PowerBasic.Compiler.Tests/Cli/ListTests.cs:2
 - class `ListTests` — The pbc --list front-end path: compile a program and write a human-readable .LST map of the emitted… — PowerBasic.Compiler.Tests/Cli/ListTests.cs:6
 
-### PlatformTests.cs  `C#, 159 lines`
+### PlatformTests.cs  `C#, 162 lines`
 - namespace `PowerBasic.Compiler.Tests.Cli` — PowerBasic.Compiler.Tests/Cli/PlatformTests.cs:3
 - class `PlatformTests` — pbc --platform x86-32|x64: native Linux ELF executables, objects and archives, emitted by — PowerBasic.Compiler.Tests/Cli/PlatformTests.cs:15
 
@@ -1384,6 +1384,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/InOperatorTests.cs:72
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/InOperatorTests.cs:87
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/InOperatorTests.cs:99
+
+### InlineAsm8086PushTests.cs  `C#, 52 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/InlineAsm8086PushTests.cs:5
+- class `InlineAsm8086PushTests` — PowerBasic.Compiler.Tests/CodeGen/InlineAsm8086PushTests.cs:7
 
 ### InlineAsm8086ShiftTests.cs  `C#, 124 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/InlineAsm8086ShiftTests.cs:6
@@ -2180,7 +2184,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `DialectBitExactClaims` — D11 - bit-exact numeric behaviour, starting where it can be settled without a vintage binary: — PowerBasic.Compiler.Tests/Dialects/DialectBitExactClaims.cs:18
 - record `Claim` — The literal as it appears in source. — PowerBasic.Compiler.Tests/Dialects/DialectBitExactClaims.cs:23
 
-### DialectMetaClaims.cs  `C#, 128 lines`
+### DialectMetaClaims.cs  `C#, 129 lines`
 - namespace `PowerBasic.Compiler.Tests.Dialects` — PowerBasic.Compiler.Tests/Dialects/DialectMetaClaims.cs:2
 - class `DialectMetaClaims` — D9 - the metastatements, and whether they actually change the executable. — PowerBasic.Compiler.Tests/Dialects/DialectMetaClaims.cs:19
 - enum `Kind` — What the claim asserts about the two compilations. — PowerBasic.Compiler.Tests/Dialects/DialectMetaClaims.cs:24
@@ -2191,7 +2195,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `DialectNumericClaims` — D6 - the numeric typing each dialect actually has, as a table of claims. — PowerBasic.Compiler.Tests/Dialects/DialectNumericClaims.cs:19
 - record `Claim` — Stable name, used in the failure message and the README note. — PowerBasic.Compiler.Tests/Dialects/DialectNumericClaims.cs:27
 
-### DialectProbes.cs  `C#, 572 lines`
+### DialectProbes.cs  `C#, 571 lines`
 - namespace `PowerBasic.Compiler.Tests.Dialects` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:7
 - class `DialectProbes` — The measurements behind . Each probe answers one dimension for one — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:18
 - record `FrontEnd` — Whether the front end accepts a source, and whether a rejection was a controlled diagnostic. — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:23
@@ -2207,18 +2211,18 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(model.Errors.Count > 0)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:242
 - method `if(module is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:247
 - method `new(DialectBattery.State.NotApplicable, 0, 0, "no compiler metastatement…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:278
-- method `if(second is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:294
-- method `if(first is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:296
-- method `if` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:302
-- method `Unprobed("docs/QUIRKS.md is not present")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:333
-- method `new(DialectBattery.State.Unprobed, 0, 0, "docs/QUIRKS.md catalogues the …` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:340
-- method `Unprobed("no quirk rows found in docs/QUIRKS.md")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:348
-- method `new(DialectBattery.State.Held, reproduced, rows.Count, $"all {rows.Count…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:357
-- method `if(statement is AssignStmt { Value: FloatLiteralExpr f })` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:405
-- method `if(actual == scenario.Expect)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:441
-- method `new(DialectBattery.State.Held, covered, total, $"all {total} {verb}")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:495
-- method `if` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:515
-- method `if(statement is AssignStmt assign && model.ExpressionTypes.TryGetValue(…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:553
+- method `if(second is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:293
+- method `if(first is null)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:295
+- method `if` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:301
+- method `Unprobed("docs/QUIRKS.md is not present")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:332
+- method `new(DialectBattery.State.Unprobed, 0, 0, "docs/QUIRKS.md catalogues the …` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:339
+- method `Unprobed("no quirk rows found in docs/QUIRKS.md")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:347
+- method `new(DialectBattery.State.Held, reproduced, rows.Count, $"all {rows.Count…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:356
+- method `if(statement is AssignStmt { Value: FloatLiteralExpr f })` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:404
+- method `if(actual == scenario.Expect)` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:440
+- method `new(DialectBattery.State.Held, covered, total, $"all {total} {verb}")` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:494
+- method `if` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:514
+- method `if(statement is AssignStmt assign && model.ExpressionTypes.TryGetValue(…` — PowerBasic.Compiler.Tests/Dialects/DialectProbes.cs:552
 
 ### DialectRuntimeClaims.cs  `C#, 53 lines`
 - namespace `PowerBasic.Compiler.Tests.Dialects` — PowerBasic.Compiler.Tests/Dialects/DialectRuntimeClaims.cs:2
@@ -5789,7 +5793,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `for` — PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsmPackedString.cs:209
 - method `if(elementBytes == 1)` — PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsmPackedString.cs:215
 
-### CodeGenerator.InlineAsmPolicy.cs  `C#, 231 lines`
+### CodeGenerator.InlineAsmPolicy.cs  `C#, 251 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsmPolicy.cs:3
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.InlineAsmPolicy.cs:5
 
@@ -5897,10 +5901,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `switch` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:268
 - method `if(value < codeLength)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:272
 
-### CodeGenerator.cs  `C#, 517 lines`
+### CodeGenerator.cs  `C#, 522 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:7
 - class `CodeGenerator` — Translates a bound program into a 16-bit real-mode DOS executable. — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:19
-- method `if(bytes > resource.Length)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:464
+- method `if(bytes > resource.Length)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:469
 
 ### DosContainer.cs  `C#, 10 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/DosContainer.cs:1
