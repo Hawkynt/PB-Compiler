@@ -2,8 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Done (constant-bound Int16 register-counter loops; the DI accumulator is kept) |
-| **Stage** | Emitter |
+| **Status** | ⬜ Planned — the IR counts every FOR up; the counting-only loop that ran down to zero with `DEC`/`JNZ` went with the direct emitter |
+| **Stage** | — |
+| **Verified by** | none: `OptimizerTests.Emit_GivenCountOnlyFor_*` only checks that no `CMP SI` appears, which any register allocation satisfies |
+| **Source** | — |
 | **Related** | [O0005](O0005-register-residency.md), [O0111](O0111-redundant-induction-variables.md), [O0113](O0113-loop-bounds-hoisted.md) |
 
 ## The idea

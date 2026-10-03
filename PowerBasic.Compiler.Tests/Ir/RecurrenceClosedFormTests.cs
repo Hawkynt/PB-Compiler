@@ -114,6 +114,52 @@ public sealed class RecurrenceClosedFormTests {
     Assert.That(RecurrenceClosedForm.Run(fn), Is.Zero, "t = t + i is a series, not a constant step");
   }
 
+  /// <summary>
+  /// An <c>EXIT FOR</c> makes the trip count an upper bound rather than the number of iterations, so
+  /// the closed form is the answer to a loop that did not run.
+  ///
+  /// This is the shape the optimizer differential caught: <c>FOR i = 1 TO 8 / IF Feed(i) &gt; 4 THEN
+  /// EXIT FOR / acc = acc + 1 / NEXT</c> leaves the loop on the fifth iteration having added four,
+  /// and genuine PBC 3.50 prints 4. The optimized build printed 8.
+  /// </summary>
+  [Test]
+  public void Accumulator_GivenTheLoopCanExitEarly_ThenItIsLeftAlone() {
+    var fn = Lowered("""
+      DIM i AS INTEGER
+      DIM t AS INTEGER
+      DIM n AS INTEGER
+      t = 0
+      n = 5
+      FOR i = 1 TO 1000
+        IF i > n THEN EXIT FOR
+        t = t + 3
+      NEXT i
+      PRINT t
+      """);
+
+    Assert.That(RecurrenceClosedForm.Run(fn), Is.Zero, "the loop stops when the test says, not when the counter does");
+  }
+
+  /// <summary>A GOTO out of the body is the same escape wearing different syntax.</summary>
+  [Test]
+  public void Accumulator_GivenTheBodyJumpsOut_ThenItIsLeftAlone() {
+    var fn = Lowered("""
+      DIM i AS INTEGER
+      DIM t AS INTEGER
+      DIM n AS INTEGER
+      t = 0
+      n = 5
+      FOR i = 1 TO 1000
+        IF i > n THEN GOTO Done
+        t = t + 3
+      NEXT i
+      Done:
+      PRINT t
+      """);
+
+    Assert.That(RecurrenceClosedForm.Run(fn), Is.Zero);
+  }
+
   [Test]
   public void Function_GivenAnArmedErrorHandler_ThenItIsSkipped() {
     var fn = Lowered("""

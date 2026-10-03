@@ -221,12 +221,17 @@ public sealed class Mos6502ProgramTests {
   [Test]
   public void Run_GivenAProgramReachingPastTheBasicRom_ThenTheRamUnderItHoldsTheCode() {
     var data = string.Join(", ", MathArguments.Select(value => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
+    // every math group, and text a READ value nothing can predict keeps from being folded away:
+    // together some 41 KB, between the ROM's $A000 and the soft stack's $C000
+    var text = string.Concat(Enumerable.Range(0, 40).Select(line => $"    PRINT \"line {line:000} of the text that only takes room\"\n"));
     var (code, error, prg) = this.Build($"""
       k = INP(&H60)
       FOR i = 1 TO 3
         READ x#
         x# = x# + k
-        PRINT {string.Join("; ", ((int[])[0, 1, 3]).Select(group => MathGroups[group].Basic))}
+        PRINT {string.Join("; ", MathGroups.Select(group => group.Basic))}
+        IF x# > 100 THEN
+      {text}  END IF
       NEXT
       DATA {data}
       """);
@@ -402,30 +407,25 @@ public sealed class Mos6502ProgramTests {
 
   [Test]
   public void Build_GivenASpeedBuildTooBigForAC64_ThenItIsBuiltForSizeWithAWarning() {
-    // unrolled and inlined for speed this needs some 64 KB; for size it fits and runs the same
-    var (code, error, prg) = this.Build("""
+    // a SPEED build inlines Mix& at all eighteen calls, some 78 KB; built for size it is one body
+    var branches = string.Concat(Enumerable.Range(0, 12).Select(i =>
+      $"  IF t& > {1000 * (i + 1)} THEN t& = t& - {7 * (i + 1)} ELSE t& = t& + {i + 2}\n"));
+    var calls = string.Concat(Enumerable.Range(1, 18).Select(i => $"s& = Mix&(s&, {i})\n"));
+    var (code, error, prg) = this.Build($"""
       $OPTIMIZE SPEED
-      OPEN "RESULT.TXT" FOR OUTPUT AS #1
-      s% = 0
-      FOR i% = 1 TO 15
-        SELECT CASE i%
-          CASE 1, 3, 5, 7
-            s% = s% + i%
-          CASE 8 TO 11
-            s% = s% + 100
-          CASE ELSE
-            s% = s% - 1
-        END SELECT
-        PRINT #1, "i"; i%; s%
-      NEXT i%
-      PRINT #1, "sum"; s%
-      CLOSE #1
-      PRINT s%
+      DECLARE FUNCTION Mix&(BYVAL a&, BYVAL b&)
+      FUNCTION Mix&(BYVAL a&, BYVAL b&)
+        t& = a& * 3 + b&
+      {branches}  Mix& = t& \ 3 + (t& MOD 11)
+      END FUNCTION
+      READ s&
+      {calls}PRINT s&
+      DATA 5
       """);
 
     Assert.That(code, Is.Zero, error);
     Assert.That(error, Does.Contain("warning: 6502: the $OPTIMIZE SPEED build does not fit a C64"));
-    Assert.That(Cpu6502.RunC64Program(prg).Output.TrimEnd('\n'), Is.EqualTo(" 409 "));
+    Assert.That(Cpu6502.RunC64Program(prg).Output.TrimEnd('\n'), Is.EqualTo(" 679 "));
   }
 
   [Test]

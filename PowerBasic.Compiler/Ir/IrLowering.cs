@@ -436,8 +436,18 @@ public sealed partial class IrLowering {
           argument += ClosureWords - 1;
         } else if (p.ByVal)
           this._b.Store(fn.Parameters[argument], this.SlotFor(p));
-        else
+        else {
           this._addr[p] = fn.Parameters[argument];
+          // A BYREF string parameter names a cell the CALLER owns, and the caller only ever hands
+          // over one holding a valid handle: a null-initialised local slot, a zeroed global, an
+          // element of a frame the prologue zeroes, or a temporary it stored into just now. So the
+          // previous value is readable here, and an assignment through the parameter must release
+          // it exactly as an assignment to a local does - without this the handle a `SUB Grow(s$)`
+          // replaced was leaked once per call, and 1500 calls is OUT OF STRING SPACE on the DOS
+          // heap where genuine PBC 3.50 finishes.
+          if (p.Type is StringType)
+            this._nullInitialisedStrings.Add(fn.Parameters[argument]);
+        }
       }
 
     // $ERROR STACK ON: the headroom probe, at the head of the procedure and before anything that
@@ -769,18 +779,20 @@ public sealed partial class IrLowering {
     // the resolver before it decides it has no entry for the mnemonic, so a variable in one is
     // collected exactly as it would be in a MOV. Scanning the text for identifiers instead is the
     // guess this node exists to avoid - it cannot tell a register from a variable.
-    if (!parsed && PolicyEmitsEveryLine(stmt.Text)) {
+    //
+    // A block neither of them can emit still binds its names: x86-16 declines it, but the lifter that
+    // turns x86 text into IR for every other machine knows instructions the table does not (SETcc).
+    var policyEmits = !parsed && PolicyEmitsEveryLine(stmt.Text);
+    if (!parsed)
       foreach (var line in stmt.Text.Split('\n'))
         Asm.TextAssembler.Analyze(line, seen);
-      parsed = true;
-    }
 
-    var routable = parsed;
+    var routable = parsed || policyEmits;
     foreach (var name in seen.Collected)
       // a VARIABLE first, exactly as the direct emitter's resolver orders it: a label sharing a
       // variable's spelling is the variable, on both paths
       if (this.AsmVariable(name) is { } symbol)
-        node.Bind(name, this.SlotFor(symbol));
+        node.Bind(name, this.SlotFor(symbol), symbol.Type is ScalarType scalar ? scalar.ByteSize : 0);
       else if (this._labels.TryGetValue(name, out var target))
         node.Bind(name, new IrBlockAddress(target));
       else if (Runtime.InlineAsmExports.Canonical(name) is null)
@@ -1031,9 +1043,11 @@ public sealed partial class IrLowering {
   /// <c>$ERROR … ON</c> trap takes in the IR. The direct emitter spells this as a conditional jump
   /// over a call; with no flags register in a target-independent IR it is an ordinary branch instead.
   ///
-  /// <c>rt_raise</c> does not come back - it dispatches through the armed ON ERROR handler or ends the
-  /// program - but the IR still needs a terminator on the block that called it, so that block branches
-  /// to the continuation it never actually reaches.
+  /// <c>rt_error</c> does not come back - every runtime dispatches through the armed ON ERROR handler,
+  /// whose RESUME continues at a statement boundary rather than here, or ends the program - so the
+  /// block that calls it ends in <c>unreachable</c>. That is what makes the condition a fact on the
+  /// continuation: past one divisor check the divisor is known nonzero, and a second check of it
+  /// folds away, which a branch back into the continuation would forbid.
   /// </summary>
   private void RaiseWhen(IrValue condition, int code, string what) {
     var bad = this.NewBlock(what + ".trap");
@@ -1041,9 +1055,14 @@ public sealed partial class IrLowering {
     this._b.CondBr(condition, bad, ok);
 
     this._b.Position(bad);
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), new IrConstantInt(IrType.I32, code));
-    this._b.Br(ok);
+    this.Raise(new IrConstantInt(IrType.I32, code));
     this._b.Position(ok);
+  }
+
+  /// <summary>Raises BASIC error <paramref name="code"/>, which never returns (see <see cref="RaiseWhen"/>).</summary>
+  private void Raise(IrValue code) {
+    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), code);
+    this._b.Unreachable();
   }
 
   /// <summary>
@@ -3046,6 +3065,13 @@ public sealed partial class IrLowering {
     // value on the x87, which is the one thing MBF bits cannot be. FIX and BCD reach the same
     // formatter for the same reason: what prints is the number, not the cell.
     var printed = this._model.TypeOf(expr);
+    // a wide integer prints as its STR$ form and the space every number is followed by
+    if (printed is WideIntType wide) {
+      this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerWideStr(expr, wide));
+      var space = this._module!.AddStringConstant([(byte)' ']);
+      this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], space, new IrConstantInt(IrType.I32, 1));
+      return;
+    }
     if (printed is MbfType mbf)
       printed = IeeeFormOf(mbf);
     printed = Valued(printed);
@@ -3507,9 +3533,7 @@ public sealed partial class IrLowering {
     var code = this._b.Load(IrType.I16, pending);
     this._b.CondBr(this._b.Cmp(IrCmpPred.Ne, code, new IrConstantInt(IrType.I16, 0)), reraise, end);
     this._b.Position(reraise);
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32),
-      this._b.ZExt(code, IrType.I32));
-    this._b.Br(end);
+    this.Raise(this._b.ZExt(code, IrType.I32));
     this._b.Position(end);
   }
 
@@ -4987,8 +5011,7 @@ public sealed partial class IrLowering {
         this._module!.AddStringConstant(bytes), new IrConstantInt(IrType.I32, bytes.Length));
       this.EmitIo(null, "print", "nl", IrType.Void, []);
     }
-    this._b.Call(IrType.Void, this.RuntimeFn("rt_error", IrType.Void, IrType.I32), new IrConstantInt(IrType.I32, 5));
-    this._b.Br(ok);
+    this.Raise(new IrConstantInt(IrType.I32, 5));
     this._b.Position(ok);
   }
 
@@ -6161,6 +6184,8 @@ public sealed partial class IrLowering {
     // the DECLARED type picks the formatter, the STORED type the conversion into it - which for FIX
     // and BCD are not the same thing, the cell being a scaled integer or ten bytes of x87
     var stored = this._model.TypeOf(arg);
+    if (stored is WideIntType wide)
+      return this.LowerWideStr(arg, wide);
     if (Valued(stored) is not ScalarType s)
       throw new IrLoweringException("STR$ of a non-numeric value");
     // Only a SINGLE takes the seven-digit formatter. The test used to name the DOUBLE by its width
@@ -6751,6 +6776,9 @@ public sealed partial class IrLowering {
     var rightPb = this._model.TypeOf(expr.Right);
     var resultPb = this._model.TypeOf(expr);
     return expr.Op switch {
+      BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual when leftPb is WideIntType || rightPb is WideIntType
+        => this.LowerWideComparison(expr, resultPb),
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
         or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType or FlexType or FixedStringType or AsciizType
           ? this.LowerStringComparison(expr, resultPb)

@@ -130,7 +130,7 @@ public sealed class O0308SpeculativeOverflowEliminationTests {
 
     var bt = new IrBuilder(trap);
     bt.Call(IrType.Void, error, IrBuilder.ConstI32(6));
-    bt.Br(continuation);
+    bt.Unreachable();
     new IrBuilder(continuation).Br(latch);
     var bl = new IrBuilder(latch);
     var next = bl.Add(counter, new IrConstantInt(IrType.I16, 1));

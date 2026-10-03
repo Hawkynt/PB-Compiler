@@ -308,7 +308,10 @@ public sealed partial class CodeGenerator {
 
   private bool EmitVirtualDwordAluFromStaged(VirtualIsaState state, string mnemonic, DwordPlace destination, int sourceScratch, RuntimeTarget target, bool preserveCarry, out string? error, bool destinationInitiallyInScratch = false) {
     error = null;
+    // the scratch register is a real register of the program's - AX unless AX is the destination -
+    // so it is saved here and restored at the end; POP leaves the merged flags as they are
     var temp = this.DwordTemp(destination);
+    this._asm.Push(temp);
     var sourceLow = this.GpScratch(state, sourceScratch);
     var sourceHigh = this.GpScratch(state, sourceScratch + 2);
     var destHigh = destinationInitiallyInScratch ? this.GpScratch(state, GpDestScratch + 2) : this.DwordHighCell(state, destination);
@@ -354,6 +357,7 @@ public sealed partial class CodeGenerator {
     }
 
     this.MergeDwordFlags(state, temp, logical, preserveCarry);
+    this._asm.Pop(temp);
     return true;
   }
 

@@ -40,7 +40,7 @@ public static class PrivateCallingConvention {
     var escaped = GlobalDce.FarEntryTargets(module);
     var changed = 0;
     foreach (var function in bodies) {
-      if (!IsEligible(function) || escaped.Contains(function)
+      if (!IsEligible(function) || function.MayGainCallers || escaped.Contains(function)
           || function.Users.Any(user => user is not IrCall direct || !ReferenceEquals(direct.Callee, function)
                || direct.Args.Any(argument => ReferenceEquals(argument, function))))
         continue;

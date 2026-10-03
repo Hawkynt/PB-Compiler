@@ -4,7 +4,8 @@
 |---|---|
 | **Status** | ✅ Implemented — `$COMPILE COM` and `--emit-com` emit a relocation-checked PSP:0100h flat image |
 | **Stage** | Image writer |
-| **Source** | `CodeGen/CodeGenerator.Trivial.cs`, `Emit/MzExeWriter.cs` |
+| **Verified by** | `Cli/EmitComTests` |
+| **Source** | `Emit/ComWriter.cs` |
 | **Gate** | `--optimize` |
 | **Related** | [P0006](P0006-header-squeeze.md), [P0007](P0007-trivial-io-lowering.md), [P0004](P0004-right-sized-memory.md) |
 

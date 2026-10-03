@@ -2,9 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (`BSWAP`, alignment); instruction-selection tuning is ⬜ partial |
-| **Stage** | Emitter + assembler |
-| **Source** | `Asm/Assembler.Instructions.cs`, `CodeGen/CodeGenerator.cs` — `AlignLoopTop` |
+| **Status** | 🟡 Partial — loop-top and procedure-entry alignment are done; the compiler itself never emits BSWAP (inline assembly only, `TryLowerBswap`) |
+| **Stage** | x86-16 back end (emission) |
+| **Verified by** | `LoopAlignmentTests.Compile_GivenLoopWithCpu586AndSpeed_ThenLoopTopNopPadded` |
+| **Source** | `Backend/MachineEmitter.cs` (loop headers aligned with `AlignCode(16)`); `CodeGen/CodeGenerator.Backend.cs` — `EmitBackendFunction` (procedure entry) |
 | **Gate** | `$CPU 80486` / `-G486` (`LanguageFeature.Cpu486`); loop alignment additionally needs `$OPTIMIZE SPEED` |
 | **Related** | [C0001](C0001-386-codegen.md), [O0041](O0041-branch-layout.md), [R0004](R0004-asm-intrinsics.md) |
 

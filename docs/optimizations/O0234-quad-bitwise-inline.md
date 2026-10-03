@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter |
-| **Source** | `CodeGen` — `EmitQuad386Bitwise` |
+| **Stage** | x86-16 back end |
+| **Source** | `Backend/InstructionSelector.cs` — `SelectQwordBinary` (inline on a 386 under the optimizer, `rt_qand`/`rt_qor`/`rt_qxor` otherwise) |
 | **Gate** | `--optimize` + `$CPU 80386` |
-| **Verified by** | `tests/diff/DIFF72.BAS` |
+| **Verified by** | `OptimizerTests.Emit_GivenQuadBitwiseUnderCpu386_WhenPb36_ThenInlineDwordOps` |
 | **Split from** | [C0001](C0001-386-codegen.md) |
 
 ## What it is

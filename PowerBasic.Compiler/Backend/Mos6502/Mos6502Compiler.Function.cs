@@ -19,6 +19,9 @@ public static partial class Mos6502Compiler {
       private IrBasicBlock? _next;
       private int _local;
 
+      /// <summary>Divisions whose answer an earlier divide already stored (<see cref="IrDivRem"/>).</summary>
+      private readonly HashSet<IrInstruction> _paired = new(ReferenceEqualityComparer.Instance);
+
       public void Generate() {
         this._asm.Bind(module._entries[function]);
         this.PreserveHandler(save: true);
@@ -48,7 +51,9 @@ public static partial class Mos6502Compiler {
       private Operand Of(IrValue value) {
         switch (value) {
           case IrConstantInt constant:
-            return new ConstantOperand(constant.Value);
+            // an i1 is 0 or 1 in a register whatever sign its constant was written with: `true` as -1
+            // would make `xor %flag, true` 0xFE, which a byte test still reads as true
+            return new ConstantOperand(constant.Type.IsBool ? constant.Value & 1 : constant.Value);
           case IrNullPtr or IrUndef:
             return new ConstantOperand(0);
           // TRY's handler triple is ON ERROR's own state
@@ -146,6 +151,7 @@ public static partial class Mos6502Compiler {
         switch (instruction) {
           case IrPhi or IrAlloca:
             return;
+          case IrBinary binary when this._paired.Contains(binary): return;
           case IrBinary binary when this.Stored(binary): this.LowerBinary(binary); return;
           case IrCmp compare when this.Stored(compare): this.LowerCompare(compare); return;
           case IrCast cast when this.Stored(cast): this.LowerCast(cast); return;
@@ -163,6 +169,8 @@ public static partial class Mos6502Compiler {
             return;
           case IrCondBr branch: this.LowerConditionalBranch(block, branch); return;
           case IrSwitch @switch: this.LowerSwitch(block, @switch); return;
+          case IrUnreachable unreachable when IrRaise.FollowsRaise(unreachable):
+            return;
           case IrUnreachable:
             this.RaiseError(51);
             return;
@@ -220,8 +228,13 @@ public static partial class Mos6502Compiler {
               (false, 4) => M6502Routine.UnsignedDivide32,
               _ => M6502Routine.UnsignedDivide64,
             };
-            var result = binary.Op is IrBinaryOp.SDiv or IrBinaryOp.UDiv ? Zp.Arg : Zp.Temp;
-            this.Arithmetic(lhs, rhs, size, signed, routine, result, destination);
+            var quotient = binary.Op is IrBinaryOp.SDiv or IrBinaryOp.UDiv;
+            this.Arithmetic(lhs, rhs, size, signed, routine, quotient ? Zp.Arg : Zp.Temp, destination);
+            // one divide answers both n \ d and n MOD d: a partner later in the block is stored now
+            if (IrDivRem.PartnerOf(binary) is { } other && this.Stored(other)) {
+              this.Copy(new MemoryOperand(quotient ? Zp.Temp : Zp.Arg), size, this.Destination(other), size);
+              this._paired.Add(other);
+            }
             return;
           case IrBinaryOp.Shl or IrBinaryOp.LShr or IrBinaryOp.AShr:
             this.Shift(binary.Op, lhs, rhs, SizeOf(binary.Rhs.Type), size, destination);

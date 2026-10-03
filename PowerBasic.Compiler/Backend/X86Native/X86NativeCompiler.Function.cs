@@ -15,6 +15,9 @@ public static partial class X86NativeCompiler {
       private IrBasicBlock? _next;
       private int _local;
 
+      /// <summary>Divisions whose answer an earlier divide already stored (<see cref="IrDivRem"/>).</summary>
+      private readonly HashSet<IrInstruction> _paired = new(ReferenceEqualityComparer.Instance);
+
       private X86Width Word => module.Word;
       private int WordBytes => module.WordBytes;
       private bool Is64 => module._asm.Machine == X86Machine.Amd64;
@@ -71,7 +74,9 @@ public static partial class X86NativeCompiler {
       private Operand Of(IrValue value) {
         switch (value) {
           case IrConstantInt constant:
-            return new ConstantOperand(constant.Value);
+            // an i1 is 0 or 1 in a register whatever sign its constant was written with: `true` as -1
+            // would make `xor %flag, true` 0xFE, which a byte test still reads as true
+            return new ConstantOperand(constant.Type.IsBool ? constant.Value & 1 : constant.Value);
           case IrNullPtr or IrUndef:
             return new ConstantOperand(0);
           case IrConstantFloat constant:
@@ -201,6 +206,7 @@ public static partial class X86NativeCompiler {
         switch (instruction) {
           case IrPhi or IrAlloca:
             return;
+          case IrBinary binary when this._paired.Contains(binary): return;
           case IrBinary binary when this.Stored(binary): this.LowerBinary(binary); return;
           case IrCmp compare when this.Stored(compare): this.LowerCompare(compare); return;
           case IrCast cast when this.Stored(cast): this.LowerCast(cast); return;
@@ -218,6 +224,7 @@ public static partial class X86NativeCompiler {
             return;
           case IrCondBr branch: this.LowerConditionalBranch(block, branch); return;
           case IrSwitch @switch: this.LowerSwitch(block, @switch); return;
+          case IrUnreachable unreachable when IrRaise.FollowsRaise(unreachable): return;
           case IrUnreachable: this.RaiseError(51); return;
           default:
             throw Decline($"'{function.Name}' uses {instruction.GetType().Name}, which has no native lowering yet");
@@ -264,9 +271,16 @@ public static partial class X86NativeCompiler {
             this.Store(destination, X86Reg.Ax, width);
             return;
           }
-          case IrBinaryOp.SDiv or IrBinaryOp.SRem or IrBinaryOp.UDiv or IrBinaryOp.URem:
-            this.Divide(binary.Op, lhs, rhs, size, destination);
+          case IrBinaryOp.SDiv or IrBinaryOp.SRem or IrBinaryOp.UDiv or IrBinaryOp.URem: {
+            // one divide answers both n \ d and n MOD d: a partner later in the block is stored now
+            X86Mem? partner = null;
+            if (IrDivRem.PartnerOf(binary) is { } other && this.Stored(other)) {
+              partner = this.Place(other);
+              this._paired.Add(other);
+            }
+            this.Divide(binary.Op, lhs, rhs, size, destination, partner);
             return;
+          }
           case IrBinaryOp.Shl or IrBinaryOp.LShr or IrBinaryOp.AShr:
             this.Shift(binary.Op, lhs, rhs, module.SizeOf(binary.Rhs.Type), width, destination);
             return;
@@ -473,7 +487,7 @@ public static partial class X86NativeCompiler {
         this.Store(destination.Plus(4), X86Reg.Dx, X86Width.Dword);
       }
 
-      private void Divide(IrBinaryOp op, Operand lhs, Operand rhs, int size, X86Mem destination) {
+      private void Divide(IrBinaryOp op, Operand lhs, Operand rhs, int size, X86Mem destination, X86Mem? partner) {
         var signed = op is IrBinaryOp.SDiv or IrBinaryOp.SRem;
         var working = size == 8 ? X86Width.Qword : X86Width.Dword;
         this.LoadExtended(X86Reg.Ax, lhs, size, signed, working);
@@ -501,8 +515,10 @@ public static partial class X86NativeCompiler {
           this._asm.Unary(X86Unary.Div, working, X86Reg.Cx);
         }
         this._asm.Bind(done);
-        var result = op is IrBinaryOp.SDiv or IrBinaryOp.UDiv ? X86Reg.Ax : X86Reg.Dx;
-        this.Store(destination, result, WidthOf(size));
+        var quotient = op is IrBinaryOp.SDiv or IrBinaryOp.UDiv;
+        this.Store(destination, quotient ? X86Reg.Ax : X86Reg.Dx, WidthOf(size));
+        if (partner is { } other)
+          this.Store(other, quotient ? X86Reg.Dx : X86Reg.Ax, WidthOf(size));
       }
 
       private void Shift(IrBinaryOp op, Operand value, Operand count, int countSize, X86Width width, X86Mem destination) {

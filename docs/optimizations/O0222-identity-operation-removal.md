@@ -2,9 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (2026-08) |
-| **Stage** | Emitter, on the value lattice |
-| **Source** | `CodeGen/CodeGenerator.cs` — `TryEmitFactRedundantOp` |
+| **Status** | 🟡 Partial — an AND whose mask keeps every bit the operand could set is removed, and a signed remainder by a power of two of a non-negative value becomes that AND (`KnownBitsSimplify`); bits under a truncation drop out (`DemandedBits`); arbitrary fact-proven identities are not covered |
+| **Stage** | IR middle end |
+| **Verified by** | `KnownBitsSimplifyTests`; `DemandedBitsTests` |
+| **Source** | `Ir/Passes/KnownBitsSimplify.cs`; `Ir/Passes/DemandedBits.cs` — `TryDropDiscardedBitOperation`; `Ir/Analysis/IrKnownBitsAnalysis.cs` |
 | **Gate** | `--optimize` |
 | **Split from** | [O0016](O0016-value-fact-analysis.md) |
 

@@ -39,7 +39,7 @@ public static class RecurrenceClosedForm {
   }
 
   private static int CloseIn(IrFunction fn, IrBasicBlock header) {
-    if (CountedLoop.Match(fn, header) is not { } loop)
+    if (CountedLoop.Match(fn, header) is not { } loop || !loop.RunsItsFullCount(fn))
       return 0;
     var (_, preheader, latch, exit, region, _, _, trips) = loop;
 

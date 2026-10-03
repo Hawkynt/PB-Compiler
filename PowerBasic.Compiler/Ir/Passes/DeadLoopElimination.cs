@@ -56,7 +56,7 @@ public static class DeadLoopElimination {
   }
 
   private static bool TryDelete(IrFunction fn, IrBasicBlock header) {
-    if (CountedLoop.Match(fn, header) is not { } loop)
+    if (CountedLoop.Match(fn, header) is not { } loop || !loop.RunsItsFullCount(fn))
       return false;
     var (_, preheader, _, exit, region, _, _, _) = loop;
 

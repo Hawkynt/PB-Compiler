@@ -24,6 +24,38 @@ public sealed class FlatTargetRuntimeTests {
       e = 2 / 3
       PRINT e; ROUND(2.5, 0); ROUND(-2.5, 0); ROUND(1.2345, 2)
       """, " .666666666666667  3 -3  1.23"),
+    ("quotient-and-remainder", """
+      FOR i% = 1 TO 4
+        READ n&, d&
+        q& = n& \ d&
+        PRINT "q";
+        r& = n& MOD d&
+        PRINT q&; r&
+      NEXT
+      DATA 17, 5, -17, 5, 17, -5, -2147483647, -1
+      """, "q 3  2\nq-3 -2\nq-3  2\nq 2147483647  0"),
+    ("empty-string-identities", """
+      READ t$
+      u$ = t$ + ""
+      v$ = "" + t$
+      w$ = SPACE$(0) + STRING$(0, 65)
+      PRINT u$; v$; LEN(w$); "|"; w$; "|"
+      FOR i% = 1 TO 300
+        u$ = u$ + ""
+      NEXT
+      PRINT u$
+      DATA abc
+      """, "abcabc 0 ||\nabc"),
+    ("known-bits", """
+      FOR i% = 1 TO 3
+        READ n%
+        PRINT (n% * 4) AND 3; (n% AND 7) AND 15; (n% AND 7) MOD 16; (n% * 3) AND 1;
+        IF (n% AND 12) = 5 THEN PRINT "never";
+        IF (n% AND 12) = 4 THEN PRINT "four";
+        PRINT
+      NEXT
+      DATA 13, -6, 4
+      """, " 0  5  5  1\n 0  2  2  0\n 0  4  4  0 four"),
     ("file-ext-tab-input", """
       DIM e AS EXT, n%
       e = 1 / 7

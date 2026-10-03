@@ -50,8 +50,7 @@ public static class OverflowCheckCoalescing {
         // firstOverflow is only meaningful on executions that passed through this guard. If either
         // the trap or the continuation has another predecessor, moving that value into `middle`
         // changes an unrelated path or can make a non-dominating definition into an SSA operand.
-        if (!HasExactlyPredecessors(first.Trap, block)
-            || !HasExactlyPredecessors(middle, block, first.Trap))
+        if (!HasExactlyPredecessors(first.Trap, block) || !HasExactlyPredecessors(middle, block))
           continue;
         if (!SafeToSpeculate(middle, second.Branch))
           continue;
@@ -60,13 +59,9 @@ public static class OverflowCheckCoalescing {
           new IrBinary(IrBinaryOp.Or, first.Branch.Condition, second.Branch.Condition), second.Branch);
         second.Branch.SetOperand(0, combined);
 
+        // the first trap is unreachable now; SimplifyCfg removes it
         first.Branch.EraseFromParent();
         block.Append(new IrBr(middle));
-
-        // The first trap is now unreachable. Phi nodes model only reachable predecessor edges in this
-        // IR, so retaining its incoming value would make an otherwise legal coalescing fail verification.
-        foreach (var phi in middle.Phis)
-          phi.RemoveIncoming(first.Trap);
 
         ++changed;
         progress = true;
@@ -92,18 +87,8 @@ public static class OverflowCheckCoalescing {
     return true;
   }
 
-  private static int? ErrorCode(IrBasicBlock trap, IrBasicBlock continuation) {
-    if (trap.Terminator is not IrBr tail || !ReferenceEquals(tail.Target, continuation))
-      return null;
-    var body = trap.Instructions.Where(i => !i.IsTerminator).ToArray();
-    return body is [IrCall {
-        Callee: IrFunction { Name: "rt_error" },
-        ArgCount: 1,
-      } call]
-      && call.GetOperand(1) is IrConstantInt code
-        ? checked((int)code.Value)
-        : null;
-  }
+  private static int? ErrorCode(IrBasicBlock trap, IrBasicBlock continuation)
+    => ReferenceEquals(trap, continuation) ? null : IrRaise.Code(trap);
 
   private static bool HasExactlyPredecessors(IrBasicBlock block, params IrBasicBlock[] expected) {
     var actual = block.Predecessors.ToArray();

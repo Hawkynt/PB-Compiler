@@ -35,6 +35,12 @@ public static partial class PortableRuntime {
   /// promotes and tidies them here. <paramref name="softMath"/> also defines the math intrinsics
   /// (<c>llvm.sqrt.f64</c> and its kin) for a target with no floating-point hardware to lower them to.
   /// </summary>
+  /// <remarks>
+  /// Before the middle end (<paramref name="cleanUp"/> false) the entries <see cref="IsRewrittenByMiddleEnd"/>
+  /// names are left declared: the passes that specialize them must still find calls to rewrite, not
+  /// a body the inliner has already spread into the caller. The definition after the middle end
+  /// gives them - and whatever those passes call instead - their bodies.
+  /// </remarks>
   public static void Define(IrModule module, int heapBytes, bool cleanUp = true, int indexBits = 32, bool softMath = false) {
     ArgumentNullException.ThrowIfNull(module);
     ArgumentOutOfRangeException.ThrowIfLessThan(heapBytes, 256);
@@ -42,6 +48,20 @@ public static partial class PortableRuntime {
       throw new ArgumentOutOfRangeException(nameof(indexBits), indexBits, "the runtime's index is 16 or 32 bits");
     new Definer(module, heapBytes, cleanUp, indexBits == 16 ? IrType.I16 : IrType.I32, softMath).Run();
   }
+
+  /// <summary>
+  /// The runtime entries a middle-end pass rewrites by name: the INSTR searches a constant needle
+  /// specializes (<c>ConstantInstrSpecialization</c>), the number printers a constant argument turns
+  /// into a literal print (<c>ConstantNumericPrint</c>), and the string producers and printers a
+  /// bounded temporary moves to the stack through (<c>StringStackPromotion</c>).
+  /// </summary>
+  public static bool IsRewrittenByMiddleEnd(string name)
+    => name is "rt_str_instr" or "rt_str_instr_start"
+         or "rt_print_str" or "rt_print_strvar" or "rt_fprint_str" or "rt_fprint_strvar"
+         or "rt_str_chr" or "rt_str_const" or "rt_str_concat" or "rt_str_concat_n" or "rt_str_append_lit"
+       || (name.StartsWith("rt_print_", StringComparison.Ordinal) || name.StartsWith("rt_fprint_", StringComparison.Ordinal))
+          && name[(name.IndexOf("print_", StringComparison.Ordinal) + "print_".Length)..]
+            is "i16" or "i32" or "i64" or "u8" or "u16" or "u32" or "single" or "double" or "ext";
 
   private sealed partial class Definer(IrModule module, int heapBytes, bool cleanUp, IrType index, bool softMath) {
 
@@ -58,7 +78,8 @@ public static partial class PortableRuntime {
       this.Declare("rt_error", IrType.Void, IrType.I32);
       this.RewriteConcatenationChains();
       foreach (var function in module.Functions.Where(function => function.IsDeclaration).ToList())
-        this.DefineIfKnown(function);
+        if (cleanUp || !IsRewrittenByMiddleEnd(function.Name))
+          this.DefineIfKnown(function);
       if (cleanUp)
         foreach (var function in this._defined) {
           Mem2Reg.Run(function);
@@ -116,6 +137,8 @@ public static partial class PortableRuntime {
     private void Build(IrFunction function, Action<IrWriter> body) {
       var writer = new IrWriter(function, this.Index);
       body(writer);
+      // defined before the middle end, it may still be called by the entries defined after it
+      function.MayGainCallers = !cleanUp;
       this._defined.Add(function);
     }
 

@@ -136,6 +136,9 @@ public static class LoopVersioning {
           queue.Enqueue(branch.IfTrue);
           queue.Enqueue(branch.IfFalse);
           break;
+        // a check's raise block: it never returns, so it leaves the loop nowhere
+        case IrUnreachable when IrRaise.Code(at) is not null:
+          break;
         default:
           return null;
       }
@@ -287,19 +290,8 @@ public static class LoopVersioning {
     return true;
   }
 
-  private static bool IsErrorTrap(IrBasicBlock trap, IrBasicBlock continuation, int errorCode) {
-    if (trap.Instructions.Count != 2
-        || trap.Instructions[0] is not IrCall call
-        || call.Callee is not IrFunction callee
-        || !callee.Name.Equals("rt_error", StringComparison.OrdinalIgnoreCase)
-        || call.Args.SingleOrDefault() is not IrConstantInt code
-        || code.ZeroExtended != (ulong)errorCode
-        || trap.Terminator is not IrBr branch
-        || !ReferenceEquals(branch.Target, continuation)
-        || trap.Predecessors.Count() != 1)
-      return false;
-    return true;
-  }
+  private static bool IsErrorTrap(IrBasicBlock trap, IrBasicBlock continuation, int errorCode)
+    => IrRaise.Code(trap) == errorCode && !ReferenceEquals(trap, continuation) && trap.Predecessors.Count() == 1;
 
   private static bool CollectBounds(
       IrValue condition,

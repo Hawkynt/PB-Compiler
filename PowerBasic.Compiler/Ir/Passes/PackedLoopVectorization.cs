@@ -188,8 +188,7 @@ public static class PackedLoopVectorization {
       return null;
     var trap = test.IfTrue;
     var latch = test.IfFalse;
-    if (trap.Instructions is not [IrCall { Callee: IrFunction { Name: "rt_error" } } raise, IrBr { Target: var rejoin }]
-        || raise.Args.ToArray() is not [IrConstantInt { Value: 6 }] || !ReferenceEquals(rejoin, latch)
+    if (IrRaise.Code(trap) != 6
         || latch.Terminator is not IrBr { Target: var back } || !ReferenceEquals(back, header)
         || latch.Instructions.Count != 3 || latch.Instructions[0] is not IrStore store
         || latch.Instructions[1] is not IrBinary { Op: IrBinaryOp.Add, Rhs: IrConstantInt { Value: 1 } } next

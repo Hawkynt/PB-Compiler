@@ -358,4 +358,93 @@ public sealed class BackendStringLifetimeTests {
       "a statement-position string result has no later consumer, so the caller owns its release");
     Assert.That(output.Replace("\r\n", "|"), Is.EqualTo("done|"));
   }
+
+  /// <summary>
+  /// A store THROUGH a BYREF string parameter must release the handle it replaces, exactly as a store
+  /// to a local does. <c>IrLowering</c> only freed through slots it had null-initialised itself, and a
+  /// BYREF parameter is not one of those - it is the caller's cell, arriving as an <c>IrArgument</c> -
+  /// so <c>SUB SetIt(s$) : s$ = "..."</c> abandoned one handle per call.
+  ///
+  /// <para>
+  /// The caller's cell always holds a valid handle by the time the callee sees it (a null-initialised
+  /// local slot, a zeroed global, or a temporary the caller stored into in front of the call), so the
+  /// previous value is readable here - which is the whole of why this is sound.
+  /// </para>
+  /// <para>
+  /// Scale is the measurement: 3000 stores of 30 characters cross the DOS runtime's compacting heap,
+  /// and the assertion is that the program FINISHES. The direct build always did, and genuine PBC 3.50
+  /// does too, so this is the routed path catching up rather than a new contract.
+  /// </para>
+  /// </summary>
+  [TestCase(true, TestName = "Run_GivenAStoreThroughAByRefStringParameter_WhenOptimized_ThenTheReplacedHandleIsReleased")]
+  [TestCase(false, TestName = "Run_GivenAStoreThroughAByRefStringParameter_WhenUnoptimized_ThenTheReplacedHandleIsReleased")]
+  public void Run_GivenAStoreThroughAByRefStringParameter_ThenTheReplacedHandleIsReleased(bool optimize) {
+    var (output, names) = Run("""
+      DECLARE SUB SetIt(s$)
+      OPEN "D.TXT" FOR OUTPUT AS #1
+      PRINT #1, "abcdefghijklmnopqrstuvwxyz0123"
+      PRINT #1, "3000"
+      CLOSE #1
+      OPEN "D.TXT" FOR INPUT AS #1
+      LINE INPUT #1, seed$
+      INPUT #1, count%
+      CLOSE #1
+      t$ = ""
+      FOR i% = 1 TO count%
+        CALL SetIt(t$)
+      NEXT i%
+      PRINT LEN(t$); t$
+      END
+      SUB SetIt(s$) NOINLINE
+        s$ = "abcdefghijklmnopqrstuvwxyz0123"
+      END SUB
+      """, optimize);
+
+    Assert.That(names, Is.SupersetOf(new[] { "SetIt", "main" }), "the back end did not take the procedure under test");
+    Assert.That(output, Does.Not.Contain("OUT OF STRING SPACE"),
+      "a store through a BYREF string parameter leaked the handle the caller's cell held");
+    Assert.That(output, Does.Contain("30 abcdefghijklmnopqrstuvwxyz0123"));
+  }
+
+  /// <summary>
+  /// The DIRECT emitter's half of the same rule, and it was wrong in the other direction: a string
+  /// FUNCTION's epilogue read its result slot with <c>EmitLoadPlace</c> - <c>MOV AX,[cell]</c> plus
+  /// <c>rt_str_dup</c>, which is how an EXPRESSION borrows a string - while the release loop above it
+  /// deliberately skips the result slot because the caller takes ownership of what comes back. Both
+  /// together abandoned the original handle on every single call to a string FUNCTION.
+  ///
+  /// <para>
+  /// 1600 calls returning 30 characters is <c>OUT OF STRING SPACE</c> on the direct build and a
+  /// finished program on the routed one; genuine PBC 3.50 finishes, measured with
+  /// <c>scripts/diff-one.sh</c>. The function takes no parameters on purpose - the leak is in the
+  /// hand-back, not in anything an argument does.
+  /// </para>
+  /// </summary>
+  [TestCase(true, TestName = "Run_GivenManyStringFunctionCalls_WhenOptimized_ThenTheResultHandleIsHandedOverRatherThanCopied")]
+  [TestCase(false, TestName = "Run_GivenManyStringFunctionCalls_WhenUnoptimized_ThenTheResultHandleIsHandedOverRatherThanCopied")]
+  public void Run_GivenManyStringFunctionCalls_ThenTheResultHandleIsHandedOverRatherThanCopied(bool optimize) {
+    var (output, names) = Run("""
+      DECLARE FUNCTION Gen$()
+      OPEN "D.TXT" FOR OUTPUT AS #1
+      PRINT #1, "1600"
+      CLOSE #1
+      OPEN "D.TXT" FOR INPUT AS #1
+      INPUT #1, count%
+      CLOSE #1
+      t$ = ""
+      FOR i% = 1 TO count%
+        t$ = Gen$
+      NEXT i%
+      PRINT LEN(t$); t$
+      END
+      FUNCTION Gen$() NOINLINE
+        Gen$ = "abcdefghijklmnopqrstuvwxyz0123"
+      END FUNCTION
+      """, optimize);
+
+    Assert.That(names, Is.SupersetOf(new[] { "Gen", "main" }));
+    Assert.That(output, Does.Not.Contain("OUT OF STRING SPACE"),
+      "a string FUNCTION's result must be handed over, not copied with the slot's own handle abandoned");
+    Assert.That(output, Does.Contain("30 abcdefghijklmnopqrstuvwxyz0123"));
+  }
 }

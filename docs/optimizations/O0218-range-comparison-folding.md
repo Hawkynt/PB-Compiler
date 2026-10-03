@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
-| **Stage** | Emitter, on the value lattice |
-| **Source** | `CodeGen/CodeGenerator.cs` — `TryEmitRangeComparison`, `FoldRangeCompare` |
+| **Status** | 🟡 Partial — interval-decided comparisons fold (`RangeCheckElim`) and so do comparisons a known bit contradicts (`KnownBitsSimplify`); congruence facts are not modelled |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/RangeCheckElim.cs`; `Ir/Passes/KnownBitsSimplify.cs` |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF78.BAS` |
+| **Verified by** | battery `InvariantComparisonFolded`; `KnownBitsSimplifyTests.Fold_GivenAComparisonAKnownBitContradicts_ThenTheBranchIsGone` |
 | **Split from** | [O0016](O0016-value-fact-analysis.md) |
 
 ## What it is

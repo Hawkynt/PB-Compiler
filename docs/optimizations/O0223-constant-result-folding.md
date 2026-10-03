@@ -2,9 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented (2026-08) |
-| **Stage** | Emitter, on the value lattice |
-| **Source** | `CodeGen/CodeGenerator.cs` — `TryEmitFactRedundantOp` |
+| **Status** | 🟡 Partial — results known bits settle fold (`(n * 4) AND 3` is 0); results only a congruence settles (`(n * 10) MOD 5`) are not modelled |
+| **Stage** | IR middle end |
+| **Verified by** | `KnownBitsSimplifyTests.Fold_GivenAMaskSelectingOnlyKnownZeroBits_ThenTheAndIsZero`; `FlatTargetRuntimeTests` (`known-bits`, held to DOS) |
+| **Source** | `Ir/Passes/KnownBitsSimplify.cs`; `Ir/Analysis/IrKnownBitsAnalysis.cs` (the low zero bits of sums, products and shifts) |
 | **Gate** | `--optimize` |
 | **Split from** | [O0016](O0016-value-fact-analysis.md) |
 
