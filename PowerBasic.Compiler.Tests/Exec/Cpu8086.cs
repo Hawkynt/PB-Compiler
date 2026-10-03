@@ -1742,13 +1742,17 @@ public sealed class Cpu8086 {
           var divisor = this.GetRm16(mode, address);
           if (divisor == 0) throw new Cpu8086Exception("divide by zero (DIV)");
           var dividend = ((uint)this._r[_DX] << 16) | this._r[_AX];
+          if (dividend / divisor > ushort.MaxValue) throw new Cpu8086Exception("divide overflow (DIV)");
           this._r[_AX] = (ushort)(dividend / divisor);
           this._r[_DX] = (ushort)(dividend % divisor);
         } else {
           var divisor = this.GetRm8(mode, address);
           if (divisor == 0) throw new Cpu8086Exception("divide by zero (DIV)");
-          this.SetReg8(_AX, (byte)(this._r[_AX] / divisor));
-          this.SetReg8(4, (byte)(this._r[_AX] % divisor));
+          // AX is read once: writing AL first and then taking the remainder of the new AX was the bug
+          var dividend = this._r[_AX];
+          if (dividend / divisor > byte.MaxValue) throw new Cpu8086Exception("divide overflow (DIV)");
+          this.SetReg8(_AX, (byte)(dividend / divisor));
+          this.SetReg8(4, (byte)(dividend % divisor));
         }
         return;
       }
@@ -1757,12 +1761,14 @@ public sealed class Cpu8086 {
           var divisor = (short)this.GetRm16(mode, address);
           if (divisor == 0) throw new Cpu8086Exception("divide by zero (IDIV)");
           var dividend = (int)(((uint)this._r[_DX] << 16) | this._r[_AX]);
+          if ((long)dividend / divisor is > short.MaxValue or < short.MinValue) throw new Cpu8086Exception("divide overflow (IDIV)");
           this._r[_AX] = (ushort)(dividend / divisor);
           this._r[_DX] = (ushort)(dividend % divisor);
         } else {
           var divisor = (sbyte)this.GetRm8(mode, address);
           if (divisor == 0) throw new Cpu8086Exception("divide by zero (IDIV)");
           var dividend = (short)this._r[_AX];
+          if (dividend / divisor is > sbyte.MaxValue or < sbyte.MinValue) throw new Cpu8086Exception("divide overflow (IDIV)");
           this.SetReg8(_AX, (byte)(dividend / divisor));
           this.SetReg8(4, (byte)(dividend % divisor));
         }
