@@ -287,6 +287,18 @@ public sealed class InlineAsmLiftingTests {
       PRINT p&; HEX$(a&); " "; HEX$(d&); " "; HEX$(e&); " "; HEX$(z&); " "; HEX$(l&); " "; HEX$(m&); " "; HEX$(k&)
       PRINT HEX$(s1&); " "; HEX$(s2&); " "; HEX$(s3&); " "; HEX$(ro&); " "; HEX$(hi&); " "; HEX$(lo&)
       """),
+    ("zmm-lane-wise", """
+      DIM a&, b&, r1&, r2&
+      a& = &H7FF08001
+      b& = &H0010FF02
+      ! MOVD XMM0, a&
+      ! MOVD XMM1, b&
+      ! VPADDD ZMM2, ZMM0, ZMM1
+      ! MOVD r1&, XMM2
+      ! VPSUBW ZMM3, ZMM2, ZMM0
+      ! MOVD r2&, XMM3
+      PRINT HEX$(r1&); " "; HEX$(r2&)
+      """),
     ("flags-and-conditions", """
       DIM lo&, hi&, m&, c&, k%
       ! MOV EAX, -1
@@ -718,6 +730,58 @@ public sealed class InlineAsmLiftingTests {
     var output = Vice.Normalize(FlatTargets.Run(platform, source));
     Assert.That(output, Does.StartWith("before"));
     Assert.That(output, Does.Contain("11"));
+  }
+
+  /// <summary>
+  /// AVX-512 on ZMM registers: the same packed operations at 512 bits, unpacks and shuffles still
+  /// within each 128-bit block, and the 128- and 256-bit inserts and extracts. Stated results, from the
+  /// host compiler's AVX-512 intrinsics on the same inputs.
+  /// </summary>
+  [TestCase("x86-32")]
+  [TestCase("x64")]
+  [TestCase("6502")]
+  public void Run_GivenAvx512_ThenEachPartMatchesTheHardware(string platform) {
+    const string source = """
+      DIM a&, b&, c&, d&, e&, f&, r0&, r13&, r15&, u12&, u15&, m12&, h7&
+      a& = &H01020304
+      b& = &H100
+      c& = &H11111111
+      d& = &H22222222
+      e& = &H33333333
+      f& = &H44444444
+      ! VPBROADCASTD ZMM0, a&
+      ! MOVD XMM1, c&
+      ! MOVD XMM2, d&
+      ! PUNPCKLDQ XMM1, XMM2
+      ! MOVD XMM2, e&
+      ! MOVD XMM3, f&
+      ! PUNPCKLDQ XMM2, XMM3
+      ! PUNPCKLQDQ XMM1, XMM2
+      ! VINSERTI32X4 ZMM0, ZMM0, XMM1, 3
+      ! VPBROADCASTD ZMM1, b&
+      ! VPADDD ZMM2, ZMM0, ZMM1
+      ! MOVD r0&, XMM2
+      ! VEXTRACTI32X4 XMM7, ZMM2, 3
+      ! PSHUFD XMM6, XMM7, 85
+      ! MOVD r13&, XMM6
+      ! PSHUFD XMM6, XMM7, 255
+      ! MOVD r15&, XMM6
+      ! VPUNPCKHDQ ZMM3, ZMM0, ZMM1
+      ! VEXTRACTI32X4 XMM7, ZMM3, 3
+      ! MOVD u12&, XMM7
+      ! PSHUFD XMM6, XMM7, 255
+      ! MOVD u15&, XMM6
+      ! VPSHUFD ZMM4, ZMM0, 27
+      ! VEXTRACTI32X4 XMM7, ZMM4, 3
+      ! MOVD m12&, XMM7
+      ! VEXTRACTI64X4 YMM5, ZMM0, 1
+      ! VEXTRACTI128 XMM7, YMM5, 1
+      ! PSHUFD XMM6, XMM7, 255
+      ! MOVD h7&, XMM6
+      PRINT HEX$(r0&); " "; HEX$(r13&); " "; HEX$(r15&); " "; HEX$(u12&); " "; HEX$(u15&); " "; HEX$(m12&); " "; HEX$(h7&)
+      """;
+    Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)),
+      Is.EqualTo(Vice.Normalize("1020404 22222322 44444544 33333333 100 44444444 44444444\n")));
   }
 
   [Test]

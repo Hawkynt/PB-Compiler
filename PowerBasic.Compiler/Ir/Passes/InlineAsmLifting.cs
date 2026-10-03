@@ -11,7 +11,7 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// Every x86 register is a module static: <c>asm.r0</c>..<c>asm.r7</c> hold <c>EAX</c>..<c>EDI</c>
 /// as 32 bits (<c>AL</c>, <c>AH</c> and <c>AX</c> are views of them), <c>asm.mm0</c>..<c>asm.mm7</c> the
 /// MMX registers as eight bytes, and <c>asm.v0</c>..<c>asm.v7</c> the vector registers as 64 bytes -
-/// <c>XMMn</c> is the low sixteen of them, <c>YMMn</c> the low thirty-two. A static that one procedure
+/// <c>XMMn</c> is the low sixteen of them, <c>YMMn</c> the low thirty-two, <c>ZMMn</c> all of them. A static that one procedure
 /// uses alone becomes a local (<see cref="LocalizeGlobals"/>) and then SSA (<see cref="Mem2Reg"/>), so
 /// a back end with registers keeps it in one; at worst it stays in memory. A vector operation works
 /// lane by lane on byte offsets into its register's static, every source lane read before any
@@ -52,7 +52,10 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// YMM2</c> takes a separate first source, works on <c>XMM</c> or <c>YMM</c>, and zeroes the register
 /// above what it writes - with the unpacks, packs and shuffles kept within each 128-bit half as the
 /// hardware keeps them; AVX2's own <c>VEXTRACTI128</c>, <c>VINSERTI128</c>, <c>VPBROADCASTB/W/D/Q</c>,
-/// <c>VPERMQ</c>, <c>VPERM2I128</c>, <c>VZEROUPPER</c> and <c>VZEROALL</c> complete the set.
+/// <c>VPERMQ</c>, <c>VPERM2I128</c>, <c>VZEROUPPER</c> and <c>VZEROALL</c> complete the set. AVX-512's
+/// <c>ZMM</c> registers take the same packed operations at 512 bits through the same path, with
+/// <c>VEXTRACTI32X4</c>/<c>I64X2</c>/<c>I64X4</c>/<c>I32X8</c>, the matching inserts and the
+/// <c>VMOVDQA32</c>/<c>VMOVDQU8</c>-style moves; the mask registers <c>k0</c>-<c>k7</c> are not lifted.
 /// </para>
 /// <para>
 /// Floating point: SSE and SSE2 <c>ADD</c>/<c>SUB</c>/<c>MUL</c>/<c>DIV</c>/<c>MIN</c>/<c>MAX</c>/<c>SQRT</c>
@@ -356,8 +359,13 @@ public static class InlineAsmLifting {
         case "COMISS" or "UCOMISS": return this.CompareScalar(operands, IrType.F32);
         case "COMISD" or "UCOMISD": return this.CompareScalar(operands, IrType.F64);
         // AVX2's own, reached only through the V prefix below
-        case "EXTRACTI128" when this._vex: return this.Extract128(operands);
-        case "INSERTI128" when this._vex: return this.Insert128(operands);
+        case "EXTRACTI128" when this._vex: return this.ExtractPart(operands, 16, 32);
+        case "INSERTI128" when this._vex: return this.InsertPart(operands, 16, 32);
+        case "EXTRACTI32X4" or "EXTRACTI64X2" when this._vex: return this.ExtractPart(operands, 16, 64);
+        case "EXTRACTI64X4" or "EXTRACTI32X8" when this._vex: return this.ExtractPart(operands, 32, 64);
+        case "INSERTI32X4" or "INSERTI64X2" when this._vex: return this.InsertPart(operands, 16, 64);
+        case "INSERTI64X4" or "INSERTI32X8" when this._vex: return this.InsertPart(operands, 32, 64);
+        case "MOVDQA32" or "MOVDQA64" or "MOVDQU8" or "MOVDQU16" or "MOVDQU32" or "MOVDQU64" when this._vex: return this.MoveVector(operands, 0);
         case "PBROADCASTB" when this._vex: return this.Broadcast(operands, 1);
         case "PBROADCASTW" when this._vex: return this.Broadcast(operands, 2);
         case "PBROADCASTD" when this._vex: return this.Broadcast(operands, 4);
@@ -370,6 +378,8 @@ public static class InlineAsmLifting {
         // writes is zeroed above its own width, up to the widest register there is
         case ['V', .. var legacy] when !this._vex && (legacy.StartsWith('P') || legacy is "MOVD" or "MOVQ" or "MOVDQA" or "MOVDQU"
             or "EXTRACTI128" or "INSERTI128" or "ZEROUPPER" or "ZEROALL"
+            || legacy.StartsWith("EXTRACTI", StringComparison.Ordinal) || legacy.StartsWith("INSERTI", StringComparison.Ordinal)
+            || legacy.StartsWith("MOVDQ", StringComparison.Ordinal)
             || legacy.EndsWith("PS", StringComparison.Ordinal) || legacy.EndsWith("PD", StringComparison.Ordinal)
             || legacy.EndsWith("SS", StringComparison.Ordinal) || legacy.EndsWith("SD", StringComparison.Ordinal)
             || legacy.StartsWith("CVT", StringComparison.Ordinal) || legacy.Contains("COMIS", StringComparison.Ordinal)):
@@ -402,6 +412,7 @@ public static class InlineAsmLifting {
       TextAssembler.ParsedAsmRegister { Register: var r } when r.IsMmx() => new VectorPlace(registers.Mmx(r), 8),
       TextAssembler.ParsedAsmRegister { Register: var r } when r.IsXmm() => new VectorPlace(registers.Vector(r), 16),
       TextAssembler.ParsedAsmRegister { Register: var r } when r.IsYmm() => new VectorPlace(registers.Vector(r), 32),
+      TextAssembler.ParsedAsmRegister { Register: var r } when r.IsZmm() => new VectorPlace(registers.Vector(r), 64),
       TextAssembler.ParsedAsmRegister { Register: var r } => throw new NotLiftableException($"register {r} is not lifted (the stack and frame pointers belong to the compiled code)"),
       TextAssembler.ParsedAsmImmediate { Value: var value } => new ImmediatePlace(value),
       TextAssembler.ParsedAsmMemory { Memory: var memory } => this.MemoryOf(memory, defaultBytes),
@@ -1642,36 +1653,38 @@ public static class InlineAsmLifting {
 
     // --- AVX2's own instructions, each reached through its V prefix ---------------------------------
 
-    /// <summary>VEXTRACTI128: the 128-bit half of a YMM register the immediate names.</summary>
-    private bool Extract128(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
-      if (operands.Count != 3 || this.PlaceOf(operands[2], 1) is not ImmediatePlace { Value: var half })
-        throw new NotLiftableException("expects a destination, a YMM register and an immediate");
-      var source = this.PlaceOf(operands[1], 32);
-      if (source is not VectorPlace { Bytes: 32 })
-        throw new NotLiftableException("extracts from a YMM register");
-      var destination = this.PlaceOf(operands[0], 16);
+    /// <summary>
+    /// VEXTRACTI128 and AVX-512's VEXTRACTI32X4/VEXTRACTI64X4: the <paramref name="chunk"/>-byte part of a
+    /// <paramref name="from"/>-byte register the immediate names, into a register or memory.
+    /// </summary>
+    private bool ExtractPart(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int chunk, int from) {
+      if (operands.Count != 3 || this.PlaceOf(operands[2], 1) is not ImmediatePlace { Value: var part })
+        throw new NotLiftableException("expects a destination, a vector register and an immediate");
+      if (this.PlaceOf(operands[1], from) is not VectorPlace { Bytes: var width } source || width != from)
+        throw new NotLiftableException($"extracts from a {from * 8}-bit register");
+      var destination = this.PlaceOf(operands[0], chunk);
       if (destination is not (VectorPlace or MemoryPlace))
-        throw new NotLiftableException("writes an XMM register or memory");
-      var lanes = this.LoadLanes(source, IrType.I64, 8, 16, (int)(half & 1) * 16);
+        throw new NotLiftableException("writes a vector register or memory");
+      var lanes = this.LoadLanes(source, IrType.I64, 8, chunk, (int)(part % (from / chunk)) * chunk);
       this.StoreLanes(destination, lanes, 8);
       return true;
     }
 
-    /// <summary>VINSERTI128: the second operand with the half the immediate names replaced by the third.</summary>
-    private bool Insert128(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
-      if (operands.Count != 4 || this.PlaceOf(operands[3], 1) is not ImmediatePlace { Value: var half })
-        throw new NotLiftableException("expects a YMM destination, a YMM source, a 128-bit source and an immediate");
-      if (this.PlaceOf(operands[0], 32) is not VectorPlace { Bytes: 32 } destination
-          || this.PlaceOf(operands[1], 32) is not VectorPlace { Bytes: 32 } source)
-        throw new NotLiftableException("inserts into YMM registers");
-      var insert = this.PlaceOf(operands[2], 16);
+    /// <summary>VINSERTI128 and AVX-512's VINSERTI32X4/VINSERTI64X4: the second operand with the part the immediate names replaced by the third.</summary>
+    private bool InsertPart(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, int chunk, int into) {
+      if (operands.Count != 4 || this.PlaceOf(operands[3], 1) is not ImmediatePlace { Value: var part })
+        throw new NotLiftableException("expects a destination, a source, the part to insert and an immediate");
+      if (this.PlaceOf(operands[0], into) is not VectorPlace { Bytes: var width } destination || width != into
+          || this.PlaceOf(operands[1], into) is not VectorPlace source || source.Bytes != into)
+        throw new NotLiftableException($"inserts into {into * 8}-bit registers");
+      var insert = this.PlaceOf(operands[2], chunk);
       if (insert is not (VectorPlace or MemoryPlace))
         throw new NotLiftableException("inserts a register or memory");
-      var lanes = this.LoadLanes(source, IrType.I64, 8, 32);
-      var replacement = this.LoadLanes(insert, IrType.I64, 8, 16);
-      var at = (int)(half & 1) * 2;
-      lanes[at] = replacement[0];
-      lanes[at + 1] = replacement[1];
+      var lanes = this.LoadLanes(source, IrType.I64, 8, into);
+      var replacement = this.LoadLanes(insert, IrType.I64, 8, chunk);
+      var at = (int)(part % (into / chunk)) * chunk / 8;
+      for (var i = 0; i < replacement.Count; ++i)
+        lanes[at + i] = replacement[i];
       this.StoreLanes(destination, lanes, 8);
       return true;
     }
