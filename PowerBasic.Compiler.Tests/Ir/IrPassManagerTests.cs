@@ -200,7 +200,7 @@ public sealed class IrPassManagerTests {
       "structpack", "fieldreorder", "hotcold", "aos2soa", "transpose", "arrayfusion",
       "arraycontract", "prefixscan", "ptrcompress", "cachepad", "arraypad", "arrayalign",
       "looptemp-reuse", "overflow-version", "ownershipbatch", "unroll",
-      "instcombine", "demandedbits", "sccp", "correlate", "bbversion", "ptrcheck",
+      "instcombine", "knownbits", "demandedbits", "sccp", "correlate", "bbversion", "ptrcheck",
       "rangefold", "specnarrow", "conversion-rangefold", "overflow-coalesce", "sroa",
       "aggregate-sroa", "storagenarrow2", "mem2reg2", "storagenarrow-ssa2", "strcow",
       "ownership-elision", "fpsimplify", "reassociate", "fpfast", "eqsat", "verified-arith",

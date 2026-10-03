@@ -8,25 +8,21 @@ namespace PowerBasic.Compiler.Ir;
 /// emulated as a run of 16-bit words, low word first.
 ///
 /// <para>
-/// A wide integer is never a VALUE on either path. It has no IR type - <see cref="IrTypeMapper"/> maps
-/// the scalars and nothing else - and the direct emitter does not give it one either: its storage is a
-/// blob and every operation is word-by-word memory traffic, which is why <c>EmitWideStore</c> takes an
-/// <see cref="AssignStmt"/> rather than producing a register. So the lowering matches, with a
-/// <c>i16 x Words</c> alloca standing where a <c>UdtType</c>'s byte buffer would.
+/// A wide integer is never a VALUE. It has no IR type - <see cref="IrTypeMapper"/> maps the scalars and
+/// nothing else - so its storage is an <c>i16 x Words</c> alloca, standing where a <c>UdtType</c>'s
+/// byte buffer would, and an expression is computed into words in memory: each operand into a frame
+/// cell of the operation's type, the operation into the destination (or into a cell of its own type,
+/// then fitted to the destination as an assignment fits it).
 /// </para>
 /// <para>
-/// The one thing that does not carry over is the carry. The emitter walks the words with <c>ADC</c> and
-/// <c>SBB</c>, reading a flag the IR has no way to name; here each word is added in THIRTY-TWO bits,
-/// where the carry is simply bit 16 of the sum and the borrow is the sign of the difference. That is
-/// more instructions and the same arithmetic - and the selector lowers a 32-bit add to the <c>ADD</c>
-/// and <c>ADC</c> pair anyway, so most of the difference is paid back. Nothing asserts the byte shape:
-/// wide integers are pb36-only, so no genuine compiler is an oracle for them and the golden gate has
-/// nothing to say about the choice.
-/// </para>
-/// <para>
-/// The supported set is exactly the emitter's, because that is what the binder admits: extend, copy,
-/// truncate, and <c>a + b</c> / <c>a - b</c> between two equally wide operands. Multiply and compare
-/// still diagnose at bind time rather than reaching either back end.
+/// Every operation is a call to a loop in <see cref="WideIntegerHelpers"/>: add and subtract with the
+/// carry taken in 32 bits, the bitwise operators, multiply, divide with remainder, compare, shift, copy
+/// with extension and the decimal form. They are ordinary IR functions defined in the module, so x86-16,
+/// x86-32, x64, the 6502, C and LLVM compile them like the program's own procedures and no runtime
+/// carries them; one loop per operation, rather than one store per word, is what keeps a program that
+/// uses an INT512 inside a 6502's memory. Wide integers are pb36-only, so no genuine compiler is an
+/// oracle for them and the golden gate has nothing to say about the shape; <c>BigInteger</c> is the
+/// oracle the tests hold every target to.
 /// </para>
 /// </summary>
 public sealed partial class IrLowering {
@@ -46,6 +42,14 @@ public sealed partial class IrLowering {
     throw new IrLoweringException("wide-integer value without a memory location");
   }
 
+  /// <summary>A wide expression computed into a cell of its own type, for a reader that needs its words.</summary>
+  private IrValue WideValue(Expression expression) {
+    var type = (WideIntType)this._model.TypeOf(expression);
+    var cell = this.WideTemp(type);
+    this.LowerWideInto(expression, cell, type);
+    return cell;
+  }
+
   /// <summary>Whether this assignment is one the wide-integer lowering owns.</summary>
   private bool IsWideAssignment(AssignStmt a, out WideIntType target)
     => (target = (this.TargetTypeOf(a.Target) as WideIntType)!) is not null;
@@ -54,71 +58,139 @@ public sealed partial class IrLowering {
   private PbType? TargetTypeOf(Expression target)
     => target is NameExpr && this._model.VariableBindings.TryGetValue(target, out var symbol) ? symbol.Type : null;
 
-  /// <summary>
-  /// <c>wide = …</c>, in the four forms the binder admits: a compile-time constant, a sum or difference
-  /// of two wide values, another wide value, and a native integer.
-  /// </summary>
-  private void LowerWideAssign(AssignStmt a, WideIntType wt) {
-    var destination = this.WideAddress(a.Target);
+  /// <summary><c>wide = …</c>: the value computed into the target's words.</summary>
+  private void LowerWideAssign(AssignStmt a, WideIntType wt) => this.LowerWideInto(a.Value, this.WideAddress(a.Target), wt);
 
+  /// <summary>A frame cell for an intermediate wide value.</summary>
+  private IrValue WideTemp(WideIntType wt)
+    => this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I16) { Count = wt.Words, Name = "wide.t" });
+
+  /// <summary>
+  /// Any integer expression into the words at <paramref name="destination"/>, as a
+  /// <paramref name="wt"/>: a constant writes its words, a native integer is extended, a wide variable
+  /// copied, and an operation computed at its own type and then fitted the way an assignment fits it.
+  /// </summary>
+  private void LowerWideInto(Expression expression, IrValue destination, WideIntType wt) {
     // a compile-time integer constant writes its own words and a sign fill above them, which covers
     // any literal or equate up to 64 bits whatever type the binder gave the expression
-    if (this._folder.TryFold(a.Value) is { Integer: { } constant }) {
+    if (this._folder.TryFold(expression) is { Integer: { } constant }) {
       var fill = (short)(constant < 0 && wt.Signed ? -1 : 0);
-      for (var k = 0; k < wt.Words; ++k) {
+      var written = Math.Min(4, wt.Words);
+      for (var k = 0; k < written; ++k) {
         var word = k < 4 ? (short)(ushort)(constant >> (16 * k)) : fill;
         this._b.Store(new IrConstantInt(IrType.I16, word), this.WideWordAddress(destination, k));
       }
+      if (written < wt.Words)
+        this.FillWords(destination, written, wt.Words, new IrConstantInt(IrType.I16, fill));
       return;
     }
 
-    if (this._model.TypeOf(a.Value) is WideIntType source) {
-      if (a.Value is BinaryExpr { Op: BinaryOp.Add or BinaryOp.Subtract } sum
-          && this._model.TypeOf(sum.Left) is WideIntType && this._model.TypeOf(sum.Right) is WideIntType) {
-        this.LowerWideAddOrSubtract(wt, sum, destination);
+    switch (this._model.TypeOf(expression)) {
+      case ScalarType { IsFloat: false, ByteSize: <= 8 } narrow:
+        this.ExtendIntoWide(destination, wt, narrow, this.LowerExpr(expression));
+        return;
+      case WideIntType source when expression is NameExpr:
+        this.CopyWide(destination, this.WideAddress(expression), wt, source);
+        return;
+      case WideIntType source: {
+        var result = source == wt ? destination : this.WideTemp(source);
+        this.ComputeWide(expression, result, source);
+        if (!ReferenceEquals(result, destination))
+          this.CopyWide(destination, result, wt, source);
         return;
       }
-      if (a.Value is BinaryExpr or UnaryExpr)
-        throw new IrLoweringException("this wide-integer operation");
-      this.CopyWide(destination, this.WideAddress(a.Value), wt, source);
-      return;
+      default:
+        throw new IrLoweringException("wide-integer assignment from this value");
     }
+  }
 
-    if (this._model.TypeOf(a.Value) is ScalarType { IsFloat: false, ByteSize: <= 4 } narrow) {
-      this.ExtendIntoWide(destination, wt, narrow, this.LowerExpr(a.Value));
-      return;
+  /// <summary>An operation whose type is <paramref name="type"/>, computed into <paramref name="result"/>.</summary>
+  private void ComputeWide(Expression expression, IrValue result, WideIntType type) {
+    var words = new IrConstantInt(IrType.I16, type.Words);
+    switch (expression) {
+      case UnaryExpr { Op: UnaryOp.Negate } negation:
+        this.LowerWideInto(negation.Operand, result, type);
+        this._b.Call(IrType.Void, WideIntegerHelpers.Neg(this._module!), result, result, words);
+        return;
+      case UnaryExpr { Op: UnaryOp.Not } inversion:
+        this.LowerWideInto(inversion.Operand, result, type);
+        this._b.Call(IrType.Void, WideIntegerHelpers.BitOp(this._module!), result, result, result, words, new IrConstantInt(IrType.I16, 3));
+        return;
+      case BinaryExpr { Op: BinaryOp.ShiftLeft or BinaryOp.ShiftRightArith or BinaryOp.ShiftRightLogical } shift: {
+        var value = this.WideTemp(type);
+        this.LowerWideInto(shift.Left, value, type);
+        var count = this.Coerce(this.LowerExpr(shift.Right), this._model.TypeOf(shift.Right), PbType.Integer);
+        // >> fills with the sign, which an unsigned value does not have
+        var kind = shift.Op switch { BinaryOp.ShiftLeft => 0, BinaryOp.ShiftRightArith when type.Signed => 1, _ => 2 };
+        this._b.Call(IrType.Void, WideIntegerHelpers.Shift(this._module!), result, value, count, words, new IrConstantInt(IrType.I16, kind));
+        return;
+      }
+      case BinaryExpr binary: {
+        var left = this.WideTemp(type);
+        var right = this.WideTemp(type);
+        this.LowerWideInto(binary.Left, left, type);
+        this.LowerWideInto(binary.Right, right, type);
+        switch (binary.Op) {
+          case BinaryOp.Add or BinaryOp.Subtract:
+            this._b.Call(IrType.Void, WideIntegerHelpers.AddSub(this._module!), result, left, right, words,
+              new IrConstantInt(IrType.I16, binary.Op == BinaryOp.Subtract ? 1 : 0));
+            return;
+          case BinaryOp.And or BinaryOp.Or or BinaryOp.Xor:
+            this._b.Call(IrType.Void, WideIntegerHelpers.BitOp(this._module!), result, left, right, words,
+              new IrConstantInt(IrType.I16, binary.Op switch { BinaryOp.And => 0, BinaryOp.Or => 1, _ => 2 }));
+            return;
+          case BinaryOp.Multiply:
+            this._b.Call(IrType.Void, WideIntegerHelpers.Mul(this._module!), result, left, right, words);
+            return;
+          case BinaryOp.IntegerDivide or BinaryOp.Modulo: {
+            var other = this.WideTemp(type);
+            var (quotient, remainder) = binary.Op == BinaryOp.IntegerDivide ? (result, other) : (other, result);
+            this._b.Call(IrType.Void, WideIntegerHelpers.DivMod(this._module!), quotient, remainder, left, right, words,
+              new IrConstantInt(IrType.I16, type.Signed ? 1 : 0));
+            return;
+          }
+        }
+        break;
+      }
     }
-
-    throw new IrLoweringException("wide-integer assignment from this value");
+    throw new IrLoweringException("this wide-integer expression");
   }
 
   /// <summary>
-  /// The carry chain. Each word is combined in thirty-two bits with the carry the word below produced,
-  /// so bit 16 of a sum IS the carry out and the sign of a difference IS the borrow - no flag has to
-  /// survive between two IR instructions, which is what an <c>ADC</c> chain would ask of one.
+  /// A comparison with a wide integer on either side: both computed at the wider type, ordered by
+  /// <c>pb_wide_cmp</c>, and answered as BASIC's -1 or 0.
   /// </summary>
-  private void LowerWideAddOrSubtract(WideIntType wt, BinaryExpr sum, IrValue destination) {
-    var left = this.WideAddress(sum.Left);
-    var right = this.WideAddress(sum.Right);
-    var adding = sum.Op == BinaryOp.Add;
-    IrValue carry = new IrConstantInt(IrType.I32, 0);
+  private IrValue LowerWideComparison(BinaryExpr expr, PbType resultPb) {
+    var (leftPb, rightPb) = (this._model.TypeOf(expr.Left), this._model.TypeOf(expr.Right));
+    var type = (leftPb, rightPb) switch {
+      (WideIntType l, WideIntType r) => r.ByteSize > l.ByteSize ? r : l,
+      (WideIntType l, _) => l,
+      (_, WideIntType r) => r,
+      _ => throw new IrLoweringException("a wide comparison without a wide operand"),
+    };
+    var left = this.WideTemp(type);
+    var right = this.WideTemp(type);
+    this.LowerWideInto(expr.Left, left, type);
+    this.LowerWideInto(expr.Right, right, type);
+    var order = this._b.Call(IrType.I16, WideIntegerHelpers.Cmp(this._module!), left, right,
+      new IrConstantInt(IrType.I16, type.Words), new IrConstantInt(IrType.I16, type.Signed ? 1 : 0));
+    var pred = expr.Op switch {
+      BinaryOp.Equal => IrCmpPred.Eq,
+      BinaryOp.NotEqual => IrCmpPred.Ne,
+      BinaryOp.Less => IrCmpPred.Slt,
+      BinaryOp.LessEqual => IrCmpPred.Sle,
+      BinaryOp.Greater => IrCmpPred.Sgt,
+      _ => IrCmpPred.Sge,
+    };
+    return this._b.SExt(this._b.Cmp(pred, order, new IrConstantInt(IrType.I16, 0)), MapType(resultPb));
+  }
 
-    for (var k = 0; k < wt.Words; ++k) {
-      var l = this._b.ZExt(this._b.Load(IrType.I16, this.WideWordAddress(left, k)), IrType.I32);
-      var r = this._b.ZExt(this._b.Load(IrType.I16, this.WideWordAddress(right, k)), IrType.I32);
-      var combined = adding
-        ? this._b.Add(this._b.Add(l, r), carry)
-        : this._b.Sub(this._b.Sub(l, r), carry);
-      this._b.Store(this._b.Trunc(combined, IrType.I16), this.WideWordAddress(destination, k));
-      if (k + 1 == wt.Words)
-        break;                                        // the top word's carry out has nowhere to go
-      // adding: the carry is bit 16 of a sum of two 16-bit values and a carry, so it is 0 or 1 outright.
-      // subtracting: the operands were zero-extended, so a borrow is exactly a negative difference, and
-      // the sign bit of a 32-bit value shifted down to bit 0 is that 0 or 1.
-      carry = this._b.Binary(IrBinaryOp.LShr, combined, new IrConstantInt(IrType.I32, adding ? 16 : 31));
-      if (adding)
-        carry = this._b.And(carry, new IrConstantInt(IrType.I32, 1));
-    }
+  /// <summary><c>STR$</c> of a wide value, and what <c>PRINT</c> writes before its trailing space.</summary>
+  private IrValue LowerWideStr(Expression expression, WideIntType type) {
+    var value = this.WideTemp(type);
+    this.LowerWideInto(expression, value, type);
+    return this._b.Call(IrType.Ptr, WideIntegerHelpers.Str(this._module!), value,
+      new IrConstantInt(IrType.I16, type.Words), new IrConstantInt(IrType.I16, type.Signed ? 1 : 0));
   }
 
   /// <summary>
@@ -126,41 +198,35 @@ public sealed partial class IrLowering {
   /// from the sign of its own top word; an unsigned one fills with zeros, and a narrower destination
   /// simply stops - a wide assignment truncates exactly as a narrow one does.
   /// </summary>
-  private void CopyWide(IrValue destination, IrValue source, WideIntType wt, WideIntType sourceType) {
-    var common = Math.Min(wt.Words, sourceType.Words);
-    for (var k = 0; k < common; ++k)
-      this._b.Store(this._b.Load(IrType.I16, this.WideWordAddress(source, k)), this.WideWordAddress(destination, k));
-    if (wt.Words <= common)
-      return;
-
-    IrValue fill = new IrConstantInt(IrType.I16, 0);
-    if (sourceType.Signed)
-      // the sign of the source's top word, spread over a whole word: an arithmetic shift down by 15
-      // leaves -1 for a negative value and 0 for the rest
-      fill = this._b.Binary(IrBinaryOp.AShr,
-        this._b.Load(IrType.I16, this.WideWordAddress(source, sourceType.Words - 1)),
-        new IrConstantInt(IrType.I16, 15));
-    for (var k = common; k < wt.Words; ++k)
-      this._b.Store(fill, this.WideWordAddress(destination, k));
-  }
+  private void CopyWide(IrValue destination, IrValue source, WideIntType wt, WideIntType sourceType)
+    => this._b.Call(IrType.Void, WideIntegerHelpers.CopyWords(this._module!), destination, source,
+      new IrConstantInt(IrType.I16, wt.Words), new IrConstantInt(IrType.I16, sourceType.Words),
+      new IrConstantInt(IrType.I16, sourceType.Signed ? 1 : 0));
 
   /// <summary>
   /// <c>wide = narrowExpr</c>: the native value's own words, then the extension. <c>WORD</c> and the
-  /// other unsigned spellings fill with zeros where <c>INTEGER</c> and <c>LONG</c> fill with their sign,
-  /// which is the whole difference between the two and is read off the SOURCE type rather than the
-  /// destination's.
+  /// other unsigned spellings fill with zeros where <c>INTEGER</c>, <c>LONG</c> and <c>QUAD</c> fill
+  /// with their sign, which is the whole difference between the two and is read off the SOURCE type
+  /// rather than the destination's. A <c>QUAD</c> brings four words.
   /// </summary>
   private void ExtendIntoWide(IrValue destination, WideIntType wt, ScalarType narrow, IrValue value) {
-    var words = narrow.ByteSize <= 2 ? 1 : 2;
+    var words = narrow.ByteSize switch { <= 2 => 1, <= 4 => 2, _ => 4 };
     if (words == 1) {
       this._b.Store(this.NarrowToWord(value, narrow), this.WideWordAddress(destination, 0));
-    } else {
+    } else if (words == 2) {
       var asLong = value.Type.Bits == 32
         ? value
         : this._b.Cast(narrow.Signed ? IrCastOp.SExt : IrCastOp.ZExt, value, IrType.I32);
       this._b.Store(this._b.Trunc(asLong, IrType.I16), this.WideWordAddress(destination, 0));
       this._b.Store(this._b.Trunc(this._b.Binary(IrBinaryOp.LShr, asLong, new IrConstantInt(IrType.I32, 16)), IrType.I16),
         this.WideWordAddress(destination, 1));
+    } else {
+      // a QUAD's words are moved through memory: a 64-bit value is a cell on a 16-bit target, not
+      // something it can shift, and the four words are where the cell already keeps them
+      var cell = this.QuadCell();
+      this._b.Store(value, cell);
+      for (var k = 0; k < words && k < wt.Words; ++k)
+        this._b.Store(this._b.Load(IrType.I16, this.OffsetWithin(cell, k * 2)), this.WideWordAddress(destination, k));
     }
     if (wt.Words <= words)
       return;
@@ -169,9 +235,21 @@ public sealed partial class IrLowering {
     if (narrow.Signed)
       fill = this._b.Binary(IrBinaryOp.AShr,
         this._b.Load(IrType.I16, this.WideWordAddress(destination, words - 1)), new IrConstantInt(IrType.I16, 15));
-    for (var k = words; k < wt.Words; ++k)
-      this._b.Store(fill, this.WideWordAddress(destination, k));
+    this.FillWords(destination, words, wt.Words, fill);
   }
+
+  /// <summary>
+  /// The words from..to-1 set to <paramref name="fill"/>. This and every other run over the words is a
+  /// loop in <see cref="WideIntegerHelpers"/> rather than one store per word, which keeps a program
+  /// that uses an INT512 small enough for a machine with 64 KB.
+  /// </summary>
+  private void FillWords(IrValue destination, int from, int to, IrValue fill)
+    => this._b.Call(IrType.Void, WideIntegerHelpers.Fill(this._module!), destination,
+      new IrConstantInt(IrType.I16, from), new IrConstantInt(IrType.I16, to), fill);
+
+  /// <summary>An eight-byte frame cell a QUAD's words pass through.</summary>
+  private IrAlloca QuadCell()
+    => this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I64) { Name = "wide.quad" });
 
   /// <summary>The low word of a native value, whatever width the expression arrived in.</summary>
   private IrValue NarrowToWord(IrValue value, ScalarType narrow) {
@@ -188,15 +266,22 @@ public sealed partial class IrLowering {
   /// truncation and never a range check, exactly as the emitter has it.
   /// </summary>
   private IrValue LowerWideTruncation(Expression wideValue, ScalarType narrow) {
-    var source = this.WideAddress(wideValue);
+    var source = wideValue is NameExpr ? this.WideAddress(wideValue) : this.WideValue(wideValue);
     var low = this._b.Load(IrType.I16, this.WideWordAddress(source, 0));
     if (narrow.ByteSize <= 2)
       return narrow.ByteSize == 1 ? this._b.Trunc(low, IrType.I8) : low;
 
+    if (narrow.ByteSize == 8) {
+      // a QUAD takes four words, assembled in a cell for the reason ExtendIntoWide gives
+      var cell = this.QuadCell();
+      for (var k = 0; k < 4; ++k)
+        this._b.Store(this._b.Load(IrType.I16, this.WideWordAddress(source, k)), this.OffsetWithin(cell, k * 2));
+      return this._b.Load(IrType.Integer(64, narrow.Signed), cell);
+    }
+
     var high = this._b.Load(IrType.I16, this.WideWordAddress(source, 1));
-    var combined = this._b.Or(
+    return this._b.Or(
       this._b.ZExt(low, IrType.I32),
       this._b.Binary(IrBinaryOp.Shl, this._b.ZExt(high, IrType.I32), new IrConstantInt(IrType.I32, 16)));
-    return narrow.ByteSize == 4 ? combined : this._b.SExt(combined, IrType.Integer(narrow.ByteSize * 8, narrow.Signed));
   }
 }

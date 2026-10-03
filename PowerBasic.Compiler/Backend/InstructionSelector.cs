@@ -505,7 +505,7 @@ public sealed partial class InstructionSelector {
     => block.Terminator is IrCondBr { Condition: IrCmp { Users.Count: 1 } cmp }
        && (cmp.Lhs.Type.IsFloat
          ? cmp.Lhs.Type.IsIeeeFloat && MapFloatPredicate(cmp.Pred) is not null
-         : MapPredicate(cmp.Pred) is not null && !IsWide(cmp.Lhs.Type))
+         : MapPredicate(cmp.Pred) is not null && !IsWide(cmp.Lhs.Type) && !IsQuad(cmp.Lhs.Type))
       ? cmp : null;
 
   /// <summary>
@@ -3223,6 +3223,8 @@ public sealed partial class InstructionSelector {
         return this.SelectIntToFloat(cast);
       case IrCastOp.FPToSIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 16 or 32:
         return this.SelectFloatToInt(cast);
+      case IrCastOp.FPToSIRound when from.IsIeeeFloat && IsQuad(to):
+        return this.SelectRoundingToQword(cast);
       // The x87 stores only SIGNED integers, so an unsigned target is staged one size larger than
       // itself: a WORD's 65535 does not fit a signed word but fits a signed dword, and a DWORD's
       // 4294967295 needs the qword store. The bits that come back are the value either way.
@@ -4859,6 +4861,23 @@ public sealed partial class InstructionSelector {
       new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
+    this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, MRegSize.Qword), reads: false);
+    return true;
+  }
+
+  /// <summary>
+  /// A float rounded into a QUAD - <c>READ q&amp;&amp;</c>, <c>INPUT q&amp;&amp;</c>, any real assigned to
+  /// one. <see cref="SelectTruncationToQword"/> without its <c>rt_trunc</c>: <c>FISTP</c> rounds by
+  /// the control word, nearest-even, which is exactly the rounding <see cref="IrCastOp.FPToSIRound"/>
+  /// names - the same reason the 16- and 32-bit forms are one <c>FISTP</c> too.
+  /// </summary>
+  private bool SelectRoundingToQword(IrCast cast) {
+    if (!this.TryFloatOperand(cast.Value, out var source))
+      return false;
+    var slot = this._function.StackSlots.Count;
+    this._function.StackSlots.Add(8);
+    this._qslots[cast] = slot;
+    this.EmitX87(MOpcode.Fld, source, reads: true);
     this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, MRegSize.Qword), reads: false);
     return true;
   }

@@ -335,9 +335,10 @@ public sealed partial class CodeGenerator {
   private void EmitBlsi(VirtualIsaState state) {
     this._asm.Push(Reg.AX);
     this._asm.Push(Reg.DX);
+    // both halves cleared before the SUB: an XOR between it and the SBB would clear the borrow
     this._asm.Xor(Reg.AX, Reg.AX);
-    this._asm.Sub(Reg.AX, this.GpScratch(state, BmiA));
     this._asm.Xor(Reg.DX, Reg.DX);
+    this._asm.Sub(Reg.AX, this.GpScratch(state, BmiA));
     this._asm.Sbb(Reg.DX, this.GpScratch(state, BmiA + 2));
     this._asm.And(Reg.AX, this.GpScratch(state, BmiA));
     this._asm.And(Reg.DX, this.GpScratch(state, BmiA + 2));

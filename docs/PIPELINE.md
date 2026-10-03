@@ -83,12 +83,23 @@ the `Inliner`, and `Standard` twice more when it inlined something. `Standard` i
 organized in named phases — LoopPreparation, ScalarSimplification, MemoryAndObjects,
 ArithmeticSimplification, MemoryOptimization, LoopOptimization, LateScalarCleanup and
 the module-level Interprocedural phase (read `IrMiddleEndPipeline.cs` for the exact
-pass list). After it come the passes that are only right for the DOS target:
+pass list). After it come the passes that need to know the runtime or the machine:
 `ConstantNumericPrint`, `ConstantInstrSpecialization`, `PackedLoopVectorization`
 (SPEED with SIMD), `AddressInduction` (steps array addresses; runs
 `AddressOffsetNarrowing` first), `StringStackPromotion`, `MemoryRoutineSpecialization`,
 a `SwitchFormation` sweep, `GlobalDce` when the module owns its callers, and
-`PrivateCallingConvention` under SPEED. Value ranges and known bits come from
+`PrivateCallingConvention` under SPEED.
+
+`RunHostedModule` (x86-32, x64, C, LLVM) runs the same `Standard` and inliner, then the
+`SwitchFormation` sweep for every hosted writer, and - on the portable runtime, x86-32 and
+x64 - `ConstantNumericPrint`, `ConstantInstrSpecialization`, `StringStackPromotion` and
+`MemoryRoutineSpecialization` too. What only the DOS machine wants stays native-only:
+`AddressInduction` (8086 addressing modes), `PackedLoopVectorization` (the DOS runtime's
+SIMD kernels) and `PrivateCallingConvention` (the 8086 register ABI). The runtime entries
+those passes rewrite by name (`PortableRuntime.IsRewrittenByMiddleEnd`) are defined after the
+middle end rather than before, so the passes find calls rather than inlined bodies; and every
+runtime routine defined before it is marked `MayGainCallers`, so no interprocedural pass
+specializes it to the callers it happened to see. Value ranges and known bits come from
 `Ir/Analysis/IrRangeAnalysis.cs` and `Ir/Analysis/IrKnownBitsAnalysis.cs`.
 
 **Tier 2 — the x86-16 back end.** `Backend/InstructionSelector` turns each IR function

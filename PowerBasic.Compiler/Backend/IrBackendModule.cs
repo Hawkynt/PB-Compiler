@@ -49,12 +49,20 @@ public sealed class IrBackendModule {
     }
 
     module.AsciiOnly = model.AsciiOnly;
+    // x86 inline assembly as IR, for every target that does not assemble x86 text itself: x86-16
+    // assembles and emulates it, and the BASIC writer gives the text back as it was
+    if (options.Target is not (IrBackendTarget.X86_16 or IrBackendTarget.PowerBasic35)
+        && !InlineAsmLifting.TryRun(module, out var notLifted)) {
+      declinedBecause = notLifted;
+      return null;
+    }
     if (options.PortableRuntimeHeapBytes is { } heap)
       PortableRuntime.Define(module, heap, cleanUp: false, options.PortableRuntimeIndexBits, options.PortableRuntimeSoftMath);
     if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35
         or IrBackendTarget.X86_32 or IrBackendTarget.X64)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
-        options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops);
+        options.EnableFpLookupTables, options.RecoverIntegerArithmetic, options.PrepareParallelLoops,
+        portableRuntime: options.PortableRuntimeHeapBytes is not null);
     else if (options.Target is IrBackendTarget.X86_16 or IrBackendTarget.Mos6502)
       IrMiddleEndPipeline.RunNativeModule(module, options.Optimize, options.OptimizeForSpeed,
         options.OptimizeForSize, minimumIntegerStorageBits: 16,

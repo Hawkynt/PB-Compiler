@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented for everything that pays without register residency; the EAX-representation change is [O0058](O0058-386-register-allocation.md) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.*` (`EmitQuad386Bitwise`, `EmitShiftRotate`, the widened block moves) |
+| **Stage** | x86-16 back end |
+| **Source** | `Backend/SelectionTarget.cs` — `Cpu386OrLater`, gating `Backend/InstructionSelector.cs` `SelectQwordBinary`, `SelectQwordShift`, `SelectNativeWideShift`; `Runtime/DosRuntime.Core.cs` — `EmitRepMovsbWidened` |
 | **Gate** | `$CPU 80386` / `-G386` |
-| **Verified by** | `tests/diff/DIFF70/71/72/73/74/75.BAS` (byte-identical to genuine PBC 3.50, which accepts `$CPU 80386`) |
+| **Verified by** | the split pages: [O0234](O0234-quad-bitwise-inline.md), [O0235](O0235-shld-shrd-shifts.md), [O0236](O0236-long-shift-rotate-collapse.md), [O0241](O0241-dword-string-copy.md) |
 | **Related** | [C0002](C0002-486-codegen.md), [O0015](O0015-udt-zero-cost.md), [R0003](R0003-string-engine.md), [O0058](O0058-386-register-allocation.md) |
 | **Split into** | [O0233](O0233-hardware-constant-divide.md), [O0234](O0234-quad-bitwise-inline.md), [O0235](O0235-shld-shrd-shifts.md), [O0236](O0236-long-shift-rotate-collapse.md), [O0237](O0237-movzx-movsx-loads.md), [O0238](O0238-setcc-relationals.md), [O0239](O0239-stosd-array-zero.md), [O0240](O0240-stosd-loop-fill.md) |
 

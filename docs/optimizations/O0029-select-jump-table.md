@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (dense 16-bit single-constant cases) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen/CodeGenerator.cs` — `TryEmitSelectJumpTable` |
+| **Stage** | IR middle end + x86-16 back end |
+| **Source** | `Ir/Passes/SwitchFormation.cs`; `Backend/InstructionSelector.Dispatch.cs` — `TryTableDispatch` |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF62.BAS` (under `pb35` and `pb36`) |
+| **Verified by** | `BackendSwitchDispatchTests`; battery `OnGotoIsJumpTable`; `HostedPipelineParityTests` (the switch on every hosted target) |
 | **Related** | [O0067](O0067-if-chain-jump-table.md) |
 
 ## What it is

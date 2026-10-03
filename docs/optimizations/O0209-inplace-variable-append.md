@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter + string runtime |
-| **Source** | runtime `rt_strcatvar` |
+| **Stage** | IR middle end + string runtime |
+| **Source** | `Ir/Passes/StringAppendInPlace.cs` → `rt_str_append_var` → `rt_strcatvar` |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF95.BAS` |
+| **Verified by** | `StringBuilderRecognitionTests` (neighbouring pass) |
 | **Split from** | [O0009](O0009-string-temp-economy.md) |
 
 ## What it is

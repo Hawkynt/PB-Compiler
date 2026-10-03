@@ -2,8 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented — `ProfileGuidedLoopOptimization`, run from `LoopUnroll.Run` |
-| **Stage** | Emitter |
+| **Status** | 🟡 Partial — a runtime-trip loop gets an unrolled body behind a remainder prologue (O0063) and profiled peeling (O0272); there is no selection between versions by trip count |
+| **Stage** | IR middle end |
+| **Verified by** | `ProfileGuidedLoopOptimizationTests` |
+| **Source** | `Ir/Passes/LoopUnroll.cs` (runtime prologue); `Ir/Passes/ProfileGuidedLoopOptimization.cs` |
 | **Related** | [O0063](O0063-duff-unrolling.md), [O0129](O0129-unroll-factor-cost-model.md), [O0026](O0026-auto-vectorization.md) |
 
 ## The idea

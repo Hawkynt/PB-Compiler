@@ -111,7 +111,15 @@ public static class StringConstantFold {
           continue;
         }
         case _CONCAT when call.ArgCount == 2:
-          folded += FoldConcat(module, call) ? 1 : 0;
+          folded += FoldConcat(module, call) || FoldEmptyOperand(call) ? 1 : 0;
+          continue;
+        // O0178/O0266: SPACE$(0) and STRING$(0, c) are the empty string - only a literal 0, since a
+        // negative count is error 5 and has to stay a call that raises it
+        case "rt_str_space" when call.ArgCount == 1 && call.GetOperand(1) is IrConstantInt { Value: 0 }:
+        case "rt_str_string" when call.ArgCount == 2 && call.GetOperand(1) is IrConstantInt { Value: 0 }:
+          call.ReplaceAllUsesWith(new IrNullPtr());
+          call.EraseFromParent();
+          ++folded;
           continue;
         case _COMPARE or _COMPARE_EQ when call.ArgCount == 2:
           folded += FoldCompare(call, callee.Name == _COMPARE_EQ) ? 1 : 0;
@@ -199,6 +207,26 @@ public static class StringConstantFold {
     left.Call.EraseFromParent();      // neither literal is ever made: the joined one replaces both
     right.Call.EraseFromParent();
     return true;
+  }
+
+  /// <summary>
+  /// O0178: <c>x + ""</c> and <c>"" + x</c> are <c>x</c>. The concatenation consumes both handles, so
+  /// <c>x</c> - read by nothing else - passes straight through as the result, and the empty literal
+  /// is never made.
+  /// </summary>
+  private static bool FoldEmptyOperand(IrCall call) {
+    for (var side = 1; side <= 2; ++side) {
+      var empty = call.GetOperand(side);
+      var other = call.GetOperand(3 - side);
+      var literal = LiteralOperand(call, side);
+      if (!(empty is IrNullPtr || literal is { Bytes.Length: 0 }) || other.Users.Count != 1)
+        continue;
+      call.ReplaceAllUsesWith(other);
+      call.EraseFromParent();
+      literal?.Call.EraseFromParent();
+      return true;
+    }
+    return false;
   }
 
   /// <summary>A comparison between two literals is the number the bytes decide.</summary>

@@ -6,8 +6,9 @@ namespace PowerBasic.Compiler.Ir.Analysis;
 /// <para>
 /// This is a deliberately small abstract domain rather than a second constant folder. It answers the
 /// question bitwise transforms actually ask: which result bits are guaranteed zero or one for every
-/// execution? The bootstrap domain understands exact constants, bitwise AND/OR/XOR, integer
-/// truncation/extension, selects and cycle-safe phi meets. Unsupported operations remain unknown.
+/// execution? The domain understands exact constants, bitwise AND/OR/XOR, shifts by a constant,
+/// integer truncation/extension, selects and cycle-safe phi meets, and the low zero bits of a sum or
+/// product - <c>n * 4</c> ends in two zeros whatever <c>n</c> is. Unsupported operations remain unknown.
 /// </para>
 /// </summary>
 public sealed class IrKnownBitsAnalysis {
@@ -82,9 +83,28 @@ public sealed class IrKnownBitsAnalysis {
       IrBinaryOp.Xor => new(binary.Type.Bits,
         ((left.Zero & right.Zero) | (left.One & right.One)) & mask,
         ((left.Zero & right.One) | (left.One & right.Zero)) & mask),
+      // the low zero bits of a product add up, and a sum or difference keeps the fewer of them -
+      // carries only move upwards
+      IrBinaryOp.Mul => LowZeros(binary.Type.Bits, TrailingZeros(left) + TrailingZeros(right)),
+      IrBinaryOp.Add or IrBinaryOp.Sub => LowZeros(binary.Type.Bits, Math.Min(TrailingZeros(left), TrailingZeros(right))),
+      IrBinaryOp.Shl when binary.Rhs is IrConstantInt { Value: var count } && count >= 0 && count < binary.Type.Bits
+        => new(binary.Type.Bits, ((left.Zero << (int)count) | ((1UL << (int)count) - 1)) & mask, (left.One << (int)count) & mask),
+      IrBinaryOp.LShr when binary.Rhs is IrConstantInt { Value: var count } && count >= 0 && count < binary.Type.Bits
+        => new(binary.Type.Bits, ((left.Zero >> (int)count) | (mask & ~(mask >> (int)count))) & mask, (left.One >> (int)count) & mask),
       _ => Unknown(binary.Type.Bits),
     };
   }
+
+  /// <summary>How many low bits of a value are known zero.</summary>
+  private static int TrailingZeros(KnownBits bits) {
+    var count = 0;
+    while (count < bits.Width && (bits.Zero & (1UL << count)) != 0)
+      ++count;
+    return count;
+  }
+
+  private static KnownBits LowZeros(int width, int count)
+    => new(width, Mask(Math.Min(count, width)), 0);
 
   private KnownBits Cast(IrCast cast, int depth) {
     if (!cast.Value.Type.IsInteger || !cast.Type.IsInteger)

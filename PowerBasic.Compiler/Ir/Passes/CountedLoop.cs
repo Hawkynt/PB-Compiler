@@ -99,10 +99,44 @@ internal sealed record CountedLoop(
   }
 
   /// <summary>
-  /// The blocks the loop body occupies, or null when the shape is not one this can reason about.
-  /// Collected by traversal, so both arms of an inner branch are inside rather than only the one a
-  /// single walk would follow.
+  /// Whether the counter is the only thing that ends the loop, so <see cref="Trips"/> is the number of
+  /// times the body runs rather than an upper bound on it. An <c>EXIT FOR</c>, a <c>GOTO</c> out, an
+  /// <c>EXIT SUB</c> or a <c>RETURN</c> inside the body all leave without the counter's say-so.
+  ///
+  /// <para>
+  /// A consumer that answers for the iterations - <see cref="RecurrenceClosedForm"/>, which writes
+  /// the full-count total into the exit, and <see cref="DeadLoopElimination"/>, which deletes the loop
+  /// outright - must ask. One that only needs the bound, or that recognizes an early exit as the
+  /// point of the loop (a search), must not. <see cref="Region"/> cannot answer it: its forward walk
+  /// follows an early exit out of the loop and keeps going, so the escape is never seen as one. The
+  /// test therefore takes the NATURAL loop of the back edge - the blocks that reach the latch without
+  /// passing through the header - and requires every edge out of it to be the header's own exit.
+  /// </para>
   /// </summary>
+  public bool RunsItsFullCount(IrFunction fn) {
+    var predecessorsOf = new Dictionary<IrBasicBlock, List<IrBasicBlock>>(ReferenceEqualityComparer.Instance);
+    foreach (var block in fn.Blocks)
+      if (block.Terminator is { } terminator)
+        foreach (var successor in terminator.Successors)
+          (predecessorsOf.TryGetValue(successor, out var list) ? list : predecessorsOf[successor] = []).Add(block);
+
+    var body = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance) { this.Header, this.Latch };
+    var pending = new Stack<IrBasicBlock>([this.Latch]);
+    while (pending.Count > 0)
+      foreach (var predecessor in predecessorsOf.GetValueOrDefault(pending.Pop(), []))
+        if (body.Add(predecessor))
+          pending.Push(predecessor);
+
+    foreach (var block in body) {
+      if (block.Terminator is not { } terminator || !terminator.Successors.Any())
+        return false;                              // a RET inside the body: the loop ends without the counter
+      foreach (var successor in terminator.Successors)
+        if (!body.Contains(successor) && !(ReferenceEquals(block, this.Header) && ReferenceEquals(successor, this.Exit)))
+          return false;
+    }
+    return true;
+  }
+
   /// <summary>
   /// The counter's first value and its step when both are constants of the counter's type and the
   /// latch advances it by an add - the arithmetic progression the induction-variable passes rewrite.
@@ -125,6 +159,11 @@ internal sealed record CountedLoop(
     return true;
   }
 
+  /// <summary>
+  /// The blocks the loop body occupies, or null when the shape is not one this can reason about.
+  /// Collected by traversal, so both arms of an inner branch are inside rather than only the one a
+  /// single walk would follow.
+  /// </summary>
   private static HashSet<IrBasicBlock>? CollectRegion(IrBasicBlock header, IrBasicBlock entry, IrBasicBlock exit, out IrBasicBlock? latch) {
     latch = null;
     var region = new HashSet<IrBasicBlock>(ReferenceEqualityComparer.Instance) { header };

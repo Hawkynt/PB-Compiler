@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented for mode-13h pixels (`PSET`/`PRESET`/`POINT`); `LINE`/`CIRCLE`/`PAINT`/`DRAW` codegen is ⬜ planned |
-| **Stage** | Emitter + runtime |
-| **Source** | `CodeGen/CodeGenerator.Extras.cs`, `Runtime/DosRuntime.*` |
+| **Stage** | Runtime |
+| **Source** | `Runtime/DosRuntime.Misc.cs` — `rt_pset`/`rt_point` (direct `A000` writes), reached as runtime calls from `IrLowering`; LINE, CIRCLE and PAINT in `Runtime/DosRuntime.Graphics.cs` |
 | **Gate** | `SCREEN 13` |
-| **Verified by** | pixel readback through `POINT`; the screen-capture oracle |
+| **Verified by** | `LineStatementTests` |
 | **Related** | [R0001](R0001-fast-text-output.md), [O0004](O0004-strength-reduction.md), [O0064](O0064-lea-fusion.md) |
 
 ## What it is

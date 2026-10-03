@@ -3,7 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Done — folds in the integer-materializing paths (assignments, bitwise, self-operand); a `+ 0` buried in a float-typed subexpression rides the FPU (and is folded by the IR tier for C/LLVM) |
-| **Stage** | Emitter |
+| **Stage** | IR middle end |
+| **Verified by** | `IrPassesTests.InstCombine_AppliesAlgebraicIdentities` |
+| **Source** | `Ir/Passes/InstCombine.cs` — `SimplifyBinary` |
 | **Related** | [O0043](O0043-ir-instcombine.md), [O0001](O0001-constant-folding.md), [O0016](O0016-value-fact-analysis.md), [O0077](O0077-negation-idioms.md) |
 
 ## The idea

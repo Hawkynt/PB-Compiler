@@ -3,7 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Done (this is the emitter view of the [O0062](O0062-loop-restructuring.md) rotation, implemented on every FOR path) |
-| **Stage** | Emitter |
+| **Stage** | x86-16 back end |
+| **Verified by** | `MachineLoopRotationTests.Run_GivenCanonicalPreTestedLoop_*`; `OptimizerTests.Emit_GivenRegisterCounterFor_*BottomTest` |
+| **Source** | `Backend/MachineLoopRotation.cs` |
 | **Related** | [O0062](O0062-loop-restructuring.md) (rotation), [O0112](O0112-countdown-loop.md), [O0131](O0131-exact-trip-count.md) |
 
 ## The idea

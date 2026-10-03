@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (2026-08) |
-| **Stage** | Emitter, on the value lattice |
-| **Source** | `CodeGen/CodeGenerator.cs` — `ModularTreeBits`, `RangeBits` |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/IntegerRecovery.cs` — rewrites the floating multiply tree PB evaluates back to an integer multiply (by modular arithmetic, not the range proof first described here) |
 | **Gate** | `--optimize` |
-| **Verified by** | scenario `BoundedMultiplyStaysOffTheFpu` |
+| **Verified by** | battery `BoundedMultiplyStaysOffTheFpu` |
 | **Split from** | [O0016](O0016-value-fact-analysis.md) |
 
 ## What it is

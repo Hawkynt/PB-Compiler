@@ -643,6 +643,7 @@ public sealed class BackendCoverageTests {
     "DIFF127.BAS",   // GET / PUT of a STRING - the heap bytes, not the handle cell
     "DIFF128.BAS",   // a member of an INDEXED UDT array field - ctx.Slots(i).Id
     "DIFF129.BAS",   // GET / PUT of a FIXED-WIDTH record field - the characters are IN the record
+    "DIFF130.BAS",   // counted loops left early: EXIT FOR, GOTO out, EXIT SUB - no closed form
     // EXIT FAR: the unwind point and the jump through it, as intrinsics the back end expands inline;
     // both the module body and its near numeric BYREF procedure route.
     "DIFF14.BAS",
@@ -836,6 +837,7 @@ public sealed class BackendCoverageTests {
     "DIFF127.BAS",   // GET / PUT of a STRING - the heap bytes, not the handle cell
     "DIFF128.BAS",   // a member of an INDEXED UDT array field - ctx.Slots(i).Id
     "DIFF129.BAS",   // GET / PUT of a FIXED-WIDTH record field - the characters are IN the record
+    "DIFF130.BAS",   // counted loops left early: EXIT FOR, GOTO out, EXIT SUB - no closed form
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: segment stepping and the EMS page window

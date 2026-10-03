@@ -25,7 +25,7 @@ namespace PowerBasic.Compiler.Ir;
 public static class IrUnitFile {
 
   private static ReadOnlySpan<byte> Magic => "PBIRUNIT"u8;
-  private const int Version = 1;
+  private const int Version = 2;
 
   private enum Ref : byte { Instruction, Argument, Global, Function, Int, Float, Null, BlockAddress, FarEntry, Undef }
 
@@ -246,8 +246,10 @@ public static class IrUnitFile {
           w.Write(asm.Text);
           w.Write(asm.Routable);
           w.Write(asm.Names.Count);
-          foreach (var name in asm.Names)
-            w.Write(name);
+          for (var i = 0; i < asm.Names.Count; ++i) {
+            w.Write(asm.Names[i]);
+            w.Write(asm.Sizes[i]);
+          }
           break;
         case IrGep gep:
           w.Write((byte)Op.Gep);
@@ -524,12 +526,15 @@ public static class IrUnitFile {
           var text = r.ReadString();
           var routable = r.ReadBoolean();
           var names = new string[r.ReadInt32()];
-          for (var i = 0; i < names.Length; ++i)
+          var sizes = new int[names.Length];
+          for (var i = 0; i < names.Length; ++i) {
             names[i] = r.ReadString();
+            sizes[i] = r.ReadInt32();
+          }
           build = operands => {
             var asm = new IrInlineAsm(text) { Routable = routable };
             for (var i = 0; i < names.Length; ++i)
-              asm.Bind(names[i], operands[i]);
+              asm.Bind(names[i], operands[i], sizes[i]);
             return asm;
           };
           break;

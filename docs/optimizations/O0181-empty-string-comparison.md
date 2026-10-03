@@ -3,7 +3,9 @@
 | | |
 |---|---|
 | **Status** | ✅ Done |
-| **Stage** | Emitter |
+| **Stage** | IR middle end |
+| **Verified by** | battery `LenZeroIsHandleTest` |
+| **Source** | `Ir/Passes/StringEmptinessTest.cs` (`strempty`) |
 | **IR** | ✅ `Ir/Passes/StringEmptinessTest.cs` — registered as `strempty` in `IrPassManager.Standard()`. A PB string is empty exactly when its handle is null, since the allocator answers a zero-length request with handle 0, so both spellings the language offers (`s$ = ""` and `LEN(s$) = 0`) reduce to the same null test and compile to the same image. Restricted to a BORROW of storage: a borrow can simply not be taken, whereas a temporary is a handle someone must release, and inserting the free would give back what the test just saved |
 | **Related** | [O0178](O0178-empty-string-simplification.md), [O0180](O0180-string-length-caching.md), [O0031](O0031-branch-fusion.md) |
 

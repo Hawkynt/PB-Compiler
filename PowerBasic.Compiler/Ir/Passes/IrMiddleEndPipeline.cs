@@ -59,6 +59,7 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("unroll", (fn, _) => Conservative(() => LoopUnroll.Run(fn, runtimeUnrolling: optimizeForSpeed)))
     .InFunctionPhase(IrMiddleEndPhase.ScalarSimplification)
     .AddAnalyzed("instcombine", (fn, _) => Conservative(() => InstCombine.Run(fn)))
+    .AddAnalyzed("knownbits", KnownBitsSimplify.Run)
     .AddAnalyzedWhen(optimizeForSpeed, "demandedbits", DemandedBits.Run)
     .AddAnalyzed("sccp", (fn, _) => Conservative(() => Sccp.Run(fn)))
     .AddAnalyzed("correlate", CorrelatedValueProp.Run)
@@ -232,13 +233,20 @@ public static class IrMiddleEndPipeline {
   /// Runs the hosted C/LLVM middle end. Optional parallel-loop preparation stays ahead of Standard,
   /// while final inlining and whole-program DCE stay after the same full-pipeline replay they had before.
   /// </summary>
+  /// <param name="portableRuntime">
+  /// Whether the module runs on the portable runtime (<c>Runtime/Portable</c>) - x86-32 and x64 - whose
+  /// constant-needle searches, number printing and string entries the runtime-aware passes target, as
+  /// they target the DOS runtime's in <see cref="RunNativeModule"/>. The C and LLVM writers link
+  /// <c>runtime/pbc_rt.h</c> instead, which has no such searches.
+  /// </param>
   public static void RunHostedModule(
       IrModule module,
       bool optimize,
       bool optimizeForSpeed = false,
       bool enableFpLookupTables = false,
       bool recoverIntegerArithmetic = false,
-      bool parallelLoops = false) {
+      bool parallelLoops = false,
+      bool portableRuntime = false) {
     ArgumentNullException.ThrowIfNull(module);
 
     var pipeline = optimize
@@ -262,6 +270,24 @@ public static class IrMiddleEndPipeline {
     Inliner.Run(module);
     pipeline.RunOnModule(module);
     pipeline.RunOnModule(module);
+
+    if (portableRuntime) {
+      ConstantNumericPrint.Run(module);
+      ConstantInstrSpecialization.Run(module);
+      StringStackPromotion.Run(module);
+      var flat = new TargetCost(CpuTier.I80386, optimizeForSpeed ? CostObjective.Speed : CostObjective.Balanced);
+      foreach (var function in module.Functions)
+        if (!function.IsDeclaration)
+          MemoryRoutineSpecialization.Run(function, flat);
+    }
+
+    // SELECT CASE back together as a switch, for every writer and back end: each renders IrSwitch,
+    // and which dispatch shape it becomes is theirs to choose
+    foreach (var function in module.Functions)
+      if (!function.IsDeclaration && SwitchFormation.Run(function) > 0) {
+        SimplifyCfg.Run(function);
+        Dce.Run(function);
+      }
     GlobalDce.Run(module);
   }
 

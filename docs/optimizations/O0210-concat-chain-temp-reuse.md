@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented |
-| **Stage** | Emitter + string runtime |
-| **Source** | `rt_strcatlit` / `rt_strcatvar` reused at chain nodes |
+| **Stage** | IR middle end + string runtime |
+| **Source** | `Ir/Passes/StringAppendInPlace.cs` (left operand a fresh concatenation) |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF97.BAS` |
+| **Verified by** | none asserts it yet |
 | **Split from** | [O0009](O0009-string-temp-economy.md) |
 
 ## What it is

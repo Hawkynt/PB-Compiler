@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (16- and 32-bit add/subtract) |
-| **Stage** | Emitter, on the value lattice |
-| **Source** | `CodeGen/CodeGenerator.cs` — `ProvablyNoOverflow`, `ProvablyNoOverflow32` |
+| **Stage** | IR middle end |
+| **Source** | `Ir/Passes/RangeCheckElim.cs` — the overflow compare decided by `IrRangeAnalysis` |
 | **Gate** | `--optimize` + `$ERROR OVERFLOW ON` |
-| **Verified by** | `tests/diff/DIFF79.BAS` (16-bit), `DIFF87.BAS` (32-bit) |
+| **Verified by** | `RangeCheckElimTests.Elim_GivenBoundedCounterAdd_*`, `Elim_GivenBoundedLongCounterSubtract_*` |
 | **Split from** | [O0016](O0016-value-fact-analysis.md) |
 
 ## What it is

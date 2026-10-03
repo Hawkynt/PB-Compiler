@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (constant counts 1..31) |
-| **Stage** | Emitter |
-| **Source** | `CodeGen` — the QUAD shift path |
+| **Stage** | x86-16 back end |
+| **Source** | `Backend/InstructionSelector.cs` — `SelectQwordShift` (`SHLD`/`SHRD`) |
 | **Gate** | `--optimize` + `$CPU 80386` |
-| **Verified by** | `tests/diff/DIFF73.BAS` |
+| **Verified by** | `OptimizerTests.Emit_GivenQuadShiftUnderCpu386_WhenPb36_ThenDoublePrecisionShld` |
 | **Split from** | [C0001](C0001-386-codegen.md) |
 
 ## What it is

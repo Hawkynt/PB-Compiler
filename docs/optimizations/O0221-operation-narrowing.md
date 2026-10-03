@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Status** | ✅ Implemented (2026-08) |
-| **Stage** | Emitter, on the value lattice |
-| **Source** | `CodeGen/CodeGenerator.cs` — `NarrowRangeOf` |
+| **Stage** | IR middle end (16-bit native targets) |
+| **Source** | `Ir/Passes/ProvenIntegerNarrowing.cs` (`narrow-proven`) |
 | **Gate** | `--optimize` |
-| **Verified by** | `tests/diff/DIFF112.BAS`, `OptimizerTests` |
+| **Verified by** | battery `LongCompareNarrowedToWord`; `OptimizerTests.Emit_GivenDwordMultiplyRangeKnown_WhenPb36_ThenNarrowedTo16BitMul` |
 | **Split from** | [O0016](O0016-value-fact-analysis.md) |
 
 ## What it is
