@@ -222,6 +222,71 @@ public sealed class InlineAsmLiftingTests {
       ! POP f2%
       PRINT HEX$(a&); b%; c&; HEX$(f1% AND &H08C1); " "; HEX$(f2% AND &H08C1)
       """),
+    ("divide", """
+      DIM q&, r&, q2%, r2%, q3%, n&
+      n& = -1000003
+      ! MOV EAX, 1000000007
+      ! MOV EDX, 2
+      ! MOV ECX, 65537
+      ! DIV ECX
+      ! MOV q&, EAX
+      ! MOV r&, EDX
+      ! MOV AX, -30000
+      ! CWD
+      ! MOV CX, 7
+      ! IDIV CX
+      ! MOV q2%, AX
+      ! MOV r2%, DX
+      ! MOV AX, 1000
+      ! MOV BL, 9
+      ! DIV BL
+      ! MOV q3%, AX
+      ! MOV EAX, n&
+      ! CDQ
+      ! MOV ECX, 10
+      ! IDIV ECX
+      ! MOV n&, EDX
+      PRINT q&; r&; q2%; r2%; HEX$(q3%); n&
+      """),
+    ("count-and-bmi", """
+      DIM p&, a&, d&, e&, z&, l&, m&, k&, s1&, s2&, s3&, ro&, hi&, lo&
+      ! MOV EBX, &H0F0F1234
+      ! POPCNT EAX, EBX
+      ! MOV p&, EAX
+      ! MOV ECX, &H00FF00F0
+      ! ANDN EAX, EBX, ECX
+      ! MOV a&, EAX
+      ! PDEP EAX, EBX, ECX
+      ! MOV d&, EAX
+      ! PEXT EAX, EBX, ECX
+      ! MOV e&, EAX
+      ! MOV EDX, 12
+      ! BZHI EAX, EBX, EDX
+      ! MOV z&, EAX
+      ! BLSR EAX, EBX
+      ! MOV l&, EAX
+      ! BLSMSK EAX, ECX
+      ! MOV m&, EAX
+      ! BLSI EAX, ECX
+      ! MOV k&, EAX
+      ! MOV EDX, 36
+      ! SHLX EAX, EBX, EDX
+      ! MOV s1&, EAX
+      ! MOV EDX, 4
+      ! SHRX EAX, EBX, EDX
+      ! MOV s2&, EAX
+      ! MOV ESI, -256
+      ! SARX EAX, ESI, EDX
+      ! MOV s3&, EAX
+      ! RORX EAX, EBX, 8
+      ! MOV ro&, EAX
+      ! MOV EDX, -2
+      ! MULX ESI, EDI, EBX
+      ! MOV hi&, ESI
+      ! MOV lo&, EDI
+      PRINT p&; HEX$(a&); " "; HEX$(d&); " "; HEX$(e&); " "; HEX$(z&); " "; HEX$(l&); " "; HEX$(m&); " "; HEX$(k&)
+      PRINT HEX$(s1&); " "; HEX$(s2&); " "; HEX$(s3&); " "; HEX$(ro&); " "; HEX$(hi&); " "; HEX$(lo&)
+      """),
     ("flags-and-conditions", """
       DIM lo&, hi&, m&, c&, k%
       ! MOV EAX, -1
@@ -615,18 +680,58 @@ public sealed class InlineAsmLiftingTests {
       Is.EqualTo(Vice.Normalize("7F800000 FF800000 FFC00000 FFC00000 7FF00000 0\n")));
   }
 
+  /// <summary>LZCNT and TZCNT, which the 8086's emulation takes only for a 386 target, with the zero source each counts as the full width.</summary>
+  [TestCase("x86-32")]
+  [TestCase("x64")]
+  [TestCase("6502")]
+  public void Run_GivenLzcntAndTzcnt_ThenTheyCountAsTheHardwareCounts(string platform) {
+    const string source = """
+      DIM l&, t&, lz%, tz%, z&, c%
+      ! MOV EBX, &H00012300
+      ! LZCNT EAX, EBX
+      ! MOV l&, EAX
+      ! TZCNT EAX, EBX
+      ! MOV t&, EAX
+      ! MOV BX, 0
+      ! LZCNT AX, BX
+      ! MOV lz%, AX
+      ! SETC CL
+      ! MOV CH, 0
+      ! MOV c%, CX
+      ! MOV EBX, 0
+      ! TZCNT EAX, EBX
+      ! MOV z&, EAX
+      ! MOV BX, &H8000
+      ! TZCNT AX, BX
+      ! MOV tz%, AX
+      PRINT l&; t&; lz%; c%; z&; tz%
+      """;
+    Assert.That(Vice.Normalize(FlatTargets.Run(platform, source)), Is.EqualTo(Vice.Normalize(" 15  8  16  1  32  15 \n")));
+  }
+
+  /// <summary>A zero divisor, or a quotient too wide for its register, is the processor's divide error: error 11, as a PowerBASIC program reports it.</summary>
+  [TestCase("x86-32", "! MOV ECX, 0\n! DIV ECX")]
+  [TestCase("x64", "! MOV AX, 1000\n! MOV CL, 2\n! DIV CL")]
+  [TestCase("6502", "! MOV AX, -32768\n! CWD\n! MOV BX, -1\n! IDIV BX")]
+  public void Run_GivenADivideError_ThenItIsError11(string platform, string division) {
+    var source = "DIM a&\nPRINT \"before\"\n! MOV EAX, 100\n" + division + "\n! MOV a&, EAX\nPRINT a&\n";
+    var output = Vice.Normalize(FlatTargets.Run(platform, source));
+    Assert.That(output, Does.StartWith("before"));
+    Assert.That(output, Does.Contain("11"));
+  }
+
   [Test]
   public void Compile_GivenAnInstructionNotLiftedYet_ThenItIsDeclinedByName() {
     var work = Directory.CreateTempSubdirectory("pbc-lift-");
     try {
       var path = Path.Combine(work.FullName, "PROG.BAS");
-      File.WriteAllText(path, "DIM a&\n! MOV EAX, 1\n! MOV ECX, 2\n! DIV ECX\n! MOV a&, EAX\nPRINT a&\n");
+      File.WriteAllText(path, "DIM a&\n! MOV EAX, 1\n! MOV ECX, 2\n! BTS EAX, ECX\n! MOV a&, EAX\nPRINT a&\n");
       var stderr = new StringWriter();
       var code = PowerBasic.Compiler.Cli.Driver.Run(["--dialect", "pb36", "--platform", "x64", path], TextWriter.Null, stderr);
 
       Assert.Multiple(() => {
         Assert.That(code, Is.Not.Zero);
-        Assert.That(stderr.ToString(), Does.Contain("'DIV' has no IR lifting yet"));
+        Assert.That(stderr.ToString(), Does.Contain("'BTS' has no IR lifting yet"));
       });
     } finally {
       work.Delete(recursive: true);

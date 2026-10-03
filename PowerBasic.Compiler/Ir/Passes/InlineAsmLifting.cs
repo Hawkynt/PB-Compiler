@@ -34,7 +34,10 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <c>ADD</c>, <c>ADC</c>, <c>SUB</c>, <c>SBB</c>, <c>CMP</c>, <c>AND</c>, <c>OR</c>, <c>XOR</c>,
 /// <c>TEST</c>, <c>NOT</c>, <c>NEG</c>, <c>INC</c>, <c>DEC</c>, <c>SHL</c>/<c>SAL</c>, <c>SHR</c>,
 /// <c>SAR</c>, <c>MUL</c>, <c>IMUL</c> (one, two and three operands), <c>MOVZX</c>, <c>MOVSX</c>,
-/// <c>XCHG</c>, <c>BSWAP</c>, <c>BSF</c>, <c>BSR</c>, <c>CLC</c>, <c>STC</c>, <c>CMC</c>, <c>JMP</c>,
+/// <c>XCHG</c>, <c>BSWAP</c>, <c>BSF</c>, <c>BSR</c>, <c>CBW</c>, <c>CWDE</c>, <c>CWD</c>, <c>CDQ</c>,
+/// <c>DIV</c> and <c>IDIV</c> (a divide error is BASIC's error 11), <c>POPCNT</c>, <c>LZCNT</c>,
+/// <c>TZCNT</c>, BMI1's <c>ANDN</c>, <c>BLSI</c>, <c>BLSR</c>, <c>BLSMSK</c> and BMI2's <c>BZHI</c>,
+/// <c>PDEP</c>, <c>PEXT</c>, <c>SHLX</c>, <c>SHRX</c>, <c>SARX</c>, <c>RORX</c>, <c>MULX</c>, <c>CLC</c>, <c>STC</c>, <c>CMC</c>, <c>JMP</c>,
 /// <c>Jcc</c>, <c>SETcc</c>, <c>CMOVcc</c>, <c>PUSH</c>, <c>POP</c>, <c>PUSHF(D)</c>, <c>POPF(D)</c>,
 /// <c>NOP</c>; MMX
 /// <c>MOVD</c>, <c>MOVQ</c>, <c>PADDB/W/D/Q</c>, <c>PSUBB/W/D/Q</c>, <c>PAND</c>, <c>PANDN</c>, <c>POR</c>,
@@ -200,6 +203,27 @@ public static class InlineAsmLifting {
         case "MUL": return this.WideMultiply(operands, IrCastOp.ZExt);
         case "IMUL" when operands.Count == 1: return this.WideMultiply(operands, IrCastOp.SExt);
         case "IMUL": return this.TruncatingMultiply(operands);
+        case "CBW": return this.SignExtendAccumulator(1, into: null);
+        case "CWDE": return this.SignExtendAccumulator(2, into: null);
+        case "CWD": return this.SignExtendAccumulator(2, into: Reg.EDX);
+        case "CDQ": return this.SignExtendAccumulator(4, into: Reg.EDX);
+        case "DIV": return this.Divide(operands, signed: false);
+        case "IDIV": return this.Divide(operands, signed: true);
+        case "POPCNT": return this.Count(operands, Counting.Population);
+        case "LZCNT": return this.Count(operands, Counting.LeadingZeros);
+        case "TZCNT": return this.Count(operands, Counting.TrailingZeros);
+        case "ANDN": return this.ThreeOperand(operands, (a, b, t) => this.Add(new IrBinary(IrBinaryOp.And, this.Add(new IrBinary(IrBinaryOp.Xor, a, new IrConstantInt(t, -1))), b)), FlagRule.Logic);
+        case "BLSI": return this.LowestBit(operands, (v, t) => this.Add(new IrBinary(IrBinaryOp.And, v, this.Add(new IrBinary(IrBinaryOp.Sub, new IrConstantInt(t, 0), v)))), carryWhenZero: false);
+        case "BLSR": return this.LowestBit(operands, (v, t) => this.Add(new IrBinary(IrBinaryOp.And, v, this.Add(new IrBinary(IrBinaryOp.Sub, v, new IrConstantInt(t, 1))))), carryWhenZero: true);
+        case "BLSMSK": return this.LowestBit(operands, (v, t) => this.Add(new IrBinary(IrBinaryOp.Xor, v, this.Add(new IrBinary(IrBinaryOp.Sub, v, new IrConstantInt(t, 1))))), carryWhenZero: true);
+        case "BZHI": return this.ZeroHighBits(operands);
+        case "PDEP": return this.ThreeOperand(operands, (a, b, t) => this.Deposit(a, b), null);
+        case "PEXT": return this.ThreeOperand(operands, (a, b, t) => this.Extract(a, b), null);
+        case "SHLX": return this.ThreeOperand(operands, (a, b, t) => this.Add(new IrBinary(IrBinaryOp.Shl, a, this.ShiftCount(b))), null);
+        case "SHRX": return this.ThreeOperand(operands, (a, b, t) => this.Add(new IrBinary(IrBinaryOp.LShr, a, this.ShiftCount(b))), null);
+        case "SARX": return this.ThreeOperand(operands, (a, b, t) => this.Add(new IrBinary(IrBinaryOp.AShr, a, this.ShiftCount(b))), null);
+        case "RORX": return this.RotateRight(operands);
+        case "MULX": return this.MultiplyNoFlags(operands);
         case "BSF": return this.BitScan(operands, forward: true);
         case "BSR": return this.BitScan(operands, forward: false);
         case "PUSH": return this.Push(operands);
@@ -605,6 +629,230 @@ public static class InlineAsmLifting {
       return true;
     }
 
+    /// <summary>
+    /// DIV/IDIV: AX, DX:AX or EDX:EAX divided by the operand, quotient and remainder in AL/AH, AX/DX or
+    /// EAX/EDX. A zero divisor or a quotient too wide for its register is the processor's divide error,
+    /// which a PowerBASIC program reports as error 11.
+    /// </summary>
+    private bool Divide(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, bool signed) {
+      if (operands.Count != 1)
+        throw new NotLiftableException("expects one operand");
+      var source = this.SizedOperand(operands[0]);
+      var bytes = source.Bytes;
+      var narrow = Integer(bytes);
+      var wide = Integer(bytes * 2);
+      var extend = signed ? IrCastOp.SExt : IrCastOp.ZExt;
+      var divisor = this.Read(source, bytes);
+      IrValue dividend;
+      if (bytes == 1)
+        dividend = this.Read(new GeneralPlace(registers.General(Reg.EAX), 2, 0), 2);
+      else {
+        var high = this.Widen(this.Read(new GeneralPlace(registers.General(Reg.EDX), bytes, 0), bytes), IrCastOp.ZExt, wide);
+        var low = this.Widen(this.Read(new GeneralPlace(registers.General(Reg.EAX), bytes, 0), bytes), IrCastOp.ZExt, wide);
+        dividend = this.Add(new IrBinary(IrBinaryOp.Or, this.Add(new IrBinary(IrBinaryOp.Shl, high, new IrConstantInt(wide, bytes * 8))), low));
+      }
+      var wideDivisor = this.Widen(divisor, extend, wide);
+      var byZero = this.Compare(IrCmpPred.Eq, divisor, new IrConstantInt(narrow, 0));
+      // the one signed overflow a division can make in its own width - the most negative dividend over
+      // -1 - is out of every narrow register's range as well, so testing the wide quotient covers it
+      var minimum = new IrConstantInt(wide, bytes * 16 >= 64 ? long.MinValue : -(1L << (bytes * 16 - 1)));
+      IrValue wraps = signed
+        ? this.Add(new IrBinary(IrBinaryOp.And, this.Compare(IrCmpPred.Eq, dividend, minimum),
+            this.Compare(IrCmpPred.Eq, wideDivisor, new IrConstantInt(wide, -1))))
+        : IrBuilder.ConstBool(false);
+      var safeDivisor = this.Add(new IrSelect(this.Add(new IrBinary(IrBinaryOp.Or, byZero, wraps)), new IrConstantInt(wide, 1), wideDivisor));
+      var quotient = this.Add(new IrBinary(signed ? IrBinaryOp.SDiv : IrBinaryOp.UDiv, dividend, safeDivisor));
+      var remainder = this.Add(new IrBinary(signed ? IrBinaryOp.SRem : IrBinaryOp.URem, dividend, safeDivisor));
+      var narrowQuotient = this.Narrow(quotient, narrow);
+      var fits = this.Compare(IrCmpPred.Eq, quotient, this.Widen(narrowQuotient, extend, wide));
+      var fault = this.Add(new IrBinary(IrBinaryOp.Or, this.Add(new IrBinary(IrBinaryOp.Or, byZero, wraps)),
+        this.Add(new IrBinary(IrBinaryOp.Xor, fits, IrBuilder.ConstBool(true)))));
+      this.RaiseWhen(fault, 11);
+      if (bytes == 1) {
+        var pair = this.Add(new IrBinary(IrBinaryOp.Or,
+          this.Add(new IrBinary(IrBinaryOp.Shl, this.Widen(this.Narrow(remainder, narrow), IrCastOp.ZExt, wide), new IrConstantInt(wide, 8))),
+          this.Widen(narrowQuotient, IrCastOp.ZExt, wide)));
+        this.Write(new GeneralPlace(registers.General(Reg.EAX), 2, 0), pair);
+      } else {
+        this.Write(new GeneralPlace(registers.General(Reg.EAX), bytes, 0), narrowQuotient);
+        this.Write(new GeneralPlace(registers.General(Reg.EDX), bytes, 0), this.Narrow(remainder, narrow));
+      }
+      return true;
+    }
+
+    /// <summary>
+    /// CBW/CWDE extend AL or AX across AX or EAX; CWD/CDQ fill DX or EDX with the sign of AX or EAX.
+    /// </summary>
+    private bool SignExtendAccumulator(int bytes, Reg? into) {
+      var value = this.Read(new GeneralPlace(registers.General(Reg.EAX), bytes, 0), bytes);
+      if (into is { } register) {
+        var sign = this.Add(new IrBinary(IrBinaryOp.AShr, value, new IrConstantInt(value.Type, bytes * 8 - 1)));
+        this.Write(new GeneralPlace(registers.General(register), bytes, 0), sign);
+      } else
+        this.Write(new GeneralPlace(registers.General(Reg.EAX), bytes * 2, 0), this.Widen(value, IrCastOp.SExt, Integer(bytes * 2)));
+      return true;
+    }
+
+    private enum Counting { Population, LeadingZeros, TrailingZeros }
+
+    /// <summary>The number of set bits, by the halving sums of a SWAR count.</summary>
+    private IrValue Population(IrValue value) {
+      var type = value.Type;
+      long Repeat(long pattern) => type.Bits == 16 ? pattern & 0xFFFF : pattern & 0xFFFFFFFF;
+      IrValue Mask(IrValue v, long m) => this.Add(new IrBinary(IrBinaryOp.And, v, new IrConstantInt(type, m)));
+      IrValue Down(IrValue v, int n) => this.Add(new IrBinary(IrBinaryOp.LShr, v, new IrConstantInt(type, n)));
+      IrValue Sum(IrValue a, IrValue b) => this.Add(new IrBinary(IrBinaryOp.Add, a, b));
+      IrValue v = this.Add(new IrBinary(IrBinaryOp.Sub, value, Mask(Down(value, 1), Repeat(0x55555555))));
+      v = Sum(Mask(v, Repeat(0x33333333)), Mask(Down(v, 2), Repeat(0x33333333)));
+      v = Mask(Sum(v, Down(v, 4)), Repeat(0x0F0F0F0F));
+      for (var shift = 8; shift < type.Bits; shift *= 2)
+        v = Sum(v, Down(v, shift));
+      return Mask(v, type.Bits == 16 ? 0x1F : 0x3F);
+    }
+
+    /// <summary>POPCNT, LZCNT and TZCNT, with the flags each leaves: ZF of the source for POPCNT, CF of the source and ZF of the count for the other two.</summary>
+    private bool Count(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, Counting counting) {
+      if (operands.Count != 2 || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 2 or 4 } destination)
+        throw new NotLiftableException("counts into a 16- or 32-bit register");
+      var bytes = destination.Bytes;
+      var type = Integer(bytes);
+      var source = this.Read(this.PlaceOf(operands[1], bytes), bytes);
+      var zero = new IrConstantInt(type, 0);
+      IrValue result;
+      switch (counting) {
+        case Counting.Population:
+          result = this.Population(source);
+          break;
+        case Counting.LeadingZeros: {
+          // smear the highest set bit downwards; what is left clear is the leading zeros
+          var smeared = source;
+          for (var shift = 1; shift < type.Bits; shift *= 2)
+            smeared = this.Add(new IrBinary(IrBinaryOp.Or, smeared, this.Add(new IrBinary(IrBinaryOp.LShr, smeared, new IrConstantInt(type, shift)))));
+          result = this.Add(new IrBinary(IrBinaryOp.Sub, new IrConstantInt(type, type.Bits), this.Population(smeared)));
+          break;
+        }
+        default: {
+          // the bits below the lowest set one, counted; a zero source counts every bit
+          var below = this.Add(new IrBinary(IrBinaryOp.And, this.Add(new IrBinary(IrBinaryOp.Xor, source, new IrConstantInt(type, -1))),
+            this.Add(new IrBinary(IrBinaryOp.Sub, source, new IrConstantInt(type, 1)))));
+          result = this.Population(below);
+          break;
+        }
+      }
+      this.Write(destination, result);
+      var sourceZero = this.Compare(IrCmpPred.Eq, source, zero);
+      if (counting == Counting.Population) {
+        this.SetFlag('Z', sourceZero);
+        this.SetFlag('C', IrBuilder.ConstBool(false));
+      } else {
+        this.SetFlag('C', sourceZero);
+        this.SetFlag('Z', this.Compare(IrCmpPred.Eq, result, zero));
+      }
+      this.SetFlag('O', IrBuilder.ConstBool(false));
+      this.SetFlag('S', IrBuilder.ConstBool(false));
+      return true;
+    }
+
+    /// <summary>The BMI three-operand shape: a 32-bit register written from a register and a register or memory operand.</summary>
+    private bool ThreeOperand(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, Func<IrValue, IrValue, IrType, IrValue> apply, FlagRule? flags) {
+      if (operands.Count != 3 || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 4 } destination)
+        throw new NotLiftableException("writes a 32-bit register from two sources");
+      var a = this.Read(this.PlaceOf(operands[1], 4), 4);
+      var b = this.Read(this.PlaceOf(operands[2], 4), 4);
+      var result = apply(a, b, IrType.I32);
+      if (flags is { } rule)
+        this.SetFlags(rule, a, b, result);
+      this.Write(destination, result);
+      return true;
+    }
+
+    /// <summary>BLSI/BLSR/BLSMSK: a function of the lowest set bit; CF says whether the source was zero (or, for BLSI, was not).</summary>
+    private bool LowestBit(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, Func<IrValue, IrType, IrValue> apply, bool carryWhenZero) {
+      if (operands.Count != 2 || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 4 } destination)
+        throw new NotLiftableException("writes a 32-bit register");
+      var source = this.Read(this.PlaceOf(operands[1], 4), 4);
+      var result = apply(source, IrType.I32);
+      this.SetFlags(FlagRule.Logic, source, source, result);
+      this.SetFlag('C', this.Compare(carryWhenZero ? IrCmpPred.Eq : IrCmpPred.Ne, source, new IrConstantInt(IrType.I32, 0)));
+      this.Write(destination, result);
+      return true;
+    }
+
+    /// <summary>BZHI: the source with the bits from the index (the low byte of the third operand) upwards cleared; CF when the index is past the width.</summary>
+    private bool ZeroHighBits(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 3 || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 4 } destination)
+        throw new NotLiftableException("writes a 32-bit register from two sources");
+      var source = this.Read(this.PlaceOf(operands[1], 4), 4);
+      var index = this.Add(new IrBinary(IrBinaryOp.And, this.Read(this.PlaceOf(operands[2], 4), 4), new IrConstantInt(IrType.I32, 0xFF)));
+      var past = this.Compare(IrCmpPred.Ugt, index, new IrConstantInt(IrType.I32, 31));
+      var mask = this.Add(new IrBinary(IrBinaryOp.Sub,
+        this.Add(new IrBinary(IrBinaryOp.Shl, new IrConstantInt(IrType.I32, 1), this.Add(new IrSelect(past, new IrConstantInt(IrType.I32, 0), index)))),
+        new IrConstantInt(IrType.I32, 1)));
+      var result = this.Add(new IrSelect(past, source, this.Add(new IrBinary(IrBinaryOp.And, source, mask))));
+      this.SetFlags(FlagRule.Logic, source, source, result);
+      this.SetFlag('C', past);
+      this.Write(destination, result);
+      return true;
+    }
+
+    private IrValue ShiftCount(IrValue count) => this.Add(new IrBinary(IrBinaryOp.And, count, new IrConstantInt(count.Type, 31)));
+
+    /// <summary>PDEP: the source's low bits placed, in order, at the positions the mask sets.</summary>
+    private IrValue Deposit(IrValue source, IrValue mask) {
+      var type = source.Type;
+      IrValue result = new IrConstantInt(type, 0);
+      IrValue taken = new IrConstantInt(type, 0);
+      for (var bit = 0; bit < 32; ++bit) {
+        var selected = this.Add(new IrBinary(IrBinaryOp.And, this.Add(new IrBinary(IrBinaryOp.LShr, mask, new IrConstantInt(type, bit))), new IrConstantInt(type, 1)));
+        var next = this.Add(new IrBinary(IrBinaryOp.And, this.Add(new IrBinary(IrBinaryOp.LShr, source, taken)), selected));
+        result = this.Add(new IrBinary(IrBinaryOp.Or, result, this.Add(new IrBinary(IrBinaryOp.Shl, next, new IrConstantInt(type, bit)))));
+        taken = this.Add(new IrBinary(IrBinaryOp.Add, taken, selected));
+      }
+      return result;
+    }
+
+    /// <summary>PEXT: the source's bits at the positions the mask sets, gathered in order into the low bits.</summary>
+    private IrValue Extract(IrValue source, IrValue mask) {
+      var type = source.Type;
+      IrValue result = new IrConstantInt(type, 0);
+      IrValue placed = new IrConstantInt(type, 0);
+      for (var bit = 0; bit < 32; ++bit) {
+        var selected = this.Add(new IrBinary(IrBinaryOp.And, this.Add(new IrBinary(IrBinaryOp.LShr, mask, new IrConstantInt(type, bit))), new IrConstantInt(type, 1)));
+        var value = this.Add(new IrBinary(IrBinaryOp.And, this.Add(new IrBinary(IrBinaryOp.LShr, source, new IrConstantInt(type, bit))), selected));
+        // placed stays below 32: it counts the mask bits seen so far
+        result = this.Add(new IrBinary(IrBinaryOp.Or, result, this.Add(new IrBinary(IrBinaryOp.Shl, value, placed))));
+        placed = this.Add(new IrBinary(IrBinaryOp.Add, placed, selected));
+      }
+      return result;
+    }
+
+    private bool RotateRight(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 3 || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 4 } destination
+          || this.PlaceOf(operands[2], 1) is not ImmediatePlace { Value: var amount })
+        throw new NotLiftableException("rotates into a 32-bit register by an immediate");
+      var source = this.Read(this.PlaceOf(operands[1], 4), 4);
+      var n = (int)(amount & 31);
+      IrValue result = n == 0 ? source : this.Add(new IrBinary(IrBinaryOp.Or,
+        this.Add(new IrBinary(IrBinaryOp.LShr, source, new IrConstantInt(IrType.I32, n))),
+        this.Add(new IrBinary(IrBinaryOp.Shl, source, new IrConstantInt(IrType.I32, 32 - n)))));
+      this.Write(destination, result);
+      return true;
+    }
+
+    /// <summary>MULX: EDX times the source, unsigned, the high half into the first operand and the low into the second; no flag changes.</summary>
+    private bool MultiplyNoFlags(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands) {
+      if (operands.Count != 3 || this.PlaceOf(operands[0], 0) is not GeneralPlace { Bytes: 4 } high
+          || this.PlaceOf(operands[1], 0) is not GeneralPlace { Bytes: 4 } low)
+        throw new NotLiftableException("multiplies into two 32-bit registers");
+      var source = this.Read(this.PlaceOf(operands[2], 4), 4);
+      var edx = this.Read(new GeneralPlace(registers.General(Reg.EDX), 4, 0), 4);
+      var product = this.Add(new IrBinary(IrBinaryOp.Mul, this.Widen(edx, IrCastOp.ZExt, IrType.I64), this.Widen(source, IrCastOp.ZExt, IrType.I64)));
+      // the low half first, so that one register named twice ends up holding the high half
+      this.Write(low, this.Narrow(product, IrType.I32));
+      this.Write(high, this.Narrow(this.Add(new IrBinary(IrBinaryOp.LShr, product, new IrConstantInt(IrType.I64, 32))), IrType.I32));
+      return true;
+    }
+
     // --- the stack ------------------------------------------------------------------------------
 
     /// <summary>The stack slot <paramref name="pointer"/> addresses.</summary>
@@ -831,9 +1079,21 @@ public static class InlineAsmLifting {
           || node.GetOperand(index) is not IrBlockAddress { Block: var target })
         throw new NotLiftableException("a jump is lifted only to a BASIC label");
       var taken = condition is { } c ? this.Holds(c) : null;
+      var (block, rest) = this.SplitHere();
+      if (taken is null)
+        block.Append(new IrBr(target));
+      else
+        block.Append(new IrCondBr(taken, target, rest));
+      return true;
+    }
+
+    /// <summary>
+    /// Ends the current block before the assembly: the assembly and everything after it move to a new
+    /// block, which the caller enters from the old one with a terminator of its own.
+    /// </summary>
+    private (IrBasicBlock Block, IrBasicBlock Continuation) SplitHere() {
       var block = node.Parent!;
-      var function = block.Parent!;
-      var rest = function.CreateBlock(block.Label + ".asm");
+      var rest = block.Parent!.CreateBlock(block.Label + ".asm");
       var moving = block.Instructions.SkipWhile(instruction => !ReferenceEquals(instruction, node)).ToList();
       foreach (var instruction in moving) {
         block.Remove(instruction);
@@ -843,11 +1103,18 @@ public static class InlineAsmLifting {
       foreach (var successor in rest.Successors.Distinct())
         foreach (var phi in successor.Phis)
           phi.RenameIncomingBlock(block, rest);
-      if (taken is null)
-        block.Append(new IrBr(target));
-      else
-        block.Append(new IrCondBr(taken, target, rest));
-      return true;
+      return (block, rest);
+    }
+
+    /// <summary>Raises BASIC error <paramref name="code"/> where <paramref name="condition"/> holds, in the shape <see cref="IrRaise"/> knows.</summary>
+    private void RaiseWhen(IrValue condition, int code) {
+      var (block, rest) = this.SplitHere();
+      var trap = block.Parent!.CreateBlock(block.Label + ".asm.trap");
+      var error = registers.Module.FindFunction("rt_error")
+        ?? registers.Module.AddFunction(new IrFunction("rt_error", IrType.Void, [new IrArgument(IrType.I32, 0)]));
+      trap.Append(new IrCall(IrType.Void, error, [new IrConstantInt(IrType.I32, code)]));
+      trap.Append(new IrUnreachable());
+      block.Append(new IrCondBr(condition, trap, rest));
     }
 
     private bool Unary(IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, Func<IrValue, IrType, IrInstruction> apply, FlagRule? flags) {

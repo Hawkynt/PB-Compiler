@@ -297,9 +297,9 @@ public sealed class EmitterNeverThrowsTests {
     // ...and IrInlineAsm, x86 text these emitters see only once InlineAsmLifting has made it IR: an
     // instruction the lifter does not know yet is declined by name.
     ("inline-asm", "--emit-c", "inline assembly",
-      "INPUT \"\", n%\n! MOV AX, n%\n! MOV CX, 3\n! DIV CX\n! MOV n%, AX\nPRINT n%\n"),
+      "INPUT \"\", n%\n! MOV AX, n%\n! MOV CX, 3\n! BTS AX, CX\n! MOV n%, AX\nPRINT n%\n"),
     ("inline-asm", "--emit-llvm", "inline assembly",
-      "INPUT \"\", n%\n! MOV AX, n%\n! MOV CX, 3\n! DIV CX\n! MOV n%, AX\nPRINT n%\n"),
+      "INPUT \"\", n%\n! MOV AX, n%\n! MOV CX, 3\n! BTS AX, CX\n! MOV n%, AX\nPRINT n%\n"),
     // CEmitter's IrCall arm - a runtime entry runtime/pbc_rt.c has no counterpart for.
     ("print-using", "--emit-c", "rt_using_field", "INPUT \"\", d#\nPRINT USING \"###.##\"; d#\n"),
     ("using-dollar", "--emit-c", "rt_capture_begin", "INPUT \"\", d#\nPRINT USING$(\"###.##\", d#)\n"),
