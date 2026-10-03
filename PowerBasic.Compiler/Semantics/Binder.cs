@@ -3909,6 +3909,9 @@ public sealed class Binder {
 
       case UnaryExpr u: {
         var operand = NumericValueType(this.BindExpression(u.Operand, scope));
+        // a wide integer negates and inverts at its own width
+        if (operand is WideIntType wideOperand)
+          return wideOperand;
         if (operand is not ScalarType)
           this.Error(u.Position, "unary operator needs a numeric operand");
         if (u.Op == UnaryOp.Not)
@@ -4071,19 +4074,47 @@ public sealed class Binder {
     return ptr; // the operator's result is the pointer type (so chaining and assignment to a pointer work)
   }
 
+  /// <summary>
+  /// A binary operator with a wide integer on at least one side. Arithmetic, <c>\</c>, <c>MOD</c> and
+  /// the bitwise operators give the wider type (the left operand's when both are as wide); a
+  /// comparison gives BASIC's INTEGER truth; a shift keeps the left operand's type and counts with
+  /// a native integer. <c>/</c> and <c>^</c> are floating-point operators and a wide integer has no
+  /// floating form, so they are refused rather than silently narrowed.
+  /// </summary>
+  private PbType BindWideBinary(BinaryExpr b, PbType left, PbType right) {
+    static bool Integral(PbType t) => t is WideIntType or ScalarType { IsFloat: false };
+    if (b.Op is BinaryOp.ShiftLeft or BinaryOp.ShiftRightArith or BinaryOp.ShiftRightLogical) {
+      if (left is not WideIntType shifted || right is not ScalarType { IsFloat: false })
+        return this.ErrorType(b.Position, "a wide-integer shift takes the wide value on the left and an integer count on the right");
+      return shifted;
+    }
+    if (!Integral(left) || !Integral(right))
+      return this.ErrorType(b.Position, "a wide integer combines only with integers (convert a floating-point value first)");
+    var wide = (left, right) switch {
+      (WideIntType l, WideIntType r) => r.ByteSize > l.ByteSize ? r : l,
+      (WideIntType l, _) => l,
+      (_, WideIntType r) => r,
+      _ => throw new InvalidOperationException("one side is wide"),
+    };
+    switch (b.Op) {
+      case BinaryOp.Add or BinaryOp.Subtract or BinaryOp.Multiply or BinaryOp.IntegerDivide or BinaryOp.Modulo
+          or BinaryOp.And or BinaryOp.Or or BinaryOp.Xor:
+        return wide;
+      case BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater or BinaryOp.LessEqual or BinaryOp.GreaterEqual:
+        return PbType.Integer;
+      default:
+        return this.ErrorType(b.Position, $"'{b.Op}' is not defined for wide integers (use \\ for division)");
+    }
+  }
+
   private PbType BindBinary(BinaryExpr b, Scope scope) {
     var left = this.BindExpression(b.Left, scope);
     var right = this.BindExpression(b.Right, scope);
 
-    // pb36 wide integers: ADD/SUBTRACT of two same-width wide values is the ADC/SBB-chain path; other
-    // ops (compare, bitwise, shift, multiply, decimal print) and mixed widths are still follow-ups
-    if (left is WideIntType lw && right is WideIntType rw) {
-      if (b.Op is BinaryOp.Add or BinaryOp.Subtract && lw.ByteSize == rw.ByteSize)
-        return lw;
-      return this.ErrorType(b.Position, "wide-integer operation not yet supported (only + and - between same-width wide values)");
-    }
+    // pb36 wide integers: the integer operators all apply, computed at the wider operand's width - a
+    // native integer on the other side is extended to it, as an assignment would extend it
     if (left is WideIntType || right is WideIntType)
-      return this.ErrorType(b.Position, "mixing a wide integer with a narrower value in an expression is not yet supported (convert explicitly)");
+      return this.BindWideBinary(b, left, right);
 
     // pb36 nullable auto-unwrap: a nullable operand in arithmetic/comparison reads its .Value
     // (the whole binary is rewritten so the .Value member's target is the original operand - no recursion)

@@ -160,10 +160,18 @@ public sealed class WideIntegerTests {
   }
 
   [Test]
-  public void Bind_GivenWideMultiply_ThenReportsNotYetSupported() {
-    // only + and - are wired; multiply/compare/etc. still diagnose at bind time rather than miscompile
-    var unit = Parser.Parse(Lexer.Tokenize("DIM a AS INT128, b AS INT128, c AS INT128\nc = a * b\n", "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+  public void Bind_GivenWideMultiplyDivideAndCompare_ThenTheyBindAtTheWiderType() {
+    var unit = Parser.Parse(Lexer.Tokenize("DIM a AS INT128, b AS INT256, c AS INT256, f%\nc = a * b \\ 7 MOD a\nf% = a < b\n", "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
-    Assert.That(model.Errors.Any(e => e.Message.Contains("wide-integer operation not yet supported")), Is.True);
+    Assert.That(model.Errors, Is.Empty);
+  }
+
+  [TestCase("c = a / b", "'Divide' is not defined for wide integers")]
+  [TestCase("c = a + 1.5", "combines only with integers")]
+  [TestCase("c = a << b", "integer count on the right")]
+  public void Bind_GivenAWideOperationWithoutAnIntegerMeaning_ThenItIsRefused(string statement, string message) {
+    var unit = Parser.Parse(Lexer.Tokenize("DIM a AS INT128, b AS INT128, c AS INT128\n" + statement + "\n", "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
+    var model = Binder.Bind(unit, Dialect.Pb36);
+    Assert.That(model.Errors.Any(e => e.Message.Contains(message)), Is.True, string.Join("; ", model.Errors));
   }
 }

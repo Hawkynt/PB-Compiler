@@ -3048,6 +3048,13 @@ public sealed partial class IrLowering {
     // value on the x87, which is the one thing MBF bits cannot be. FIX and BCD reach the same
     // formatter for the same reason: what prints is the number, not the cell.
     var printed = this._model.TypeOf(expr);
+    // a wide integer prints as its STR$ form and the space every number is followed by
+    if (printed is WideIntType wide) {
+      this.EmitIo(file, "print", "strvar", IrType.Void, [IrType.Ptr], this.LowerWideStr(expr, wide));
+      var space = this._module!.AddStringConstant([(byte)' ']);
+      this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], space, new IrConstantInt(IrType.I32, 1));
+      return;
+    }
     if (printed is MbfType mbf)
       printed = IeeeFormOf(mbf);
     printed = Valued(printed);
@@ -6160,6 +6167,8 @@ public sealed partial class IrLowering {
     // the DECLARED type picks the formatter, the STORED type the conversion into it - which for FIX
     // and BCD are not the same thing, the cell being a scaled integer or ten bytes of x87
     var stored = this._model.TypeOf(arg);
+    if (stored is WideIntType wide)
+      return this.LowerWideStr(arg, wide);
     if (Valued(stored) is not ScalarType s)
       throw new IrLoweringException("STR$ of a non-numeric value");
     // Only a SINGLE takes the seven-digit formatter. The test used to name the DOUBLE by its width
@@ -6750,6 +6759,9 @@ public sealed partial class IrLowering {
     var rightPb = this._model.TypeOf(expr.Right);
     var resultPb = this._model.TypeOf(expr);
     return expr.Op switch {
+      BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
+        or BinaryOp.LessEqual or BinaryOp.GreaterEqual when leftPb is WideIntType || rightPb is WideIntType
+        => this.LowerWideComparison(expr, resultPb),
       BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater
         or BinaryOp.LessEqual or BinaryOp.GreaterEqual => leftPb is StringType or FlexType or FixedStringType or AsciizType
           ? this.LowerStringComparison(expr, resultPb)
