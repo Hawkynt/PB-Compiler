@@ -123,7 +123,13 @@ public sealed partial class CodeGenerator {
     var unchanged = this._asm.DefineLabel();
     var loop = this._asm.DefineLabel();
     var finish = this._asm.DefineLabel();
-    this._asm.Jcxz(unchanged);
+    // JCXZ only reaches 127 bytes and the expansion below - the flag merge and the write-back of a
+    // register or memory place - can be longer, so a zero count hops through a near JMP
+    var zero = this._asm.DefineLabel();
+    this._asm.Jcxz(zero);
+    this._asm.Jmp(loop);
+    this._asm.MarkLabel(zero);
+    this._asm.Jmp(unchanged);
 
     this._asm.MarkLabel(loop);
     if (mnemonic is "SHL" or "SAL") {

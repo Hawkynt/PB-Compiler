@@ -145,6 +145,12 @@ public sealed class Cpu8086 {
   /// instructions). <paramref name="exactFloatingPoint"/> selects bit-exact software x87 arithmetic;
   /// leave it off for corpus throughput when IEEE64 observation is sufficient.
   /// </summary>
+  /// <summary>
+  /// How many instructions carried the 386's operand-size prefix - none in a program built for
+  /// <c>$CPU 8086</c>, where every 32-bit operation must be emulated on 16-bit instructions.
+  /// </summary>
+  public int OperandSizePrefixes { get; private set; }
+
   public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000, bool exactFloatingPoint = false) {
     var cpu = new Cpu8086(exactFloatingPoint);
     cpu._executables["T.EXE"] = exe;                    // the test harness runs each image under this DOS name
@@ -563,6 +569,7 @@ public sealed class Cpu8086 {
     }
 
     if (operand32) {
+      ++this.OperandSizePrefixes;
       this.StepDword(opcode, repeat);
       return;
     }
