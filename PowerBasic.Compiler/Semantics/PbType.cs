@@ -131,6 +131,9 @@ public sealed record ProcPtrType(IReadOnlyList<PbType> ParameterTypes, PbType? R
 /// <summary>One UDT/UNION field with its resolved offset.</summary>
 public sealed record UdtField(string Name, PbType Type, int Offset, int ElementCount = 1) {
   public int TotalSize => this.Type.Size * this.ElementCount;
+
+  /// <summary>An array field's bounds per dimension - <c>v(1 TO 3)</c> is subscripted 1 to 3 - or null for a scalar one.</summary>
+  public IReadOnlyList<(int Lower, int Upper)>? Bounds { get; init; }
 }
 
 /// <summary>

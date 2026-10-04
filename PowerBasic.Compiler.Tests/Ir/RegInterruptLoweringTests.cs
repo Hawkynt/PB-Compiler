@@ -46,7 +46,7 @@ public sealed class RegInterruptLoweringTests {
       """, " 1234  5678 \r\n"),
     // DOS get-version (AH=30h) - the interrupt INTREG.BAS uses, and one the test CPU implements.
     // Its whole observable effect is what comes BACK in the buffer, which is the half of the
-    // contract a write-only test would miss. The test CPU reports DOS 6.
+    // contract a write-only test would miss. The test CPU reports DOS 5, as DOSBox does.
     ("interrupt returns through the buffer", """
       REG 1, &H3000
       CALL INTERRUPT &H21
@@ -54,7 +54,7 @@ public sealed class RegInterruptLoweringTests {
       ver = REG(1) AND &HFF
       PRINT ver
       END
-      """, " 6 \r\n"),
+      """, " 5 \r\n"),
     ("indices through a variable", """
       DIM i AS INTEGER
       FOR i = 1 TO 6
@@ -106,7 +106,7 @@ public sealed class RegInterruptLoweringTests {
       PRINT REG(1) AND &HFF
       END
       """;
-    Assert.That(Run(source), Is.EqualTo(" 6 \r\n"), "the test CPU reports DOS 6");
+    Assert.That(Run(source), Is.EqualTo(" 5 \r\n"), "the test CPU reports DOS 5, as DOSBox does");
     Assert.That(Run(source).Trim(), Is.Not.EqualTo("0"),
       "a version of zero means the buffer never came back");
   }

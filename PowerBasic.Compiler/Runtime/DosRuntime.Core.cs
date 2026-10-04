@@ -417,6 +417,24 @@ public sealed partial class DosRuntime {
     asm.MarkLabel("rt_err_io");
     asm.Mov(Reg.AX, 57);
     asm.Jmp(asm.Lbl("rt_raise"));
+    // a file number that is out of range or names no open file: 52, bad file name or number
+    asm.MarkLabel("rt_err_badfile");
+    asm.Mov(Reg.AX, 52);
+    asm.Jmp(asm.Lbl("rt_raise"));
+    // a DOS function's error code in AX, as the BASIC error genuine PBC 3.50 raises for it: file not
+    // found 53, path not found 76, too many files 67, access denied 75, bad handle 52; anything else
+    // is the device I/O error, 57
+    asm.MarkLabel("rt_err_dos");
+    foreach (var (dos, basic) in (ReadOnlySpan<(int, int)>)[(2, 53), (3, 76), (4, 67), (5, 75), (6, 52), (16, 75), (18, 53)]) {
+      var other = asm.DefineLabel();
+      asm.Cmp(Reg.AX, dos);
+      asm.Jne(other);
+      asm.Mov(Reg.AX, basic);
+      asm.Jmp(asm.Lbl("rt_raise"));
+      asm.MarkLabel(other);
+    }
+    asm.Mov(Reg.AX, 57);
+    asm.Jmp(asm.Lbl("rt_raise"));
   }
 
   private void EmitErrorMessages(Assembler asm) {

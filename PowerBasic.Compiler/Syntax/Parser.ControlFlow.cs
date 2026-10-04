@@ -176,7 +176,10 @@ public sealed partial class Parser {
       return new(pos, this.ParseExpression(), null, bare);
     }
 
-    if (this.TryMatchKeyword("IS")) {
+    // PowerBASIC has no IS here: CASE > x is its relation, and CASE IS > x names a variable IS -
+    // zero, unassigned - so the case is the value of (IS > x), which genuine PBC 3.0 and 3.5 both
+    // compile and which matches nothing the program meant (docs/QUIRKS.md)
+    if (this._dialect is not (>= Dialect.Pb20 and <= Dialect.Pb36) && this.TryMatchKeyword("IS")) {
       var comparison = this.Current.Kind switch {
         TokenKind.Equals => CaseComparison.Equal,
         TokenKind.NotEquals => CaseComparison.NotEqual,

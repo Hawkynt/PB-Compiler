@@ -171,7 +171,7 @@ public sealed class Mos6502ProgramTests {
       PRINT x&; y%; FIX(k - 2.7); INT(k - 2.7); CINT(k + 3.5)
       """);
 
-    Assert.That(output, Is.EqualTo(" .3333333  .666666666666667 -2.5  1.5E-07  .0001 \n 8  2 -2 -3  4 "));
+    Assert.That(output, Is.EqualTo(" .3333333  .666666666666667 -2.5  .00000015  .0001 \n 8  2 -2 -3  4 "));
   }
 
   private static readonly double[] MathArguments = [0.5, 1, 2, 3, 10, 0.001, 123.456, 1000, 7.25, 0.1];
@@ -223,7 +223,7 @@ public sealed class Mos6502ProgramTests {
     var data = string.Join(", ", MathArguments.Select(value => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
     // every math group, and text a READ value nothing can predict keeps from being folded away:
     // together some 41 KB, between the ROM's $A000 and the soft stack's $C000
-    var text = string.Concat(Enumerable.Range(0, 40).Select(line => $"    PRINT \"line {line:000} of the text that only takes room\"\n"));
+    var text = string.Concat(Enumerable.Range(0, 70).Select(line => $"    PRINT \"line {line:000} of the text that only takes room\"\n"));
     var (code, error, prg) = this.Build($"""
       k = INP(&H60)
       FOR i = 1 TO 3
@@ -400,7 +400,7 @@ public sealed class Mos6502ProgramTests {
     var result = Cpu6502.RunC64Program(prg);
 
     Assert.Multiple(() => {
-      Assert.That(result.Output.TrimEnd('\n'), Is.EqualTo(" 1  2  513 \n 519 "), "DEF SEG selects nothing on a flat machine");
+      Assert.That(result.Output.TrimEnd('\n'), Is.EqualTo(" 1  2  513 \n 513 "), "DEF SEG = 1234 moves the window, as it does on DOS");
       Assert.That(result.Memory[0xD020], Is.EqualTo(2), "the VIC-II's border colour register");
     });
   }

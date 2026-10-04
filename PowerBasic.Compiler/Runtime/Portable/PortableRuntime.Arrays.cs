@@ -16,11 +16,11 @@ public static partial class PortableRuntime {
     private IrFunction? _allocateArray;
 
     private Action<IrWriter>? ArrayRoutine(string name) => name switch {
-      "rt_arr_alloc" => w => w.B.Ret(this.Far(w, w.B.Call(IrType.Ptr, this.AllocateArray, w.ToIndex(w.Function.Parameters[0]), IrBuilder.ConstBool(true)))),
-      "rt_arr_alloc_nz" => w => w.B.Ret(this.Far(w, w.B.Call(IrType.Ptr, this.AllocateArray, w.ToIndex(w.Function.Parameters[0]), IrBuilder.ConstBool(false)))),
+      "rt_arr_alloc" => w => w.B.Ret(this.Far(w, w.B.Call(IrType.Ptr, this.AllocateArray, this.Fitting(w, w.Function.Parameters[0]), IrBuilder.ConstBool(true)))),
+      "rt_arr_alloc_nz" => w => w.B.Ret(this.Far(w, w.B.Call(IrType.Ptr, this.AllocateArray, this.Fitting(w, w.Function.Parameters[0]), IrBuilder.ConstBool(false)))),
       "rt_arr_alloc_ptr" => w => w.B.Ret(this.Far(w, w.B.Call(IrType.Ptr, this.AllocateArray,
         this.PointerBytes(w, w.Function.Parameters[0]), IrBuilder.ConstBool(true)))),
-      "rt_arr_realloc" => w => w.B.Ret(this.Reallocate(w, w.ToIndex(w.Function.Parameters[1]), w.ToIndex(w.Function.Parameters[2]))),
+      "rt_arr_realloc" => w => w.B.Ret(this.Reallocate(w, w.ToIndex(w.Function.Parameters[1]), this.Fitting(w, w.Function.Parameters[2]))),
       "rt_arr_realloc_ptr" => w => w.B.Ret(this.Reallocate(w, this.PointerBytes(w, w.Function.Parameters[1]),
         this.PointerBytes(w, w.Function.Parameters[2]))),
       "rt_arr_free" or "rt_arr_free_ptr" => w => {
@@ -47,8 +47,23 @@ public static partial class PortableRuntime {
 
     /// <summary><c>count</c> target pointers, in bytes: the width of a pointer is the back end's to say.</summary>
     private IrValue PointerBytes(IrWriter w, IrValue count) {
-      var end = w.B.Gep(new IrNullPtr(), this.NonNegative(w, w.ToIndex(count)), IrType.Ptr);
+      var end = w.B.Gep(new IrNullPtr(), this.NonNegative(w, this.Fitting(w, count, scale: 2)), IrType.Ptr);
       return w.B.Cast(IrCastOp.PtrToInt, end, w.Index);
+    }
+
+    /// <summary>
+    /// A LONG size as the runtime's index - or error 7 when the index is narrower and the size does
+    /// not fit it, which on a 16-bit machine is any array past 32 KB (<paramref name="scale"/> times
+    /// smaller for a count of that many bytes each). Truncating it instead would allocate a sliver
+    /// and let the program write past it.
+    /// </summary>
+    private IrValue Fitting(IrWriter w, IrValue size, int scale = 1) {
+      if (size.Type.Bits <= this.Index.Bits)
+        return w.ToIndex(size);
+      var limit = ((1L << (this.Index.Bits - 1)) - 1) / scale;
+      w.If(w.Cmp(IrCmpPred.Sgt, size, IrBuilder.ConstInt(size.Type, limit)),
+        () => w.B.Call(IrType.Void, this.ErrorFunction, w.I32(7)));
+      return w.ToIndex(size);
     }
 
     /// <summary><c>rt.allocateArray(bytes, zero)</c>: at least one byte, zeroed when asked; out of room is error 7.</summary>

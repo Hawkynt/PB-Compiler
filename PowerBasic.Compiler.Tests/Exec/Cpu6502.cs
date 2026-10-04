@@ -19,7 +19,7 @@ public sealed partial class Cpu6502 {
 
   private const ushort Chrout = 0xFFD2;
   private const ushort Chrin = 0xFFCF;
-  private const ushort Sentinel = 0xFFF0;
+  private const ushort Sentinel = 0xFFF8;   // not a KERNAL entry: $FFF0 is PLOT
 
   private readonly byte[] _memory = new byte[0x10000];
   private readonly StringBuilder _output = new();
@@ -51,6 +51,10 @@ public sealed partial class Cpu6502 {
       if (cpu._pc < 0xFF81 || !cpu.Kernal())
         cpu.Step();
       ++steps;
+      // the jiffy clock at $A0-$A2: the KERNAL's IRQ bumps it sixty times a second, about every
+      // 5000 instructions of a 1 MHz 6510
+      if (steps % 5000 == 0)
+        cpu.Tick();
     }
     return new(cpu._output.ToString(), cpu._pc == Sentinel, steps, cpu._s, cpu._memory);
   }
@@ -80,6 +84,14 @@ public sealed partial class Cpu6502 {
     return new(cpu._output.ToString(), cpu._pc == Sentinel, steps, cpu._s, memory);
   }
 
+  /// <summary>One jiffy: the three-byte clock at $A0 (high) .. $A2 (low) counts up, wrapping at 24 hours as the KERNAL's does.</summary>
+  private void Tick() {
+    var jiffies = (this._memory[0xA0] << 16 | this._memory[0xA1] << 8 | this._memory[0xA2]) + 1;
+    if (jiffies >= 5_184_000)
+      jiffies = 0;
+    (this._memory[0xA0], this._memory[0xA1], this._memory[0xA2]) = ((byte)(jiffies >> 16), (byte)(jiffies >> 8), (byte)jiffies);
+  }
+
   private string _keyboard = "";
   private int _keyboardAt;
 
@@ -106,6 +118,7 @@ public sealed partial class Cpu6502 {
     switch (character) {
       case 0x0D: this._output.Append('\n'); break;
       case 0x0E: break;
+      case 0x93: break;                                // CLR: the screen clears, the teletype stream has nothing to show
       case >= 0x41 and <= 0x5A: this._output.Append((char)(character + 0x20)); break;
       case >= 0xC1 and <= 0xDA: this._output.Append((char)(character - 0x80)); break;
       default: this._output.Append((char)character); break;

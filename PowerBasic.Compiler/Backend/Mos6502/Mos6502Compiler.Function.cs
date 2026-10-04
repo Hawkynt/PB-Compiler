@@ -24,6 +24,7 @@ public static partial class Mos6502Compiler {
 
       public void Generate() {
         this._asm.Bind(module._entries[function]);
+        this.ZeroSourceVariables();
         this.PreserveHandler(save: true);
         foreach (var block in function.Blocks)
           this._blocks.Add(block, this._asm.NewLabel($"{function.Name}.{block.Label}"));
@@ -45,6 +46,54 @@ public static partial class Mos6502Compiler {
       }
 
       private M6502Label Local(string what) => this._asm.NewLabel($"{function.Name}.{what}{this._local++}");
+
+      /// <summary>
+      /// Every local the program declared starts at zero on each entry, as PowerBASIC's frame does. A
+      /// frame here is a fixed overlay rather than fresh stack, so without this a SUB read the values
+      /// its previous call left - or those of another procedure sharing the overlay. A string handle
+      /// is not among them: the lowering already stores its empty value.
+      /// </summary>
+      private void ZeroSourceVariables() {
+        foreach (var alloca in function.Blocks.SelectMany(block => block.Instructions).OfType<IrAlloca>()) {
+          if (!alloca.IsSourceVariable || !this._frame.Holds(alloca))
+            continue;
+          var bytes = SizeOf(alloca.Allocated) * alloca.Count;
+          var address = this._frame.AddressOf(alloca);
+          this._asm.Immediate(Lda, 0);
+          if (bytes <= 16) {
+            for (var i = 0; i < bytes; ++i)
+              this._asm.Memory(Sta, address.Plus(i));
+            continue;
+          }
+          // a larger block through Zp.Ptr: whole pages counted in X, then the rest
+          this._asm.ImmediateLow(Lda, address);
+          this._asm.Memory(Sta, Zp.Ptr);
+          this._asm.ImmediateHigh(Lda, address);
+          this._asm.Memory(Sta, Zp.Ptr.Plus(1));
+          this._asm.Immediate(Lda, 0);
+          this._asm.Emit(Tay);
+          if (bytes >= 256) {
+            var page = this.Local("zeroPage");
+            this._asm.Immediate(Ldx, bytes >> 8);
+            this._asm.Bind(page);
+            this._asm.IndirectY(Sta, Zp.Ptr);
+            this._asm.Emit(Iny);
+            this._asm.Branch(Bne, page);
+            this._asm.Memory(Inc, Zp.Ptr.Plus(1));
+            this._asm.Emit(Dex);
+            this._asm.Branch(Bne, page);
+          }
+          if ((bytes & 0xFF) != 0) {
+            var rest = this.Local("zeroRest");
+            this._asm.Immediate(Ldx, bytes & 0xFF);
+            this._asm.Bind(rest);
+            this._asm.IndirectY(Sta, Zp.Ptr);
+            this._asm.Emit(Iny);
+            this._asm.Emit(Dex);
+            this._asm.Branch(Bne, rest);
+          }
+        }
+      }
 
       // --- operands --------------------------------------------------------------------------
 
@@ -122,7 +171,9 @@ public static partial class Mos6502Compiler {
       /// <summary>Copies <paramref name="bytes"/> bytes of a value, zero- or sign-extending it past its own width.</summary>
       private void Copy(Operand source, int sourceSize, M6502Address destination, int bytes, bool signed = false) {
         var direct = Math.Min(sourceSize, bytes);
-        for (var k = 0; k < direct; ++k) {
+        // a cast sharing its source's cell (O0408) finds its bytes already in place
+        var inPlace = source is MemoryOperand { Address: var from } && from == destination;
+        for (var k = inPlace ? direct : 0; k < direct; ++k) {
           this.WithByte(Lda, source, k, sourceSize);
           this._asm.Memory(Sta, destination.Plus(k));
         }
@@ -317,24 +368,25 @@ public static partial class Mos6502Compiler {
 
       private void LowerCompare(IrCmp compare) {
         var holds = this.Local("true");
-        var done = this.Local("compared");
         this.BranchIf(compare, holds);
         this._asm.Immediate(Lda, 0);
-        this._asm.Jump(done);
+        // BIT absolute's opcode swallows the LDA #1 after it as its operand - a read of the stack page
+        // that changes nothing - so the false path steps over it in one byte rather than a jump's three
+        this._asm.Bytes([0x2C]);
         this._asm.Bind(holds);
         this._asm.Immediate(Lda, 1);
-        this._asm.Bind(done);
         this._asm.Memory(Sta, this.Destination(compare));
       }
 
       /// <summary>Jumps to <paramref name="target"/> when the comparison holds; falls through when it does not.</summary>
-      private void BranchIf(IrCmp compare, M6502Label target) {
+      private void BranchIf(IrCmp compare, M6502Label target, bool unless = false) {
+        var predicate = unless ? Negated(compare.Pred) : compare.Pred;
         if (compare.Lhs.Type.IsFloat) {
           // FloatCompare answers $FF, 0 or 1 in A for less, equal and greater
           this.Unpack(compare.Lhs, intoB: false);
           this.Unpack(compare.Rhs, intoB: true);
           this._asm.Call(this._runtime.Routine(M6502Routine.FloatCompare));
-          var (answer, holdsWhenEqual) = compare.Pred switch {
+          var (answer, holdsWhenEqual) = predicate switch {
             IrCmpPred.Foeq => (0, true),
             IrCmpPred.Fone => (0, false),
             IrCmpPred.Folt => (0xFF, true),
@@ -349,7 +401,7 @@ public static partial class Mos6502Compiler {
         }
         var size = SizeOf(compare.Lhs.Type);
         var (lhs, rhs) = (this.Of(compare.Lhs), this.Of(compare.Rhs));
-        switch (compare.Pred) {
+        switch (predicate) {
           case IrCmpPred.Eq: {
             var differs = this.Local("differs");
             for (var k = 0; k < size; ++k) {
@@ -382,6 +434,22 @@ public static partial class Mos6502Compiler {
             throw Decline("floating point has no 6502 lowering yet");
         }
       }
+
+      /// <summary>
+      /// The predicate that holds exactly when <paramref name="predicate"/> does not. The soft float
+      /// has no NaN, so an ordered comparison's complement is the ordered opposite.
+      /// </summary>
+      private static IrCmpPred Negated(IrCmpPred predicate) => predicate switch {
+        IrCmpPred.Eq => IrCmpPred.Ne, IrCmpPred.Ne => IrCmpPred.Eq,
+        IrCmpPred.Ult => IrCmpPred.Uge, IrCmpPred.Uge => IrCmpPred.Ult,
+        IrCmpPred.Ugt => IrCmpPred.Ule, IrCmpPred.Ule => IrCmpPred.Ugt,
+        IrCmpPred.Slt => IrCmpPred.Sge, IrCmpPred.Sge => IrCmpPred.Slt,
+        IrCmpPred.Sgt => IrCmpPred.Sle, IrCmpPred.Sle => IrCmpPred.Sgt,
+        IrCmpPred.Foeq => IrCmpPred.Fone, IrCmpPred.Fone => IrCmpPred.Foeq,
+        IrCmpPred.Folt => IrCmpPred.Foge, IrCmpPred.Foge => IrCmpPred.Folt,
+        IrCmpPred.Fogt => IrCmpPred.Fole, IrCmpPred.Fole => IrCmpPred.Fogt,
+        _ => throw new ArgumentOutOfRangeException(nameof(predicate)),
+      };
 
       /// <summary>
       /// <c>a - b</c> for its flags: carry clear exactly when <c>a &lt; b</c> unsigned. The low byte
@@ -421,6 +489,16 @@ public static partial class Mos6502Compiler {
             this._asm.Call(this._runtime.Routine(cast.Op == IrCastOp.SIToFP ? M6502Routine.FloatFromSigned : M6502Routine.FloatFromUnsigned));
             this.Pack(cast.Type, destination);
             return;
+          // PB's rounding conversions are the x87's FISTP into a signed LONG - a QUAD for a DWORD or a
+          // QUAD target - keeping the low bytes, so BYTE 200 + 100 wraps to 44 as it does on DOS
+          case IrCastOp.FPToSIRound or IrCastOp.FPToUIRound when size < 8: {
+            var staged = size == 4 && cast.Op == IrCastOp.FPToUIRound ? 8 : 4;
+            this.Unpack(cast.Value, intoB: false);
+            this._asm.Immediate(Ldx, staged);
+            this._asm.Call(this._runtime.Routine(M6502Routine.FloatToSignedRound));
+            this.Copy(new MemoryOperand(Zp.Ret), size, destination, size);
+            return;
+          }
           case IrCastOp.FPToSI or IrCastOp.FPToUI or IrCastOp.FPToSIRound or IrCastOp.FPToUIRound:
             this.Unpack(cast.Value, intoB: false);
             this._asm.Immediate(Ldx, size);
@@ -650,6 +728,7 @@ public static partial class Mos6502Compiler {
             return;
           case "rt_onerr_disarm":
             this.Copy(new ConstantOperand(0), 2, module._errorHandler, 2);
+            this.ClearError();
             return;
           case "rt_resume_mark":
             this.Copy(this.Of(call.Args.ElementAt(0)), 2, module._statementStart, 2);
@@ -661,34 +740,6 @@ public static partial class Mos6502Compiler {
             return;
           case "rt_err_clear":
             this.ClearError();
-            return;
-          // PEEK and POKE: on a flat 16-bit machine the offset IS the address - the VIC-II's border at
-          // 53280, the SID at 54272 - and DEF SEG's segment has nothing to select
-          case "rt_peek" or "rt_peeki" or "rt_peekl": {
-            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Ptr, 2);
-            var bytes = callee.Name switch { "rt_peek" => 1, "rt_peeki" => 2, _ => 4 };
-            if (!this.Stored(call))
-              return;
-            var destination = this.Destination(call);
-            for (var i = 0; i < SizeOf(call.Type); ++i) {
-              if (i < bytes) {
-                this._asm.Immediate(Ldy, i);
-                this._asm.IndirectY(Lda, Zp.Ptr);
-              } else {
-                this._asm.Immediate(Lda, 0);
-              }
-              this._asm.Memory(Sta, destination.Plus(i));
-            }
-            return;
-          }
-          case "rt_poke":
-            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Ptr, 2);
-            this.Copy(this.Of(call.Args.ElementAt(1)), 1, Zp.Temp, 1);
-            this._asm.Memory(Lda, Zp.Temp);
-            this._asm.Immediate(Ldy, 0);
-            this._asm.IndirectY(Sta, Zp.Ptr);
-            return;
-          case "rt_defseg_reset":
             return;
           // EXIT FAR AT label: where to land, and the stacks to have back when it does
           case "rt_efar_arm":
@@ -730,6 +781,91 @@ public static partial class Mos6502Compiler {
               this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
             return;
           }
+          case "sys_rename":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Arg, 2);
+            this.Copy(this.Of(call.Args.ElementAt(1)), 2, Zp.Arg.Plus(2), 2);
+            this._asm.Call(this._runtime.Routine(M6502Routine.FileRename));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          // the 1541 has one flat directory and no notion of a current one: making, removing or
+          // entering a directory is refused, and the current directory is the drive
+          // a line of the drive's directory listing as one getdents64 record (Mos6502Runtime.Files.cs)
+          case "sys_dirents": {
+            var args = call.Args.ToList();
+            this.Copy(this.Of(args[0]), 1, Zp.Arg, 1);
+            this.Copy(this.Of(args[1]), 2, Zp.Arg.Plus(4), 2);
+            this._asm.Call(this._runtime.Routine(M6502Routine.FileDirectoryRead));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          }
+          case "sys_truncate":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 1, Zp.Arg, 1);
+            this.Copy(this.Of(call.Args.ElementAt(1)), 2, Zp.Arg.Plus(2), 2);
+            this._asm.Call(this._runtime.Routine(M6502Routine.FileTruncate));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          // the keyboard and the screen are the only console there is, and standard input and output are them
+          // $ERROR STACK: a frame's locals go to the soft stack, which raises error 7 itself when it
+          // runs out; what is left to watch is the processor's own page of return addresses
+          case "sys_stack_low": {
+            var low = this.Local("stackLow");
+            this._asm.Emit(Tsx);
+            this._asm.Immediate(Cpx, 0x40);
+            this._asm.Immediate(Lda, 1);
+            this._asm.Branch(Bcc, low);
+            this._asm.Immediate(Lda, 0);
+            this._asm.Bind(low);
+            if (this.Stored(call)) {
+              this._asm.Memory(Sta, Zp.Temp);
+              this.Copy(new MemoryOperand(Zp.Temp), 1, this.Destination(call), SizeOf(call.Type));
+            }
+            return;
+          }
+          // a program LOADed and RUN has no command line and no environment
+          case "sys_arg" or "sys_env":
+            if (this.Stored(call))
+              this.Copy(new ConstantOperand(0), 2, this.Destination(call), SizeOf(call.Type));
+            return;
+          case "sys_console":
+            if (this.Stored(call))
+              this.Copy(new ConstantOperand(1), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          case "sys_mkdir" or "sys_rmdir" or "sys_chdir" or "sys_getcwd":
+            if (this.Stored(call))
+              this.Copy(new ConstantOperand(-1), 4, this.Destination(call), SizeOf(call.Type));
+            return;
+          case "sys_clock":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 2, Zp.Ptr2, 2);
+            this._asm.Call(this._runtime.Routine(M6502Routine.SystemClock));
+            return;
+          // the screen editor's own: CHR$(147) clears and homes, PLOT puts the cursor at X = row, Y = column
+          case "sys_cls":
+            this._asm.Immediate(Lda, 147);
+            this._asm.Call(Mos6502Runtime.Chrout);
+            return;
+          case "sys_locate":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 1, Zp.Temp, 1);
+            this.Copy(this.Of(call.Args.ElementAt(1)), 1, Zp.Temp.Plus(1), 1);
+            this._asm.Memory(Ldx, Zp.Temp);
+            this._asm.Emit(Dex);
+            this._asm.Memory(Ldy, Zp.Temp.Plus(1));
+            this._asm.Emit(Dey);
+            this._asm.Emit(Clc);
+            this._asm.Call(M6502Address.Absolute(0xFFF0));
+            return;
+          case "sys_sleep":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 4, Zp.Arg, 4);
+            this._asm.Call(this._runtime.Routine(M6502Routine.SystemSleep));
+            return;
+          case "sys_key":
+            this.Copy(this.Of(call.Args.ElementAt(0)), 1, Zp.Arg, 1);
+            this._asm.Call(this._runtime.Routine(M6502Routine.SystemKey));
+            if (this.Stored(call))
+              this.Copy(new MemoryOperand(Zp.Ret), 4, this.Destination(call), SizeOf(call.Type));
+            return;
           case "sys_seek": {
             // a descriptor, the offset's low word - a cached file is 4 KB at most - and whence
             var args = call.Args.ToList();
@@ -832,28 +968,28 @@ public static partial class Mos6502Compiler {
         var phis = to.Phis.ToList();
         if (phis.Count == 0)
           return;
-        var moves = phis.Select(phi => (Phi: phi, Source: phi.IncomingFrom(from)
-          ?? throw Decline($"a phi in '{function.Name}' has no value for one of its edges"))).ToList();
-        if (moves.Any(move => move.Source is IrPhi phi && phi.Parent == to && phi != move.Phi)) {
-          var offset = 0;
-          foreach (var (phi, source) in moves) {
-            var size = SizeOf(phi.Type);
-            this.Copy(this.Of(source), size, this.Scratch(offset, size), size);
-            offset += size;
-          }
-          offset = 0;
-          foreach (var (phi, _) in moves) {
-            var size = SizeOf(phi.Type);
-            this.Copy(new MemoryOperand(this.Scratch(offset, size)), size, this.Destination(phi), size);
-            offset += size;
-          }
-          return;
-        }
-        foreach (var (phi, source) in moves) {
-          if (source == phi)
+        // the phis take their values all at once: a move goes as soon as no other still waiting reads
+        // the phi it writes, and a cycle is broken by parking one phi's old value in the staging area
+        var pending = phis.Select(phi => (Phi: phi, Source: (IrValue?)(phi.IncomingFrom(from)
+          ?? throw Decline($"a phi in '{function.Name}' has no value for one of its edges")), Parked: (M6502Address?)null))
+          .Where(move => move.Source != move.Phi).ToList();
+        var parkedBytes = 0;
+        while (pending.Count > 0) {
+          var ready = pending.FindIndex(move => !pending.Any(other => other.Source == move.Phi));
+          if (ready < 0) {
+            // every waiting move's phi is still read by another: park the first one's current value
+            var blocked = pending[0].Phi;
+            var size = SizeOf(blocked.Type);
+            var parked = this.Scratch(parkedBytes, size);
+            parkedBytes += size;
+            this.Copy(this.Of(blocked), size, parked, size);
+            pending = pending.Select(move => move.Source == blocked ? (move.Phi, null, parked) : move).ToList();
             continue;
-          var size = SizeOf(phi.Type);
-          this.Copy(this.Of(source), size, this.Destination(phi), size);
+          }
+          var (phi, source, parkedAt) = pending[ready];
+          pending.RemoveAt(ready);
+          var bytes = SizeOf(phi.Type);
+          this.Copy(parkedAt is { } at ? new MemoryOperand(at) : this.Of(source!), bytes, this.Destination(phi), bytes);
         }
       }
 
@@ -887,19 +1023,23 @@ public static partial class Mos6502Compiler {
 
       private void LowerConditionalBranch(IrBasicBlock block, IrCondBr branch) {
         var stubs = new List<(M6502Label, IrBasicBlock)>();
-        var ifTrue = this.EdgeLabel(branch.IfTrue, stubs);
+        // when the true successor comes next, branch on the condition's complement to the false one
+        // and fall through: one branch rather than a branch over a jump
+        var unless = this._next == branch.IfTrue && branch.IfFalse != branch.IfTrue;
+        var (taken, fallen) = unless ? (branch.IfFalse, branch.IfTrue) : (branch.IfTrue, branch.IfFalse);
+        var target = this.EdgeLabel(taken, stubs);
         if (branch.Condition is IrCmp compare && compare.Parent == block && compare.Users.Count == 1
             && block.Instructions[^2] == compare) {
-          this.BranchIf(compare, ifTrue);
+          this.BranchIf(compare, target, unless);
         } else {
           this.WithByte(Lda, this.Of(branch.Condition), 0, 1);
-          this._asm.Branch(Bne, ifTrue);
+          this._asm.Branch(unless ? Beq : Bne, target);
         }
-        this.Edge(block, branch.IfFalse);
+        this.Edge(block, fallen);
         if (stubs.Count == 0)
-          this.JumpUnlessNext(branch.IfFalse);
+          this.JumpUnlessNext(fallen);
         else
-          this._asm.Jump(this._blocks[branch.IfFalse]);
+          this._asm.Jump(this._blocks[fallen]);
         this.EmitStubs(block, stubs);
       }
 

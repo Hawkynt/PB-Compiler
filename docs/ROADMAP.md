@@ -228,23 +228,24 @@ static Linux ELF files; the 6502 compiles integer and floating-point programs to
 floor under how many they accept - they are this section's to-do list.
 
 ### Must
-- **x86-32/x64 run every battery program that is not DOS by nature** (18 of 21: the other three
-  call DOS interrupts, link a DOS object, or are 16-bit inline assembly). `TRY`/`CATCH` and
-  `EXIT FAR` are done.
-- **The differential battery on the flat targets.** Compiling `tests/diff/**/*.BAS` for x64 and the
-  6502 is the wider to-do list the 21-program battery is too small to be (2026-09-30: 126 and 120 of
-  162 compiled before RND, ROUND, file TAB/SPC/INPUT/EXT, float-typed integer literals and the
-  6502's SPEED-to-size fallback closed the largest groups). What is left is declined by name, one or
-  two programs each: runtime entries (`rt_locate`, `rt_arr_desc`, `rt_timer`, `rt_str_scanset`,
-  `rt_str_mki`, `rt_stack_probe`, `rt_fix_up`, `rt_file_seteof`, `rt_file_put_raw`, `rt_codeseg`,
-  `rt_chain_open_read`, `rt_asciiz_store`, `rt_consin`), `segment:offset` pointers (`DIM AT`, huge
-  arrays), BASICA's MBF floats, and five 6502 programs that do not fit a C64 even built for size.
-- **Smaller 6502 code.** The 6502 runs 18 of the 21 battery programs - every one that is not DOS by nature, as x86-32 and x64 do. Code is still dominated by
-  `LDA`/`STA`: every SSA value has its own frame cell, so casts, returns, phi edges and arguments
-  are byte-by-byte copies. Done: frames share memory through the call-graph overlay (the innermost
-  in page zero), and the portable runtime keeps its lengths and counters in 16 bits here, which cut
-  `STRINGS` from 36 KB to 30 KB. Next: aliasing a truncating cast to its source's cell, and
-  coalescing phi cells with their incoming values.
+- **Every BASIC idiom on every platform.** `tests/idioms` holds one program per family - strings,
+  `PRINT USING`, the clock and keyboard, the console, files sequential and random, `FIELD`, FIX and
+  BCD, arrays with `ARRAY SORT`/`SCAN`, array parameters, records, control flow, error trapping,
+  `DIR$`/`COMMAND$`/`ENVIRON$`, `DEF SEG`/`PEEK`/`POKE`/`DIM AT`/`HUGE`, and the DOS and BIOS
+  services behind `CALL INTERRUPT` - and `FlatTargetIdiomTests` holds x86-32, x64 and the 6502 to
+  what each program's DOS build prints; every program is also checked against genuine PBC 3.50.
+  What a flat machine makes of each DOS idiom is tabled in `docs/BACKENDS.md`. Still declined, by
+  name: segment registers in inline assembly (`MOV ES, AX`, `ES:[BX]`), calls into the DOS runtime
+  from it (`CALL GetStrLoc`), and the DOS-only `CHAIN`/`SHELL`/`FILES`.
+- **The differential battery on the flat targets.** `tests/diff/**/*.BAS` compiled for x86-32, x64
+  and the 6502 against the DOS build: what is left besides the declines above is the 6502's 46 KB -
+  a program the hosted targets run can be too big for a C64, and VIRTUAL arrays of 200 KB are.
+- **Smaller 6502 code.** Code is dominated by `LDA`/`STA` between memory cells, every SSA value
+  living in one. Done: frames overlay along the call graph (the innermost in page zero), values
+  whose lives never meet share a cell, a narrowing cast takes its source's cell, phi copies move
+  straight to their phis, redundant accumulator loads go, and branches fall through to their true
+  side (O0408-O0410). Next: coalescing a phi's cell with an incoming value whose life ends at the
+  edge, and keeping a value in A or X across the instruction that consumes it.
 
 ### Should
 - **RANDOM and BINARY files past 4 KB on the 6502** - they live in a RAM cache while open; a larger

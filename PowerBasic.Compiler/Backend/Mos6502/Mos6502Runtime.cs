@@ -15,6 +15,12 @@ public enum M6502Routine {
   SystemWrite,
   /// <summary><c>sys_read(fd, buffer, length)</c>: one byte of console input through <c>CHRIN</c>; other descriptors are at their end.</summary>
   SystemRead,
+  /// <summary><c>sys_clock(out)</c> with the pointer in <c>Ptr2</c>: day 0, and the jiffy clock as hundredths since it started.</summary>
+  SystemClock,
+  /// <summary><c>sys_sleep(hundredths)</c> with the count in <c>Arg</c>: waits that long on the jiffy clock.</summary>
+  SystemSleep,
+  /// <summary><c>sys_key(wait)</c> with the flag in <c>Arg</c>: a key from <c>GETIN</c> as ASCII in <c>Ret</c>, or -1 when none is waiting and the caller will not wait.</summary>
+  SystemKey,
   Multiply16, Multiply32, Multiply64,
   UnsignedDivide16, UnsignedDivide32, UnsignedDivide64, SignedDivide16, SignedDivide32, SignedDivide64,
   /// <summary>BASIC's run-time error in Arg, handed to the portable runtime's <c>rt_error</c>.</summary>
@@ -29,6 +35,11 @@ public enum M6502Routine {
   // files on the 1541: Mos6502Runtime.Files.cs
   FileData, FileOpen, FileClose, FileRead, FileWrite, FileUnlink, FileCloseAll, FileCommandChannel, FileStatus,
   FileAppendPath, FileOpenCached, FileReadCached, FileWriteCached, FileSeek, FileFlushCache,
+  /// <summary><c>sys_truncate(fd, length)</c> with the descriptor at <c>Arg</c> and the length at <c>Arg+2</c>: the cached file ends there.</summary>
+  FileTruncate,
+  FileDirectoryRead,
+  /// <summary><c>sys_rename(old, new)</c> with the paths at <c>Arg</c> and <c>Arg+2</c>: <c>R0:new=old</c> to the command channel.</summary>
+  FileRename,
 
   // floating point: Mos6502Runtime.Float.cs
   UnpackSingleA, UnpackSingleB, UnpackDoubleA, UnpackDoubleB, UnpackExtendedA, UnpackExtendedB,
@@ -195,6 +206,9 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
       case M6502Routine.PutChar: this.EmitPutChar(); break;
       case M6502Routine.SystemWrite: this.EmitSystemWrite(); break;
       case M6502Routine.SystemRead: this.EmitSystemRead(); break;
+      case M6502Routine.SystemClock: this.EmitSystemClock(); break;
+      case M6502Routine.SystemSleep: this.EmitSystemSleep(); break;
+      case M6502Routine.SystemKey: this.EmitSystemKey(); break;
       case M6502Routine.Multiply16: this.EmitMultiply(2); break;
       case M6502Routine.Multiply32: this.EmitMultiply(4); break;
       case M6502Routine.Multiply64: this.EmitMultiply(8); break;
@@ -272,6 +286,134 @@ public sealed partial class Mos6502Runtime(Mos6502Assembler asm) {
     asm.Immediate(Ldy, 0);
     asm.IndirectY(Sta, Zp.Arg.Plus(4));
     asm.Immediate(Lda, 1);
+    asm.Memory(Sta, Zp.Ret);
+    asm.Immediate(Lda, 0);
+    for (var i = 1; i < 4; ++i)
+      asm.Memory(Sta, Zp.Ret.Plus(i));
+    asm.Emit(Rts);
+  }
+
+  /// <summary>The KERNAL's jiffy clock, sixty ticks a second since power-on: high byte at $A0, low at $A2.</summary>
+  private static readonly M6502Address JiffyHigh = M6502Address.Absolute(0xA0);
+  private static readonly M6502Address JiffyLow = M6502Address.Absolute(0xA2);
+  private static readonly M6502Address Getin = M6502Address.Absolute(0xFFE4);
+
+  /// <summary>The jiffy clock into <c>Arg</c> as four bytes, read with interrupts held so its bytes agree.</summary>
+  private void ReadJiffies() {
+    asm.Emit(Sei);
+    asm.Memory(Lda, JiffyLow);
+    asm.Memory(Sta, Zp.Arg);
+    asm.Memory(Lda, JiffyHigh.Plus(1));
+    asm.Memory(Sta, Zp.Arg.Plus(1));
+    asm.Memory(Lda, JiffyHigh);
+    asm.Memory(Sta, Zp.Arg.Plus(2));
+    asm.Emit(Cli);
+    asm.Immediate(Lda, 0);
+    asm.Memory(Sta, Zp.Arg.Plus(3));
+  }
+
+  /// <summary><c>Arg *= factor</c> by shifts and adds, then <c>Arg /= divisor</c>: the jiffy-to-hundredths scaling and back.</summary>
+  private void Scale(int factor, int divisor) {
+    for (var i = 0; i < 4; ++i) {
+      asm.Memory(Lda, Zp.Arg.Plus(i));
+      asm.Memory(Sta, Zp.Temp.Plus(i));
+    }
+    // factor is 3 or 5: Arg * 2 (or 4), then + the original
+    for (var shift = 0; shift < (factor == 5 ? 2 : 1); ++shift) {
+      asm.Memory(Asl, Zp.Arg);
+      for (var i = 1; i < 4; ++i)
+        asm.Memory(Rol, Zp.Arg.Plus(i));
+    }
+    asm.Emit(Clc);
+    for (var i = 0; i < 4; ++i) {
+      asm.Memory(Lda, Zp.Arg.Plus(i));
+      asm.Memory(Adc, Zp.Temp.Plus(i));
+      asm.Memory(Sta, Zp.Arg.Plus(i));
+    }
+    asm.Immediate(Lda, divisor);
+    asm.Memory(Sta, Zp.ArgB);
+    asm.Immediate(Lda, 0);
+    for (var i = 1; i < 4; ++i)
+      asm.Memory(Sta, Zp.ArgB.Plus(i));
+    asm.Call(this.Routine(M6502Routine.UnsignedDivide32));
+  }
+
+  private void EmitSystemClock() {
+    // days since 1970: the machine has no calendar, so it is day 0; the time is the jiffy clock,
+    // which the KERNAL itself wraps at 24 hours - jiffies * 5 / 3 is hundredths
+    this.ReadJiffies();
+    this.Scale(5, 3);
+    asm.Immediate(Ldy, 0);
+    asm.Immediate(Lda, 0);
+    var days = asm.NewLabel("rt.systemClock.days");
+    asm.Bind(days);
+    asm.IndirectY(Sta, Zp.Ptr2);
+    asm.Emit(Iny);
+    asm.Immediate(Cpy, 4);
+    asm.Branch(Bne, days);
+    for (var i = 0; i < 4; ++i) {
+      asm.Memory(Lda, Zp.Arg.Plus(i));
+      asm.IndirectY(Sta, Zp.Ptr2);
+      asm.Emit(Iny);
+    }
+    asm.Emit(Rts);
+  }
+
+  private void EmitSystemSleep() {
+    // hundredths * 3 / 5 jiffies, each one waited out by watching the clock's low byte change
+    var loop = asm.NewLabel("rt.systemSleep.loop");
+    var tick = asm.NewLabel("rt.systemSleep.tick");
+    var noBorrow = asm.NewLabel("rt.systemSleep.noBorrow");
+    var done = asm.NewLabel("rt.systemSleep.done");
+    this.Scale(3, 5);
+    asm.Bind(loop);
+    asm.Memory(Lda, Zp.Arg);
+    asm.Memory(Ora, Zp.Arg.Plus(1));
+    asm.Branch(Beq, done);
+    asm.Memory(Lda, JiffyLow);
+    asm.Bind(tick);
+    asm.Memory(Cmp, JiffyLow);
+    asm.Branch(Beq, tick);
+    asm.Memory(Lda, Zp.Arg);
+    asm.Branch(Bne, noBorrow);
+    asm.Memory(Dec, Zp.Arg.Plus(1));
+    asm.Bind(noBorrow);
+    asm.Memory(Dec, Zp.Arg);
+    asm.Jump(loop);
+    asm.Bind(done);
+    asm.Emit(Rts);
+  }
+
+  private void EmitSystemKey() {
+    var poll = asm.NewLabel("rt.systemKey.poll");
+    var got = asm.NewLabel("rt.systemKey.got");
+    var capital = asm.NewLabel("rt.systemKey.capital");
+    var store = asm.NewLabel("rt.systemKey.store");
+    asm.Bind(poll);
+    asm.Call(Getin);
+    asm.Immediate(Cmp, 0);
+    asm.Branch(Bne, got);
+    asm.Memory(Lda, Zp.Arg);
+    asm.Branch(Bne, poll);
+    asm.Immediate(Lda, 0xFF);
+    for (var i = 0; i < 4; ++i)
+      asm.Memory(Sta, Zp.Ret.Plus(i));
+    asm.Emit(Rts);
+    // PETSCII back to ASCII, as a line read is
+    asm.Bind(got);
+    asm.Immediate(Cmp, 0xC1);
+    asm.Branch(Bcs, capital);
+    asm.Immediate(Cmp, 0x41);
+    asm.Branch(Bcc, store);
+    asm.Immediate(Cmp, 0x5B);
+    asm.Branch(Bcs, store);
+    asm.Immediate(Ora, 0x20);
+    asm.Jump(store);
+    asm.Bind(capital);
+    asm.Immediate(Cmp, 0xDB);
+    asm.Branch(Bcs, store);
+    asm.Immediate(M6502Op.And, 0x7F);
+    asm.Bind(store);
     asm.Memory(Sta, Zp.Ret);
     asm.Immediate(Lda, 0);
     for (var i = 1; i < 4; ++i)

@@ -28,6 +28,7 @@ public static partial class X86NativeCompiler {
         this._asm.Mov(this.Word, X86Reg.Bp, X86Reg.Sp);
         if (this._frame.Size > 0)
           this._asm.AluImmediate(X86Alu.Sub, this.Word, X86Reg.Sp, this._frame.Size);
+        this.ZeroSourceVariables();
         this.PreserveHandler(save: true);
         foreach (var block in function.Blocks)
           this._blocks.Add(block, this._asm.NewLabel($"{function.Name}.{block.Label}"));
@@ -41,6 +42,45 @@ public static partial class X86NativeCompiler {
               continue;
             this.Lower(block, instructions[j]);
           }
+        }
+      }
+
+      /// <summary>
+      /// Every local the program declared starts at zero on each entry, as PowerBASIC's frame does: an
+      /// array, a record or a scalar the optimizer left in memory. A frame slot is whatever the stack
+      /// held before, so without this a SUB read its previous call's values - or another procedure's.
+      /// A string handle is not among them: the lowering already stores its empty value.
+      /// </summary>
+      private void ZeroSourceVariables() {
+        var cleared = false;
+        foreach (var alloca in function.Blocks.SelectMany(block => block.Instructions).OfType<IrAlloca>()) {
+          if (!alloca.IsSourceVariable || !this._frame.Places.TryGetValue(alloca, out var offset))
+            continue;
+          var bytes = Math.Max(1, module.SizeOf(alloca.Allocated) * alloca.Count);
+          if (!cleared) {
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, X86Reg.Ax, X86Reg.Ax);
+            cleared = true;
+          }
+          if (bytes <= 8 * this.WordBytes) {
+            var at = 0;
+            for (; at + this.WordBytes <= bytes; at += this.WordBytes)
+              this._asm.Mov(this.Word, X86Mem.At(X86Reg.Bp, offset + at), X86Reg.Ax);
+            for (; at < bytes; ++at)
+              this._asm.Mov(X86Width.Byte, X86Mem.At(X86Reg.Bp, offset + at), X86Reg.Ax);
+            continue;
+          }
+          // a larger block in a loop: DI walks it a word at a time, and a byte tail follows
+          var words = bytes / this.WordBytes;
+          var loop = this.Local("zero");
+          this._asm.Lea(this.Word, X86Reg.Di, X86Mem.At(X86Reg.Bp, offset));
+          this._asm.MovImmediate(this.Word, X86Reg.Cx, words);
+          this._asm.Bind(loop);
+          this._asm.Mov(this.Word, X86Mem.At(X86Reg.Di), X86Reg.Ax);
+          this._asm.AluImmediate(X86Alu.Add, this.Word, X86Reg.Di, this.WordBytes);
+          this._asm.AluImmediate(X86Alu.Sub, this.Word, X86Reg.Cx, 1);
+          this._asm.Jump(X86Cond.NotEqual, loop);
+          for (var at = words * this.WordBytes; at < bytes; ++at)
+            this._asm.Mov(X86Width.Byte, X86Mem.At(X86Reg.Bp, offset + at), X86Reg.Ax);
         }
       }
 
@@ -846,6 +886,8 @@ public static partial class X86NativeCompiler {
             this.SystemCall(call, numbers, arguments);
             return;
           }
+          if (this.TryClockPrimitive(call, callee.Name, arguments))
+            return;
           if (this.TryErrorIntrinsic(callee.Name, arguments))
             return;
           if (TryMathIntrinsic(callee.Name) is { } math && this.Stored(call)) {
@@ -853,8 +895,6 @@ public static partial class X86NativeCompiler {
             this._asm.Fstp(FormatOf(call.Type), this.Place(call));
             return;
           }
-          if (callee.Name is "rt_peek" or "rt_peeki" or "rt_peekl" or "rt_poke" or "rt_poke_str")
-            throw Decline("PEEK and POKE name 16-bit DOS offsets, and a 32- or 64-bit Linux process has nothing at them");
           throw Decline($"the native runtime has no {callee.Name} yet");
         }
         this.CallFunction(callee, arguments.Select(this.Of).ToList(), arguments.Select(argument => argument.Type).ToList());
@@ -1063,6 +1103,7 @@ public static partial class X86NativeCompiler {
             return true;
           case "rt_onerr_disarm":
             this._asm.MovImmediate(word, this.Cell(module._errorHandler), 0);
+            ClearError();
             return true;
           case "rt_resume_mark":
             this.Load(X86Reg.Ax, this.Of(arguments[0]), word);
@@ -1127,6 +1168,13 @@ public static partial class X86NativeCompiler {
         ["sys_close"] = (3, 6),
         ["sys_seek"] = (8, 19),
         ["sys_unlink"] = (87, 10),
+        ["sys_rename"] = (82, 38),
+        ["sys_mkdir"] = (83, 39),
+        ["sys_rmdir"] = (84, 40),
+        ["sys_chdir"] = (80, 12),
+        ["sys_getcwd"] = (79, 183),
+        ["sys_truncate"] = (77, 93),  // ftruncate: a descriptor and a length
+        ["sys_dirents"] = (217, 220), // getdents64, whose record layout the runtime reads
         ["sys_exit"] = (231, 1),     // exit_group on x64, so no thread is left behind
       };
 
@@ -1147,12 +1195,12 @@ public static partial class X86NativeCompiler {
               this.Is64 ? X86Width.Qword : X86Width.Dword);
         }
         if (call.Callee is IrFunction { Name: "sys_open" }) {
-          // mode 0 read, 1 create and truncate, 2 append (creating), 3 read and write (creating)
-          const int readOnly = 0, writeOnly = 1, readWrite = 2, create = 0x40, truncate = 0x200, append = 0x400;
+          // mode 0 read, 1 create and truncate, 2 append (creating), 3 read and write (creating), 4 a directory
+          const int readOnly = 0, writeOnly = 1, readWrite = 2, create = 0x40, truncate = 0x200, append = 0x400, directory = 0x10000;
           var flags = registers[1];
           var done = this.Local("flags");
           foreach (var (mode, value) in (ReadOnlySpan<(int, int)>)[
-              (1, writeOnly | create | truncate), (2, writeOnly | create | append), (3, readWrite | create)]) {
+              (1, writeOnly | create | truncate), (2, writeOnly | create | append), (3, readWrite | create), (4, readOnly | directory)]) {
             var next = this.Local("mode");
             this._asm.AluImmediate(X86Alu.Cmp, X86Width.Dword, flags, mode);
             this._asm.Jump(X86Cond.NotEqual, next);
@@ -1168,6 +1216,230 @@ public static partial class X86NativeCompiler {
         this._asm.SystemCall();
         if (this.Stored(call))
           this.Store(this.Place(call), X86Reg.Ax, WidthOf(module.SizeOf(call.Type)));
+      }
+
+      /// <summary>
+      /// The clock and keyboard primitives (<c>Runtime/Portable/PortableRuntime.Clock.cs</c>), each a
+      /// short run of Linux system calls: <c>sys_clock</c> is <c>clock_gettime</c> turned into days
+      /// since 1970 and hundredths since midnight, <c>sys_sleep</c> is <c>nanosleep</c>, and
+      /// <c>sys_key</c> reads a byte from standard input - after <c>poll</c> with no timeout when the
+      /// caller must not wait. Standard input is left in whatever mode the terminal has.
+      /// </summary>
+      private bool TryClockPrimitive(IrCall call, string name, IReadOnlyList<IrValue> arguments) {
+        var word = this.Word;
+        var scratch = this.Scratch;
+        X86Reg first = this.Is64 ? X86Reg.Di : X86Reg.Bx, second = this.Is64 ? X86Reg.Si : X86Reg.Cx, third = X86Reg.Dx;
+        void Syscall(int amd64, int i386) {
+          this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, this.Is64 ? amd64 : i386);
+          this._asm.SystemCall();
+        }
+        switch (name) {
+          case "sys_clock": {
+            // clock_gettime(CLOCK_REALTIME, &scratch): seconds then nanoseconds, a word each
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, first, first);
+            this._asm.Lea(word, second, scratch);
+            Syscall(228, 265);
+            this._asm.Mov(word, X86Reg.Ax, scratch);
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, X86Reg.Dx, X86Reg.Dx);
+            this._asm.MovImmediate(word, X86Reg.Cx, 86400);
+            this._asm.Unary(X86Unary.Div, word, X86Reg.Cx);
+            this.Load(X86Reg.Si, this.Of(arguments[0]), word);
+            this._asm.Mov(X86Width.Dword, X86Mem.At(X86Reg.Si), X86Reg.Ax);
+            // hundredths since midnight: the second of the day times 100, and the nanoseconds over 10^7
+            this._asm.MovImmediate(word, X86Reg.Ax, 100);
+            this._asm.Imul(word, X86Reg.Dx, X86Reg.Ax);
+            this._asm.Push(X86Reg.Dx);
+            this._asm.Mov(word, X86Reg.Ax, scratch.Plus(this.WordBytes));
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, X86Reg.Dx, X86Reg.Dx);
+            this._asm.MovImmediate(word, X86Reg.Cx, 10_000_000);
+            this._asm.Unary(X86Unary.Div, word, X86Reg.Cx);
+            this._asm.Pop(X86Reg.Dx);
+            this._asm.Alu(X86Alu.Add, word, X86Reg.Ax, X86Reg.Dx);
+            this._asm.Mov(X86Width.Dword, X86Mem.At(X86Reg.Si, 4), X86Reg.Ax);
+            break;
+          }
+          case "sys_sleep": {
+            // nanosleep({hundredths / 100, hundredths % 100 * 10^7}, null)
+            this.LoadExtended(X86Reg.Ax, this.Of(arguments[0]), 4, signed: true, word);
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, X86Reg.Dx, X86Reg.Dx);
+            this._asm.MovImmediate(word, X86Reg.Cx, 100);
+            this._asm.Unary(X86Unary.Div, word, X86Reg.Cx);
+            this._asm.Mov(word, scratch, X86Reg.Ax);
+            this._asm.MovImmediate(word, X86Reg.Ax, 10_000_000);
+            this._asm.Imul(word, X86Reg.Dx, X86Reg.Ax);
+            this._asm.Mov(word, scratch.Plus(this.WordBytes), X86Reg.Dx);
+            this._asm.Lea(word, first, scratch);
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, second, second);
+            Syscall(35, 162);
+            break;
+          }
+          case "sys_key": {
+            var read = this.Local("keyRead");
+            var none = this.Local("keyNone");
+            var done = this.Local("keyDone");
+            this.LoadExtended(X86Reg.Ax, this.Of(arguments[0]), 4, signed: true, X86Width.Dword);
+            this._asm.Test(X86Width.Dword, X86Reg.Ax, X86Reg.Ax);
+            this._asm.Jump(X86Cond.NotEqual, read);
+            // poll({fd 0, POLLIN}, 1, 0): is a byte there now?
+            this._asm.MovImmediate(X86Width.Dword, scratch, 0);
+            this._asm.MovImmediate(X86Width.Dword, scratch.Plus(4), 1);
+            this._asm.Lea(word, first, scratch);
+            this._asm.MovImmediate(X86Width.Dword, second, 1);
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, third, third);
+            Syscall(7, 168);
+            this._asm.Test(X86Width.Dword, X86Reg.Ax, X86Reg.Ax);
+            this._asm.Jump(X86Cond.LessOrEqual, none);
+            this._asm.Bind(read);
+            // read(0, &scratch, 1)
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, first, first);
+            this._asm.Lea(word, second, scratch);
+            this._asm.MovImmediate(X86Width.Dword, third, 1);
+            Syscall(0, 3);
+            this._asm.AluImmediate(X86Alu.Cmp, X86Width.Dword, X86Reg.Ax, 1);
+            this._asm.Jump(X86Cond.NotEqual, none);
+            this._asm.Extend(signed: false, X86Width.Dword, X86Reg.Ax, X86Width.Byte, scratch);
+            this._asm.Jump(done);
+            this._asm.Bind(none);
+            this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, -1);
+            this._asm.Bind(done);
+            break;
+          }
+          case "sys_stack_low": {
+            // $ERROR STACK: low once the stack has grown 4 MB down from where the program started it,
+            // half the 8 MB Linux gives a process by default
+            var room = this.Local("stackRoom");
+            this._asm.Mov(word, X86Reg.Ax, this.Cell(module._stackTop));
+            this._asm.Alu(X86Alu.Sub, word, X86Reg.Ax, X86Reg.Sp);
+            this._asm.AluImmediate(X86Alu.Cmp, word, X86Reg.Ax, 4 << 20);
+            this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, 0);
+            this._asm.Jump(X86Cond.BelowOrEqual, room);
+            this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, 1);
+            this._asm.Bind(room);
+            break;
+          }
+          // the process's own stack as the kernel built it: argc, argv[0..argc-1], NULL, envp..., NULL
+          case "sys_arg" or "sys_env": {
+            var none = this.Local("noVector");
+            var done = this.Local("vectorRead");
+            this.LoadExtended(X86Reg.Cx, this.Of(arguments[0]), 4, signed: true, word);
+            this._asm.Mov(word, X86Reg.Si, this.Cell(module._processStack));
+            this._asm.Alu(X86Alu.Or, word, X86Reg.Si, X86Reg.Si);
+            this._asm.Jump(X86Cond.Equal, none);
+            this._asm.Alu(X86Alu.Or, word, X86Reg.Cx, X86Reg.Cx);
+            this._asm.Jump(X86Cond.Less, none);
+            this._asm.Mov(word, X86Reg.Ax, X86Mem.At(X86Reg.Si));
+            if (name == "sys_arg") {
+              this._asm.Alu(X86Alu.Cmp, word, X86Reg.Cx, X86Reg.Ax);
+              this._asm.Jump(X86Cond.GreaterOrEqual, none);
+              this._asm.AluImmediate(X86Alu.Add, word, X86Reg.Cx, 1);
+            } else {
+              // past argc's own word, argc pointers and argv's NULL
+              this._asm.Alu(X86Alu.Add, word, X86Reg.Cx, X86Reg.Ax);
+              this._asm.AluImmediate(X86Alu.Add, word, X86Reg.Cx, 2);
+            }
+            this._asm.Shift(X86Shift.Shl, word, X86Reg.Cx, this.Is64 ? 3 : 2);
+            this._asm.Alu(X86Alu.Add, word, X86Reg.Si, X86Reg.Cx);
+            this._asm.Mov(word, X86Reg.Ax, X86Mem.At(X86Reg.Si));
+            this._asm.Jump(done);
+            this._asm.Bind(none);
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, X86Reg.Ax, X86Reg.Ax);
+            this._asm.Bind(done);
+            break;
+          }
+          case "sys_console": {
+            // a terminal is what answers TIOCGWINSZ
+            this.LoadExtended(first, this.Of(arguments[0]), 4, signed: true, X86Width.Dword);
+            this._asm.MovImmediate(X86Width.Dword, second, 0x5413);
+            this._asm.Lea(word, third, scratch);
+            Syscall(16, 54);
+            var notTerminal = this.Local("notTerminal");
+            var answered = this.Local("consoleAnswered");
+            this._asm.Test(X86Width.Dword, X86Reg.Ax, X86Reg.Ax);
+            this._asm.Jump(X86Cond.NotEqual, notTerminal);
+            this._asm.MovImmediate(X86Width.Dword, X86Reg.Ax, 1);
+            this._asm.Jump(answered);
+            this._asm.Bind(notTerminal);
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, X86Reg.Ax, X86Reg.Ax);
+            this._asm.Bind(answered);
+            break;
+          }
+          case "sys_cls" or "sys_locate": {
+            // only a terminal is told to move its cursor: output sent to a file or a pipe is the text
+            // alone, as the DOS console's teletype output is
+            var skip = this.Local("noTerminal");
+            this._asm.MovImmediate(X86Width.Dword, first, 1);
+            this._asm.MovImmediate(X86Width.Dword, second, 0x5413);   // TIOCGWINSZ: a winsize, eight bytes
+            this._asm.Lea(word, third, scratch);
+            Syscall(16, 54);
+            this._asm.Test(X86Width.Dword, X86Reg.Ax, X86Reg.Ax);
+            this._asm.Jump(X86Cond.NotEqual, skip);
+            if (name == "sys_cls") {
+              var text = this._asm.NewLabel($"{function.Name}.clearText{this._local++}");
+              this._asm.DataBytes(text, "\x1b[2J\x1b[H"u8);
+              this._asm.MovImmediate(X86Width.Dword, first, 1);
+              this._asm.Lea(word, second, X86Mem.At(text));
+              this._asm.MovImmediate(X86Width.Dword, third, 7);
+            } else {
+              // ESC [ row ; column H, built in the scratch cell
+              this._asm.Lea(word, X86Reg.Di, scratch);
+              this._asm.MovImmediate(X86Width.Byte, X86Mem.At(X86Reg.Di), 0x1B);
+              this._asm.MovImmediate(X86Width.Byte, X86Mem.At(X86Reg.Di, 1), '[');
+              this._asm.AluImmediate(X86Alu.Add, word, X86Reg.Di, 2);
+              this.LoadExtended(X86Reg.Ax, this.Of(arguments[0]), 4, signed: true, X86Width.Dword);
+              this.AppendDecimal();
+              this._asm.MovImmediate(X86Width.Byte, X86Mem.At(X86Reg.Di), ';');
+              this._asm.AluImmediate(X86Alu.Add, word, X86Reg.Di, 1);
+              this.LoadExtended(X86Reg.Ax, this.Of(arguments[1]), 4, signed: true, X86Width.Dword);
+              this.AppendDecimal();
+              this._asm.MovImmediate(X86Width.Byte, X86Mem.At(X86Reg.Di), 'H');
+              this._asm.AluImmediate(X86Alu.Add, word, X86Reg.Di, 1);
+              this._asm.Lea(word, second, scratch);
+              this._asm.Mov(word, third, X86Reg.Di);
+              this._asm.Alu(X86Alu.Sub, word, third, second);
+              this._asm.MovImmediate(X86Width.Dword, first, 1);
+            }
+            Syscall(1, 4);
+            this._asm.Bind(skip);
+            this._asm.Alu(X86Alu.Xor, X86Width.Dword, X86Reg.Ax, X86Reg.Ax);
+            break;
+          }
+          default:
+            return false;
+        }
+        if (this.Stored(call))
+          this.Store(this.Place(call), X86Reg.Ax, WidthOf(module.SizeOf(call.Type)));
+        return true;
+      }
+
+      /// <summary>EAX (0..999) as decimal digits at DI, which advances past them; leading zeros dropped.</summary>
+      private void AppendDecimal() {
+        var word = this.Word;
+        foreach (var divisor in (int[])[100, 10]) {
+          var skip = this.Local("digit");
+          this._asm.AluImmediate(X86Alu.Cmp, X86Width.Dword, X86Reg.Ax, divisor);
+          this._asm.Jump(X86Cond.Below, skip);
+          this._asm.Alu(X86Alu.Xor, X86Width.Dword, X86Reg.Dx, X86Reg.Dx);
+          this._asm.MovImmediate(X86Width.Dword, X86Reg.Cx, divisor);
+          this._asm.Unary(X86Unary.Div, X86Width.Dword, X86Reg.Cx);
+          // the quotient is this digit; it is at most 9 here, the divisor going high to low
+          this._asm.AluImmediate(X86Alu.Add, X86Width.Dword, X86Reg.Ax, '0');
+          this._asm.Mov(X86Width.Byte, X86Mem.At(X86Reg.Di), X86Reg.Ax);
+          this._asm.AluImmediate(X86Alu.Add, word, X86Reg.Di, 1);
+          this._asm.Mov(X86Width.Dword, X86Reg.Ax, X86Reg.Dx);
+          // a ten after a hundred must still be written, even as 0
+          if (divisor == 100) {
+            var tens = this.Local("tens");
+            this._asm.AluImmediate(X86Alu.Cmp, X86Width.Dword, X86Reg.Ax, 10);
+            this._asm.Jump(X86Cond.AboveOrEqual, tens);
+            this._asm.MovImmediate(X86Width.Byte, X86Mem.At(X86Reg.Di), '0');
+            this._asm.AluImmediate(X86Alu.Add, word, X86Reg.Di, 1);
+            this._asm.Bind(tens);
+          }
+          this._asm.Bind(skip);
+        }
+        this._asm.AluImmediate(X86Alu.Add, X86Width.Dword, X86Reg.Ax, '0');
+        this._asm.Mov(X86Width.Byte, X86Mem.At(X86Reg.Di), X86Reg.Ax);
+        this._asm.AluImmediate(X86Alu.Add, word, X86Reg.Di, 1);
       }
 
       /// <summary>BASIC's run-time error <paramref name="code"/>, through the portable runtime's <c>rt_error</c>.</summary>

@@ -113,6 +113,12 @@ public sealed partial class IrLowering {
   public static IrModule? TryLowerModule(SemanticModel model, out string? declinedBecause)
     => TryLowerModule(model, null, out declinedBecause);
 
+  /// <summary>As above, for a flat target when <paramref name="flatArrayDescriptors"/> says so (see <see cref="IrModule.FlatArrayDescriptors"/>).</summary>
+  public static IrModule? TryLowerModule(SemanticModel model, bool flatArrayDescriptors, out string? declinedBecause) {
+    ArgumentNullException.ThrowIfNull(model);
+    return HirToMir.Lower(BoundAstToHir.Lower(model), null, out declinedBecause, flatArrayDescriptors);
+  }
+
   /// <summary>
   /// As above, with the BASICA/GW lines control cannot reach. The caller computes that set because the
   /// DIRECT emitter needs the identical one; recomputing it here would be a second answer to a
@@ -126,7 +132,7 @@ public sealed partial class IrLowering {
 
   /// <summary>Builds MIR from an already formed HIR module.</summary>
   internal static IrModule? LowerHirToMir(HirModule hir,
-      IReadOnlySet<DeferredSourceStmt>? unreachableDeferred, out string? declinedBecause) {
+      IReadOnlySet<DeferredSourceStmt>? unreachableDeferred, out string? declinedBecause, bool flatArrayDescriptors = false) {
     ArgumentNullException.ThrowIfNull(hir);
     declinedBecause = null;
     var hirErrors = HirVerifier.Verify(hir);
@@ -136,7 +142,7 @@ public sealed partial class IrLowering {
     }
     var model = hir.BoundModel;
     var hirProcedures = hir.Functions.Where(function => !function.IsEntryPoint).ToArray();
-    var module = new IrModule(model.FileName, model.Dialect, model.CompatDialect);
+    var module = new IrModule(model.FileName, model.Dialect, model.CompatDialect) { FlatArrayDescriptors = flatArrayDescriptors };
     var procMap = new Dictionary<ProcedureSymbol, IrFunction>(ReferenceEqualityComparer.Instance);
 
     // An EXTERNAL procedure is included too, as a signature with no body - which is exactly what
@@ -1126,7 +1132,7 @@ public sealed partial class IrLowering {
 
     // The memory-model classes reach their elements through a segment they compute per access. HIR
     // carries that source-level class; the page/segment arithmetic remains a lower-level decision.
-    if (access.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
+    if (this.IsPaged(access.ArrayClass))
       return farAllowed
         ? this.PagedElementAddress(access)
         : throw new IrLoweringException(
@@ -1182,7 +1188,48 @@ public sealed partial class IrLowering {
   /// former rather than a storable value - there is no register that holds one - so the pair is
   /// combined at each use instead of being stored as a pointer.
   /// </param>
-  private readonly record struct DynArr(IrValue Data, IrValue[] Lo, IrValue[] Size, IrValue? Segment = null);
+  private readonly record struct DynArr(IrValue Data, IrValue[] Lo, IrValue[] Size, IrValue? Segment = null, bool FlatParameter = false);
+
+  /// <summary>
+  /// Whether an array of this class reaches its elements through a segment it computes per access -
+  /// HUGE stepping segments past 64 KB, VIRTUAL, EMS and XMS mapping pages into a window. Only DOS
+  /// has segments or a window; on a flat machine every one of them is an ordinary dynamic array.
+  /// </summary>
+  private bool IsPaged(ArrayClass arrayClass)
+    => !this.FlatDescriptors && arrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms;
+
+  /// <summary>Whether array descriptors take the flat layout - see <see cref="IrModule.FlatArrayDescriptors"/>.</summary>
+  private bool FlatDescriptors => this._module?.FlatArrayDescriptors == true;
+
+  /// <summary>
+  /// An integer field of a flat array descriptor: <c>[data pointer][element size][rank]</c> and then
+  /// a lower bound and an extent per dimension, each a LONG after the pointer.
+  /// </summary>
+  private IrValue FlatDescriptorField(IrValue block, int index)
+    => this._b.Gep(this._b.Gep(block, new IrConstantInt(IrType.I32, 1), IrType.Ptr), new IrConstantInt(IrType.I32, index), IrType.I32);
+
+  /// <summary>A flat descriptor block, room for the pointer and every LONG however wide a pointer is.</summary>
+  private IrValue FlatDescriptorBlock(VariableSymbol symbol, int rank)
+    => this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.Ptr) { Count = 1 + 2 * (2 + 2 * rank), Name = symbol.Name + ".desc" });
+
+  /// <summary>Writes a whole flat descriptor: the data address, the element size and rank, and the bounds.</summary>
+  private void FillFlatDescriptor(IrValue block, IrValue data, ArrayType arr, Func<int, IrValue> lower, Func<int, IrValue> extent) {
+    this._b.Store(data, block);
+    this._b.Store(new IrConstantInt(IrType.I32, ElementByteSize(arr)), this.FlatDescriptorField(block, 0));
+    this._b.Store(new IrConstantInt(IrType.I32, arr.Rank), this.FlatDescriptorField(block, 1));
+    for (var k = 0; k < arr.Rank; ++k) {
+      this._b.Store(lower(k), this.FlatDescriptorField(block, 2 + k * 2));
+      this._b.Store(extent(k), this.FlatDescriptorField(block, 3 + k * 2));
+    }
+  }
+
+  /// <summary>Copies a flat parameter's widened descriptor back into the caller's block, after a REDIM or an ERASE.</summary>
+  private void WriteBackFlatParameterDescriptor(VariableSymbol symbol, ArrayType arr, DynArr descriptor) {
+    if (!this._addr.TryGetValue(symbol, out var block))
+      throw new IrLoweringException($"array parameter {symbol.Name} has no incoming descriptor pointer");
+    this.FillFlatDescriptor(block, this._b.Load(IrType.FarPtr, descriptor.Data), arr,
+      k => this._b.Load(IrType.I32, descriptor.Lo[k]), k => this._b.Load(IrType.I32, descriptor.Size[k]));
+  }
   private readonly Dictionary<VariableSymbol, DynArr> _dynArrays = new(ReferenceEqualityComparer.Instance);
 
   /// <summary>$ERROR BOUNDS ON: subscripts are checked and Error 9 raised when one is out of range.</summary>
@@ -1340,6 +1387,23 @@ public sealed partial class IrLowering {
   private DynArr ParameterDynDescriptor(VariableSymbol symbol, int rank) {
     if (!this._addr.TryGetValue(symbol, out var descriptor))
       throw new IrLoweringException($"array parameter {symbol.Name} has no incoming descriptor pointer");
+
+    if (this.FlatDescriptors) {
+      // the flat layout: the data address is a pointer, and the bounds are LONGs
+      var flatData = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.FarPtr) { Name = symbol.Name + ".data" });
+      var flatLo = new IrValue[rank];
+      var flatSize = new IrValue[rank];
+      for (var k = 0; k < rank; ++k) {
+        flatLo[k] = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Name = $"{symbol.Name}.lo{k}" });
+        flatSize[k] = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(IrType.I32) { Name = $"{symbol.Name}.size{k}" });
+      }
+      this._b.Store(this._b.Load(IrType.FarPtr, descriptor), flatData);
+      for (var k = 0; k < rank; ++k) {
+        this._b.Store(this._b.Load(IrType.I32, this.FlatDescriptorField(descriptor, 2 + k * 2)), flatLo[k]);
+        this._b.Store(this._b.Load(IrType.I32, this.FlatDescriptorField(descriptor, 3 + k * 2)), flatSize[k]);
+      }
+      return new DynArr(flatData, flatLo, flatSize, FlatParameter: true);
+    }
 
     // every field is a word, so the block is addressed as an i16 array and each field is its index
     IrValue Word(int index) => this._b.Load(IrType.I16, this._b.Gep(descriptor, new IrConstantInt(IrType.I16, index), IrType.I16));
@@ -2112,7 +2176,7 @@ public sealed partial class IrLowering {
       // unrelated reason ("evaluate the value first, it may clobber BX/ES, then address the target"),
       // and agreeing with it is the point. HUGE needs none of this: it steps a segment and maps
       // nothing, so its address survives anything the value does.
-      if (arrSym.ArrayClass is ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+      if (this.IsPaged(arrSym.ArrayClass) && arrSym.ArrayClass is not ArrayClass.Huge) {
         // A RECORD element is copied whole and has no value to load, so the ordering argument reads
         // differently for it: what has to come first is the SOURCE address, because forming it may
         // map a different page over the one the destination needs.
@@ -2168,6 +2232,23 @@ public sealed partial class IrLowering {
       var (address, fieldType) = this.MemberLValue(member);
       this._b.Store(this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), fieldType), address);
       return;
+    }
+    // r.v(i) = x - one element of a record's array field: a number, a fixed string or a record
+    if (a.Target is IndexExpr { Target: MemberExpr } fieldElement) {
+      var elementType = this._model.TypeOf(fieldElement);
+      switch (elementType) {
+        case ScalarType scalarElement:
+          var elementValue = this.Coerce(this.LowerExpr(a.Value), this._model.TypeOf(a.Value), scalarElement);
+          this._b.Store(elementValue, this.FieldElementAddress(fieldElement, scalarElement));
+          return;
+        case FixedStringType fixedElement:
+          this._b.Call(IrType.Void, this.RuntimeFn("rt_str_to_fixed", IrType.Void, IrType.Ptr, IrType.I32, IrType.Ptr),
+            this.FieldElementAddress(fieldElement, fixedElement), new IrConstantInt(IrType.I32, fixedElement.Length), this.LowerStringExpr(a.Value));
+          return;
+        case UdtType recordElement:
+          this.CopyBlock(this.FieldElementAddress(fieldElement, recordElement), this.UdtAddress(a.Value), recordElement.Size);
+          return;
+      }
     }
     // a delegate takes a whole closure, never a number - the eight bytes are written as eight bytes
     if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var closureSym)
@@ -2388,6 +2469,8 @@ public sealed partial class IrLowering {
       return this.MemberLValue(m);
     if (e is PtrDerefExpr deref && this._model.TypeOf(deref) is ScalarType target)
       return (this.DerefAddress(deref), target);
+    if (e is IndexExpr { Target: MemberExpr } fieldElement && this._model.TypeOf(fieldElement) is ScalarType fieldScalar)
+      return (this.FieldElementAddress(fieldElement, fieldScalar), fieldScalar);   // r.v(i) - one element of an array field
     // Name the SHAPE. "unsupported lvalue" alone says a decline happened and nothing about what to
     // write next, which is the same defect the module-level decline had: a reason that identifies
     // nothing cannot be worked from, and it took a corpus census plus a guess to find out what was
@@ -2503,9 +2586,7 @@ public sealed partial class IrLowering {
   /// holds those bytes.
   /// </para>
   /// </summary>
-  private IrValue FieldElementAddress(IndexExpr ix, UdtType element) {
-    if (ix.Arguments.Count != 1)
-      throw new IrLoweringException("multi-dimensional UDT field array");
+  private IrValue FieldElementAddress(IndexExpr ix, PbType element) {
     if (ix.Target is not MemberExpr arrayField)
       throw new IrLoweringException($"the indexed {ix.Target.GetType().Name} is not a UDT array field");
 
@@ -2517,8 +2598,23 @@ public sealed partial class IrLowering {
     // 8086 allocator has to keep live across the loop, and a READ of one inside a loop then declined
     // the whole function under --no-optimize.
     var (recordBase, field) = this.MemberFieldBase(arrayField, arrayFieldAllowed: true);
-    var index = this.Coerce(this.LowerExpr(ix.Arguments[0]), this._model.TypeOf(ix.Arguments[0]), PbType.Integer);
-    IrValue offset = this._b.Mul(index, new IrConstantInt(IrType.I16, element.Size));
+    // each subscript measured from its own lower bound - v(1 TO 3) starts at 1 - and the first
+    // subscript varying fastest, as in every other PowerBASIC array
+    var bounds = field.Bounds ?? [(0, field.ElementCount - 1)];
+    if (ix.Arguments.Count != bounds.Count)
+      throw new IrLoweringException($"{ix.Arguments.Count} subscripts on the {bounds.Count}-dimensional field {field.Name}");
+    IrValue? index = null;
+    var stride = 1;
+    for (var k = 0; k < bounds.Count; ++k) {
+      IrValue subscript = this.Coerce(this.LowerExpr(ix.Arguments[k]), this._model.TypeOf(ix.Arguments[k]), PbType.Integer);
+      if (bounds[k].Lower != 0)
+        subscript = this._b.Sub(subscript, new IrConstantInt(IrType.I16, bounds[k].Lower));
+      if (stride != 1)
+        subscript = this._b.Mul(subscript, new IrConstantInt(IrType.I16, stride));
+      index = index is null ? subscript : this._b.Add(index, subscript);
+      stride *= bounds[k].Upper - bounds[k].Lower + 1;
+    }
+    IrValue offset = this._b.Mul(index!, new IrConstantInt(IrType.I16, element.Size));
     if (field.Offset != 0)
       offset = this._b.Add(offset, new IrConstantInt(IrType.I16, field.Offset));
     return this._b.Gep(recordBase, offset);
@@ -2637,7 +2733,7 @@ public sealed partial class IrLowering {
   private IrValue SegmentOfStorage(Expression e) {
     if (e is CallOrIndexExpr indexed && this._model.VariableBindings.TryGetValue(indexed, out var array)
         && array.Type is ArrayType element) {
-      if (array.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms)
+      if (this.IsPaged(array.ArrayClass))
         return this.ElementAddress(indexed, farAllowed: true).Address is IrFarPtr paged
           ? paged.Segment
           : throw new IrLoweringException($"VARSEG of an element of the {array.ArrayClass} array {array.Name}");
@@ -3295,6 +3391,9 @@ public sealed partial class IrLowering {
       case MemberExpr fm when !this._model.VariableBindings.ContainsKey(fm) && this.MemberFieldAddress(fm) is { Field.Type: FixedStringType ffs } fa:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
           fa.Address, new IrConstantInt(IrType.I32, ffs.Length));   // read a fixed-string record field as a handle
+      case IndexExpr { Target: MemberExpr } fixedElement when this._model.TypeOf(fixedElement) is FixedStringType fixedType:
+        return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_from_fixed", IrType.Ptr, IrType.Ptr, IrType.I32),
+          this.FieldElementAddress(fixedElement, fixedType), new IrConstantInt(IrType.I32, fixedType.Length));
       case MemberExpr am when !this._model.VariableBindings.ContainsKey(am) && this.MemberFieldAddress(am) is { Field.Type: AsciizType afz } aa:
         return this._b.Call(IrType.Ptr, this.RuntimeFn("rt_asciiz_load", IrType.Ptr, IrType.Ptr, IrType.I32),
           aa.Address, new IrConstantInt(IrType.I32, afz.Length));
@@ -3929,7 +4028,7 @@ public sealed partial class IrLowering {
     // a memory-model array re-DIMs through its own allocator, not the far array heap. PRESERVE has
     // no meaning there - the direct emitter refuses it too, and for the same reason: the copy would
     // have to walk two segment-stepped or page-mapped blocks at once.
-    if (operation.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+    if (this.IsPaged(operation.ArrayClass)) {
       if (operation.Preserve)
         throw new IrLoweringException($"REDIM PRESERVE on the {operation.ArrayClass} array {symbol.Name}");
       this.LowerPagedAllocation(symbol, arr, dims);
@@ -4022,6 +4121,8 @@ public sealed partial class IrLowering {
       return;
     }
     this._b.Store(data, descriptor.Data);
+    if (descriptor.FlatParameter)
+      this.WriteBackFlatParameterDescriptor(symbol, arr, descriptor);
   }
 
   /// <summary>
@@ -4061,7 +4162,7 @@ public sealed partial class IrLowering {
       return;
     }
 
-    if (operation.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+    if (this.IsPaged(operation.ArrayClass)) {
       this.LowerPagedErase(symbol, arr);
       return;
     }
@@ -4088,6 +4189,8 @@ public sealed partial class IrLowering {
       this._b.Call(IrType.Void, this.RuntimeFn("rt_arr_free", IrType.Void, IrType.FarPtr, IrType.I32),
         block, this.ArrayBytes(count, arr));
     this._b.Store(new IrNullPtr(IrType.FarPtr), descriptor.Data);
+    if (descriptor.FlatParameter)
+      this.WriteBackFlatParameterDescriptor(symbol, arr, descriptor);
   }
 
   // ---- ARRAY SORT / ARRAY SCAN ---------------------------------------------
@@ -4263,7 +4366,8 @@ public sealed partial class IrLowering {
       // high byte, which is where rt_scanstr reads it from
       this.StoreArpb("rt_arpb_flags", new IrConstantInt(IrType.I16, 2 | (ScanRelop(scan.Op) << 8)));
       var match = this.LowerStringExpr(scan.Match);
-      this.StoreArpb("rt_arpb_match", match);
+      // the match is a handle, which is a word only where pointers are
+      this._b.Store(match, this.RuntimeCell("rt_arpb_match", IrType.Ptr));
       found = this._b.Call(IrType.I16, this.RuntimeFn("rt_array_scan_str", IrType.I16));
       // the comparison does not consume its operands, so the match handle is still this statement's
       // to release - and the answer is already in hand when it goes
@@ -4274,7 +4378,7 @@ public sealed partial class IrLowering {
       // the match is compared as an ELEMENT, so it is coerced to the element type and stored as its
       // raw bytes - the staging cell reads it back with the same FILD/FLD the elements go through
       this._b.Store(this.Coerce(this.LowerExpr(scan.Match), this._model.TypeOf(scan.Match), shape.Type.Element),
-        this.RuntimeCell("rt_num_match", MapType(shape.Type.Element)));
+        this.RuntimeCell("rt_num_match", IrType.F80));   // ten bytes: room for the widest element
       found = this._b.Call(IrType.I16, this.RuntimeFn("rt_array_scan_num", IrType.I16));
     }
 
@@ -4472,7 +4576,7 @@ public sealed partial class IrLowering {
     if (d.AtAddress is not null)
       throw new IrLoweringException("DIM AT without the ABSOLUTE class");
     // HUGE / VIRTUAL / EMS / XMS: storage from the DOS or EMS allocator rather than the array heap
-    if (d.Class is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms) {
+    if (this.IsPaged(d.Class)) {
       this.LowerPagedDim(d);
       return;
     }
@@ -4493,7 +4597,7 @@ public sealed partial class IrLowering {
     // them: it marks the symbol's ArrayType IsDynamic or not, and every path below asks the SYMBOL.
     // So the class needs permission to reach that path rather than a path of its own - written out,
     // the two spellings of `DIM a%(7)` and `DIM DYNAMIC a%(7)` differ in nothing this lowering does.
-    if (d.Class is not (ArrayClass.Default or ArrayClass.Dynamic or ArrayClass.Static))
+    if (d.Class is not (ArrayClass.Default or ArrayClass.Dynamic or ArrayClass.Static) && !(this.FlatDescriptors && d.Class is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms))
       throw new IrLoweringException($"DIM {d.Class} array class");
 
     // A STATIC array is laid out at compile time and the declaration emits nothing. A DYNAMIC one -
@@ -5241,6 +5345,8 @@ public sealed partial class IrLowering {
       case MemberExpr member:
         var (memberAddr, memberType) = this.MemberLValue(member);
         return this._b.Load(MapType(memberType), memberAddr);
+      case IndexExpr { Target: MemberExpr } fieldElement when this._model.TypeOf(fieldElement) is ScalarType fieldScalar:
+        return this._b.Load(MapType(fieldScalar), this.FieldElementAddress(fieldElement, fieldScalar));
       // @p / @p[i] as a value. A record target has no single value to load - only its fields do, and
       // those arrive here as a MemberExpr - so it declines rather than reading the first word of one.
       case PtrDerefExpr deref when this._model.TypeOf(deref) is ScalarType target:
@@ -6132,6 +6238,10 @@ public sealed partial class IrLowering {
               Num(0), new IrConstantInt(IrType.I32,
                 (Math.Clamp((int)digits.Value, 1, 32) << 8) | (name == "HEX$" ? 4 : name == "OCT$" ? 3 : 1)))
           : throw new IrLoweringException($"{name} with a non-constant digit count"),
+      // DIR$(mask$ [, attribute]) - the find-FIRST half; the bare DIR$ that continues it is a name
+      "DIR$" when ci.Arguments.Count is 1 or 2 =>
+        this._b.Call(IrType.Ptr, this.RuntimeFn("rt_dir", IrType.Ptr, IrType.Ptr, IrType.I16),
+          Str(0), ci.Arguments.Count == 2 ? this.WordArg(ci.Arguments[1]) : new IrConstantInt(IrType.I16, 0)),
       // ENVIRON$("NAME") reads one variable back; the runtime answers a fresh string handle.
       "ENVIRON$" when ci.Arguments.Count == 1 =>
         this._b.Call(IrType.Ptr, this.RuntimeFn("rt_environ", IrType.Ptr, IrType.Ptr), Str(0)),
@@ -6593,8 +6703,11 @@ public sealed partial class IrLowering {
       List<(IrValue Block, VariableSymbol Symbol, ArrayType Array)>? record = null) {
     if (!this._model.VariableBindings.TryGetValue(argument, out var symbol) || symbol.Type is not ArrayType arr)
       throw new IrLoweringException("array argument that is not an array");
-    if (symbol.ArrayClass is ArrayClass.Huge or ArrayClass.Virtual or ArrayClass.Ems or ArrayClass.Xms or ArrayClass.Absolute)
+    if (this.IsPaged(symbol.ArrayClass) || symbol.ArrayClass is ArrayClass.Absolute)
       throw new IrLoweringException($"an argument of the {symbol.ArrayClass} array {symbol.Name}");
+
+    if (this.FlatDescriptors)
+      return this.FlatArrayDescriptorArgument(symbol, arr, record);
 
     var words = 4 + arr.Rank * 2;
     var block = this._entry.InsertAt(this._entryAllocaCount++,
@@ -6648,6 +6761,14 @@ public sealed partial class IrLowering {
   /// </summary>
   private void ReadBackArrayDescriptor(IrValue block, VariableSymbol symbol, ArrayType arr) {
     var descriptor = this.DynDescriptor(symbol, arr.Rank);
+    if (this.FlatDescriptors) {
+      this._b.Store(this._b.Load(IrType.FarPtr, block), descriptor.Data);
+      for (var k = 0; k < arr.Rank; ++k) {
+        this._b.Store(this._b.Load(IrType.I32, this.FlatDescriptorField(block, 2 + k * 2)), descriptor.Lo[k]);
+        this._b.Store(this._b.Load(IrType.I32, this.FlatDescriptorField(block, 3 + k * 2)), descriptor.Size[k]);
+      }
+      return;
+    }
     IrValue Word(int index) => this._b.Load(IrType.I16, this._b.Gep(block, new IrConstantInt(IrType.I16, index), IrType.I16));
     if (descriptor.Segment is { } segmentCell) {
       this._b.Store(Word(0), segmentCell);
@@ -6664,6 +6785,24 @@ public sealed partial class IrLowering {
       this._b.Store(this._b.Cast(IrCastOp.SExt, Word(4 + k * 2), IrType.I32), descriptor.Lo[k]);
       this._b.Store(this._b.Cast(IrCastOp.ZExt, Word(5 + k * 2), IrType.I32), descriptor.Size[k]);
     }
+  }
+
+  /// <summary>The flat-layout descriptor an array argument passes: its data address and its bounds, static or dynamic.</summary>
+  private IrValue FlatArrayDescriptorArgument(VariableSymbol symbol, ArrayType arr,
+      List<(IrValue Block, VariableSymbol Symbol, ArrayType Array)>? record) {
+    var block = this.FlatDescriptorBlock(symbol, arr.Rank);
+    if (arr.IsDynamic || symbol.Storage == VariableStorage.Parameter) {
+      var descriptor = this.DynDescriptor(symbol, arr.Rank);
+      this.FillFlatDescriptor(block, this._b.Load(IrType.FarPtr, descriptor.Data), arr,
+        k => this._b.Load(IrType.I32, descriptor.Lo[k]), k => this._b.Load(IrType.I32, descriptor.Size[k]));
+      record?.Add((block, symbol, arr));
+      return block;
+    }
+    if (arr.StaticBounds is not { } bounds || bounds.Count != arr.Rank)
+      throw new IrLoweringException($"an argument of the static array {symbol.Name} without bounds");
+    this.FillFlatDescriptor(block, this._b.Cast(IrCastOp.BitCast, this.SlotFor(symbol), IrType.FarPtr), arr,
+      k => new IrConstantInt(IrType.I32, bounds[k].Lower), k => new IrConstantInt(IrType.I32, bounds[k].Upper - bounds[k].Lower + 1));
+    return block;
   }
 
   /// <summary>The descriptor's element-size field: what one subscript step advances the data pointer by.</summary>

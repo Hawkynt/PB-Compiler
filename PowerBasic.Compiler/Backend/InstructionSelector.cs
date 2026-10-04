@@ -3681,8 +3681,10 @@ public sealed partial class InstructionSelector {
         this.ArmHandler(new MOperand.DataOffset("rt_resumenext_handler", 0));
         return true;
 
+      // ON ERROR GOTO 0 disarms and clears ERR, as genuine PBC 3.50 does
       case "rt_onerr_disarm":
         this.StoreCell("rt_onerr", new MOperand.Immediate(0));
+        this.StoreCell("rt_err", new MOperand.Immediate(0));
         return true;
 
       case "rt_err_clear":

@@ -70,6 +70,14 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   /// </summary>
   public bool OwnsProcedureAbi { get; set; }
 
+  /// <summary>
+  /// Whether an array passed to a procedure is described by a pointer-width data address rather than
+  /// the DOS descriptor's segment and offset words. A flat machine's addresses do not fit a word, and
+  /// it has no segment to put beside one; DOS keeps the vintage layout, which is the ABI a genuine
+  /// unit or object file expects.
+  /// </summary>
+  public bool FlatArrayDescriptors { get; init; }
+
   public IReadOnlyList<IrFunction> Functions => this._functions;
   public IReadOnlyList<IrGlobalVariable> Globals => this._globals;
 

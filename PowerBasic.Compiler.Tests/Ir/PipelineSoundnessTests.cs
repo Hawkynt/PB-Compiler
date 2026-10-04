@@ -22,7 +22,7 @@ public sealed class PipelineSoundnessTests {
     yield return Case("nested-for", "t% = 0\nFOR r% = 1 TO 3\n FOR c% = 1 TO 3\n  t% = t% + r% * c%\n NEXT c%\nNEXT r%");
     yield return Case("do-while", "i% = 0\nDO WHILE i% < 10\n i% = i% + 1\nLOOP");
     yield return Case("do-until-post", "i% = 0\nDO\n i% = i% + 1\nLOOP UNTIL i% >= 10");
-    yield return Case("select", "n% = 2\nr% = 0\nSELECT CASE n%\nCASE 1\n r% = 10\nCASE 2, 3\n r% = 20\nCASE 4 TO 6\n r% = 30\nCASE IS > 9\n r% = 40\nCASE ELSE\n r% = 99\nEND SELECT");
+    yield return Case("select", "n% = 2\nr% = 0\nSELECT CASE n%\nCASE 1\n r% = 10\nCASE 2, 3\n r% = 20\nCASE 4 TO 6\n r% = 30\nCASE > 9\n r% = 40\nCASE ELSE\n r% = 99\nEND SELECT");
     yield return Case("arrays", "DIM a%(1 TO 10)\nFOR i% = 1 TO 10\n a%(i%) = i% * i%\nNEXT i%\ns& = 0\nFOR i% = 1 TO 10\n s& = s& + a%(i%)\nNEXT i%");
     yield return Case("2d-array", "DIM g%(1 TO 3, 1 TO 3)\nFOR r% = 1 TO 3\n FOR c% = 1 TO 3\n  g%(r%, c%) = r% * 10 + c%\n NEXT c%\nNEXT r%");
     yield return Case("intrinsics", "x! = -2.5\na! = ABS(x!)\nb% = SGN(x!)\nc! = FIX(x!)\nd! = INT(x!)");

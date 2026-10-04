@@ -193,6 +193,8 @@ public sealed class DirectOptimizerOnRenderedBasicTests {
     // faithful - which the writer does for pure expressions but not across a materialized temporary.
     ["pb36/DIFF35.BAS"] = "a float temporary is materialized into a declared variable, so PB picks its "
       + "formatter from the temporary's type rather than the expression's - see LowerArithmetic.",
+    ["pb36/DIFF134.BAS"] = "a float temporary is materialized into a declared variable, as DIFF35: the "
+      + "product 1E+300 * 10 prints by the temporary's type rather than the expression's.",
     ["tb10/DIFF01.BAS"] = "float PRINT formatting differs between TB 1.0 and pb35 (1E+15 against 1000000000000000).",
     ["tb11/DIFF01.BAS"] = "float PRINT formatting differs between TB 1.1 and pb35.",
     ["pb21/DIFF01.BAS"] = "float PRINT formatting differs between PB 2.1 and pb35.",

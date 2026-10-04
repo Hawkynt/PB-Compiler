@@ -1,6 +1,8 @@
 ' Sequential file I/O: write, append, read back, EOF, FREEFILE, KILL.
 DIM f AS INTEGER, n AS INTEGER
 DIM s AS STRING
+' KILL of a file that is not there is error 53, so there is one to remove first
+OPEN "OUT.TXT" FOR OUTPUT AS #1: CLOSE #1
 KILL "OUT.TXT"
 f = FREEFILE
 PRINT f

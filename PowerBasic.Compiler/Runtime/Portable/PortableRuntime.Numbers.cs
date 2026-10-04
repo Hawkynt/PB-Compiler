@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Syntax;
 using System.Numerics;
 using PowerBasic.Compiler.Ir;
 
@@ -24,7 +25,10 @@ public static partial class PortableRuntime {
     private IrGlobalVariable? _powers;
 
     private Action<IrWriter>? NumberRoutine(string name) => name switch {
-      "rt_print_i8" or "rt_print_i16" or "rt_print_i32" or "rt_print_i64" => w => this.PrintNumber(w, this.Widened(w, signed: true), this.FormatSigned),
+      "rt_print_i8" or "rt_print_i16" or "rt_print_i32" => w => this.PrintNumber(w, this.Widened(w, signed: true), this.FormatSigned),
+      // a QUAD prints as the DOS runtime prints it - through the DOUBLE formatter, so exact digits
+      // only below 10^15 and 9.22337203685478E+18 above
+      "rt_print_i64" => w => this.PrintNumber(w, w.B.Cast(IrCastOp.SIToFP, w.Function.Parameters[0], IrType.F80), this.FormatFloat(15)),
       "rt_print_u8" or "rt_print_u16" or "rt_print_u32" => w => this.PrintNumber(w, this.Widened(w, signed: false), this.FormatUnsigned),
       "rt_print_single" => w => this.PrintNumber(w, w.Function.Parameters[0], this.FormatFloat(7)),
       "rt_print_double" => w => this.PrintNumber(w, w.Function.Parameters[0], this.FormatFloat(15)),
@@ -34,11 +38,13 @@ public static partial class PortableRuntime {
       "rt_rnd_range" => this.RandomRange,
       "rt_round_half_away" => this.RoundHalfAway,
       "rt_round_places" => this.RoundPlaces,
-      "rt_str_from_i8" or "rt_str_from_i16" or "rt_str_from_i32" or "rt_str_from_i64" => w => this.NumberString(w, this.Widened(w, signed: true), this.FormatSigned),
+      "rt_str_from_i8" or "rt_str_from_i16" or "rt_str_from_i32" => w => this.NumberString(w, this.Widened(w, signed: true), this.FormatSigned),
+      "rt_str_from_i64" => w => this.NumberString(w, w.B.Cast(IrCastOp.SIToFP, w.Function.Parameters[0], IrType.F80), this.FormatFloat(15)),
       "rt_str_from_u8" or "rt_str_from_u16" or "rt_str_from_u32" => w => this.NumberString(w, this.Widened(w, signed: false), this.FormatUnsigned),
       "rt_str_from_single" => w => this.NumberString(w, w.Function.Parameters[0], this.FormatFloat(7)),
       "rt_str_from_double" => w => this.NumberString(w, w.Function.Parameters[0], this.FormatFloat(15)),
-      "rt_str_from_ext" => w => this.NumberString(w, w.Function.Parameters[0], this.FormatFloat(18)),
+      // STR$ of an EXT renders fifteen digits, as genuine PBC 3.50 does
+      "rt_str_from_ext" => w => this.NumberString(w, w.Function.Parameters[0], this.FormatFloat(15)),
       "rt_str_hex" => w => this.Radix(w, w.Function.Parameters[0], w.Ix((1 << 8) | 4)),
       "rt_str_oct" => w => this.Radix(w, w.Function.Parameters[0], w.Ix((1 << 8) | 3)),
       "rt_str_bin" => w => this.Radix(w, w.Function.Parameters[0], w.Ix((1 << 8) | 1)),
@@ -175,7 +181,9 @@ public static partial class PortableRuntime {
         var total = w.Variable(IrType.I64, w.I64(0));
         var scanning = w.Variable(IrType.I1, IrBuilder.ConstBool(true));
         w.While(() => w.B.And(scanning.Get(), More()), () => {
-          var character = Upper(Current());
+          // only a letter is folded to upper case: clearing bit 5 of a digit turns '1' into a control code
+          var raw = Current();
+          var character = w.B.Select(IsDigit(raw), raw, Upper(raw));
           var digit = w.Variable(IrType.I64, w.I64(99));
           w.If(IsDigit(character), () => digit.Set(w.B.ZExt(w.B.Sub(character, w.I8('0')), IrType.I64)),
             () => w.If(w.B.And(w.Cmp(IrCmpPred.Uge, character, w.I8('A')), w.Cmp(IrCmpPred.Ule, character, w.I8('F'))),
@@ -246,7 +254,7 @@ public static partial class PortableRuntime {
     // --- floats --------------------------------------------------------------------------------
 
     /// <summary><c>10^(2^i)</c> as correctly rounded 80-bit extended values, ten bytes each.</summary>
-    private IrGlobalVariable Powers => this._powers ??= module.AddGlobal(new IrGlobalVariable("rt.powersOfTen", IrType.I8) {
+    private IrGlobalVariable Powers => this._powers ??= this.Shared(new IrGlobalVariable("rt.powersOfTen", IrType.I8) {
       Count = PowerCount * 10,
       Bytes = PowersOfTen(),
       IsZeroInitialized = false,
@@ -298,12 +306,27 @@ public static partial class PortableRuntime {
     /// and DOUBLEs carries it once.
     /// </summary>
     private IrFunction FormatFloat(int digits) {
+      digits = this.SignificantDigits(digits);
       if (!this._formatFloat.TryGetValue(digits, out var function)) {
         function = this.Internal($"rt.formatFloat{digits}", this.Index, [IrType.F80, IrType.Ptr],
           w => w.B.Ret(w.B.Call(w.Index, this.FloatFormatter, w.Function.Parameters[0], w.Function.Parameters[1], w.Ix(digits))));
         this._formatFloat[digits] = function;
       }
       return function;
+    }
+
+    /// <summary>
+    /// The significant digits the source dialect's runtime prints for a SINGLE (7) or a DOUBLE (15):
+    /// Turbo Basic prints sixteen for both, and the Microsoft compilers before PDS 7.0 sixteen for a
+    /// DOUBLE - the same table the DOS runtime's formatter is built from.
+    /// </summary>
+    private int SignificantDigits(int digits) {
+      var dialect = module.EffectiveDialect;
+      if (dialect.IsTurboBasic())
+        return 16;
+      if (digits == 15 && dialect.Family() == Syntax.DialectFamily.Microsoft && dialect < Syntax.Dialect.Pds70)
+        return 16;
+      return digits;
     }
 
     private IrFunction? _floatFormatter;
@@ -419,23 +442,36 @@ public static partial class PortableRuntime {
 
       Emit(w.B.Select(negative, w.I8('-'), w.I8(' ')));
       var e = exponent.Get();
-      var scientific = w.B.Or(w.Cmp(IrCmpPred.Slt, e, w.Ix(-4)), w.Cmp(IrCmpPred.Sge, e, digits));
+      // the layout is the source dialect's, as the DOS runtime lays it out: a number with more integer
+      // digits than are significant is written with an exponent; a fraction keeps its zeros down to
+      // 1E-7 under PowerBASIC, down to its own digit count under QuickBASIC's DOUBLE, and not below
+      // .1 under Turbo Basic; and only the Microsoft family pads the exponent (to two digits, three
+      // under Turbo Basic) and marks a DOUBLE's with D
+      var dialect = module.EffectiveDialect;
+      var microsoft = dialect.Family() == Syntax.DialectFamily.Microsoft && !dialect.IsTurboBasic();
+      IrValue smallest = dialect.IsTurboBasic() ? w.Ix(-1)
+        : microsoft ? w.B.Select(w.Cmp(IrCmpPred.Eq, digits, w.Ix(7)), w.Ix(-7), w.B.Sub(w.Ix(-1), digits))
+        : w.Ix(-7);
+      var scientific = w.B.Or(w.Cmp(IrCmpPred.Slt, e, smallest), w.Cmp(IrCmpPred.Sge, e, digits));
       w.If(scientific, () => {
         Emit(w.ByteAt(digitText, w.Ix(0)));
         w.If(w.Cmp(IrCmpPred.Sgt, significant.Get(), w.Ix(1)), () => {
           Emit(w.I8('.'));
           CopyDigits(w.Ix(1));
         });
-        Emit(w.I8('E'));
+        Emit(microsoft ? w.B.Select(w.Cmp(IrCmpPred.Eq, digits, w.Ix(7)), w.I8('E'), w.I8('D')) : w.I8('E'));
         var power = exponent.Get();
         Emit(w.B.Select(w.Cmp(IrCmpPred.Slt, power, w.Ix(0)), w.I8('-'), w.I8('+')));
         var absolute = w.Variable(w.Index, w.B.Select(w.Cmp(IrCmpPred.Slt, power, w.Ix(0)), w.B.Sub(w.Ix(0), power), power));
-        foreach (var place in new[] { 1000, 100 }) {
+        var pad = dialect.IsTurboBasic() ? 3 : microsoft ? 2 : 1;
+        foreach (var place in new[] { 1000, 100, 10 }) {
           var p = place;
-          w.If(w.Cmp(IrCmpPred.Sge, absolute.Get(), w.Ix(p)),
+          // a digit is written when the exponent reaches it, or when the padding asks for it
+          var padded = p < (int)Math.Pow(10, pad);
+          IrValue wanted = padded ? IrBuilder.ConstBool(true) : w.Cmp(IrCmpPred.Sge, absolute.Get(), w.Ix(p));
+          w.If(wanted,
             () => Emit(w.B.Add(w.B.Trunc(w.B.Binary(IrBinaryOp.URem, w.B.Binary(IrBinaryOp.UDiv, absolute.Get(), w.Ix(p)), w.Ix(10)), IrType.I8), w.I8('0'))));
         }
-        Emit(w.B.Add(w.B.Trunc(w.B.Binary(IrBinaryOp.URem, w.B.Binary(IrBinaryOp.UDiv, absolute.Get(), w.Ix(10)), w.Ix(10)), IrType.I8), w.I8('0')));
         Emit(w.B.Add(w.B.Trunc(w.B.Binary(IrBinaryOp.URem, absolute.Get(), w.Ix(10)), IrType.I8), w.I8('0')));
       }, () => w.If(w.Cmp(IrCmpPred.Sge, exponent.Get(), w.Ix(0)), () => {
         // the integer part, padded with zeros past the significant digits, then any fraction

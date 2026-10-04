@@ -1,0 +1,44 @@
+OPEN "T1.DAT" FOR RANDOM AS #1 LEN = 12
+FIELD #1, 4 AS a$, 8 AS b$
+LSET a$ = "ab"
+RSET b$ = "xyz"
+PUT #1, 1
+LSET a$ = "cd"
+LSET b$ = "q"
+PUT #1, 2
+GET #1, 1
+PRINT "["; a$; "]["; b$; "]"
+PRINT LOF(1); LOC(1)
+CLOSE #1
+NAME "T1.DAT" AS "T2.DAT"
+OPEN "T2.DAT" FOR BINARY AS #2
+s$ = SPACE$(4)
+GET #2, 13, s$
+PRINT "["; s$; "]"
+SEEK #2, 1
+z$ = "ZZ": PUT #2, , z$
+PRINT SEEK(2)
+CLOSE #2
+OPEN "T2.DAT" FOR INPUT AS #3
+LINE INPUT #3, l$
+PRINT LEFT$(l$, 6)
+CLOSE #3
+KILL "T2.DAT"
+PRINT FREEFILE
+OPEN "T3.DAT" FOR RANDOM AS #4 LEN = 4
+x& = 1234567
+PUT #4, 3, x&
+y& = 0
+GET #4, 3, y&
+PRINT y&; LOF(4)
+CLOSE #4
+OPEN "T3.DAT" FOR BINARY AS #5
+SEEK #5, 9
+z& = 0
+GET #5, , z&
+PRINT z&
+SEEK #5, 5
+SETEOF #5
+PRINT LOF(5)
+CLOSE #5
+KILL "T3.DAT"
