@@ -25,7 +25,7 @@ public static partial class X86NativeCompiler {
     /// EXIT FAR's unwind point is a triple of its own.
     /// </summary>
     private X86Label _errorHandler, _errorFrame, _errorStack, _statementStart, _statementNext, _faultStart, _faultNext,
-      _resumeNextStub, _exitFarTarget, _exitFarFrame, _exitFarStack;
+      _resumeNextStub, _exitFarTarget, _exitFarFrame, _exitFarStack, _stackTop, _processStack;
 
     /// <summary>The program's ERR cell, when it reads ERR at all.</summary>
     private X86Label? ErrorCode
@@ -65,10 +65,15 @@ public static partial class X86NativeCompiler {
       this._statementNext = this._asm.NewLabel("pb.statementNext");
       this._faultStart = this._asm.NewLabel("pb.faultStart");
       this._faultNext = this._asm.NewLabel("pb.faultNext");
+      this._stackTop = this._asm.NewLabel("pb.stackTop");
+      this._processStack = this._asm.NewLabel("pb.processStack");
 
       // _start: the program, then exit(0) - the stack pointer as the kernel left it
       var start = this._asm.NewLabel("_start");
       this._asm.Bind(start);
+      this._asm.Mov(this.Word, X86Mem.At(this._stackTop), X86Reg.Sp);
+      // where the kernel left argc, the argument vector and the environment - only _start has them
+      this._asm.Mov(this.Word, X86Mem.At(this._processStack), X86Reg.Sp);
       this._asm.Call(this._entries[main]);
       this.EmitExit(null);
 
@@ -77,6 +82,7 @@ public static partial class X86NativeCompiler {
       this._asm.Bind(export);
       foreach (var register in (X86Reg[])[X86Reg.Bx, X86Reg.Si, X86Reg.Di, X86Reg.Bp])
         this._asm.Push(register);
+      this._asm.Mov(this.Word, X86Mem.At(this._stackTop), X86Reg.Sp);
       this._asm.Call(this._entries[main]);
       foreach (var register in (X86Reg[])[X86Reg.Bp, X86Reg.Di, X86Reg.Si, X86Reg.Bx])
         this._asm.Pop(register);
@@ -108,7 +114,7 @@ public static partial class X86NativeCompiler {
       this._asm.Reserve(this._controlWord, 4, 4);
       foreach (var cell in (X86Label[])[this._errorHandler, this._errorFrame, this._errorStack,
           this._statementStart, this._statementNext, this._faultStart, this._faultNext,
-          this._exitFarTarget, this._exitFarFrame, this._exitFarStack])
+          this._exitFarTarget, this._exitFarFrame, this._exitFarStack, this._stackTop, this._processStack])
         this._asm.Reserve(cell, this.WordBytes, this.WordBytes);
       return new(this._asm, start, export);
     }
@@ -204,18 +210,46 @@ public static partial class X86NativeCompiler {
         below = (below + bytes + alignment - 1) / alignment * alignment;
         frame.Places.Add(value, -below);
       }
+      var values = new List<IrInstruction>();
       foreach (var instruction in function.Blocks.SelectMany(block => block.Instructions)) {
         if (instruction is IrAlloca alloca)
           Add(alloca, Math.Max(1, this.SizeOf(alloca.Allocated) * alloca.Count));
         else if (!instruction.Type.IsVoid && (instruction is IrPhi || !instruction.HasNoUsers))
-          Add(instruction, this.SizeOf(instruction.Type));
+          values.Add(instruction);
       }
       // scratch for conversions through memory
       Add(frame.Scratch, 16);
       // a procedure that arms a handler keeps its caller's here, to put back when it returns
       if (function.HasErrorHandler && function.Name != "main")
         Add(frame.SavedHandler, 3 * this.WordBytes);
-      frame.Size = (below + 15) / 16 * 16;
+      // a function with a handler can resume anywhere, which no live range accounts for: one cell per value
+      if (function.HasErrorHandler) {
+        foreach (var value in values)
+          Add(value, this.SizeOf(value.Type));
+        frame.Size = (below + 15) / 16 * 16;
+        return frame;
+      }
+      // the rest share cells between values never alive together (ValueLiveRanges): a value of b bytes,
+      // aligned to its size, takes the lowest offset in the shared area no live value overlaps
+      var floor = (below + 15) / 16 * 16;
+      var ranges = ValueLiveRanges.Of(function, values);
+      var active = new List<(int End, int Offset, int Bytes)>();
+      var used = 0;
+      foreach (var value in values.OrderBy(value => ranges[value].Start)) {
+        var (start, end) = ranges[value];
+        active.RemoveAll(slot => slot.End < start);
+        var size = this.SizeOf(value.Type);
+        var alignment = size >= 8 ? 8 : size >= 4 ? 4 : size >= 2 ? 2 : 1;
+        var bytes = (size + alignment - 1) / alignment * alignment;
+        var offset = 0;
+        while (active.Any(slot => offset + bytes > slot.Offset && slot.Offset + slot.Bytes > offset))
+          offset = (active.Where(slot => offset + bytes > slot.Offset && slot.Offset + slot.Bytes > offset)
+            .Max(slot => slot.Offset + slot.Bytes) + alignment - 1) / alignment * alignment;
+        frame.Places.Add(value, -(floor + offset + bytes));
+        active.Add((end, offset, bytes));
+        used = Math.Max(used, offset + bytes);
+      }
+      frame.Size = (floor + used + 15) / 16 * 16;
       return frame;
     }
 

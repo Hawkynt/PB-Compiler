@@ -1272,7 +1272,7 @@ public sealed partial class DosRuntime {
 
   public Label Rename { get; private set; } = null!;
 
-  /// <summary>NAME old$ AS new$: DOS rename (consumes both handles; failure raises ERR 57).</summary>
+  /// <summary>NAME old$ AS new$: DOS rename (consumes both handles; a failure raises the DOS code's BASIC error).</summary>
   private void EmitRename(Assembler asm) {
     this.Rename = asm.MarkLabel("rt_rename");
     var ok = asm.DefineLabel();
@@ -1299,8 +1299,7 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AH, 0x56);
     asm.Int(0x21);
     asm.Jnc(ok);
-    asm.Mov(Reg.AX, 57);
-    asm.Call(asm.Lbl("rt_raise"));
+    asm.Call(asm.Lbl("rt_err_dos"));                   // a missing file is 53
     asm.MarkLabel(ok);
     asm.Pop(Reg.ES);
     asm.Pop(Reg.DI);

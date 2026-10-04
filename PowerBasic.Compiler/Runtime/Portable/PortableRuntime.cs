@@ -77,6 +77,7 @@ public static partial class PortableRuntime {
       // rt_error is always there: a back end raises BASIC's errors through it
       this.Declare("rt_error", IrType.Void, IrType.I32);
       this.RewriteConcatenationChains();
+      this.InitialiseInternalVariables();
       foreach (var function in module.Functions.Where(function => function.IsDeclaration).ToList())
         if (cleanUp || !IsRewrittenByMiddleEnd(function.Name))
           this.DefineIfKnown(function);
@@ -107,7 +108,7 @@ public static partial class PortableRuntime {
         ?? module.AddFunction(new IrFunction(name, returnType, parameters.Select((type, i) => new IrArgument(type, i))));
 
     private void DefineIfKnown(IrFunction function) {
-      var body = this.StringRoutine(function.Name) ?? this.NumberRoutine(function.Name) ?? this.ArrayRoutine(function.Name)
+      var body = this.StringRoutine(function.Name) ?? this.TextRoutine(function.Name) ?? this.UsingRoutine(function.Name) ?? this.ClockRoutine(function.Name) ?? this.FieldRoutine(function.Name) ?? this.InternalRoutine(function.Name) ?? this.NumberRoutine(function.Name) ?? this.ArrayRoutine(function.Name) ?? this.SortRoutine(function.Name) ?? this.DirectoryRoutine(function.Name) ?? this.ProcessRoutine(function.Name) ?? this.InterruptRoutine(function.Name) ?? this.CoalescedRoutine(function)
         ?? this.FileRoutine(function.Name) ?? this.MathRoutine(function.Name)
         ?? (Action<IrWriter>?)(function.Name switch {
         "rt_print_str" => w => {
@@ -123,6 +124,41 @@ public static partial class PortableRuntime {
           this.System(w, this.Exit, w.Function.Parameters[0]);
           w.B.Ret();
         },
+        // one flat address space: the segment half of a code pointer is nothing
+        // $ERROR STACK ON: a procedure entered with the stack nearly gone is error 201, out of stack space
+        "rt_stack_probe" => w => {
+          w.If(w.Cmp(IrCmpPred.Ne, w.B.Call(IrType.I32, this.Declare("sys_stack_low", IrType.I32), []), w.I32(0)),
+            () => w.B.Call(IrType.Void, this.ErrorFunction, w.I32(201)));
+          w.B.Ret();
+        },
+        // DEF SEG and the memory it names: a segment and an offset, which the back end turns into
+        // whatever address the target has for them (FarPointerFlattening)
+        "rt_defseg_reset" => w => {
+          w.B.Store(IrBuilder.ConstInt(IrType.I16, 0), this.DefaultSegment);
+          w.B.Ret();
+        },
+        "rt_peek" => w => w.B.Ret(w.B.ZExt(w.B.Load(IrType.I8, this.Segmented(w, w.Function.Parameters[0])), w.Function.ReturnType)),
+        "rt_peeki" or "rt_peekl" => w => w.B.Ret(w.B.Load(w.Function.ReturnType, this.Segmented(w, w.Function.Parameters[0]))),
+        "rt_poke" => w => {
+          w.B.Store(w.B.Trunc(w.Function.Parameters[1], IrType.I8), this.Segmented(w, w.Function.Parameters[0]));
+          w.B.Ret();
+        },
+        "rt_poke_str" => w => {
+          var text = w.Function.Parameters[1];
+          var (bytes, length) = this.View(w, text, w.Ix(1), this.Length(w, text));
+          var i = w.Variable(w.Index, w.Ix(0));
+          w.While(() => w.Cmp(IrCmpPred.Slt, i.Get(), length), () => {
+            var at = w.B.Add(w.Function.Parameters[0], w.FromIndex(i.Get(), IrType.I16));
+            w.B.Store(w.ByteAt(bytes, i.Get()), this.Segmented(w, at));
+            i.Set(w.B.Add(i.Get(), w.Ix(1)));
+          });
+          this.Consume(w, text);
+          w.B.Ret();
+        },
+        // FRE(-11), the EMS a VIRTUAL array draws on: here every array draws on the one heap, so it is
+        // the heap's room never yet handed out
+        "rt_ems_fre" => w => w.B.Ret(w.FromIndex(w.B.Sub(w.Ix(heapBytes), w.B.Load(w.Index, this.HeapTop)), IrType.I32)),
+        "rt_codeseg" => w => w.B.Ret(IrBuilder.ConstInt(w.Function.ReturnType, 0)),
         "rt_inp" => w => w.B.Ret(IrBuilder.ConstInt(w.Function.ReturnType, 0)),
         "rt_outp" => w => w.B.Ret(),
         "llvm.memcpy.p0.p0.i32" => this.MemoryCopy,
@@ -132,6 +168,41 @@ public static partial class PortableRuntime {
       if (body is null)
         return;
       this.Build(function, body);
+    }
+
+    /// <summary>
+    /// The entries string-allocation coalescing routes a region through. Its preflight is the DOS
+    /// heap's - a reservation this heap has no use for - so the region's markers do nothing and each
+    /// coalesced producer is its ordinary self; a borrowing one copies the source it was lent first,
+    /// since the ordinary producer consumes what it is given.
+    /// </summary>
+    private Action<IrWriter>? CoalescedRoutine(IrFunction function) {
+      if (function.Name is "rt_str_coalesce_begin" or "rt_str_coalesce_end")
+        return w => w.B.Ret();
+      if (!function.Name.EndsWith("_coalesced", StringComparison.Ordinal))
+        return null;
+      var borrows = function.Name.EndsWith("_borrow_coalesced", StringComparison.Ordinal);
+      var plainName = function.Name[..^(borrows ? "_borrow_coalesced" : "_coalesced").Length];
+      return w => {
+        var plain = this.Declare(plainName, function.ReturnType, [.. function.Parameters.Select(p => p.Type)]);
+        if (plain.IsDeclaration)
+          this.DefineIfKnown(plain);
+        var arguments = w.Function.Parameters.Cast<IrValue>().ToArray();
+        if (borrows)
+          arguments[0] = w.B.Call(IrType.Ptr, this.Declare("rt_str_dup", IrType.Ptr, IrType.Ptr) is var dup && dup.IsDeclaration
+            ? this.Defined(dup) : dup, arguments[0]);
+        w.B.Ret(w.B.Call(function.ReturnType, plain, arguments));
+      };
+    }
+
+    private IrGlobalVariable DefaultSegment => this.Shared(new IrGlobalVariable("rt_defseg", IrType.I16) { IsZeroInitialized = true });
+
+    /// <summary>The byte at DEF SEG:<paramref name="offset"/>.</summary>
+    private IrValue Segmented(IrWriter w, IrValue offset) => w.B.FarPtr(w.B.Load(IrType.I16, this.DefaultSegment), offset);
+
+    private IrFunction Defined(IrFunction function) {
+      this.DefineIfKnown(function);
+      return function;
     }
 
     private void Build(IrFunction function, Action<IrWriter> body) {
@@ -156,17 +227,45 @@ public static partial class PortableRuntime {
     private IrFunction Exit => this._exit ??= this.Declare("sys_exit", IrType.Void, IrType.I32);
 
     /// <summary>The output column, counted from zero, that zones and TAB measure from.</summary>
-    private IrGlobalVariable Column => this._column ??= module.AddGlobal(new IrGlobalVariable("rt.column", this.Index));
+    /// <summary>
+    /// The runtime's state cell named by <paramref name="cell"/>, shared with every earlier definition
+    /// in the module. The runtime is defined twice - its early entries before the middle end, the rest
+    /// after it - and each definition is a fresh writer: a second cell of the same name would give the
+    /// two halves two file tables or two heaps, so an OPEN inlined into main wrote a descriptor that the
+    /// later PRINT # never saw.
+    /// </summary>
+    private IrGlobalVariable Shared(IrGlobalVariable cell) => module.FindGlobal(cell.Name) ?? module.AddGlobal(cell);
+
+    /// <summary>
+    /// The console's print column, 0-based: <c>rt_col</c>, the cell the lowering reads POS from and
+    /// STDOUT resets, so that this runtime and the program agree on where the cursor is.
+    /// </summary>
+    private IrGlobalVariable Column => this._column ??= module.FindGlobal("rt_col")
+      ?? module.AddGlobal(new IrGlobalVariable("rt_col", IrType.I16) { IsZeroInitialized = true });
+
+    private IrValue GetColumn(IrWriter w) => w.ToIndex(w.B.Load(IrType.I16, this.Column));
+    private void SetColumn(IrWriter w, IrValue column) => w.B.Store(w.FromIndex(column, IrType.I16), this.Column);
 
     /// <summary><c>rt.out(buffer, length)</c>: writes, and keeps the column.</summary>
     private IrFunction Out => this._out ??= this.Internal("rt.out", IrType.Void, [IrType.Ptr, this.Index], w => {
       var (buffer, length) = (w.Function.Parameters[0], w.Function.Parameters[1]);
+      // while a USING$ is being built, the text is the string's, not the screen's
+      if (this.CapturesOutput)
+        w.If(w.Cmp(IrCmpPred.Ne, w.B.Load(w.Index, this.Capturing), w.Ix(0)), () => {
+          this.Capture(w, buffer, length);
+          w.Return();
+        });
       var i = w.Variable(w.Index, w.Ix(0));
       w.While(() => w.Cmp(IrCmpPred.Slt, i.Get(), length), () => {
-        var column = w.B.Load(w.Index, this.Column);
+        var column = this.GetColumn(w);
         w.If(w.Cmp(IrCmpPred.Eq, w.ByteAt(buffer, i.Get()), w.I8('\n')),
-          () => w.B.Store(w.Ix(0), this.Column),
-          () => w.B.Store(w.B.Add(column, w.Ix(1)), this.Column));
+          () => {
+            this.SetColumn(w, w.Ix(0));
+            if (this.TracksRow)
+              w.If(w.Cmp(IrCmpPred.Slt, w.B.Load(IrType.I32, this.Row), w.I32(24)),
+                () => w.B.Store(w.B.Add(w.B.Load(IrType.I32, this.Row), w.I32(1)), this.Row));
+          },
+          () => this.SetColumn(w, w.B.Add(column, w.Ix(1))));
         i.Set(w.B.Add(i.Get(), w.Ix(1)));
       });
       this.System(w, this.Write, w.Ix(1), buffer, length);
@@ -191,7 +290,7 @@ public static partial class PortableRuntime {
       w.B.Br(loop);
       w.B.Position(loop);
       this.OutByte(w, w.I8(' '));
-      var column = w.B.Load(w.Index, this.Column);
+      var column = this.GetColumn(w);
       w.B.CondBr(w.Cmp(IrCmpPred.Ne, w.B.Binary(IrBinaryOp.SRem, column, w.Ix(ZoneWidth)), w.Ix(0)), loop, done);
       w.B.Position(done);
       w.B.Ret();
@@ -200,9 +299,9 @@ public static partial class PortableRuntime {
     private void PrintTab(IrWriter w) {
       var target = w.Variable(w.Index, w.ToIndex(w.Function.Parameters[0]));
       w.If(w.Cmp(IrCmpPred.Slt, target.Get(), w.Ix(1)), () => target.Set(w.Ix(1)));
-      w.While(() => w.Cmp(IrCmpPred.Sgt, w.B.Load(w.Index, this.Column), w.B.Sub(target.Get(), w.Ix(1))),
+      w.While(() => w.Cmp(IrCmpPred.Sgt, this.GetColumn(w), w.B.Sub(target.Get(), w.Ix(1))),
         () => this.OutByte(w, w.I8('\n')));
-      w.While(() => w.Cmp(IrCmpPred.Slt, w.B.Load(w.Index, this.Column), w.B.Sub(target.Get(), w.Ix(1))),
+      w.While(() => w.Cmp(IrCmpPred.Slt, this.GetColumn(w), w.B.Sub(target.Get(), w.Ix(1))),
         () => this.OutByte(w, w.I8(' ')));
       w.B.Ret();
     }

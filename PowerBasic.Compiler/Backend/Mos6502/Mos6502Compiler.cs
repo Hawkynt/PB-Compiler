@@ -114,6 +114,12 @@ public static partial class Mos6502Compiler {
       this.Size += bytes;
     }
 
+    /// <summary>A slot at a chosen offset - one a value no longer live has given up - growing the frame to cover it.</summary>
+    public void AddAt(IrValue value, int offset, int bytes) {
+      this.Slots.Add(value, (offset, bytes));
+      this.Size = Math.Max(this.Size, offset + bytes);
+    }
+
     public bool Holds(IrValue value) => this.Slots.ContainsKey(value);
 
     public M6502Address AddressOf(IrValue value) {

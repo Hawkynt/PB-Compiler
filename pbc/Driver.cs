@@ -442,8 +442,14 @@ public static class Driver {
     return 0;
   }
 
-  /// <summary>The string heap of a C64 program: a slice of the 46 KB a program has.</summary>
+  /// <summary>The string heap a C64 program starts with: grown into whatever the program leaves of its 46 KB, or shrunk towards <see cref="C64HeapFloor"/> for one a little too big.</summary>
   private const int C64HeapBytes = 4096;
+
+  /// <summary>The smallest a program too big for the usual heap is given instead of being refused.</summary>
+  private const int C64HeapFloor = 1024;
+
+  /// <summary>The largest: a heap block's end has to be a positive 16-bit index.</summary>
+  private const int C64HeapLimit = 28 << 10;
 
   /// <summary>The string heap of a native Linux program: uninitialised storage, so it costs no file space.</summary>
   private const int NativeHeapBytes = 16 << 20;
@@ -503,21 +509,60 @@ public static class Driver {
     return 0;
   }
 
+  /// <summary>
+  /// The C64 build: once with the smallest string heap, and - when that leaves memory unused below
+  /// the soft stack - again with the heap grown into it. The heap's size is only a constant the code
+  /// compares against, so the second build is the first one's size with a longer heap behind it.
+  /// </summary>
   private static Mos6502Assembler.Image? CompileC64(SemanticModel model, bool optimize, bool speed,
       IReadOnlyList<IrModule> linked, out string? declined) {
+    var image = CompileC64(model, optimize, speed, linked, C64HeapBytes, out declined);
+    if (image is null)
+      return null;
+    // a page kept back, in case a constant the larger heap needs encodes longer somewhere
+    var spare = C64Prg.MemoryTop - image.End - 256;
+    if (spare < 0) {
+      // too big by less than the heap can give up: a smaller heap, down to a floor a program that
+      // works its strings at all still needs, rather than no program
+      var smaller = C64HeapBytes + spare;
+      if (smaller < C64HeapFloor)
+        return Overflowed(image, out declined);
+      var tighter = CompileC64(model, optimize, speed, linked, smaller, out var tighterDeclined);
+      declined = tighterDeclined;
+      return tighter is not null && tighter.End <= C64Prg.MemoryTop ? tighter : Overflowed(tighter ?? image, out declined);
+    }
+    if (spare < 1024)
+      return image;
+    // the runtime counts the heap in signed 16-bit indexes, so a block's end must stay below 32 KB
+    var roomier = CompileC64(model, optimize, speed, linked, Math.Min(C64HeapBytes + spare, C64HeapLimit), out var roomierDeclined);
+    if (roomier is null)
+      return image;
+    declined = roomierDeclined;
+    return roomier;
+  }
+
+  private static Mos6502Assembler.Image? CompileC64(SemanticModel model, bool optimize, bool speed,
+      IReadOnlyList<IrModule> linked, int heapBytes, out string? declined) {
     var compiled = IrBackendModule.TryCompile(model, new IrBackendOptions {
       Target = IrBackendTarget.Mos6502,
       Optimize = optimize,
       OptimizeForSpeed = speed,
       OptimizeForSize = !speed,
       RecoverIntegerArithmetic = optimize,
-      PortableRuntimeHeapBytes = C64HeapBytes,
+      PortableRuntimeHeapBytes = heapBytes,
       PortableRuntimeIndexBits = 16,
       PortableRuntimeSoftMath = true,
       LinkedModules = linked,
     }, out declined);
+    // laid out against the whole address space, so a program too big is measured rather than refused
     return compiled is null ? null
-      : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, C64Prg.MemoryTop, out declined);
+      : Mos6502Compiler.TryCompile(compiled.Module, C64Prg.CodeOrigin, 0x10000, out declined);
+  }
+
+  /// <summary>The decline for an image past <see cref="C64Prg.MemoryTop"/>, saying how far past.</summary>
+  private static Mos6502Assembler.Image? Overflowed(Mos6502Assembler.Image image, out string? declined) {
+    declined = $"the program needs memory up to ${image.End:X4}, past the ${C64Prg.MemoryTop:X4} available";
+    return null;
   }
 
   /// <summary>Whether a 6502 decline is the image not fitting, rather than a construct it cannot lower.</summary>
@@ -531,7 +576,7 @@ public static class Driver {
   /// </summary>
   private static int CompileIrUnit(SemanticModel model, string source, string? output, string platform, bool library,
       TextWriter stdout, TextWriter stderr) {
-    var module = IrLowering.TryLowerModule(model, out var declined);
+    var module = IrLowering.TryLowerModule(model, flatArrayDescriptors: true, out var declined);
     if (module is null) {
       stderr.WriteLine($"error: {platform}: {declined ?? "the unit does not lower"}");
       return 1;

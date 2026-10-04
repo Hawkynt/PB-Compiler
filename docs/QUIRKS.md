@@ -104,6 +104,26 @@ Unit coverage for the emulated rows: `PowerBasic.Compiler.Tests/Syntax/QuirkEmul
 - **GetStrLoc ABI**: the handle is pushed on the stack (callee cleans, RET 2);
   returns DX:AX = far data pointer, CX = length (DIFF20 exercises it from
   inline assembly).
+- **`CASE IS` is not PowerBASIC**: PBC 3.0 and 3.50 take `CASE > 15` as the relation
+  and read `CASE IS > 15` as the case value `(IS > 15)`, where `IS` is an ordinary,
+  unassigned variable - so the case is 0 and never matches 16. `CASE IS > 15, 12`
+  matches only 12. Replicated for every PowerBASIC dialect, pb36 included; QuickBASIC
+  and its relatives keep `IS` (DIFF138).
+- **A bare float literal is typed by its magnitude as well as its digits**: `1E50` is a
+  DOUBLE, since a SINGLE cannot hold it (DIFF134).
+- **An array parameter's rank is whatever the body indexes it with**: `SUB s(m#())`
+  using `m#(i, j)` takes a two-dimensional array (DIFF132). A record's array field
+  `v(1 TO 3)` is subscripted from its own lower bound (DIFF133).
+- **File errors are numbered by their cause** (DIFF136, DIFF137): file not found 53,
+  path not found 76, access denied or a directory that exists 75, a closed or
+  out-of-range file number 52, a number already open 55, too many files 67, and reading
+  past the end 62 - for `LINE INPUT #` and `INPUT #` alike. `KILL` of a missing file is
+  53 and `RMDIR`/`CHDIR` of a missing directory 76; `CLOSE` of a closed number is no
+  error. `ERRCLEAR` answers ERR and clears it, and `ON ERROR GOTO 0` clears it too.
+  Under `ON ERROR RESUME NEXT` a statement that succeeds leaves ERR as it was.
+- **Some names PB-Compiler accepts are reserved in PBC 3.50**: `KEY`, `VIEW` and `POINT`
+  as a variable or TYPE name are syntax errors there. PB-Compiler accepts them (a
+  superset); the batteries avoid them.
 
 ### Implementation divergences (documented, observably benign)
 

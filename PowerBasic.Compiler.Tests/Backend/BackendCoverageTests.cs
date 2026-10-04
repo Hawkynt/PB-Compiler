@@ -644,6 +644,14 @@ public sealed class BackendCoverageTests {
     "DIFF128.BAS",   // a member of an INDEXED UDT array field - ctx.Slots(i).Id
     "DIFF129.BAS",   // GET / PUT of a FIXED-WIDTH record field - the characters are IN the record
     "DIFF130.BAS",   // counted loops left early: EXIT FOR, GOTO out, EXIT SUB - no closed form
+    "DIFF131.BAS",   // CLOSE frees the file's number: FREEFILE hands it out again
+    "DIFF132.BAS",   // an array parameter's rank comes from the body: m#(i, j) makes it two-dimensional
+    "DIFF133.BAS",   // a scalar or fixed-string element of a record's array field, from its own lower bound
+    "DIFF134.BAS",   // a bare literal past SINGLE's range is a DOUBLE: 1E50 printed forever as an infinity
+    "DIFF135.BAS",   // DIR$(mask$) and the bare DIR$ that continues the search
+    "DIFF136.BAS",   // OPEN failures numbered by cause - 53, 76 - ERRCLEAR, ON ERROR GOTO 0 clearing ERR
+    "DIFF137.BAS",   // 52 55 62 53 75 76: closed numbers, a number in use, past the end, KILL/NAME/MKDIR/RMDIR/CHDIR
+    "DIFF138.BAS",   // PowerBASIC's CASE has no IS: CASE IS > 15 is the value (IS > 15)
     // EXIT FAR: the unwind point and the jump through it, as intrinsics the back end expands inline;
     // both the module body and its near numeric BYREF procedure route.
     "DIFF14.BAS",
@@ -764,6 +772,22 @@ public sealed class BackendCoverageTests {
     "DIFF03.BAS",
     "FILEIO1.BAS",
     "HELLO.BAS",
+    "ARRAYS.BAS",   // tests/idioms: the battery every flat target is held to
+    "ARRAYS2.BAS",
+    "ARRPARAM.BAS",
+    "CONTROL.BAS",
+    "CLOCK.BAS",
+    "CONSOLE.BAS",
+    "ERRORS.BAS",
+    "FILES2.BAS",
+    "FILES3.BAS",
+    "FIXBCD.BAS",
+    "MEMORY.BAS",
+    "PROCESS.BAS",
+    "RECORDS.BAS",
+    "SERVICES.BAS",
+    "STRINGS1.BAS",
+    "USING.BAS",
     "INPUTS.BAS",
     "INTREG.BAS",   // REG / CALL INTERRUPT
     "LINKDEMO.BAS",
@@ -838,6 +862,14 @@ public sealed class BackendCoverageTests {
     "DIFF128.BAS",   // a member of an INDEXED UDT array field - ctx.Slots(i).Id
     "DIFF129.BAS",   // GET / PUT of a FIXED-WIDTH record field - the characters are IN the record
     "DIFF130.BAS",   // counted loops left early: EXIT FOR, GOTO out, EXIT SUB - no closed form
+    "DIFF131.BAS",   // CLOSE frees the file's number: FREEFILE hands it out again
+    "DIFF132.BAS",   // an array parameter's rank comes from the body: m#(i, j) makes it two-dimensional
+    "DIFF133.BAS",   // a scalar or fixed-string element of a record's array field, from its own lower bound
+    "DIFF134.BAS",   // a bare literal past SINGLE's range is a DOUBLE: 1E50 printed forever as an infinity
+    "DIFF135.BAS",   // DIR$(mask$) and the bare DIR$ that continues the search
+    "DIFF136.BAS",   // OPEN failures numbered by cause - 53, 76 - ERRCLEAR, ON ERROR GOTO 0 clearing ERR
+    "DIFF137.BAS",   // 52 55 62 53 75 76: closed numbers, a number in use, past the end, KILL/NAME/MKDIR/RMDIR/CHDIR
+    "DIFF138.BAS",   // PowerBASIC's CASE has no IS: CASE IS > 15 is the value (IS > 15)
     "DIFF15.BAS",
     "DIFF16.BAS",   // FIX (@) and BCD (@@): a scaled int64 cell and an f80 one
     "DIFF17.BAS",   // DIM HUGE / DIM VIRTUAL: segment stepping and the EMS page window
@@ -955,6 +987,22 @@ public sealed class BackendCoverageTests {
     "DIFF03.BAS",
     "FILEIO1.BAS",
     "HELLO.BAS",
+    "ARRAYS.BAS",   // tests/idioms: the battery every flat target is held to
+    "ARRAYS2.BAS",
+    "ARRPARAM.BAS",
+    "CONTROL.BAS",
+    "CLOCK.BAS",
+    "CONSOLE.BAS",
+    "ERRORS.BAS",
+    "FILES2.BAS",
+    "FILES3.BAS",
+    "FIXBCD.BAS",
+    "MEMORY.BAS",
+    "PROCESS.BAS",
+    "RECORDS.BAS",
+    "SERVICES.BAS",
+    "STRINGS1.BAS",
+    "USING.BAS",
     "INTREG.BAS",   // REG / CALL INTERRUPT
     "INPUTS.BAS",
     "LINKDEMO.BAS",

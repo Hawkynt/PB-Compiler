@@ -170,32 +170,104 @@ public sealed class Mos6502Assembler {
   }
 
   /// <summary>
-  /// Drops a <c>LDA x</c> that directly follows <c>STA x</c>: A already holds the value. The two must be
-  /// adjacent - no label between them, so nothing jumps in to the load - and what follows the load
-  /// must not be a branch, which would read the flags only the load sets.
+  /// Drops a <c>LDA</c> that loads what A already holds: the same immediate, or the cell A was last
+  /// loaded from or stored to, untouched since. What A holds is followed through straight-line code
+  /// only - a label forgets it, since control can arrive there from anywhere - and a store to memory
+  /// the cell might be, a call or an instruction that changes A forget it too. A load also sets N and
+  /// Z, so it stays wherever something could read those flags before an instruction sets them again.
   /// </summary>
-  private int RemoveRedundantReloads() {
+  private int RemoveRedundantLoads() {
     var removed = 0;
     var end = this._uninitializedStart < 0 ? this._items.Count : this._uninitializedStart;
-    for (var i = 0; i + 1 < end; ++i) {
-      var (store, load) = (this._items[i], this._items[i + 1]);
-      if (store is not { Kind: ItemKind.Instruction, Op: M6502Op.Sta }
-          || load is not { Kind: ItemKind.Instruction, Op: M6502Op.Lda, Select: ByteSelect.Whole }
-          || load.Mode != store.Mode || load.Operand != store.Operand
-          || (i + 2 < end && this._items[i + 2] is { Kind: ItemKind.Branch } or { Op: M6502Op.Php, Kind: ItemKind.Instruction }))
+    Item? immediate = null;                               // the LDA #value A holds, or null
+    Item? cell = null;                                    // the cell A equals, as an LDA of it, or null
+    var skipped = false;                                  // the instruction after a BIT that swallows it
+    for (var i = 0; i < end; ++i) {
+      var item = this._items[i];
+      if (item.Kind != ItemKind.Instruction) {
+        if (item.Kind is not ItemKind.Branch)
+          (immediate, cell) = (null, null);
+        // a BIT opcode on its own steps over the next instruction: past it, the paths join unlabelled
+        if (item is { Kind: ItemKind.Bytes, Data: [0x2C] })
+          skipped = true;
         continue;
-      this._items.RemoveAt(i + 1);
-      --end;
-      if (this._uninitializedStart >= 0)
-        --this._uninitializedStart;
-      ++removed;
+      }
+      if (skipped) {
+        // the swallowed instruction runs on one path only, so nothing is known after it
+        skipped = false;
+        (immediate, cell) = (null, null);
+        continue;
+      }
+      switch (item.Op) {
+        case M6502Op.Lda:
+          var known = item.Mode == M6502Mode.Immediate ? immediate : cell;
+          if (known is not null && SameCell(known, item) && this.FlagsUnreadAfter(i, end)) {
+            this._items.RemoveAt(i);
+            --i;
+            --end;
+            if (this._uninitializedStart >= 0)
+              --this._uninitializedStart;
+            ++removed;
+            continue;
+          }
+          (immediate, cell) = item.Mode switch {
+            M6502Mode.Immediate => (item, null),
+            M6502Mode.ZeroPage or M6502Mode.Absolute when Remembered(item) => (null, item),
+            _ => ((Item?)null, (Item?)null),
+          };
+          break;
+        case M6502Op.Sta:
+          cell = item.Mode is M6502Mode.ZeroPage or M6502Mode.Absolute && Remembered(item) ? item with { Op = M6502Op.Lda } : null;
+          break;
+        case M6502Op.Stx or M6502Op.Sty or M6502Op.Inc or M6502Op.Dec
+          or M6502Op.Asl or M6502Op.Lsr or M6502Op.Rol or M6502Op.Ror when item.Mode != M6502Mode.Accumulator:
+          cell = null;                                    // the remembered cell may be the one written
+          break;
+        case M6502Op.Adc or M6502Op.Sbc or M6502Op.And or M6502Op.Ora or M6502Op.Eor or M6502Op.Asl or M6502Op.Lsr
+          or M6502Op.Rol or M6502Op.Ror or M6502Op.Txa or M6502Op.Tya or M6502Op.Pla or M6502Op.Jsr or M6502Op.Jmp
+          or M6502Op.Rts or M6502Op.Rti or M6502Op.Brk or M6502Op.Plp:
+          (immediate, cell) = (null, null);
+          break;
+      }
     }
     return removed;
   }
 
+  /// <summary>
+  /// Whether a cell holds still between instructions: the program's own memory - a labelled cell or
+  /// BASIC's page zero below <c>$90</c> - and not the KERNAL's cells the interrupt updates or the chips'
+  /// registers, which can read differently twice in a row.
+  /// </summary>
+  private static bool Remembered(Item item)
+    => item.Operand.Label is not null || item.Operand.Offset is >= 0x02 and < 0x90;
+
+  private static bool SameCell(Item a, Item b)
+    => a.Mode == b.Mode && a.Operand == b.Operand && a.Select == b.Select;
+
+  /// <summary>Whether nothing after item <paramref name="i"/> reads N or Z before an instruction sets them.</summary>
+  private bool FlagsUnreadAfter(int i, int end) {
+    for (var k = i + 1; k < end; ++k) {
+      var item = this._items[k];
+      if (item.Kind != ItemKind.Instruction)
+        return false;                                     // a branch or a label: someone may read them
+      switch (item.Op) {
+        case M6502Op.Sta or M6502Op.Stx or M6502Op.Sty or M6502Op.Clc or M6502Op.Sec or M6502Op.Pha or M6502Op.Nop:
+          continue;
+        case M6502Op.Lda or M6502Op.Ldx or M6502Op.Ldy or M6502Op.Adc or M6502Op.Sbc or M6502Op.And or M6502Op.Ora
+          or M6502Op.Eor or M6502Op.Cmp or M6502Op.Cpx or M6502Op.Cpy or M6502Op.Inc or M6502Op.Dec or M6502Op.Inx
+          or M6502Op.Iny or M6502Op.Dex or M6502Op.Dey or M6502Op.Asl or M6502Op.Lsr or M6502Op.Rol or M6502Op.Ror
+          or M6502Op.Bit or M6502Op.Tax or M6502Op.Tay or M6502Op.Txa or M6502Op.Tya or M6502Op.Pla:
+          return true;
+        default:
+          return false;
+      }
+    }
+    return false;
+  }
+
   /// <summary>Lays the program out at <paramref name="origin"/> and encodes it.</summary>
   public Image Assemble(int origin) {
-    this.RemoveRedundantReloads();
+    this.RemoveRedundantLoads();
     var addresses = new Dictionary<M6502Label, int>();
     int[] offsets;
     bool relaxed;

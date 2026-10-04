@@ -343,6 +343,11 @@ public sealed partial class Parser {
     // lives in its 16-digit double runtime
     if (this._dialect.IsTurboBasic())
       return TypeSuffix.Double;
+    // a magnitude SINGLE cannot hold is a DOUBLE whatever its digits: 1E50 prints as 1E+50 on
+    // genuine PBC 3.50, where a SINGLE would have made it infinite
+    var magnitude = Math.Abs(token.FloatValue);
+    if (magnitude > float.MaxValue || magnitude != 0 && magnitude < float.Epsilon * (1 << 23))
+      return TypeSuffix.Double;
     var significant = 0;
     var seenNonZero = false;
     foreach (var c in token.Text) {

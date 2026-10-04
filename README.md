@@ -72,6 +72,10 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
 - A `pb36` superset that adds language features while leaving existing programs behaving as they did
 - Runs on any 64-bit host; the output runs on real DOS or in DOSBox
+- The same program also builds for Linux on x86-32 and x64 and for the Commodore 64, and prints
+  there what its DOS build prints - arrays, records, files, `DIR$`, `PRINT USING`, error trapping,
+  `DEF SEG`/`PEEK`/`POKE` and the rest; how each DOS idiom maps onto a flat machine is in
+  [docs/BACKENDS.md](docs/BACKENDS.md#what-a-flat-target-makes-of-doss-idioms)
 
 ## 🧩 Support matrix
 
@@ -377,10 +381,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 2 | 1 | 0 | 3 |
-| O — optimization passes | 170 | 84 | 153 | 407 |
+| O — optimization passes | 173 | 84 | 153 | 410 |
 | P — lean output | 6 | 0 | 1 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **182** | **85** | **154** | **421** |
+| **all** | **185** | **85** | **154** | **424** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -642,6 +646,9 @@ next free number rather than displacing anything.
 | 🟡 | [O0242](docs/optimizations/O0242-movsd-block-copy.md) | DWORD block copy for TYPE and `LSET` | Whole-`TYPE` copies, `LSET` and BCD block moves run word-wide (`REP MOVSW`, 8086-safe) under the optimizer and DWORD-wide (`REP MOVSD`) under `$CPU 80386`. |
 
 | ✅ | [O0407](docs/optimizations/O0407-dead-loop-elimination.md) | Dead loop elimination | A loop whose body cannot be observed - no store, no call, no output - is deleted outright rather than left to spin (`deadloop`, `$OPTIMIZE SPEED`). |
+| ✅ | [O0408](docs/optimizations/O0408-6502-frame-slot-sharing.md) | Frame slot sharing (6502, x86-32, x64) | SSA values whose lives never meet share a frame cell on the flat back ends; on the 6502 more frames then fit the page-zero window. |
+| ✅ | [O0409](docs/optimizations/O0409-6502-accumulator-load-elimination.md) | 6502 accumulator-load elimination | An `LDA` of the immediate or cell A already holds is dropped, kept wherever N and Z could still be read. |
+| ✅ | [O0410](docs/optimizations/O0410-6502-branch-shaping.md) | 6502 branch shaping | A branch whose true side comes next tests the complement and falls through; a comparison kept as a value steps over `LDA #1` with a one-byte `BIT`. |
 ### O — planned sub-passes (dissected from the entries above)
 
 | | # | Optimization | What it does |

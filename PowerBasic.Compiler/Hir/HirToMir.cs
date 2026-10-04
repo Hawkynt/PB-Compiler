@@ -12,9 +12,9 @@ public static class HirToMir {
     => Lower(hir, null, out declinedBecause);
 
   public static IrModule? Lower(HirModule hir, IReadOnlySet<DeferredSourceStmt>? unreachableDeferred,
-      out string? declinedBecause) {
+      out string? declinedBecause, bool flatArrayDescriptors = false) {
     ArgumentNullException.ThrowIfNull(hir);
-    var module = IrLowering.LowerHirToMir(hir, unreachableDeferred, out declinedBecause);
+    var module = IrLowering.LowerHirToMir(hir, unreachableDeferred, out declinedBecause, flatArrayDescriptors);
     if (module is null)
       return null;
 

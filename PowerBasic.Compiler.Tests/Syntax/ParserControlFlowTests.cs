@@ -140,6 +140,23 @@ public sealed class ParserControlFlowTests {
   #region SELECT CASE
 
   [Test]
+  public void Parse_GivenCaseIsInPowerBasic_WhenParsed_ThenIsIsAVariableInTheCaseValue() {
+    // PBC 3.0 and 3.50 have no IS: CASE IS > 100 is the value (IS > 100), IS an ordinary variable
+    var unit = ParserTestHelper.Parse("SELECT CASE n\n  CASE IS > 100\n    x = 3\nEND SELECT", Dialect.Pb35);
+    var selector = ((SelectStmt)unit.Statements[0]).Arms[0].Selectors[0];
+    Assert.Multiple(() => {
+      Assert.That(selector.IsComparison, Is.Null);
+      Assert.That(selector.Value, Is.InstanceOf<BinaryExpr>());
+    });
+  }
+
+  [Test]
+  public void Parse_GivenCaseIsInQuickBasic_WhenParsed_ThenItIsTheRelation() {
+    var unit = ParserTestHelper.Parse("SELECT CASE n\n  CASE IS > 100\n    x = 3\nEND SELECT", Dialect.Qb45);
+    Assert.That(((SelectStmt)unit.Statements[0]).Arms[0].Selectors[0].IsComparison, Is.EqualTo(CaseComparison.Greater));
+  }
+
+  [Test]
   public void Parse_GivenSelectWithValueListRangeAndIs_WhenParsed_ThenSelectorsAreTyped() {
     var stmt = ParseSingle<SelectStmt>("""
       SELECT CASE n
@@ -147,7 +164,7 @@ public sealed class ParserControlFlowTests {
               x = 1
           CASE 5 TO 9
               x = 2
-          CASE IS > 100
+          CASE > 100
               x = 3
           CASE ELSE
               x = 4

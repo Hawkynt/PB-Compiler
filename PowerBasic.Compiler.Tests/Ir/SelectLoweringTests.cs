@@ -45,7 +45,7 @@ public sealed class SelectLoweringTests {
       "CASE 1\n  r% = 10\n" +
       "CASE 2, 3\n  r% = 20\n" +
       "CASE 4 TO 6\n  r% = 30\n" +
-      "CASE IS > 9\n  r% = 40\n" +
+      "CASE > 9\n  r% = 40\n" +
       "CASE ELSE\n  r% = 99\n" +
       "END SELECT");
 

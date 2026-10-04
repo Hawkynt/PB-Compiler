@@ -36,9 +36,9 @@ public static partial class PortableRuntime {
     private IrGlobalVariable? _heap, _heapTop, _freeLists;
     private IrFunction? _allocate, _release, _newString, _makeString;
 
-    private IrGlobalVariable Heap => this._heap ??= module.AddGlobal(new IrGlobalVariable("rt.heap", IrType.I8) { Count = heapBytes });
-    private IrGlobalVariable HeapTop => this._heapTop ??= module.AddGlobal(new IrGlobalVariable("rt.heapTop", this.Index));
-    private IrGlobalVariable FreeLists => this._freeLists ??= module.AddGlobal(new IrGlobalVariable("rt.freeLists", IrType.Ptr) { Count = SizeClasses });
+    private IrGlobalVariable Heap => this._heap ??= this.Shared(new IrGlobalVariable("rt.heap", IrType.I8) { Count = heapBytes });
+    private IrGlobalVariable HeapTop => this._heapTop ??= this.Shared(new IrGlobalVariable("rt.heapTop", this.Index));
+    private IrGlobalVariable FreeLists => this._freeLists ??= this.Shared(new IrGlobalVariable("rt.freeLists", IrType.Ptr) { Count = SizeClasses });
 
     private IrValue FreeList(IrWriter w, IrValue sizeClass) => w.B.Gep(this.FreeLists, sizeClass, IrType.Ptr);
 

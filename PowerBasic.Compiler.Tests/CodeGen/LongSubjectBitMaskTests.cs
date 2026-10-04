@@ -25,7 +25,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// The 65541 case below is the one that matters: its low word is 5 and it must NOT select
 /// <c>CASE 5</c>. Without the guard it does, and every other test here still passes.
 ///
-/// Every SELECT here carries a <c>CASE IS &gt; 1000</c> arm on purpose. The per-arm mask is the LAST
+/// Every SELECT here carries a <c>CASE &gt; 1000</c> arm on purpose. The per-arm mask is the LAST
 /// strategy tried — the whole-select jump table, perfect hash and decision tree all get first
 /// refusal, and a dense little span like 1,3,5,9 is exactly what the jump table takes. Without a
 /// comparison arm to make those decline, none of this reaches the code under test: the first draft
@@ -57,7 +57,7 @@ public sealed class LongSubjectBitMaskTests {
           PRINT "set"
         CASE 2
           PRINT "two"
-        CASE IS > 1000
+        CASE > 1000
           PRINT "big"
         CASE ELSE
           PRINT "else"
@@ -86,7 +86,7 @@ public sealed class LongSubjectBitMaskTests {
   /// set, while the value itself is not. A mask test over the low half alone takes the wrong arm.
   ///
   /// The expected answer is "big", not "else": any value with a non-zero high word is at least
-  /// 65536 and so satisfies the <c>CASE IS &gt; 1000</c> arm. It discriminates just as well — without
+  /// 65536 and so satisfies the <c>CASE &gt; 1000</c> arm. It discriminates just as well — without
   /// the guard these print "set", because the masked arm is tested first and claims them.
   /// </summary>
   [TestCase(65541L)]      // 0001_0005h - low word 5
@@ -116,7 +116,7 @@ public sealed class LongSubjectBitMaskTests {
       SELECT CASE v
         CASE -1, -3, -7, -9
           PRINT "neg"
-        CASE IS > 1000
+        CASE > 1000
           PRINT "big"
         CASE ELSE
           PRINT "else"
@@ -141,7 +141,7 @@ public sealed class LongSubjectBitMaskTests {
       SELECT CASE v
         CASE 1, 3, 5, 9
           PRINT "set"
-        CASE IS > 1000
+        CASE > 1000
           PRINT "big"
         CASE ELSE
           PRINT "else"

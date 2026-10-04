@@ -110,7 +110,9 @@ public static partial class Mos6502Compiler {
       || module.Functions.Where(function => !function.IsDeclaration && function.Name != "rt_file_open")
         .SelectMany(function => function.Blocks).SelectMany(block => block.Instructions).OfType<IrCall>()
         .Any(call => call.Callee is IrFunction { Name: "rt_file_open" or "sys_open" } callee
-          && call.Args.ElementAt(callee.Name == "sys_open" ? 1 : 2) is not IrConstantInt { Value: >= 0 and < 3 });
+          && (callee.Name == "sys_open"
+            ? call.Args.ElementAt(1) is not IrConstantInt { Value: (>= 0 and < 3) or 4 }   // sys_open's 4 is a directory
+            : call.Args.ElementAt(2) is not IrConstantInt { Value: >= 0 and < 3 }));
 
     /// <summary>The program's ERR cell, when it reads ERR at all.</summary>
     private M6502Address? ErrorCode
@@ -247,20 +249,65 @@ public static partial class Mos6502Compiler {
         _ = SizeOf(parameter.Type);
     }
 
-    /// <summary>Gives every argument, local and SSA value of <paramref name="function"/> its place in the frame.</summary>
+    /// <summary>
+    /// Gives every argument, local and SSA value of <paramref name="function"/> its place in the frame.
+    /// Arguments, locals and the saved handler each keep a place of their own; an SSA value shares one
+    /// with values whose lives do not overlap its own (<see cref="ValueLiveRanges"/>), so a frame is as big
+    /// as the most that is alive at once rather than the sum of everything - and more of it fits in
+    /// the page-zero window, where an access is a byte shorter.
+    /// </summary>
     private Frame LayOut(IrFunction function) {
       var frame = new Frame { Contiguous = this._recursive.Contains(function), Place = this.Place };
       foreach (var parameter in function.Parameters)
         frame.Add(parameter, SizeOf(parameter.Type));
+      var values = new List<IrInstruction>();
       foreach (var instruction in function.Blocks.SelectMany(block => block.Instructions)) {
         if (instruction is IrAlloca alloca)
           frame.Add(alloca, SizeOf(alloca.Allocated) * alloca.Count);
         else if (!instruction.Type.IsVoid && (instruction is IrPhi || !instruction.HasNoUsers))
-          frame.Add(instruction, SizeOf(instruction.Type));
+          values.Add(instruction);
       }
       // a procedure that arms a handler keeps its caller's here, to put back when it returns
       if (function.HasErrorHandler && function.Name != "main")
         frame.Add(frame.SavedHandler, 6);
+      // a function with a handler can resume anywhere, which no live range accounts for
+      if (function.HasErrorHandler) {
+        foreach (var value in values)
+          frame.Add(value, SizeOf(value.Type));
+        return frame;
+      }
+      var ranges = ValueLiveRanges.Of(function, values);
+      // a cast that keeps a value's low bytes reads them where they already are: it takes its source's
+      // cell, whose life then lasts as long as either's
+      var aliases = new Dictionary<IrInstruction, IrValue>(ReferenceEqualityComparer.Instance);
+      var slotted = new HashSet<IrValue>(values, ReferenceEqualityComparer.Instance);
+      IrValue RootOf(IrValue value) => value is IrInstruction aliased && aliases.TryGetValue(aliased, out var root) ? root : value;
+      foreach (var value in values)
+        if (value is IrCast { Op: IrCastOp.Trunc or IrCastOp.BitCast or IrCastOp.PtrToInt or IrCastOp.IntToPtr } cast
+            && SizeOf(cast.Type) <= SizeOf(cast.Value.Type) && RootOf(cast.Value) is var source
+            && (source is IrArgument || source is IrInstruction and not (IrPhi or IrGep or IrAlloca) && slotted.Contains(source))) {
+          aliases[cast] = source;
+          if (source is IrInstruction held)
+            ranges[held] = (Math.Min(ranges[held].Start, ranges[cast].Start), Math.Max(ranges[held].End, ranges[cast].End));
+        }
+      var floor = frame.Size;
+      var active = new List<(int End, int Offset, int Bytes)>();
+      foreach (var value in values.Where(value => !aliases.ContainsKey(value)).OrderBy(value => ranges[value].Start)) {
+        var (start, end) = ranges[value];
+        active.RemoveAll(slot => slot.End < start);
+        var bytes = SizeOf(value.Type);
+        // the lowest offset no live slot overlaps
+        var offset = floor;
+        foreach (var slot in active.OrderBy(slot => slot.Offset))
+          if (offset + bytes > slot.Offset && slot.Offset + slot.Bytes > offset)
+            offset = slot.Offset + slot.Bytes;
+        while (active.Any(slot => offset + bytes > slot.Offset && slot.Offset + slot.Bytes > offset))
+          offset = active.Where(slot => offset + bytes > slot.Offset && slot.Offset + slot.Bytes > offset).Max(slot => slot.Offset + slot.Bytes);
+        frame.AddAt(value, offset, bytes);
+        active.Add((end, offset, bytes));
+      }
+      foreach (var (cast, source) in aliases)
+        frame.AddAt(cast, frame.Slots[source].Offset, SizeOf(cast.Type));
       return frame;
     }
 

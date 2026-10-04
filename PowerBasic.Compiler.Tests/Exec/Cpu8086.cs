@@ -1974,7 +1974,12 @@ public sealed class Cpu8086 {
   private void Dos() {
     var ah = this.Reg8(4);
     switch (ah) {
-      case 0x30: this._r[_AX] = 0x0006; return;                // DOS 6.0
+      case 0x30: this._r[_AX] = 0x0005; return;                // DOS 5.0, as DOSBox answers - the oracles run there
+      case 0x02:                                               // character out: DL
+        this._output.Append((char)this.Reg8(2));
+        this.ConsoleWrite(this.Reg8(2));
+        this.SetReg8(0, this.Reg8(2));
+        return;
       case 0x25 or 0x35: return;                               // set/get interrupt vector - nothing to do here
       case 0x4B: {                                             // load and execute a child program
         var subfunction = this.Reg8(_AX);
@@ -2029,6 +2034,11 @@ public sealed class Cpu8086 {
       }
       case 0x3C or 0x5B: {                                     // create file - truncates an existing one
         var name = this.CString(Linear(this._ds, this._r[_DX]));
+        if (name.Contains('\\') || name.Contains('/')) {         // no directories, so no path to create in
+          this._cf = true;
+          this._r[_AX] = 3;
+          return;
+        }
         if (!this._byName.TryGetValue(name, out var file))
           this._byName[name] = file = new MemoryFile { Name = name };
         file.Bytes.Clear();
@@ -2041,7 +2051,8 @@ public sealed class Cpu8086 {
         var name = this.CString(Linear(this._ds, this._r[_DX]));
         if (!this._byName.TryGetValue(name, out var file)) {
           this._cf = true;
-          this._r[_AX] = 2;                                    // file not found
+          // the disk has no directories: a name with a directory in it has a path that is not there
+          this._r[_AX] = (ushort)(name.Contains('\\') || name.Contains('/') ? 3 : 2);
           return;
         }
         this._files[this._nextHandle] = new OpenFile { File = file };
@@ -2091,9 +2102,11 @@ public sealed class Cpu8086 {
         this._cf = false;
         return;
       }
-      case 0x41: {                                             // delete
-        this._byName.Remove(this.CString(Linear(this._ds, this._r[_DX])));
-        this._cf = false;
+      case 0x41: {                                             // delete - a name that is not there is error 2
+        var removed = this._byName.Remove(this.CString(Linear(this._ds, this._r[_DX])));
+        this._cf = !removed;
+        if (!removed)
+          this._r[_AX] = 2;
         return;
       }
       case 0x44: {                                             // IOCTL get device information

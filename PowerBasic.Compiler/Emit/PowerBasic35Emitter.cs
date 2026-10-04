@@ -807,6 +807,11 @@ public sealed class PowerBasic35Emitter {
       this.Line($"{s.Keyword} {this.Expr(off)}, {this.Expr(val)}");
       return;
     }
+    // NAME old$ AS new$ - the one command whose two operands are not separated by a comma
+    if (s.Keyword == "NAME" && s.Arguments is [{ } oldName, { } newName]) {
+      this.Line($"NAME {this.Expr(oldName)} AS {this.Expr(newName)}");
+      return;
+    }
     var args = s.Arguments.Select(a => a is null ? "" : this.Expr(a));
     var joined = string.Join(", ", args);
     this.Line(joined.Length == 0 ? s.Keyword : $"{s.Keyword} {joined}");
@@ -979,8 +984,9 @@ public sealed class PowerBasic35Emitter {
   }
 
   private string FormatSelector(CaseSelector c) {
+    // PowerBASIC's relation is bare - CASE > 15; written CASE IS > 15 it would read IS as a variable
     if (c.IsComparison is { } cmp)
-      return $"IS {ComparisonText(cmp)} {this.Expr(c.Value!)}";
+      return $"{ComparisonText(cmp)} {this.Expr(c.Value!)}";
     if (c.RangeUpper is { } hi)
       return $"{this.Expr(c.Value!)} TO {this.Expr(hi)}";
     return this.Expr(c.Value!);

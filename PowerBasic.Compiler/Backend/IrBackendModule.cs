@@ -30,13 +30,20 @@ public sealed class IrBackendModule {
     return true;
   }
 
+  /// <summary>Segment and offset as one address on a target with no segments - the program's and the runtime's alike.</summary>
+  private static void FlattenFarPointers(IrModule module, IrBackendTarget target) {
+    if (target is IrBackendTarget.X86_32 or IrBackendTarget.X64 or IrBackendTarget.Mos6502)
+      FarPointerFlattening.Run(module, conventionalMemory: target is not IrBackendTarget.Mos6502);
+  }
+
   public static IrBackendModule? TryCompile(
       SemanticModel model,
       IrBackendOptions? options,
       out string? declinedBecause) {
     ArgumentNullException.ThrowIfNull(model);
     options ??= new();
-    var module = IrLowering.TryLowerModule(model, out declinedBecause);
+    var module = IrLowering.TryLowerModule(model,
+      flatArrayDescriptors: options.Target is not (IrBackendTarget.X86_16 or IrBackendTarget.PowerBasic35), out declinedBecause);
     if (module is null)
       return null;
     if (options.LinkedModules.Count > 0) {
@@ -56,8 +63,12 @@ public sealed class IrBackendModule {
       declinedBecause = notLifted;
       return null;
     }
+    // a flat machine's code address does not fit the offset half of a PB code pointer
+    if (options.Target is IrBackendTarget.X86_32 or IrBackendTarget.X64 or IrBackendTarget.Mos6502)
+      ComputedJumpOrdinals.Run(module);
     if (options.PortableRuntimeHeapBytes is { } heap)
       PortableRuntime.Define(module, heap, cleanUp: false, options.PortableRuntimeIndexBits, options.PortableRuntimeSoftMath);
+    FlattenFarPointers(module, options.Target);
     if (options.Target is IrBackendTarget.C or IrBackendTarget.Llvm or IrBackendTarget.PowerBasic35
         or IrBackendTarget.X86_32 or IrBackendTarget.X64)
       IrMiddleEndPipeline.RunHostedModule(module, options.Optimize, options.OptimizeForSpeed,
@@ -74,6 +85,7 @@ public sealed class IrBackendModule {
 
     if (options.PortableRuntimeHeapBytes is { } lateHeap)
       PortableRuntime.Define(module, lateHeap, cleanUp: true, options.PortableRuntimeIndexBits, options.PortableRuntimeSoftMath);
+    FlattenFarPointers(module, options.Target);
 
     var errors = IrVerifier.Verify(module);
     if (errors.Count != 0) {

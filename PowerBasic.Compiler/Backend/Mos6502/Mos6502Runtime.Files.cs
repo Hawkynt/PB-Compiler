@@ -59,6 +59,9 @@ public sealed partial class Mos6502Runtime {
       case M6502Routine.FileRead: this.EmitFileRead(); return true;
       case M6502Routine.FileWrite: this.EmitFileWrite(); return true;
       case M6502Routine.FileUnlink: this.EmitFileUnlink(); return true;
+      case M6502Routine.FileRename: this.EmitFileRename(); return true;
+      case M6502Routine.FileTruncate: this.EmitFileTruncate(); return true;
+      case M6502Routine.FileDirectoryRead: this.EmitDirectoryRead(); return true;
       case M6502Routine.FileCloseAll: this.EmitFileCloseAll(); return true;
       case M6502Routine.FileCommandChannel: this.EmitFileCommandChannel(); return true;
       case M6502Routine.FileStatus: this.EmitFileStatus(); return true;
@@ -207,6 +210,11 @@ public sealed partial class Mos6502Runtime {
     var fail = asm.NewLabel("rt.files.open.fail");
     asm.Call(this.Routine(M6502Routine.FileCommandChannel));
     asm.Memory(Lda, Zp.Arg.Plus(2));
+    asm.Immediate(Cmp, 4);
+    var notDirectory = asm.NewLabel("rt.files.open.notDirectory");
+    asm.Branch(Bne, notDirectory);
+    asm.Jump(this.DirectoryOpen);
+    asm.Bind(notDirectory);
     asm.Immediate(Cmp, this.FileCache is null ? 3 : 4);
     asm.Branch(Bcs, fail);
     asm.Immediate(Ldx, FirstFile);
@@ -281,6 +289,170 @@ public sealed partial class Mos6502Runtime {
     asm.Emit(Rts);
     asm.Bind(fail);
     this.ReturnFailure();
+    asm.Emit(Rts);
+    if (this._pendingDirectoryOpen)
+      this.EmitDirectoryOpen();
+  }
+
+  private M6502Label? _directoryOpen;
+
+  /// <summary>
+  /// <c>sys_open(path, 4)</c>: the drive's directory, which a 1541 hands out as the BASIC listing
+  /// <c>LOAD "$",8</c> would - <c>"$"</c> on secondary address 0. The path is ignored, the drive having
+  /// one flat directory; the listing's load address and its first line, the disk's own name, are read
+  /// past here, so what is left is a line per file.
+  /// </summary>
+  private M6502Label DirectoryOpen {
+    get {
+      if (this._directoryOpen is { } existing)
+        return existing;
+      var label = asm.NewLabel("rt.files.directory.open");
+      this._directoryOpen = label;
+      this._pendingDirectoryOpen = true;
+      return label;
+    }
+  }
+
+  private bool _pendingDirectoryOpen;
+
+  /// <summary>Emits the directory open when FileOpen asked for it; FileOpen's slot search has left the file number in <c>cells.File</c>.</summary>
+  private void EmitDirectoryOpen() {
+    var cells = this.Files;
+    var fail = asm.NewLabel("rt.files.directory.fail");
+    var header = asm.NewLabel("rt.files.directory.header");
+    asm.Bind(this._directoryOpen!.Value);
+    // the drive's one directory is "."; any other is a directory the 1541 cannot have
+    asm.Immediate(Ldy, 0);
+    asm.IndirectY(Lda, Zp.Arg);
+    asm.Immediate(Cmp, (byte)'.');
+    asm.Branch(Bne, fail);
+    asm.Emit(Iny);
+    asm.IndirectY(Lda, Zp.Arg);
+    asm.Branch(Bne, fail);
+    // FileOpen jumped here before its slot search: find a free logical file the same way
+    var find = asm.NewLabel("rt.files.directory.find");
+    var found = asm.NewLabel("rt.files.directory.found");
+    asm.Immediate(Ldx, FirstFile);
+    asm.Bind(find);
+    asm.Memory(Lda, cells.InUse, M6502Index.X);
+    asm.Branch(Beq, found);
+    asm.Emit(Inx);
+    asm.Immediate(Cpx, LastFile + 1);
+    asm.Branch(Bne, find);
+    asm.Jump(fail);
+    asm.Bind(found);
+    asm.Memory(Stx, cells.File);
+    asm.Immediate(Lda, (byte)'$');
+    asm.Memory(Sta, cells.Name);
+    asm.Memory(Lda, cells.File);
+    asm.Immediate(Ldx, Device);
+    asm.Immediate(Ldy, 0);
+    asm.Call(Setlfs);
+    asm.Immediate(Lda, 1);
+    asm.ImmediateLow(Ldx, cells.Name);
+    asm.ImmediateHigh(Ldy, cells.Name);
+    asm.Call(Setnam);
+    asm.Call(Open);
+    asm.Branch(Bcs, fail);
+    asm.Memory(Ldx, cells.File);
+    asm.Call(Chkin);
+    asm.Branch(Bcs, fail);
+    // the load address, the header line's link and number, and its text up to the zero
+    for (var i = 0; i < 6; ++i)
+      asm.Call(Chrin);
+    asm.Bind(header);
+    asm.Call(Chrin);
+    asm.Immediate(Cmp, 0);
+    asm.Branch(Bne, header);
+    asm.Call(Clrchn);
+    asm.Memory(Ldx, cells.File);
+    asm.Immediate(Lda, 1);
+    asm.Memory(Sta, cells.InUse, M6502Index.X);
+    asm.Immediate(Lda, 0);
+    asm.Memory(Sta, cells.AtEnd, M6502Index.X);
+    asm.Emit(Txa);
+    this.ReturnByte();
+    asm.Emit(Rts);
+    asm.Bind(fail);
+    asm.Call(Clrchn);
+    this.ReturnFailure();
+    asm.Emit(Rts);
+  }
+
+  /// <summary>
+  /// <c>sys_dirents(fd, buffer, length)</c> on the 1541: the next line of the listing as one
+  /// getdents64 record - its length at byte 16, the regular-file type at 18, the name between the
+  /// line's quotes from 19 with a zero after it - and the record's length; 0 at the end of the
+  /// listing, which is the line with no quotes, "BLOCKS FREE.". fd at Arg, the buffer at Arg+4.
+  /// </summary>
+  private void EmitDirectoryRead() {
+    var cells = this.Files;
+    var end = asm.NewLabel("rt.files.dirents.end");
+    var seek = asm.NewLabel("rt.files.dirents.seek");
+    var name = asm.NewLabel("rt.files.dirents.name");
+    var named = asm.NewLabel("rt.files.dirents.named");
+    var rest = asm.NewLabel("rt.files.dirents.rest");
+    var done = asm.NewLabel("rt.files.dirents.done");
+    asm.Memory(Ldx, Zp.Arg);
+    asm.Memory(Lda, cells.AtEnd, M6502Index.X);
+    asm.Branch(Bne, end);
+    asm.Call(Chkin);
+    asm.Branch(Bcs, end);
+    // the link: two zeros end the listing
+    asm.Call(Chrin);
+    asm.Memory(Sta, Zp.Temp);
+    asm.Call(Chrin);
+    asm.Memory(Ora, Zp.Temp);
+    asm.Branch(Beq, end);
+    asm.Call(Readst);
+    asm.Immediate(M6502Op.And, 0x42);
+    asm.Branch(Bne, end);
+    asm.Call(Chrin);                                   // the block count, which DIR$ does not answer
+    asm.Call(Chrin);
+    asm.Bind(seek);                                     // to the opening quote, or the line's end
+    asm.Call(Chrin);
+    asm.Immediate(Cmp, 0);
+    asm.Branch(Beq, end);
+    asm.Immediate(Cmp, (byte)'"');
+    asm.Branch(Bne, seek);
+    asm.Immediate(Ldy, 19);
+    asm.Bind(name);
+    asm.Call(Chrin);
+    asm.Immediate(Cmp, (byte)'"');
+    asm.Branch(Beq, named);
+    asm.IndirectY(Sta, Zp.Arg.Plus(4));
+    asm.Emit(Iny);
+    asm.Jump(name);
+    asm.Bind(named);
+    asm.Immediate(Lda, 0);
+    asm.IndirectY(Sta, Zp.Arg.Plus(4));
+    asm.Emit(Iny);
+    asm.Emit(Tya);
+    asm.Memory(Sta, Zp.Ret);
+    asm.Immediate(Ldy, 16);
+    asm.IndirectY(Sta, Zp.Arg.Plus(4));
+    asm.Immediate(Lda, 0);
+    asm.Emit(Iny);
+    asm.IndirectY(Sta, Zp.Arg.Plus(4));
+    asm.Immediate(Lda, 8);
+    asm.Emit(Iny);
+    asm.IndirectY(Sta, Zp.Arg.Plus(4));
+    asm.Bind(rest);                                     // the file's type and the padding, to the line's zero
+    asm.Call(Chrin);
+    asm.Immediate(Cmp, 0);
+    asm.Branch(Bne, rest);
+    asm.Call(Clrchn);
+    asm.Memory(Lda, Zp.Ret);
+    this.ReturnByte();
+    asm.Emit(Rts);
+    asm.Bind(end);
+    asm.Memory(Ldx, Zp.Arg);
+    asm.Immediate(Lda, 1);
+    asm.Memory(Sta, cells.AtEnd, M6502Index.X);
+    asm.Call(Clrchn);
+    asm.Immediate(Lda, 0);
+    this.ReturnByte();
+    asm.Bind(done);
     asm.Emit(Rts);
   }
 
@@ -414,6 +586,72 @@ public sealed partial class Mos6502Runtime {
     asm.Emit(Rts);
   }
 
+  /// <summary>
+  /// <c>sys_rename(old, new)</c>: <c>R0:new=old</c> printed to the command channel, as CBM DOS spells
+  /// a rename - the new name first. The paths arrive at <c>Arg</c> and <c>Arg+2</c>; the reply is read
+  /// to clear the channel, and a refusal answers -1.
+  /// </summary>
+  private void EmitFileRename() {
+    var cells = this.Files;
+    var send = asm.NewLabel("rt.files.rename.send");
+    var sent = asm.NewLabel("rt.files.rename.sent");
+    var done = asm.NewLabel("rt.files.rename.done");
+    var refused = asm.NewLabel("rt.files.rename.refused");
+    asm.Call(this.Routine(M6502Routine.FileCommandChannel));
+    asm.Memory(Lda, cells.CommandOpen);
+    asm.Branch(Beq, refused);
+    asm.Immediate(Lda, 0);
+    asm.Memory(Sta, cells.NameLength);
+    this.AppendText("R0:");
+    // the new name, from Arg+2, through the one appender: it reads (Arg)
+    asm.Memory(Lda, Zp.Arg);
+    asm.Emit(Pha);
+    asm.Memory(Lda, Zp.Arg.Plus(1));
+    asm.Emit(Pha);
+    asm.Memory(Lda, Zp.Arg.Plus(2));
+    asm.Memory(Sta, Zp.Arg);
+    asm.Memory(Lda, Zp.Arg.Plus(3));
+    asm.Memory(Sta, Zp.Arg.Plus(1));
+    asm.Call(this.Routine(M6502Routine.FileAppendPath));
+    asm.Emit(Pla);
+    asm.Memory(Sta, Zp.Arg.Plus(1));
+    asm.Emit(Pla);
+    asm.Memory(Sta, Zp.Arg);
+    this.AppendText("=");
+    asm.Call(this.Routine(M6502Routine.FileAppendPath));
+    asm.Immediate(Ldx, CommandChannel);
+    asm.Call(Chkout);
+    var channelRefused = asm.NewLabel("rt.files.rename.channelRefused");
+    asm.Branch(Bcs, channelRefused);
+    asm.Immediate(Lda, 0);
+    asm.Memory(Sta, cells.Status);
+    asm.Bind(send);
+    asm.Memory(Ldx, cells.Status);
+    asm.Memory(Cpx, cells.NameLength);
+    asm.Branch(Beq, sent);
+    asm.Memory(Lda, cells.Name, M6502Index.X);
+    asm.Call(Chrout);
+    asm.Memory(Inc, cells.Status);
+    asm.Jump(send);
+    asm.Bind(sent);
+    asm.Immediate(Lda, 13);
+    asm.Call(Chrout);
+    asm.Call(Clrchn);
+    // 62 FILE NOT FOUND or 63 FILE EXISTS on the command channel: the rename did not happen
+    asm.Call(this.Routine(M6502Routine.FileStatus));
+    asm.Branch(Bcs, refused);
+    asm.Jump(done);
+    asm.Bind(channelRefused);
+    asm.Call(Clrchn);
+    asm.Bind(refused);
+    this.ReturnFailure();
+    asm.Emit(Rts);
+    asm.Bind(done);
+    asm.Immediate(Lda, 0);
+    this.ReturnByte();
+    asm.Emit(Rts);
+  }
+
   /// <summary><c>sys_unlink(path)</c>: <c>S0:name</c> printed to the command channel, whose reply is read to clear it.</summary>
   private void EmitFileUnlink() {
     var cells = this.Files;
@@ -445,8 +683,48 @@ public sealed partial class Mos6502Runtime {
     asm.Immediate(Lda, 13);
     asm.Call(Chrout);
     asm.Call(Clrchn);
-    asm.Call(this.Routine(M6502Routine.FileStatus));
+    // the reply is "01, FILES SCRATCHED,nn,00": nn of 00 means there was no such file, which DOS
+    // reports as file not found - so the count after the second comma is read, not just the code
+    var reply = asm.NewLabel("rt.files.unlink.reply");
+    var counted = asm.NewLabel("rt.files.unlink.counted");
+    var none = asm.NewLabel("rt.files.unlink.none");
+    asm.Immediate(Ldx, CommandChannel);
+    asm.Call(Chkin);
+    asm.Branch(Bcs, refused);
+    asm.Immediate(Lda, 0);
+    asm.Memory(Sta, Zp.Temp);                   // commas seen
+    asm.Memory(Sta, Zp.Temp.Plus(1));           // the count's digits, or'ed together less '0'
+    asm.Bind(reply);
+    asm.Call(Readst);
+    asm.Branch(Bne, counted);
+    asm.Call(Chrin);
+    asm.Immediate(Cmp, 13);
+    asm.Branch(Beq, counted);
+    asm.Immediate(Cmp, (byte)',');
+    var notComma = asm.NewLabel("rt.files.unlink.notComma");
+    asm.Branch(Bne, notComma);
+    asm.Memory(Inc, Zp.Temp);
+    asm.Jump(reply);
+    asm.Bind(notComma);
+    asm.Memory(Ldx, Zp.Temp);
+    asm.Immediate(Cpx, 2);
+    asm.Branch(Bne, reply);
+    asm.Emit(Sec);
+    asm.Immediate(Sbc, (byte)'0');
+    asm.Memory(Ora, Zp.Temp.Plus(1));
+    asm.Memory(Sta, Zp.Temp.Plus(1));
+    asm.Jump(reply);
+    asm.Bind(counted);
+    asm.Call(Clrchn);
+    asm.Memory(Lda, Zp.Temp);
+    asm.Immediate(Cmp, 2);
+    asm.Branch(Bcc, done);                     // no count in the reply: nothing to judge by
+    asm.Memory(Lda, Zp.Temp.Plus(1));
+    asm.Branch(Beq, none);
     asm.Jump(done);
+    asm.Bind(none);
+    this.ReturnFailure();
+    asm.Emit(Rts);
     asm.Bind(refused);
     asm.Call(Clrchn);
     asm.Bind(done);

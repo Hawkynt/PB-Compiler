@@ -619,13 +619,15 @@ public sealed class Binder {
       }
 
       var count = 1;
+      List<(int Lower, int Upper)>? bounds = null;
       if (field.ArrayBounds != null)
         foreach (var (lowerExpr, upperExpr) in field.ArrayBounds) {
           var lower = lowerExpr == null ? this._optionBase : this._folder.TryFold(lowerExpr)?.Integer;
           var upper = this._folder.TryFold(upperExpr)?.Integer;
-          if (lower != null && upper != null)
+          if (lower != null && upper != null) {
             count *= (int)(upper.Value - lower.Value + 1);
-          else
+            (bounds ??= []).Add(((int)lower.Value, (int)upper.Value));
+          } else
             this.Error(field.Position, $"field array bound of {name}.{field.Name} is not constant");
         }
 
@@ -649,7 +651,7 @@ public sealed class Binder {
         offset += size;
       }
 
-      resolved.Add(new(field.Name, fieldType, fieldOffset, count));
+      resolved.Add(new(field.Name, fieldType, fieldOffset, count) { Bounds = bounds });
       naturalEnd = Math.Max(naturalEnd, fieldOffset + size);
     }
 
@@ -705,7 +707,7 @@ public sealed class Binder {
     if (isFunction)
       proc.ReturnType = this.ResolveReturnType(name, suffix, returnType);
     foreach (var p in parameters)
-      proc.Parameters.Add(this.BindParameter(p));
+      proc.Parameters.Add(this.BindParameter(p, p.IsArray ? InferArrayParameterRank(p, body) : 1));
 
     // pb36: a FUNCTION returning a UDT by value uses the struct-return convention - a hidden trailing
     // BYREF result-buffer parameter the body writes through; the result variable aliases it
@@ -1655,9 +1657,34 @@ public sealed class Binder {
     if (a.Parameters.Count != b.Parameters.Count)
       return false;
     for (var i = 0; i < a.Parameters.Count; ++i)
-      if (!Equals(a.Parameters[i].Type, b.Parameters[i].Type))
+      if (!SameParameterType(a.Parameters[i].Type, b.Parameters[i].Type))
         return false;
     return true;
+  }
+
+  /// <summary>An array parameter is the same whatever rank each spelling settled on: a prototype's <c>m#()</c> states none.</summary>
+  private static bool SameParameterType(PbType a, PbType b)
+    => a is ArrayType x && b is ArrayType y ? Equals(x.Element, y.Element) : Equals(a, b);
+
+  /// <summary>
+  /// The rank of an array parameter, which its declaration does not state: <c>SUB s(m#())</c> takes
+  /// an array of any shape, and the body says which by how many subscripts it indexes it with - or
+  /// by the highest dimension it asks LBOUND or UBOUND about. One when the body never says.
+  /// </summary>
+  private static int InferArrayParameterRank(Parameter parameter, IReadOnlyList<Statement> body) {
+    bool Names(string name, TypeSuffix suffix)
+      => name.Equals(parameter.Name, StringComparison.OrdinalIgnoreCase)
+         && (suffix == parameter.Suffix || suffix == TypeSuffix.None || parameter.Suffix == TypeSuffix.None);
+    var rank = 1;
+    foreach (var node in body.SelectMany(AstWalker.DescendantNodes))
+      if (node is CallOrIndexExpr call) {
+        if (Names(call.Name, call.Suffix))
+          rank = Math.Max(rank, call.Arguments.Count);
+        else if ((call.Name.Equals("UBOUND", StringComparison.OrdinalIgnoreCase) || call.Name.Equals("LBOUND", StringComparison.OrdinalIgnoreCase))
+                 && call.Arguments is [NameExpr array, IntegerLiteralExpr { Value: > 0 and < 9 } dimension] && Names(array.Name, array.Suffix))
+          rank = Math.Max(rank, (int)dimension.Value);
+      }
+    return rank;
   }
 
   private void RegisterProcedure(ProcedureSymbol proc) {
@@ -1718,12 +1745,12 @@ public sealed class Binder {
     return best;
   }
 
-  private VariableSymbol BindParameter(Parameter p) {
+  private VariableSymbol BindParameter(Parameter p, int rank = 1) {
     var type = p.Type != null
       ? this.ResolveTypeName(p.Type) ?? PbType.Integer
       : this.TypeFromSuffixOrDefault(p.Name, p.Suffix);
     if (p.IsArray)
-      type = new ArrayType(type, null, Rank: 1); // array parameters arrive as descriptors
+      type = new ArrayType(type, null, Rank: rank); // array parameters arrive as descriptors
 
     return new(p.Name, type, VariableStorage.Parameter) { ByVal = p.ByVal, Seg = p.Seg, Optional = p.Optional, DefaultValue = p.DefaultValue };
   }

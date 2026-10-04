@@ -86,6 +86,8 @@ SUB Test_Arrays
 END SUB
 
 ' ---------------------------- driver -----------------------------------------
+' KILL of a file that is not there is error 53, so there is one to remove first
+OPEN "UNITTEST.LOG" FOR OUTPUT AS #1: CLOSE #1
 KILL "UNITTEST.LOG"
 CALL Test_BeginSuite("MINI")
 CALL Test_StringBasics

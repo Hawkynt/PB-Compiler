@@ -15,11 +15,11 @@ the equivalent BASIC the transformed program behaves like.
 
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
-| C — target-CPU code generation | 3 | 0 | 0 | 3 |
-| O — optimization passes | 178 | 77 | 152 | 407 |
+| C — target-CPU code generation | 2 | 1 | 0 | 3 |
+| O — optimization passes | 173 | 84 | 153 | 410 |
 | P — lean output | 6 | 0 | 1 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **191** | **77** | **153** | **421** |
+| **all** | **185** | **85** | **154** | **424** |
 
 **A 🟡 page's "Still planned" list can be behind the code, so check before building
 from it.** Of eight partial pages read closely on 2026-08-06, four named work that
@@ -545,6 +545,9 @@ Conventions used on every page:
 | ⬜ | [O0405](O0405-sample-based-reordering.md) | Sample-based binary reordering |
 | ⬜ | [O0406](O0406-layout-assertion-battery.md) | Executable-layout assertion battery |
 | ✅ | [O0407](O0407-dead-loop-elimination.md) | Dead loop elimination |
+| ✅ | [O0408](O0408-6502-frame-slot-sharing.md) | Frame slot sharing (6502, x86-32, x64) |
+| ✅ | [O0409](O0409-6502-accumulator-load-elimination.md) | 6502 accumulator-load elimination |
+| ✅ | [O0410](O0410-6502-branch-shaping.md) | 6502 branch shaping |
 
 ## P — lean output
 

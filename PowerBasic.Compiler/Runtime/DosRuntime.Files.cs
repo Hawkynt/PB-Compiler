@@ -118,6 +118,8 @@ public sealed partial class DosRuntime {
   private void EmitFileProcedures(Assembler asm) {
     var files = asm.Lbl("rt_file_table");
     var ioError = asm.Lbl("rt_err_io");
+    var dosError = asm.Lbl("rt_err_dos");
+    var badFile = asm.Lbl("rt_err_badfile");
 
     // rt_name_z: AX=string handle -> ASCIIZ filename in rt_namebuf (consumes)
     asm.MarkLabel("rt_name_z");
@@ -173,16 +175,23 @@ public sealed partial class DosRuntime {
       asm.Mov(Mem.Word(asm.Lbl("rt_st1")), Reg.CX);
       asm.Mov(Mem.Word(asm.Lbl("rt_st2")), Reg.SI);
       asm.Cmp(Reg.BX, 1);
-      asm.Jl(ioError);
+      asm.Jl(badFile);
       asm.Cmp(Reg.BX, 15);
-      asm.Jg(ioError);
+      asm.Jg(badFile);
+      // a number already in use is 55, file already open
+      asm.Shl(Reg.BX, 1);
+      asm.Cmp(Mem.Word(Reg.BX, files), (Imm)0);
+      asm.Je(asm.Lbl("rt_fopen_free"));
+      asm.Mov(Reg.AX, 55);
+      asm.Jmp(asm.Lbl("rt_raise"));
+      asm.MarkLabel("rt_fopen_free");
       asm.Call(asm.Lbl("rt_name_z"));
       asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_namebuf")));
       asm.Cmp(Mem.Word(asm.Lbl("rt_st1")), (Imm)0);
       asm.Jne(notInput);
       asm.Mov(Reg.AX, 0x3D00);
       asm.Int(0x21);
-      asm.Jc(ioError);
+      asm.Jc(dosError);
       asm.Jmp(store);
       asm.MarkLabel(notInput);
       asm.Cmp(Mem.Word(asm.Lbl("rt_st1")), (Imm)2);
@@ -192,7 +201,7 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AH, 0x3C);
       asm.Xor(Reg.CX, Reg.CX);
       asm.Int(0x21);
-      asm.Jc(ioError);
+      asm.Jc(dosError);
       asm.Jmp(store);
       asm.MarkLabel(readWrite);          // RANDOM/BINARY: open r/w, create when missing
       asm.Mov(Reg.AX, 0x3D02);
@@ -201,7 +210,7 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AH, 0x3C);
       asm.Xor(Reg.CX, Reg.CX);
       asm.Int(0x21);
-      asm.Jc(ioError);
+      asm.Jc(dosError);
       asm.Jmp(store);
       asm.MarkLabel(append);
       asm.Mov(Reg.AX, 0x3D01);
@@ -210,7 +219,7 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AH, 0x3C);
       asm.Xor(Reg.CX, Reg.CX);
       asm.Int(0x21);
-      asm.Jc(ioError);
+      asm.Jc(dosError);
       asm.MarkLabel(store);
       asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_st0")));
       asm.Shl(Reg.BX, 1);
@@ -259,12 +268,12 @@ public sealed partial class DosRuntime {
       asm.Test(Reg.AX, Reg.AX);
       asm.Jz(console);
       asm.Cmp(Reg.AX, 15);
-      asm.Jg(ioError);
+      asm.Ja(badFile);
       asm.Mov(Reg.BX, Reg.AX);
       asm.Shl(Reg.BX, 1);
       asm.Mov(Reg.BX, Mem.Word(Reg.BX, files));
       asm.Test(Reg.BX, Reg.BX);
-      asm.Jz(ioError);
+      asm.Jz(badFile);
       asm.Jmp(found);
       asm.MarkLabel(console);
       asm.Xor(Reg.BX, Reg.BX);
@@ -279,7 +288,7 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AH, 0x3F);
       asm.Int(0x21);
       asm.Pop(Reg.DS);
-      asm.Jc(ioError);
+      asm.Jc(dosError);
       asm.Ret();
     }
 
@@ -291,7 +300,7 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AH, 0x40);
       asm.Int(0x21);
       asm.Pop(Reg.DS);
-      asm.Jc(ioError);
+      asm.Jc(dosError);
       asm.Pop(Reg.AX);
       asm.Ret();
     }
@@ -654,7 +663,11 @@ public sealed partial class DosRuntime {
       asm.Int(0x21);
       asm.Jc(finish);
       asm.Test(Reg.AX, Reg.AX);
-      asm.Jz(finish);
+      // the end of the file before a field even began is 62, input past end
+      asm.Jnz(asm.Lbl("rt_ftoken_lead"));
+      asm.Mov(Reg.AX, 62);
+      asm.Jmp(asm.Lbl("rt_raise"));
+      asm.MarkLabel("rt_ftoken_lead");
       asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_linebuf")));
       asm.Cmp(Reg.AL, (Imm)' ');
       asm.Je(skipLead);
@@ -762,6 +775,9 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AX, Mem.Word(Reg.BX, files));
       asm.Test(Reg.AX, Reg.AX);
       asm.Jz(done);
+      // the slot is free again once the file is closed: FREEFILE hands it out, and genuine PBC 3.50
+      // answers 1 after OPEN #1 : CLOSE #1 where leaving the handle here answered 2
+      asm.Mov(Mem.Word(Reg.BX, files), 0);
       if (this.EffectiveDialect.IsBascomRuntime()) {
         // the BASCOM lineage (QB 1.0-3.0) ends sequential OUTPUT/APPEND files
         // with a CP/M-style ^Z marker (oracle-verified; QB 4.x dropped the habit).
@@ -815,14 +831,14 @@ public sealed partial class DosRuntime {
     {
       asm.Push(Reg.BX);
       asm.Cmp(Reg.AX, 1);
-      asm.Jl(ioError);
+      asm.Jl(badFile);
       asm.Cmp(Reg.AX, 15);
-      asm.Jg(ioError);
+      asm.Jg(badFile);
       asm.Mov(Reg.BX, Reg.AX);
       asm.Shl(Reg.BX, 1);
       asm.Mov(Reg.AX, Mem.Word(Reg.BX, files));
       asm.Test(Reg.AX, Reg.AX);
-      asm.Jz(ioError);
+      asm.Jz(badFile);
       asm.Mov(Mem.Word(asm.Lbl("rt_curout")), Reg.AX);
       // route the active print column to this file's own column (BX = file number * 2)
       asm.Mov(Reg.AX, Imm.OffsetOf(asm.Lbl("rt_filecol")));
@@ -846,7 +862,8 @@ public sealed partial class DosRuntime {
       asm.Inc(Reg.AX);
       asm.Cmp(Reg.AX, 15);
       asm.Jle(scan);
-      asm.Jmp(ioError);
+      asm.Mov(Reg.AX, 67);                      // too many files
+      asm.Jmp(asm.Lbl("rt_raise"));
       asm.MarkLabel(found);
       asm.Pop(Reg.BX);
       asm.Ret();
@@ -865,7 +882,7 @@ public sealed partial class DosRuntime {
       asm.Shl(Reg.BX, 1);
       asm.Mov(Reg.BX, Mem.Word(Reg.BX, files));
       asm.Test(Reg.BX, Reg.BX);
-      asm.Jz(ioError);
+      asm.Jz(badFile);
       asm.Mov(Reg.AX, 0x4201);                  // current position
       asm.Xor(Reg.CX, Reg.CX);
       asm.Xor(Reg.DX, Reg.DX);
@@ -913,6 +930,7 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_namebuf")));
       asm.Mov(Reg.AH, 0x41);
       asm.Int(0x21);
+      asm.Jc(dosError);                         // a missing file is 53, as genuine PBC 3.50 says
       asm.Pop(Reg.DX);
       asm.Pop(Reg.AX);
       asm.Ret();
@@ -920,8 +938,8 @@ public sealed partial class DosRuntime {
 
     // MKDIR / RMDIR / CHDIR are rt_kill's shape with a different DOS function: the path arrives as a
     // string handle, rt_name_z turns it into the ASCIIZ buffer INT 21h wants, and that is the whole
-    // routine. PB reports no result for any of them - a failed CHDIR is simply not an error here,
-    // which is what the genuine compiler does too.
+    // routine. A failure is the DOS code's BASIC error, as genuine PBC 3.50 raises it: MKDIR of a
+    // directory that exists is 75, RMDIR or CHDIR of one that does not is 76.
     foreach (var (label, function) in new[] { ("rt_mkdir", 0x39), ("rt_rmdir", 0x3A), ("rt_chdir", 0x3B) }) {
       var entry = asm.MarkLabel(label);
       if (label == "rt_mkdir") this.MkDir = entry;
@@ -933,6 +951,7 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.DX, Imm.OffsetOf(asm.Lbl("rt_namebuf")));
       asm.Mov(Reg.AH, (Imm)function);
       asm.Int(0x21);
+      asm.Jc(dosError);
       asm.Pop(Reg.DX);
       asm.Pop(Reg.AX);
       asm.Ret();
@@ -960,7 +979,14 @@ public sealed partial class DosRuntime {
       asm.Int(0x21);
       asm.Jc(finish);
       asm.Test(Reg.AX, Reg.AX);
-      asm.Jz(finish);                            // EOF
+      asm.Jnz(asm.Lbl("rt_linput_byte"));
+      // the end of the file: a last line without its newline is still a line, but nothing at all
+      // is 62, input past end, as genuine PBC 3.50 raises it
+      asm.Test(Reg.DI, Reg.DI);
+      asm.Jnz(finish);
+      asm.Mov(Reg.AX, 62);
+      asm.Jmp(asm.Lbl("rt_raise"));
+      asm.MarkLabel("rt_linput_byte");
       asm.Mov(Reg.SI, Reg.DI);
       asm.Mov(Reg.AL, Mem.Byte(Reg.SI, asm.Lbl("rt_linebuf")));
       asm.Cmp(Reg.AL, (Imm)10);

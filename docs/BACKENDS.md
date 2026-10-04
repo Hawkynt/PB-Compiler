@@ -220,6 +220,35 @@ other's with the reason. `FlatTargetUnitTests` compiles a unit and a program lin
 through a library, and as the 6502's object and library - on x86-32, x64, the 6502 and DOS, and
 wants DOS's output from all of them.
 
+### What a flat target makes of DOS's idioms
+
+The same program runs on x86-32, x64 and the 6502, and `FlatTargetIdiomTests` holds it to what its
+DOS build prints - every program in `tests/idioms`, each one also checked against genuine PBC 3.50.
+Where an idiom leans on DOS's machine rather than on the language, a flat target gives it the
+nearest meaning it can keep:
+
+| Idiom | On DOS | On x86-32 / x64 | On the 6502 |
+|---|---|---|---|
+| `DEF SEG` / `PEEK` / `POKE` / `PEEK$` / `POKE$`, `DIM ... AT` | the real-mode byte `seg * 16 + off` | a megabyte of the process standing in for DOS's (`Ir/Passes/FarPointerFlattening`): every route to one segment and offset agrees, DOS's own areas read as zero | the machine's own memory, wrapped to 64 KB |
+| `DIM HUGE` / `VIRTUAL` / `EMS` / `XMS` | segment stepping, the EMS page window | an ordinary dynamic array | likewise, within the heap |
+| An array passed to a procedure | the DOS descriptor: segment, offset, element size, rank, word bounds | a flat descriptor: a pointer-width data address, then LONG bounds (`IrModule.FlatArrayDescriptors`) | likewise |
+| `CODEPTR32(label)`, `GOTO` / `GOSUB DWORD` | the label's segment and offset | a label ordinal, the computed jump a switch over them (`Ir/Passes/ComputedJumpOrdinals`) | likewise |
+| `CONSIN` / `CONSOUT` | DOS IOCTL | whether the descriptor is a terminal (`TIOCGWINSZ`) | always the console |
+| `$ERROR STACK ON` | headroom probe, error 201 | 201 once 4 MB of stack is used | 201 when the processor stack is nearly full; the soft stack raises 7 itself |
+| `DIR$` | FindFirst / FindNext | `getdents64`, the mask matched as DOS matches it | the 1541's directory listing (`"$"`) |
+| `REG` / `CALL INTERRUPT`, inline `INT n` | DOS and the BIOS | the services programs ask for most answered by the runtime (`PortableRuntime.Interrupts`): characters in and out, the date, time and version, the cursor, the keyboard, the timer ticks; any other sets the carry | likewise |
+| `COMMAND$` / `ENVIRON$` | the PSP | the process's argument vector and environment | empty: a C64 program has neither |
+| `CLS` / `LOCATE` / `CSRLIN` | the BIOS | ANSI cursor control on a terminal, nothing in a pipe | the screen editor and `PLOT` |
+| `TIMER` / `TIME$` / `DATE$` / `SLEEP` / `INKEY$` | the BIOS clock and keyboard | `clock_gettime`, `nanosleep`, `poll` | the jiffy clock, `GETIN` |
+| Paths | `\` separators | `\` taken as `/` | no directories: one that is named is not there (76) |
+| A line written to a file | `CR LF` | `LF` | `LF` |
+
+File errors are numbered as genuine PBC 3.50 numbers them (`docs/QUIRKS.md`): `errno` and the
+1541's status are mapped onto 53, 76, 75, 67, 61, 62, 55 and 52. What does not carry over is the
+DOS machine itself - segment registers in inline assembly, calls into the DOS runtime from it, a
+service no table above names - and each declines with its name or, for a service, sets the carry. A C64 also has 46 KB in all, so a program the hosted
+targets run can be too large for it; the decline says by how much.
+
 `PlatformTests` builds, runs and links all three artifacts for both machines - the host C compiler,
 or the bare `ld` where there is no 32-bit C library, is the oracle that the objects link, never part
 of the build. `NativeBatteryTests` run every DOS battery program the back end accepts against its
@@ -275,9 +304,9 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
   at `OPEN`, written back whole with `@0:` at `CLOSE` if it changed - one such file at a time, and
   the cache reserved only in a program that opens one. `Cpu6502` models the KERNAL calls and the
   drive, and the VICE test runs the file programs against a host directory as drive 8.
-- **`PEEK` and `POKE` take the offset as the address** - the machine is flat and 16-bit, so
-  `POKE 53280, 0` sets the border colour as it does in C64 BASIC - and `DEF SEG` selects nothing.
-  (x86-32 and x64 decline them: a 16-bit DOS offset names nothing in a Linux process.)
+- **`PEEK` and `POKE` reach the machine's own memory** at the real-mode address `DEF SEG * 16 +
+  offset`, wrapped to 64 KB - the default segment is 0, so `POKE 53280, 0` sets the border colour as
+  it does in C64 BASIC, and `DIM scr?(999) AT &H40` lays an array over the screen at `$0400`.
 - **Math functions are portable IR** (`PortableRuntime.Math.cs`, switched on by
   `PortableRuntimeSoftMath`): the `llvm.sqrt`/`sin`/`cos`/`tan`/`atan`/`log`/`exp`/`pow` family,
   each computed in EXTENDED on the soft float. A whole exponent multiplies by repeated squaring, so
@@ -288,12 +317,21 @@ chip with three 8-bit registers has nothing to gain from a register allocator bu
 - **Size comes first.** A C64 leaves 46 KB for program and data - `$0801` up to the soft stack at
   `$C000`, the top 8 KB under the BASIC ROM, which start-up maps out while the program runs and the
   return to BASIC maps back in - so the build optimizes for size
-  unless `$OPTIMIZE SPEED` asks otherwise, the string heap is 4 KB, and the portable runtime keeps
-  its lengths, positions and counters in 16 bits (`IrWriter.Index`) - the `rt_*` ABI keeps its
+  unless `$OPTIMIZE SPEED` asks otherwise, the string heap starts at 4 KB - and, when that build
+  leaves memory unused below `$C000`, the program is built again with the heap grown into it, up to
+  28 KB (only a constant changes, so the code does not move); a program a little too big is built
+  again with a heap that much smaller, down to 1 KB, rather than refused - and the portable runtime keeps
+  its lengths, positions and counters in 16 bits (`IrWriter.Index`) - an array past 32 KB is error
+  7 rather than a truncated size - and the `rt_*` ABI keeps its
   declared widths and each entry converts at that edge. A `$OPTIMIZE SPEED` build that does not
   fit is built again for size, with a warning - unrolled and inlined, the differential battery's
   speed programs need up to 100 KB, and a slower program beats one that does not load. A program
-  that does not fit even then is declined with how far past `$C000` it would reach.
+  that does not fit even then is declined with how far past `$C000` it would reach. Three passes
+  keep the code small whatever the optimization setting: SSA values whose lives never meet share a
+  frame slot, so more frames fit the page-zero window - x86-32 and x64 pack their frames the same way - ([O0408](optimizations/O0408-6502-frame-slot-sharing.md));
+  the assembler drops an `LDA` of what A already holds ([O0409](optimizations/O0409-6502-accumulator-load-elimination.md));
+  and a branch whose true side comes next falls through to it, while a comparison kept as a value
+  steps over its `LDA #1` with a one-byte `BIT` ([O0410](optimizations/O0410-6502-branch-shaping.md)).
 - **Start-up returns to BASIC cleanly.** The program's page-zero cells (`$02`-`$8F`, BASIC's own),
   the processor port that maps the BASIC ROM and the stack pointer are saved on entry and restored
   on exit, so the final `RTS` - or `END`, or a
@@ -2010,7 +2048,7 @@ What declines, measured rather than assumed - the corpus figures are what
 |---|---|---|---|
 | Microsoft Binary Format (`mbf32`/`mbf64`) | declines | declines | a DOS storage encoding with no C or LLVM type. Lowering now emits `MbfToFP`/`FPToMbf`, and x86-16 converts address-bound scalar cells; portable emitters still refuse the foreign storage rather than silently substitute IEEE |
 | the address of a basic block | declines | renders | `ON ERROR` arms a handler with one and `CODEPTR32` of a label is one; standard C has no such value (see above) |
-| `IrFarPtr` | declines | declines | a segment:offset pointer (`DIM … AT`, a segmented access); flattening it to a near pointer silently substitutes the default segment |
+| `IrFarPtr` | declines | declines | a segment:offset pointer (`DIM … AT`, a segmented access); flattening it to a near pointer silently substitutes the default segment. The native flat back ends get it flattened first, by `FarPointerFlattening`, to an address they can name |
 | `IrInlineAsm` | declines | declines | x86-16 machine code by definition |
 | `IrIndirectBr` | (unreachable) | renders | `GOTO DWORD`/`GOSUB DWORD`. LLVM has `indirectbr`; the C arm exists but nothing reaches it, because the address such a branch jumps to is a block address, which the row above declines first. Plain `GOSUB` is a `switch` and renders in both |
 | `rt_using_field`, `rt_lprint_*`, `rt_capture_*`, `rt_reg_*`, `rt_interrupt*` | declines | renders | `runtime/pbc_rt.c` has no entry, and a stub would lie about what the program did |

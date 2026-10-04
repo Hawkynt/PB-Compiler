@@ -30,7 +30,7 @@ public static partial class PortableRuntime {
           module.RemoveGlobal(existing);
           existing.ReplaceAllUsesWith(seed);
         }
-        return this._seed = module.AddGlobal(seed);
+        return this._seed = this.Shared(seed);
       }
     }
 

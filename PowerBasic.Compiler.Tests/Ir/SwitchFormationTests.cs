@@ -130,7 +130,7 @@ public sealed class SwitchFormationTests {
   }
 
   /// <summary>
-  /// The arm that ends a chain has to SURVIVE it. <c>CASE IS &gt; 1000</c> reads as a perfectly good set
+  /// The arm that ends a chain has to SURVIVE it. <c>CASE &gt; 1000</c> reads as a perfectly good set
   /// of 31767 values, is then rejected for being too wide to enumerate, and so becomes the dispatch's
   /// default - which is why counting it as consumed before it was used deleted the block the switch had
   /// just pointed at, and sent every non-member to whatever followed.
@@ -140,7 +140,7 @@ public sealed class SwitchFormationTests {
     var formed = FormAndFind(Select("""
       CASE 1, 3, 5, 9
         PRINT "set"
-      CASE IS > 1000
+      CASE > 1000
         PRINT "big"
       CASE ELSE
         PRINT "else"

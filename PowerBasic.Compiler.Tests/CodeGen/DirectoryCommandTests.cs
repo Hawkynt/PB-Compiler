@@ -45,17 +45,18 @@ public sealed class DirectoryCommandTests {
   }
 
   /// <summary>
-  /// PowerBASIC does not raise on a directory call that fails, so removing something that was never
-  /// there has to run straight through rather than end the program.
+  /// Removing a directory that was never there is error 76, path not found - genuine PBC 3.50 raises
+  /// it (tests/diff/DIFF137.BAS), so a handler sees it and the program carries on from there.
   /// </summary>
   [Test]
-  public void RmDir_GivenAPathThatIsNotThere_ThenTheProgramCarriesOn() {
+  public void RmDir_GivenAPathThatIsNotThere_ThenItIsError76() {
     var cpu = Run("""
+      ON ERROR RESUME NEXT
       RMDIR "NOSUCH"
-      PRINT "after"
+      PRINT "after"; ERR
       """);
 
-    Assert.That(cpu.Output.Trim(), Is.EqualTo("after"));
+    Assert.That(cpu.Output.Trim(), Is.EqualTo("after 76"));
   }
 
   [Test]

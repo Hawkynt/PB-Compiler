@@ -44,6 +44,29 @@ public sealed partial class Mos6502Runtime {
     }
   }
 
+  /// <summary>
+  /// <c>sys_truncate(fd, length)</c>: SETEOF on the cached RANDOM or BINARY file - its size becomes the
+  /// length, written back whole when it closes. Any other descriptor is refused with -1: a sequential
+  /// file on the 1541 only goes forwards.
+  /// </summary>
+  private void EmitFileTruncate() {
+    var refused = asm.NewLabel("rt.cache.truncate.refused");
+    if (this.FileCache is not null) {
+      asm.Memory(Lda, Zp.Arg);
+      asm.Memory(Cmp, this.Cache.File);
+      asm.Branch(Bne, refused);
+      this.Copy16(Zp.Arg.Plus(2), this.Cache.Size);
+      asm.Immediate(Lda, 1);
+      asm.Memory(Sta, this.Cache.Dirty);
+      asm.Immediate(Lda, 0);
+      this.ReturnByte();
+      asm.Emit(Rts);
+    }
+    asm.Bind(refused);
+    this.ReturnFailure();
+    asm.Emit(Rts);
+  }
+
   /// <summary>Jumps to <paramref name="target"/> when the descriptor in <paramref name="fd"/> is the cached file.</summary>
   private void WhenCached(M6502Address fd, M6502Label target) {
     if (this.FileCache is null)

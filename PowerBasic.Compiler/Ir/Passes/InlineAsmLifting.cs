@@ -229,6 +229,7 @@ public static class InlineAsmLifting {
         case "MULX": return this.MultiplyNoFlags(operands);
         case "BSF": return this.BitScan(operands, forward: true);
         case "BSR": return this.BitScan(operands, forward: false);
+        case "INT" when operands is [{ } interruptNumber]: return this.Interrupt(interruptNumber);
         case "PUSH": return this.Push(operands);
         case "POP": return this.Pop(operands);
         case "PUSHF": this.PushValue(this.PackFlags(IrType.I16)); return true;
@@ -943,6 +944,32 @@ public static class InlineAsmLifting {
     // --- flags ----------------------------------------------------------------------------------
 
     private enum FlagRule { Add, Subtract, Logic, Increment, Decrement, Negate }
+
+    /// <summary>
+    /// <c>INT n</c>: the registers into the REG buffer, the runtime's <c>rt_interrupt</c> - which answers
+    /// the DOS and BIOS services a program asks for most (<c>PortableRuntime.Interrupts</c>) - and the
+    /// buffer back, its carry and zero bits as the flags. The same buffer is REG's, so an
+    /// <c>INT 21h</c> written as assembly and a <c>CALL INTERRUPT &amp;H21</c> do one thing.
+    /// </summary>
+    private bool Interrupt(TextAssembler.ParsedAsmOperand vector) {
+      if (this.PlaceOf(vector, 1) is not ImmediatePlace { Value: var number })
+        throw new NotLiftableException("an interrupt number is a constant");
+      var module = registers.Module;
+      var buffer = module.FindGlobal("rt.regs") ?? module.AddGlobal(new IrGlobalVariable("rt.regs", IrType.I16) { Count = 10, IsZeroInitialized = true });
+      var handler = module.FindFunction("rt_interrupt")
+        ?? module.AddFunction(new IrFunction("rt_interrupt", IrType.Void, [new IrArgument(IrType.I16, 0)]));
+      // REG's numbering: 1 AX, 2 BX, 3 CX, 4 DX, 5 SI, 6 DI, 7 BP; 0 the flags
+      (int Slot, Reg Register)[] map = [(1, Reg.AX), (2, Reg.BX), (3, Reg.CX), (4, Reg.DX), (5, Reg.SI), (6, Reg.DI), (7, Reg.BP)];
+      IrValue Cell(int slot) => this.Add(new IrGep(buffer, new IrConstantInt(IrType.I32, slot), IrType.I16));
+      foreach (var (slot, register) in map)
+        this.Add(new IrStore(this.Read(new GeneralPlace(registers.General(register), 2, 0), 2), Cell(slot)));
+      this.Add(new IrStore(this.PackFlags(IrType.I16), Cell(0)));
+      this.Add(new IrCall(IrType.Void, handler, [new IrConstantInt(IrType.I16, number & 0xFF)]));
+      foreach (var (slot, register) in map)
+        this.Write(new GeneralPlace(registers.General(register), 2, 0), this.Add(new IrLoad(IrType.I16, Cell(slot))));
+      this.UnpackFlags(this.Add(new IrLoad(IrType.I16, Cell(0))));
+      return true;
+    }
 
     private IrValue GetFlag(char flag) => this.Add(new IrLoad(IrType.I1, registers.Flag(flag)));
     private void SetFlag(char flag, IrValue value) => this.Add(new IrStore(value, registers.Flag(flag)));

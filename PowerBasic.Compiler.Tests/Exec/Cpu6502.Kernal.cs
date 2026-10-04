@@ -48,6 +48,10 @@ public sealed partial class Cpu6502 {
     switch (this._pc) {
       case Chrout: this.CharacterOut(this._a); break;
       case Chrin: this._a = this.CharacterIn(); break;
+      // GETIN: the next key typed, or 0 when nothing is waiting - a test's input, a key at a time
+      // PLOT: the cursor moves, which a teletype stream does not record
+      case 0xFFF0: this._carry = false; break;
+      case 0xFFE4: this._a = this._keyboardAt < this._keyboard.Length ? this.NextInput() : (byte)0; this.Nz(this._a); this._carry = false; break;
       case Readst: this._a = this._status; this.Nz(this._a); break;
       case Setlfs: (this._pendingFile, this._pendingDevice, this._pendingSecondary) = (this._a, this._x, this._y); break;
       case Setnam: this._pendingName = this._memory.AsSpan(this.Word2(this._x, this._y), this._a).ToArray(); break;
@@ -87,6 +91,13 @@ public sealed partial class Cpu6502 {
       text = text[2..];
     else if (text.StartsWith(':'))
       text = text[1..];
+    // "$" on secondary address 0: the directory, as the BASIC listing LOAD "$",8 reads
+    if (text.StartsWith('$') && this._pendingSecondary == 0) {
+      channel.Name = "$";
+      channel.Data = this.DirectoryListing();
+      this.Report("00, OK,00,00");
+      return;
+    }
     var parts = text.Split(',');
     var name = parts[0];
     var mode = parts.Skip(1).FirstOrDefault(part => part is "R" or "W" or "A") ?? "R";
@@ -113,13 +124,51 @@ public sealed partial class Cpu6502 {
     this.Report("00, OK,00,00");
   }
 
+  /// <summary>
+  /// The 1541's directory as a BASIC program: load address $0401, a header line naming the disk, a
+  /// line per file - its size in blocks as the line number, its quoted name and its type - and the
+  /// blocks free. Each line is a link, a number, the text and a zero; two zero bytes end it.
+  /// </summary>
+  private List<byte> DirectoryListing() {
+    var listing = new List<byte> { 0x01, 0x04 };
+    void Line(int number, string text) {
+      listing.AddRange([0x01, 0x01, (byte)number, (byte)(number >> 8)]);
+      listing.AddRange(Encoding.Latin1.GetBytes(text));
+      listing.Add(0);
+    }
+    Line(0, "\u0012\"PBC TEST DISK    \" 00 2A");
+    foreach (var (name, data) in this._disk.OrderBy(entry => entry.Key, StringComparer.Ordinal)) {
+      var blocks = Math.Max(1, (data.Count + 253) / 254);
+      var quoted = $"\"{name}\"";
+      Line(blocks, $"{new string(' ', blocks < 10 ? 3 : blocks < 100 ? 2 : 1)}{quoted.PadRight(18)} SEQ");
+    }
+    Line(664, "BLOCKS FREE.");
+    listing.AddRange([0, 0]);
+    return listing;
+  }
+
   private void Report(string status) => (this._driveStatus, this._driveStatusAt) = (status, 0);
 
-  /// <summary>A DOS command, from <c>OPEN</c>'s name or printed to channel 15: only scratch is modelled.</summary>
+  /// <summary>A DOS command, from <c>OPEN</c>'s name or printed to channel 15: scratch (<c>S0:name</c>) and rename (<c>R0:new=old</c>).</summary>
   private void Execute(IReadOnlyList<byte> command) {
     var text = Encoding.Latin1.GetString(command.ToArray()).TrimEnd('\r');
     if (text.Length == 0)
       return;
+    if (text[0] == 'R') {
+      var names = text[(text.IndexOf(':') + 1)..].Split('=');
+      if (names.Length != 2 || !this._disk.TryGetValue(names[1], out var data)) {
+        this.Report("62,FILE NOT FOUND,00,00");
+        return;
+      }
+      if (this._disk.ContainsKey(names[0])) {
+        this.Report("63,FILE EXISTS,00,00");
+        return;
+      }
+      this._disk.Remove(names[1]);
+      this._disk[names[0]] = data;
+      this.Report("00, OK,00,00");
+      return;
+    }
     if (text[0] != 'S') {
       this.Report("31,SYNTAX ERROR,00,00");
       return;
