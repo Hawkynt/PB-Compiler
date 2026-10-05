@@ -176,8 +176,9 @@ pbc HELLO.BAS -o HELLO.EXE --optimize
 Run the result on DOS or in DOSBox. [Getting started](#-installation) below covers the dialect
 selection and the unit/library forms.
 
-With `$CPU 8086`, inline assembly rejects immediate `PUSH` (an 80186 instruction); multi-bit
-immediate shifts are instead expanded into 8086 count-one instructions.
+With `$CPU 8086`, inline assembly rejects immediate `PUSH`, `PUSHA`/`POPA`, and word `IMUL`
+forms that require 80186 or 80386. It still emulates 32-bit `IMUL` and expands multi-bit
+immediate shifts into 8086 instructions.
 
 ## ❓ Why
 
