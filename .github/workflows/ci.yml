@@ -86,6 +86,10 @@ jobs:
       - name: Build
         run: dotnet build PB-Compiler.slnx --configuration Release --no-restore
 
+      - name: Verify release archive packaging
+        if: matrix.os == 'ubuntu-latest'
+        run: bash .github/workflows/scripts/test-package-app-artifacts.sh
+
       # Classic DOSBox runs ordinary execution tests; DOSBox-X's Pentium-MMX
       # profile runs the packed-kernel oracle. Both are installed on Linux only.
       # The classic emulator's portable FPU computes in 64-bit doubles (the

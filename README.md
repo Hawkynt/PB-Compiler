@@ -110,6 +110,9 @@ both `pbc` and the original and asserts the outputs match byte for byte. See
 
 ## 📦 Installation
 
+Nightly releases provide self-contained `pbc-win-x64.tar.gz` and
+`pbc-linux-x64.tar.gz` downloads; extract the archive for your host with `tar -xzf`.
+
 ### Build
 
 ```bash

@@ -1,8 +1,8 @@
 name: Build artifacts
 
-# Shared build/pack block. Called by release.yml (manual dispatch) and
-# nightly.yml (auto, on CI success). Single place that turns a commit into
-# shippable artifacts so release and nightly never diverge.
+# Shared application build block. Called by release.yml (manual dispatch) and
+# nightly.yml (auto, on a validated main push). Both release jobs use the same
+# package-app-artifacts.sh step to turn its uploaded directories into archives.
 #
 # PER-PACKAGE versioning: `version.pl --stamp` writes each csproj's OWN <Version>
 # + the git commit count. No single version is threaded through the pipeline —

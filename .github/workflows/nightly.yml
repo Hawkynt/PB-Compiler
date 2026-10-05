@@ -48,6 +48,9 @@ jobs:
           name: nuget-packages
           path: dist
         continue-on-error: true
+
+      - name: Package downloadable applications
+        run: bash .github/workflows/scripts/package-app-artifacts.sh dist
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -71,8 +74,19 @@ jobs:
           name: ${{ env.TAG }}
           target_commitish: ${{ github.sha }}
           prerelease: true
-          files: dist/*
+          files: |
+            dist/pbc-win-x64.tar.gz
+            dist/pbc-linux-x64.tar.gz
+          fail_on_unmatched_files: true
           body_path: RELEASE_NOTES.md            # commit-message changelog, not GitHub's PR notes
+
+      - name: Verify published application archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          count=$(gh release view "$TAG" --json assets --jq \
+            '[.assets[].name | select(. == "pbc-win-x64.tar.gz" or . == "pbc-linux-x64.tar.gz")] | length')
+          test "$count" -eq 2
 
   prune:
     needs: publish

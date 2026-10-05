@@ -90,8 +90,8 @@ runs everything.
   version, so the repo-level tag is the date marker `vyyyyMMdd`.
 - **`release.yml` calls `ci.yml` via `workflow_call`**, so tests and releases
   stay in lockstep with no copy-paste.
-- **`_build.yml` is the only packaging block**, shared by release and nightly so
-  the two cannot diverge.
+- **`_build.yml` builds both applications**; `package-app-artifacts.sh` archives
+  those same outputs in both release workflows so the two cannot diverge.
 - **GFS retention, not "keep last N".** Grandfather-Father-Son guarantees at
   least one build per week for a month and one per month for a quarter.
 
@@ -139,4 +139,10 @@ because the next nightly's changelog delta is measured from its tag.
 
 | Artifact                                    | Produced by       |
 | ------------------------------------------- | ----------------- |
-| `app-artifacts` — self-contained `pbc` for win-x64 + linux-x64 | release + nightly |
+| `app-artifacts` — raw win-x64 and linux-x64 publish directories | shared build |
+| `pbc-win-x64.tar.gz`, `pbc-linux-x64.tar.gz` — self-contained release downloads | release + nightly |
+
+`package-app-artifacts.sh` refuses a missing `pbc` executable and verifies both archives before
+publication. Each release job then checks that both downloads are present on the published release.
+The Ubuntu CI fixture checks archive entries and the Linux executable bit. Extract either archive
+with `tar -xzf`.
