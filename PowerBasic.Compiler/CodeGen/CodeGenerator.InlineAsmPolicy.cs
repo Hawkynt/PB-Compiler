@@ -33,6 +33,9 @@ public sealed partial class CodeGenerator {
     if (this.TryReject8086ImmediatePush(instruction, resolver, target, out error))
       return true;
 
+    if (this.TryRejectLegacyCpuForm(instruction, resolver, target, out error))
+      return true;
+
     if (this.TryEmit8086CompatibleShift(instruction, resolver, target, out error))
       return true;
 
@@ -180,6 +183,42 @@ public sealed partial class CodeGenerator {
       return false;
 
     error = "PUSH with an immediate requires 80186 or later; target is 8086";
+    return true;
+  }
+
+  /// <summary>
+  /// PUSHA/POPA and immediate IMUL start at 80186; two-operand register/memory IMUL starts at 80386.
+  /// These forms are encoded directly by TextAssembler, so target legality must be checked first.
+  /// </summary>
+  private bool TryRejectLegacyCpuForm(InlineInstruction instruction, IAsmSymbolResolver resolver,
+      RuntimeTarget target, out string? error) {
+    error = null;
+    if (target.CpuLevel < 186 && instruction.Mnemonic is ("PUSHA" or "POPA")
+        && instruction.Operands.Length == 0) {
+      error = $"{instruction.Mnemonic} requires 80186 or later; target is 8086";
+      return true;
+    }
+    if (instruction.Mnemonic != "IMUL" || target.CpuLevel >= 386)
+      return false;
+
+    this._textAssembler ??= new(this._asm);
+    if (!this._textAssembler.TryParseOperands(instruction.Operands, resolver, out var operands, out error))
+      return true;
+    if (operands is [TextAssembler.ParsedAsmRegister { Register: var register }, ..] && register.IsDword())
+      return false; // the GP32 virtualization below lowers these forms to 8086 instructions
+
+    var requiredCpu = operands switch {
+      [TextAssembler.ParsedAsmRegister, TextAssembler.ParsedAsmImmediate] => 186,
+      [TextAssembler.ParsedAsmRegister, TextAssembler.ParsedAsmRegister or TextAssembler.ParsedAsmMemory] => 386,
+      [TextAssembler.ParsedAsmRegister, TextAssembler.ParsedAsmRegister or TextAssembler.ParsedAsmMemory,
+        TextAssembler.ParsedAsmImmediate] => 186,
+      _ => 0,
+    };
+    if (requiredCpu == 0 || target.CpuLevel >= requiredCpu)
+      return false;
+
+    var cpuName = requiredCpu == 186 ? "80186" : "80386";
+    error = $"IMUL with {operands.Count} operands requires {cpuName} or later; target is {target.CpuLevel}";
     return true;
   }
 

@@ -1813,6 +1813,12 @@ diagnostic, so callers cannot accidentally save a partial binary. `InlineAsm8086
 refusal and both legal CPU/register cases; the dialect metastatement battery checks that the two shift
 targets produce different images rather than incorrectly demanding rejection of a safely expanded shift.
 
+The same gate refuses `PUSHA`/`POPA` below 80186 and distinguishes `IMUL` forms: word
+register/immediate and three-operand forms require 80186, while word register/register or
+register/memory without an immediate requires 80386. One-operand `IMUL` remains legal on 8086.
+The 32-bit forms still use the GP32 emulator on an 8086 target. `InlineAsmCpuFloorTests` checks
+these boundaries against the [Microsoft MASM 6.0 Programmer's Guide](https://msarchive.pcjs.org/mspl13/masm/mpguide/).
+
 ## `EXIT FAR`: PB's other non-local jump
 
 The keyword argues for the wrong reading. `EXIT FAR` is not a far **return** and pops nothing: `EXIT
