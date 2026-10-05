@@ -1266,6 +1266,18 @@ that point, and re-reading the source later would see whatever a store in betwee
 `ArgKind.SignedQwordSt0` then takes the cell as it already takes a literal's staging cell, and
 printing a non-constant QUAD stops declining.
 
+### MBF32 assignment overflow
+
+An MBF32 store uses an IEEE single as a rounding intermediate, then adds two to its exponent byte.
+An IEEE exponent of 254 or 255 cannot fit in MBF32; the former wrapped to a zero exponent and
+made the stored value read back as zero. The store now raises Error 6 before writing it. This is an
+assignment-conversion overflow: genuine GW-BASIC 3.23 accepts `1.7014118D38` as DOUBLE but traps
+`X! = 1.7014118D38` under `ON ERROR GOTO`. The `tests/diff/gw/MBF32OVR.BAS` probe compares the
+resulting file byte for byte.
+The [GW-BASIC User's Guide](https://bitsavers.trailing-edge.com/pdf/microsoft/gw-basic/410130001-320-R01-0686_Microsoft_GW-BASIC_Interpreter_Users_Guide_1986.pdf)
+documents the MBF32 exponent/sign layout; it separately describes non-trappable overflow during
+expression evaluation.
+
 ### FIX and BCD: one of them is a float and the other is not
 
 `@` and `@@` look like one feature and are two. A BCD cell is ten bytes of x87 extended, so its bits

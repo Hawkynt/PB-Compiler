@@ -740,6 +740,7 @@ public sealed class BackendCoverageTests {
     "DIFF97.BAS",
     "DIFF99.BAS",
     "FLTRET.BAS",   // a SINGLE / DOUBLE result is rounded to its width on the way out
+    "MBF32OVR.BAS", // GW-BASIC SINGLE assignment overflow reaches verified Low IR
     "HIBYTE.BAS",   // string literals keep their bytes above 127
     "INCRLV.BAS",   // INCR / DECR of an array element, a record field and a float
     "INSTRC.BAS",   // INSTR of compile-time needles, short and Horspool
@@ -955,6 +956,7 @@ public sealed class BackendCoverageTests {
     "DIFF97.BAS",
     "DIFF99.BAS",
     "FLTRET.BAS",
+    "MBF32OVR.BAS",
     "HIBYTE.BAS",
     "INCRLV.BAS",
     "INSTRC.BAS",
