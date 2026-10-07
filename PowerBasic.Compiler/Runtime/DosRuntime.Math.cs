@@ -119,6 +119,7 @@ public sealed partial class DosRuntime {
 
     // rt_mbfst: AX = offset of the MBF32 cell, ST(0) = the value to store
     var storeZero = asm.DefineLabel();
+    var storeOverflow = asm.DefineLabel();
     var storeNoSign = asm.DefineLabel();
     var storeDone = asm.DefineLabel();
     asm.MarkLabel("rt_mbfst");
@@ -135,6 +136,8 @@ public sealed partial class DosRuntime {
     asm.And(Reg.BX, (Imm)0xFF);
     asm.Or(Reg.BL, Reg.BL);                                // IEEE exponent 0 -> MBF is 0
     asm.Jz(storeZero);
+    asm.Cmp(Reg.BL, (Imm)253);                             // MBF exponent = IEEE exponent + 2
+    asm.Ja(storeOverflow);                                 // 254/255 cannot fit, including IEEE infinity/NaN
     asm.And(Reg.DL, (Imm)0x7F);                            // mantissa[22:16] (drops the exponent's low bit)
     asm.Test(Reg.DH, (Imm)0x80);                           // sign
     asm.Jz(storeNoSign);
@@ -143,6 +146,9 @@ public sealed partial class DosRuntime {
     asm.Add(Reg.BL, (Imm)2);                               // MBF biased exponent
     asm.Mov(Reg.DH, Reg.BL);                               // exponent into byte 3
     asm.Jmp(storeDone);
+    asm.MarkLabel(storeOverflow);
+    asm.Mov(Reg.AX, (Imm)6);
+    asm.Call(asm.Lbl("rt_raise"));
     asm.MarkLabel(storeZero);
     asm.Xor(Reg.AX, Reg.AX);
     asm.Xor(Reg.DX, Reg.DX);

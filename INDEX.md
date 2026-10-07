@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-05 05:05 UTC by index_codebase.py.
+Generated 2026-10-05 09:45 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1056 files, 8733 symbols.
+1057 files, 8737 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -304,7 +304,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Show(string text, int from, int at)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:209
 - method `OneLine(string text, int limit)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:221
 
-### BackendCoverageTests.cs  `C#, 1039 lines`
+### BackendCoverageTests.cs  `C#, 1041 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:9
 - class `BackendCoverageTests` — How much of the real corpus the in-house x86-16 back end can actually compile, and - for — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:44
 - record `Census` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:83
@@ -546,6 +546,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `BackendMathIntrinsicTests` — The transcendental intrinsics are INSTRUCTIONS on this target, not runtime routines: the x87 has — PowerBasic.Compiler.Tests/Backend/BackendMathIntrinsicTests.cs:17
 - field `source` — PowerBasic.Compiler.Tests/Backend/BackendMathIntrinsicTests.cs:59
 - method `TAN(i / 4)` — PowerBasic.Compiler.Tests/Backend/BackendMathIntrinsicTests.cs:62
+
+### BackendMbf32BoundsTests.cs  `C#, 84 lines`
+- namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendMbf32BoundsTests.cs:5
+- class `BackendMbf32BoundsTests` — PowerBasic.Compiler.Tests/Backend/BackendMbf32BoundsTests.cs:7
+- method `PEEK(P% + 7)` — PowerBasic.Compiler.Tests/Backend/BackendMbf32BoundsTests.cs:49
+- method `PEEK(P% + 3)` — PowerBasic.Compiler.Tests/Backend/BackendMbf32BoundsTests.cs:61
 
 ### BackendMbf64Tests.cs  `C#, 200 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:5
@@ -9346,7 +9352,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.LowLevel.cs:2
 - class `DosRuntime` — Low-level services. Register conventions (everything not returned is preserved): — PowerBasic.Compiler/Runtime/DosRuntime.LowLevel.cs:20
 
-### DosRuntime.Math.cs  `C#, 538 lines`
+### DosRuntime.Math.cs  `C#, 544 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Math.cs:2
 - class `DosRuntime` — PowerBasic.Compiler/Runtime/DosRuntime.Math.cs:4
 
