@@ -1278,6 +1278,18 @@ The [GW-BASIC User's Guide](https://bitsavers.trailing-edge.com/pdf/microsoft/gw
 documents the MBF32 exponent/sign layout; it separately describes non-trappable overflow during
 expression evaluation.
 
+### MBF32 values below IEEE's normal range
+
+MBF32 represents some values that IEEE binary32 treats as subnormal. Routing an MBF32 value through
+an IEEE SINGLE before its cell conversion loses precision, and the old store discarded every such
+value as zero. The IR now keeps MBF32 conversions in x87 extended precision. For values near the
+lower edge, the store doubles the x87 value twice before rounding to an IEEE single; its resulting
+normal exponent is already the MBF exponent. This preserves the extra low bit an IEEE subnormal
+intermediate would have lost. Before that rounding, an unrounded x87 exponent below `2^-128`
+flushes to zero, even if rounding would have raised the value to the smallest MBF32 cell.
+`tests/diff/gw/MBF32MIN.BAS` checks positive and negative `1D-38`, the smallest MBF32 value,
+values just below it, and underflowing `1D-40` against GW-BASIC 3.23, including the cell bytes.
+
 ### FIX and BCD: one of them is a float and the other is not
 
 `@` and `@@` look like one feature and are two. A BCD cell is ten bytes of x87 extended, so its bits

@@ -66,6 +66,71 @@ public sealed class BackendMbf32BoundsTests {
   }
 
   [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Store_GivenAnIeeeSubnormalWithinMbf32Range_ThenKeepsTheMbfBytes(Dialect dialect, bool optimize) {
+    var output = Run("""
+      10 X! = 1D-38
+      20 P% = VARPTR(X!)
+      30 PRINT PEEK(P%)
+      40 PRINT PEEK(P% + 1)
+      50 PRINT PEEK(P% + 2)
+      60 PRINT PEEK(P% + 3)
+      70 END
+      """, dialect, optimize);
+
+    Assert.That(output, Is.EqualTo("221|199|89|2"));
+  }
+
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Store_GivenANegativeIeeeSubnormalWithinMbf32Range_ThenKeepsTheMbfSign(Dialect dialect, bool optimize) {
+    var output = Run("""
+      10 X! = -1D-38
+      20 P% = VARPTR(X!)
+      30 PRINT PEEK(P%)
+      40 PRINT PEEK(P% + 1)
+      50 PRINT PEEK(P% + 2)
+      60 PRINT PEEK(P% + 3)
+      70 END
+      """, dialect, optimize);
+
+    Assert.That(output, Is.EqualTo("221|199|217|2"));
+  }
+
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Load_GivenAnMbf32ValueInTheIeeeSubnormalRange_ThenKeepsItsMagnitude(Dialect dialect, bool optimize) {
+    var output = Run("""
+      10 X! = 1D-38
+      20 IF X! > 0 THEN PRINT "nonzero" ELSE PRINT "zero"
+      30 END
+      """, dialect, optimize);
+
+    Assert.That(output, Is.EqualTo("nonzero"));
+  }
+
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Store_GivenTheSmallestMbf32Magnitude_ThenKeepsTheMinimumExponent(Dialect dialect, bool optimize) {
+    var output = Run("""
+      10 X! = 2.93873587705572D-39
+      20 P% = VARPTR(X!)
+      30 PRINT PEEK(P% + 3)
+      40 END
+      """, dialect, optimize);
+
+    Assert.That(output, Is.EqualTo("1"));
+  }
+
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Store_GivenAValueJustBelowMbf32Minimum_ThenFlushesBeforeRounding(Dialect dialect, bool optimize) {
+    var output = Run("""
+      10 X! = 2.9387358D-39
+      20 P% = VARPTR(X!)
+      30 PRINT PEEK(P% + 3)
+      40 END
+      """, dialect, optimize);
+
+    Assert.That(output, Is.EqualTo("0"));
+  }
+
+  [TestCaseSource(nameof(_dialectsAndModes))]
   public void Store_GivenAValueBelowTheMbf32Range_ThenStoresCanonicalZero(Dialect dialect, bool optimize) {
     var output = Run("""
       10 X! = 1D-40

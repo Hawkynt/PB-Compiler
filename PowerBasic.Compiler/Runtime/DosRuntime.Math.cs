@@ -118,6 +118,8 @@ public sealed partial class DosRuntime {
     asm.Ret();
 
     // rt_mbfst: AX = offset of the MBF32 cell, ST(0) = the value to store
+    var storeSmall = asm.DefineLabel();
+    var storeEncode = asm.DefineLabel();
     var storeZero = asm.DefineLabel();
     var storeOverflow = asm.DefineLabel();
     var storeNoSign = asm.DefineLabel();
@@ -127,12 +129,33 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.CX);
     asm.Push(Reg.SI);
     asm.Mov(Reg.SI, Reg.AX);
-    asm.Fstp(Mem.Dword(this._scratch));                    // narrow the x87 value to IEEE single
+    asm.Fst(Mem.Dword(this._scratch));                     // inspect without losing the x87 value
+    asm.Mov(Reg.BX, Mem.Word(this._scratch, 2));
+    asm.Mov(Reg.CL, (Imm)7);
+    asm.Shr(Reg.BX, Reg.CL);                               // exponent (bits 7..14) into BL
+    asm.And(Reg.BX, (Imm)0xFF);
+    asm.Cmp(Reg.BL, (Imm)1);
+    asm.Jbe(storeSmall);
+    asm.Fstp(Mem.Dword(this._scratch));                    // ordinary IEEE single has MBF's precision
+    asm.Mov(Reg.CH, (Imm)2);                               // MBF exponent = IEEE exponent + 2
+    asm.Jmp(storeEncode);
+    asm.MarkLabel(storeSmall);
+    asm.Fstp(Mem.Tbyte(this._scratch));                     // inspect the unrounded x87 exponent
+    asm.Mov(Reg.BX, Mem.Word(this._scratch, 8));
+    asm.And(Reg.BX, (Imm)0x7FFF);                          // discard the sign
+    asm.Cmp(Reg.BX, (Imm)0x3F7F);                          // 16383 - 128: smallest MBF32 exponent
+    asm.Jb(storeZero);                                     // GW-BASIC flushes before rounding up
+    asm.Fld(Mem.Tbyte(this._scratch));
+    asm.Fadd(St.St0, St.St0);
+    asm.Fadd(St.St0, St.St0);                              // make MBF's low range IEEE-normal before rounding
+    asm.Fstp(Mem.Dword(this._scratch));
+    asm.Xor(Reg.CH, Reg.CH);                               // scaled IEEE exponent is the MBF exponent
+    asm.MarkLabel(storeEncode);
     asm.Mov(Reg.AX, Mem.Word(this._scratch));              // mantissa low 16
     asm.Mov(Reg.DX, Mem.Word(this._scratch, 2));           // sign | exponent | mantissa hi
     asm.Mov(Reg.BX, Reg.DX);
     asm.Mov(Reg.CL, (Imm)7);
-    asm.Shr(Reg.BX, Reg.CL);                               // exponent (bits 7..14) into BL
+    asm.Shr(Reg.BX, Reg.CL);
     asm.And(Reg.BX, (Imm)0xFF);
     asm.Or(Reg.BL, Reg.BL);                                // IEEE exponent 0 -> MBF is 0
     asm.Jz(storeZero);
@@ -143,7 +166,7 @@ public sealed partial class DosRuntime {
     asm.Jz(storeNoSign);
     asm.Or(Reg.DL, (Imm)0x80);
     asm.MarkLabel(storeNoSign);
-    asm.Add(Reg.BL, (Imm)2);                               // MBF biased exponent
+    asm.Add(Reg.BL, Reg.CH);                               // normal +2, scaled low range +0
     asm.Mov(Reg.DH, Reg.BL);                               // exponent into byte 3
     asm.Jmp(storeDone);
     asm.MarkLabel(storeOverflow);
