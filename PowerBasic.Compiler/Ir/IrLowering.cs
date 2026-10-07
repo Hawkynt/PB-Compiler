@@ -7255,13 +7255,13 @@ public sealed partial class IrLowering {
   }
 
   /// <summary>
-  /// The IEEE/x87 scalar an MBF cell converts through. Microsoft Binary Format is STORAGE - the x87
+  /// The x87 scalar an MBF cell converts through. Microsoft Binary Format is STORAGE - the x87
   /// cannot add two of them - so a value is converted the moment it is used and back when it is
-  /// stored. MBF64 has 56 significant bits and therefore uses x87 extended rather than binary64,
-  /// whose 53 bits would narrow the value before the MBF boundary applied its own rounding.
+  /// stored. MBF32's low exponent range cannot survive an IEEE single, while MBF64 has 56
+  /// significant bits that cannot survive an IEEE double. Both need x87 extended until their
+  /// respective MBF storage boundary applies its own rounding.
   /// </summary>
-  private static ScalarType IeeeFormOf(MbfType mbf) =>
-    mbf.IsDouble ? PbType.Ext : PbType.Single;
+  private static ScalarType IeeeFormOf(MbfType mbf) => PbType.Ext;
 
   /// <summary>
   /// The value form of a PB type - what arithmetic on it happens AT. FIX/BCD compute as x87 extended;
