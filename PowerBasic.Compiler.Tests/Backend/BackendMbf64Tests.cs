@@ -66,6 +66,52 @@ public sealed class BackendMbf64Tests {
     50 END
     """, Dialect.Gw, optimize: true, "129");
 
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Add_GivenDoubleLiteralsBelowIeee64Ulp_ThenKeepsMbf64LowBits(Dialect dialect, bool optimize) => Prints("""
+    10 X# = 1D0 + 1D-16
+    20 P% = VARPTR(X#)
+    30 PRINT PEEK(P%)
+    40 PRINT PEEK(P% + 7)
+    50 END
+    """, dialect, optimize, "4|129");
+
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Add_GivenDoubleCellsBelowIeee64Ulp_ThenKeepsMbf64LowBits(Dialect dialect, bool optimize) => Prints("""
+    10 A# = 1D0
+    20 B# = 1D-16
+    30 X# = A# + B#
+    40 P% = VARPTR(X#)
+    50 PRINT PEEK(P%)
+    60 PRINT PEEK(P% + 7)
+    70 END
+    """, dialect, optimize, "4|129");
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Add_GivenFileWritingDoubleCells_ThenKeepsMbf64LowBitsInExactX87(bool optimize) {
+    // Complete PRECV.TXT captured from genuine GW-BASIC 3.23. DOSBox 0.74's C FPU loses the
+    // low-bit arithmetic result, so the compiled image needs an exact-x87 execution oracle.
+    const string source = """
+      10 OPEN "PRECV.TXT" FOR OUTPUT AS #1
+      20 A# = 1D0
+      30 B# = 1D-16
+      40 X# = A# + B#
+      50 P% = VARPTR(X#)
+      60 PRINT #1, PEEK(P%); PEEK(P%+1); PEEK(P%+2); PEEK(P%+3)
+      70 PRINT #1, PEEK(P%+4); PEEK(P%+5); PEEK(P%+6); PEEK(P%+7)
+      80 CLOSE #1: SYSTEM
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "PRECV.BAS", Dialect.Gw), "PRECV.BAS", Dialect.Gw);
+    var model = Binder.Bind(unit, Dialect.Gw);
+    Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { Optimize = optimize };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    var output = Cpu8086.Run(image, exactFloatingPoint: true).FileContent("PRECV.TXT");
+    Assert.That(output, Is.EqualTo(" 4  0  0  0 \r\n 0  0  0  129 \r\n\u001a"));
+  }
+
   /// <summary>
   /// Given zero, a negative value, a copied value and an arithmetic result, when they cross MBF64
   /// cell boundaries, then zero is canonical, the sign is in byte six, loads reconstruct values and

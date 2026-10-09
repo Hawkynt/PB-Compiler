@@ -1290,6 +1290,16 @@ flushes to zero, even if rounding would have raised the value to the smallest MB
 `tests/diff/gw/MBF32MIN.BAS` checks positive and negative `1D-38`, the smallest MBF32 value,
 values just below it, and underflowing `1D-40` against GW-BASIC 3.23, including the cell bytes.
 
+### MBF64 arithmetic and emulator precision
+
+GW-BASIC 3.23 stores `1D0 + 1D-16` as MBF64 with low mantissa byte `4`; an IEEE binary64 addition
+would lose that increment. The DOS image produces the genuine interpreter's complete output file in
+`BackendMbf64Tests.Add_GivenFileWritingDoubleCells_ThenKeepsMbf64LowBitsInExactX87` when executed by
+the test CPU's exact x87 mode. DOSBox 0.74's [C FPU implementation](https://sources.debian.org/src/dosbox/0.74-3/src/fpu/fpu_instructions.h/)
+adds its `Real64` register values, so this particular compiled x87 addition reads back as zero in
+DOSBox 0.74; the interpreter uses MBF software arithmetic and reads back four. A DOSBox-only numeric
+differential cannot establish bit-exact 80-bit x87 behavior at this boundary.
+
 ### FIX and BCD: one of them is a float and the other is not
 
 `@` and `@@` look like one feature and are two. A BCD cell is ten bytes of x87 extended, so its bits
