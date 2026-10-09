@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-07 12:46 UTC by index_codebase.py.
+Generated 2026-10-09 11:31 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1057 files, 8742 symbols.
+1057 files, 8744 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -976,9 +976,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - constructor `UnclassifiedLowIrInstruction()` — PowerBasic.Compiler.Tests/Backend/MachineTargetTests.cs:12
 - method `IrConstantInt` — PowerBasic.Compiler.Tests/Backend/MachineTargetTests.cs:76
 
-### MandatoryRoutingTests.cs  `C#, 79 lines`
+### MandatoryRoutingTests.cs  `C#, 94 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/MandatoryRoutingTests.cs:4
-- class `MandatoryRoutingTests` — Every corpus program compiles with routing mandatory: there is no fallback emitter, so a body the — PowerBasic.Compiler.Tests/Backend/MandatoryRoutingTests.cs:33
+- class `MandatoryRoutingTests` — Every corpus program compiles with routing mandatory: there is no fallback emitter, so a body the — PowerBasic.Compiler.Tests/Backend/MandatoryRoutingTests.cs:35
+- method `InvalidOperationException($"unknown differential corpus dialect: {directory}")` — PowerBasic.Compiler.Tests/Backend/MandatoryRoutingTests.cs:50
+- method `return(path, dialect)` — PowerBasic.Compiler.Tests/Backend/MandatoryRoutingTests.cs:51
 
 ### Mos6502BatteryTests.cs  `C#, 88 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/Mos6502BatteryTests.cs:3
