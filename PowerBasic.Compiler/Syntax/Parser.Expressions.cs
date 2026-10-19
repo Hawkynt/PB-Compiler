@@ -343,10 +343,11 @@ public sealed partial class Parser {
     // lives in its 16-digit double runtime
     if (this._dialect.IsTurboBasic())
       return TypeSuffix.Double;
-    // a magnitude SINGLE cannot hold is a DOUBLE whatever its digits: 1E50 prints as 1E+50 on
-    // genuine PBC 3.50, where a SINGLE would have made it infinite
+    // PBC promotes magnitudes outside IEEE SINGLE's normal range. BASICA/GW SINGLE has an MBF
+    // exponent range instead, so a tiny E literal must retain its source precision when widened.
     var magnitude = Math.Abs(token.FloatValue);
-    if (magnitude > float.MaxValue || magnitude != 0 && magnitude < float.Epsilon * (1 << 23))
+    if (magnitude > float.MaxValue
+        || !this._dialect.IsGwBasica() && magnitude != 0 && magnitude < float.Epsilon * (1 << 23))
       return TypeSuffix.Double;
     var significant = 0;
     var seenNonZero = false;

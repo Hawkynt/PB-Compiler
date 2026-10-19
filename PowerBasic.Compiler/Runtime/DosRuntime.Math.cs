@@ -80,42 +80,7 @@ public sealed partial class DosRuntime {
   /// </para>
   /// </summary>
   private void EmitMbf(Assembler asm) {
-    // rt_mbfld: AX = offset of the MBF32 cell; answers ST(0)
-    var loadNonzero = asm.DefineLabel();
-    var loadNoSign = asm.DefineLabel();
-    var loadDone = asm.DefineLabel();
-    asm.MarkLabel("rt_mbfld");
-    asm.Push(Reg.BX);
-    asm.Push(Reg.CX);
-    asm.Mov(Reg.BX, Reg.AX);
-    asm.Mov(Reg.AX, Mem.Word(Reg.BX, 0));                  // mantissa low 16
-    asm.Mov(Reg.DX, Mem.Word(Reg.BX, 2));                  // DL = sign|mantissa hi, DH = MBF exponent
-    asm.Or(Reg.DH, Reg.DH);                                // exponent 0 -> the value is 0.0
-    asm.Jnz(loadNonzero);
-    asm.Xor(Reg.AX, Reg.AX);
-    asm.Xor(Reg.DX, Reg.DX);
-    asm.Jmp(loadDone);
-    asm.MarkLabel(loadNonzero);
-    asm.Mov(Reg.CH, Reg.DL);                               // keep the sign byte
-    asm.And(Reg.DL, (Imm)0x7F);                            // mantissa[22:16]
-    asm.Sub(Reg.DH, (Imm)2);                               // IEEE biased exponent
-    asm.Xor(Reg.BX, Reg.BX);
-    asm.Mov(Reg.BL, Reg.DH);
-    asm.Mov(Reg.CL, (Imm)7);
-    asm.Shl(Reg.BX, Reg.CL);                               // exponent into bits 7..14
-    asm.Or(Reg.BL, Reg.DL);                                // mantissa hi into bits 0..6
-    asm.Test(Reg.CH, (Imm)0x80);
-    asm.Jz(loadNoSign);
-    asm.Or(Reg.BH, (Imm)0x80);                             // sign into bit 15
-    asm.MarkLabel(loadNoSign);
-    asm.Mov(Reg.DX, Reg.BX);                               // IEEE high word (AX still holds the low word)
-    asm.MarkLabel(loadDone);
-    asm.Mov(Mem.Word(this._scratch), Reg.AX);
-    asm.Mov(Mem.Word(this._scratch, 2), Reg.DX);
-    asm.Fld(Mem.Dword(this._scratch));
-    asm.Pop(Reg.CX);
-    asm.Pop(Reg.BX);
-    asm.Ret();
+    this.EmitMbfSingleLoad(asm);
 
     // rt_mbfst: AX = offset of the MBF32 cell, ST(0) = the value to store
     var storeSmall = asm.DefineLabel();
@@ -185,6 +150,44 @@ public sealed partial class DosRuntime {
 
     this.EmitMbfDoubleLoad(asm);
     this.EmitMbfDoubleStore(asm);
+  }
+
+  /// <summary>MBF32 near cell in AX to an exact x87 value, including MBF's low exponent range.</summary>
+  private void EmitMbfSingleLoad(Assembler asm) {
+    var zero = asm.DefineLabel();
+    var noSign = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    asm.MarkLabel("rt_mbfld");
+    asm.Push(Reg.BX);
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.BX, 3));
+    asm.Or(Reg.AL, Reg.AL);
+    asm.Jz(zero);
+    asm.Mov(Reg.AX, Mem.Word(Reg.BX));
+    asm.Mov(Mem.Word(this._scratch, 5), Reg.AX);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.BX, 2));
+    asm.Mov(Reg.DL, Reg.AL);
+    asm.And(Reg.AL, (Imm)0x7F);
+    asm.Or(Reg.AL, (Imm)0x80);                            // restore the hidden significand bit
+    asm.Mov(Mem.Byte(this._scratch, 7), Reg.AL);
+    asm.Mov(Mem.Word(this._scratch), (Imm)0);
+    asm.Mov(Mem.Word(this._scratch, 2), (Imm)0);
+    asm.Mov(Mem.Byte(this._scratch, 4), (Imm)0);          // the low 40 x87 significand bits are zero
+    asm.Mov(Reg.AL, Mem.Byte(Reg.BX, 3));
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.Add(Reg.AX, (Imm)0x3F7E);                        // MBF exponent bias to x87 exponent bias
+    asm.Test(Reg.DL, (Imm)0x80);
+    asm.Jz(noSign);
+    asm.Or(Reg.AH, (Imm)0x80);
+    asm.MarkLabel(noSign);
+    asm.Mov(Mem.Word(this._scratch, 8), Reg.AX);
+    asm.Fld(Mem.Tbyte(this._scratch));
+    asm.Jmp(done);
+    asm.MarkLabel(zero);
+    asm.Fldz();
+    asm.MarkLabel(done);
+    asm.Pop(Reg.BX);
+    asm.Ret();
   }
 
   /// <summary>MBF64 near cell in AX to an exact x87 value in ST(0).</summary>

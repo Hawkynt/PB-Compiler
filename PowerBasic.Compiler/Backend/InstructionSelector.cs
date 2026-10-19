@@ -4807,8 +4807,9 @@ public sealed partial class InstructionSelector {
     var destination = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
     this._current.Instructions.Add(new MInstr(MOpcode.Mov, [destination, address],
       MovEffect(destination, address)));
-    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(routine)],
-      new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+    // The routine consumes AX; physical-register liveness must retain the staged pointer.
+    this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef(routine), destination],
+      new MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: true,
         ReadsMemory: true, WritesMemory: true),
       condition: null, clobbers: _callClobbers));
   }
