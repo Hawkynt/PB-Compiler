@@ -33,6 +33,25 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class EmitterNeverThrowsTests {
 
+  /// <summary>
+  /// Given a GW-BASIC literal requiring MBF64's low bits, when portable C cannot represent its exact
+  /// x87 constant, then it declines with a diagnostic instead of leaking a host-double exception.
+  /// </summary>
+  [Test]
+  public void EmitC_GivenNonBinary64MbfLiteral_ThenDeclinesWithoutThrowing() {
+    var path = Path.Combine(Path.GetTempPath(), $"pbc-mbf-literal-{Guid.NewGuid():N}.BAS");
+    File.WriteAllText(path, "10 X#=1.0000000000000001D0\n20 PRINT X#\n30 END\n");
+    try {
+      var (code, error) = Emit(path, "--emit-c", "--dialect", "gw");
+      Assert.Multiple(() => {
+        Assert.That(code, Is.EqualTo(1));
+        Assert.That(error, Does.Contain("x87 constant"));
+      });
+    } finally {
+      File.Delete(path);
+    }
+  }
+
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 

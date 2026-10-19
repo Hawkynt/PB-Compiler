@@ -1,5 +1,6 @@
 using PowerBasic.Compiler.Asm;
 using PowerBasic.Compiler.Emit;
+using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Runtime;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
@@ -24,6 +25,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   private readonly Dictionary<string, Label> _stringLiterals = new(StringComparer.Ordinal);
   private readonly Dictionary<ProcedureSymbol, Label> _procLabels = new(ReferenceEqualityComparer.Instance);
   private readonly List<(Label Slot, double Value)> _floatConstants = [];
+  private readonly List<(Label Slot, IrFloat80 Value)> _float80Constants = [];
   private Label _scratch = null!;
 
   // current frame (main or procedure)
@@ -409,6 +411,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     return slot;
   }
 
+  private Label Float80ConstOf(IrFloat80 value) {
+    var slot = this._asm.DefineLabel($"f80_{this._float80Constants.Count}");
+    this._float80Constants.Add((slot, value));
+    return slot;
+  }
+
   private Label ProcLabelOf(ProcedureSymbol proc) {
     if (!this._procLabels.TryGetValue(proc, out var label))
       // DECLAREd-but-undefined procedures resolve at link time by name; overloaded
@@ -437,6 +445,12 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       asm.Align(2);
       asm.MarkLabel(slot);
       asm.Dq(value);
+    }
+    foreach (var (slot, value) in this._float80Constants) {
+      asm.Align(2);
+      asm.MarkLabel(slot);
+      asm.Dq(value.Significand);
+      asm.Dw(value.SignExponent);
     }
 
     // String literals are target data. The IR backend resolves each interned .strN global through

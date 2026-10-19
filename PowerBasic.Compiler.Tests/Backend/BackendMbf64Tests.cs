@@ -86,6 +86,81 @@ public sealed class BackendMbf64Tests {
     70 END
     """, dialect, optimize, "4|129");
 
+  /// <summary>
+  /// Given a 17-digit GW-BASIC decimal literal that lies below binary64's unit in the last place,
+  /// when stored as DOUBLE, then its MBF64 cell matches the interpreter's observed low byte.
+  /// </summary>
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Store_GivenDecimalLiteralBelowIeee64Ulp_ThenKeepsOracleMbf64Bits(
+      Dialect dialect, bool optimize) => Prints("""
+    10 X# = 1.0000000000000001D0
+    20 P% = VARPTR(X#)
+    30 PRINT PEEK(P%)
+    40 PRINT PEEK(P% + 7)
+    50 END
+    """, dialect, optimize, "4|129");
+
+  /// <summary>
+  /// GW-BASIC 3.23 reads decimal digits through staged precision. This case distinguishes that
+  /// historical conversion from correctly rounding the exact decimal fraction to MBF64.
+  /// </summary>
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Store_GivenHistoricalDecimalTie_ThenMatchesGwBasicDigitAccumulation(bool optimize) => Prints("""
+    10 X# = 1.00000000000000005D0
+    20 P% = VARPTR(X#)
+    30 PRINT PEEK(P%)
+    40 PRINT PEEK(P% + 7)
+    50 END
+    """, Dialect.Gw, optimize, "1|129");
+
+  /// <summary>
+  /// Given decimal exponents across the MBF range, when GW-BASIC 3.23 stores each literal, then the
+  /// entire captured file agrees; the power-of-ten table and division rounding affect low bytes.
+  /// </summary>
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Store_GivenDecimalExponentGrid_ThenMatchesGenuineGwBasicFile(bool optimize) {
+    const string source = """
+      10 OPEN "LITGRID.TXT" FOR OUTPUT AS #1
+      20 X#=0D0:P%=VARPTR(X#)
+      30 X#=1D-38:GOSUB 500
+      40 X#=3D-39:GOSUB 500
+      50 X#=1D-20:GOSUB 500
+      60 X#=1D-17:GOSUB 500
+      70 X#=1D-16:GOSUB 500
+      80 X#=1D17:GOSUB 500
+      90 X#=1D30:GOSUB 500
+      100 X#=1D38:GOSUB 500
+      110 X#=12345678901234567D0:GOSUB 500
+      120 X#=0.12345678901234567D0:GOSUB 500
+      130 CLOSE #1:SYSTEM
+      500 PRINT #1,PEEK(P%);PEEK(P%+1);PEEK(P%+2);PEEK(P%+3);PEEK(P%+4);PEEK(P%+5);PEEK(P%+6);PEEK(P%+7)
+      510 RETURN
+      """;
+    const string expected = """
+       34  199  83  237  220  199  89  2
+       21  17  255  39  30  171  2  1
+       27  17  146  100  8  229  60  62
+       180  164  54  50  170  119  56  72
+       225  77  196  190  148  149  102  75
+       0  0  197  46  188  162  49  185
+       79  103  4  205  201  242  73  228
+       137  13  181  80  153  118  22  255
+       28  46  173  117  81  113  47  182
+       244  178  55  186  233  214  124  125
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "LITGRID.BAS", Dialect.Gw), "LITGRID.BAS", Dialect.Gw);
+    var model = Binder.Bind(unit, Dialect.Gw);
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { Optimize = optimize };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    var actual = Cpu8086.Run(image, exactFloatingPoint: true).FileContent("LITGRID.TXT");
+    Assert.That(actual, Is.EqualTo(expected.Replace("\r\n", "\n").Replace("\n", " \r\n") + " \r\n\u001a"));
+  }
+
   [TestCase(false)]
   [TestCase(true)]
   public void Add_GivenFileWritingDoubleCells_ThenKeepsMbf64LowBitsInExactX87(bool optimize) {

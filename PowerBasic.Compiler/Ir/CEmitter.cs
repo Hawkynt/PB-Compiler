@@ -602,7 +602,9 @@ public sealed class CEmitter {
 
   /// <summary>Exact round-tripping literal ("G17"), so no precision is lost through the text form.</summary>
   private static string FloatLiteral(IrConstantFloat f) {
-    var text = f.Value.ToString("G17", CultureInfo.InvariantCulture);
+    if (!f.TryGetDoubleExact(out var value))
+      throw new EmitDeclinedException($"C emission: x87 constant {f.Float80.ToLlvmHexString()} cannot fit binary64");
+    var text = value.ToString("G17", CultureInfo.InvariantCulture);
     if (!text.Contains('.') && !text.Contains('E') && !text.Contains("Inf") && !text.Contains("NaN"))
       text += ".0";
     return f.Type.Bits == 32 ? text + "f" : text;

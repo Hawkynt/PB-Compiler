@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.Hir;
+using PowerBasic.Compiler.Numerics;
 using PowerBasic.Compiler.Semantics;
 using PowerBasic.Compiler.Syntax;
 using PowerBasic.Compiler.Syntax.Ast;
@@ -5312,6 +5313,12 @@ public sealed partial class IrLowering {
         return new IrConstantInt(MapType(this._model.TypeOf(lit)), lit.Value);
       case FloatLiteralExpr lit: {
         var type = this._model.TypeOf(lit);
+        if (this._model.Dialect.IsGwBasica() && type is ScalarType { Kind: ScalarKind.Double }
+            && lit.SourceText is { } sourceText
+            && Mbf64.TryParseDecimalLiteral(sourceText, out var mbf)) {
+          var bytes = mbf.ToExtended80().ToBytes();
+          return IrConstantFloat.FromFloat80Bits(BitConverter.ToUInt16(bytes, 8), BitConverter.ToUInt64(bytes));
+        }
         // The parser carries every decimal in a host double, but an unsuffixed PB literal is a
         // SINGLE. Quantize at the source boundary before a later FPExt can make the wider container
         // preserve bits the original literal never had. This mirrors the direct emitter exactly.

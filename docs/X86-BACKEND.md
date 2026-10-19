@@ -1305,6 +1305,17 @@ adds its `Real64` register values, so this particular compiled x87 addition read
 DOSBox 0.74; the interpreter uses MBF software arithmetic and reads back four. A DOSBox-only numeric
 differential cannot establish bit-exact 80-bit x87 behavior at this boundary.
 
+GW-BASIC decimal DOUBLE literals retain their original spelling through parsing. An MBF64 digit
+accumulator rounds each multiply-by-ten and digit addition before applying the decimal exponent;
+the resulting value reaches the native backend as a ten-byte x87 constant. In GW-BASIC 3.23,
+`1.0000000000000001D0` stores low byte `4`, while `1.00000000000000005D0` stores low byte `1`.
+Rounding only the final decimal would disagree in the latter case. This covers literal conversion,
+not every interpreter arithmetic or formatting path. The ten-literal exponent grid and 15-cell
+boundary oracle are compared against complete GW-BASIC 3.23 MBF64 cells; run the compiled image in
+the test CPU's exact-x87 mode for this comparison, since DOSBox 0.74 narrows the ten-byte constants.
+The portable C emitter declines an exact x87 literal that cannot fit binary64 instead of narrowing
+it or throwing an unhandled exception.
+
 ### FIX and BCD: one of them is a float and the other is not
 
 `@` and `@@` look like one feature and are two. A BCD cell is ten bytes of x87 extended, so its bits

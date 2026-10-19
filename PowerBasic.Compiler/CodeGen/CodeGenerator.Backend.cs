@@ -1104,8 +1104,17 @@ public sealed partial class CodeGenerator {
       return materialize
         ? Asm.Mem.Word(this.LiteralOf(System.Text.Encoding.Latin1.GetString(bytes)))
         : _ProbeCell;
-    // a float literal: the back end names it by its bits, and it resolves through this codegen's own
-    // constant pool - which stores every float as a qword double, whatever its source precision
+    // Exact x87 constants get ten-byte cells; narrowing them through the qword pool loses MBF64 bits.
+    if (name.StartsWith(".fc80.", System.StringComparison.Ordinal)
+        && name.Length == 26
+        && ushort.TryParse(name.AsSpan(6, 4), System.Globalization.NumberStyles.HexNumber,
+             System.Globalization.CultureInfo.InvariantCulture, out var signExponent)
+        && ulong.TryParse(name.AsSpan(10, 16), System.Globalization.NumberStyles.HexNumber,
+             System.Globalization.CultureInfo.InvariantCulture, out var significand))
+      return materialize
+        ? Asm.Mem.Tbyte(this.Float80ConstOf(new IrFloat80(signExponent, significand)))
+        : _ProbeCell;
+    // Binary64-exact float literals keep the existing qword pool and its byte-identical output.
     if (name.StartsWith(".fc.", System.StringComparison.Ordinal)
         && long.TryParse(name[4..], System.Globalization.NumberStyles.HexNumber,
              System.Globalization.CultureInfo.InvariantCulture, out var bits))
