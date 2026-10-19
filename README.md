@@ -369,6 +369,11 @@ inlining, dead-procedure removal). The same IR feeds the x86-16 back end
 (`Backend/`: instruction selection, peephole, scheduling, linear-scan allocation)
 and the C and LLVM emitters, so all three get the same optimizer.
 
+`MandatoryRoutingTests` compiles every differential-corpus source under its own
+dialect (root files use `pb35`) in both optimizer modes. A front-end rejection,
+backend decline, or missing executable fails that gate; the separate per-dialect
+battery checks accepted statement forms across all 19 dialects.
+
 Every pass has its own reference page in
 [docs/optimizations/](docs/optimizations/README.md): what it recognizes, the
 BASIC source it fires on, the assembly it emits **with and without** the

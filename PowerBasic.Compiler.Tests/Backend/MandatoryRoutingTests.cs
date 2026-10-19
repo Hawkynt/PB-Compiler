@@ -7,7 +7,9 @@ namespace PowerBasic.Compiler.Tests.Backend;
 /// <summary>
 /// Every corpus program compiles with routing mandatory: there is no fallback emitter, so a body the
 /// back end does not take is a compile error carrying the routing's own reason, and this collects
-/// those errors over the whole differential corpus.
+/// those errors over the whole differential corpus. Root programs use PB 3.5; a dialect directory
+/// selects its own front end, as in the differential runner. Front-end rejection is a failure here,
+/// not a way to remove a program from the routing denominator.
 ///
 /// <para>
 /// This was the direct-emitter retirement question - would the corpus still compile without
@@ -36,23 +38,36 @@ public sealed class MandatoryRoutingTests {
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 
-  private static IEnumerable<string> CorpusPrograms() {
+  private static IEnumerable<(string Path, Dialect Dialect)> CorpusPrograms() {
     var diff = Path.Combine(_repoRoot, "tests", "diff");
     if (!Directory.Exists(diff))
       yield break;
-    foreach (var path in Directory.EnumerateFiles(diff, "*.BAS", SearchOption.AllDirectories).OrderBy(p => p, StringComparer.Ordinal))
-      yield return path;
+    foreach (var path in Directory.EnumerateFiles(diff, "*.BAS", SearchOption.AllDirectories)
+               .OrderBy(p => p, StringComparer.Ordinal)) {
+      var directory = Path.GetDirectoryName(Path.GetRelativePath(diff, path));
+      var dialect = Dialect.Pb35;
+      if (!string.IsNullOrEmpty(directory) && !DialectFacts.TryParse(directory, out dialect))
+        throw new InvalidOperationException($"unknown differential corpus dialect: {directory}");
+      yield return (path, dialect);
+    }
   }
 
-  private static IReadOnlyList<string> MandatoryRoutingErrors(string source, bool optimize) {
-    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
+  private static IReadOnlyList<string> MandatoryRoutingErrors(string path, Dialect dialect, bool optimize) {
+    var name = Path.GetFileName(path);
+    var tokens = Preprocessor.Expand(path, new FileSourceProvider(), dialect);
+    var model = Binder.Bind(Parser.Parse(tokens, name, dialect), dialect);
     if (model.Errors.Count > 0)
-      return [];   // rejected by the front end; it never reaches the routing and is nobody's coverage
+      return [.. model.Errors.Select(error => $"front end: {error.Message}")];
     var generator = new CodeGenerator(model) {
       Optimize = optimize,
     };
-    generator.EmitExecutable();
-    return [.. generator.Errors.Select(e => e.Message).Where(m => m.Contains("routing is mandatory", StringComparison.Ordinal))];
+    var image = generator.EmitExecutable();
+    var errors = generator.Errors.Select(error => error.Message).ToList();
+    if (image.Length == 0 && errors.Count == 0)
+      errors.Add("the back end produced no executable");
+    if (!generator.BackendRoutedNames.Contains("main", StringComparer.OrdinalIgnoreCase))
+      errors.Add("main did not route through the back end");
+    return errors;
   }
 
   /// <summary>
@@ -64,15 +79,15 @@ public sealed class MandatoryRoutingTests {
   public void Compile_GivenTheCorpusWithRoutingMandatory_ThenTheRoutingRefusesNoBody(bool optimize) {
     var refused = new List<string>();
     var programs = 0;
-    foreach (var path in CorpusPrograms()) {
+    foreach (var (path, dialect) in CorpusPrograms()) {
       ++programs;
-      foreach (var message in MandatoryRoutingErrors(File.ReadAllText(path), optimize))
-        refused.Add($"{Path.GetFileName(path)}: {message}");
+      foreach (var message in MandatoryRoutingErrors(path, dialect, optimize))
+        refused.Add($"{dialect.CanonicalName()}/{Path.GetFileName(path)}: {message}");
     }
 
     Assume.That(programs, Is.GreaterThan(0), "no corpus programs found");
     Assert.That(refused, Is.Empty,
-      $"{refused.Count} of {programs} corpus programs were refused by the mandatory routing:"
+      $"{refused.Count} failures across {programs} native-dialect corpus programs:"
         + Environment.NewLine + string.Join(Environment.NewLine, refused.Take(25)));
   }
 }

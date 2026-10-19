@@ -253,6 +253,11 @@ A construct the back end cannot compile must **decline**: `InstructionSelector.D
 decline is safe and it is *named* - routing is mandatory, so `CodeGenerator` reports it as a compile
 error ("routing is mandatory and 'X' was not taken by the x86-16 back end: <reason>"), and
 `BackendCoverageTests`' histogram records the reason, where it can be ranked and closed.
+`MandatoryRoutingTests` also compiles every `tests/diff` program under its source dialect (root
+programs use PB 3.5), with and without optimization. It rejects front-end errors, backend errors,
+an unrouted main body, and an empty executable; parsing every program as PB 3.6 would not prove that
+the original dialect reaches this path. The per-dialect statement battery covers all 19 dialects;
+the differential corpus is a deeper but narrower set of executable programs.
 
 A **throw** is none of those things. It ends the compilation with a stack trace, emits no executable,
 produces no diagnostic, and is invisible to every census here, because the function neither routed nor
