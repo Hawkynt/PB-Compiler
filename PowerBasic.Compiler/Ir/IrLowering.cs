@@ -6941,9 +6941,8 @@ public sealed partial class IrLowering {
     // PBC still divides in the register and prints 66.66667, where rounding to SINGLE first would
     // give 66.66666. The declared type chooses the FORMATTER; it does not round the value.
     //
-    // Narrowing happens where PB actually narrows - storing into a declared variable - which the
-    // Coerce at that use site emits, because Coerce measures the value's OWN width rather than
-    // trusting the PB type it is told.
+    // PowerBASIC narrows at declared storage. BASICA/GW instead round every arithmetic result to
+    // their MBF precision; RoundInterpreterArithmetic records that boundary before the next use.
     var arithPb = resultPb is ScalarType { IsFloat: true } ? PbType.Ext : resultPb;
     var resultTy = MapType(arithPb);
     var signed = resultPb is ScalarType { Signed: true };
@@ -6958,7 +6957,9 @@ public sealed partial class IrLowering {
       case BinaryOp.Power:
         if (!resultTy.IsFloat)
           throw new IrLoweringException("integer exponentiation");   // PB ^ yields a floating result
-        return this._b.Call(resultTy, this.RuntimeFn($"llvm.pow.f{resultTy.Bits}", resultTy, resultTy, resultTy), l, r);
+        return this.RoundInterpreterArithmetic(
+          this._b.Call(resultTy, this.RuntimeFn($"llvm.pow.f{resultTy.Bits}", resultTy, resultTy, resultTy), l, r),
+          resultPb);
       // The pb36 ROTATE operators. The IR has no rotate instruction and does not need one: by a KNOWN
       // amount a rotate is a pair of shifts ORed together, which is what a target without the
       // instruction would decompose it to anyway and what the x87-less 32-bit path already does by
@@ -7008,9 +7009,29 @@ public sealed partial class IrLowering {
           this.RaiseWhen(this._b.Cmp(IrCmpPred.Eq, r, new IrConstantInt(resultTy, 0)), 11, "division by zero");
           break;
       }
-    return this._checkOverflow && op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.Mul
+    var result = this._checkOverflow && op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.Mul
       ? this.CheckedArithmetic(op, l, r, resultTy, signed)
       : this._b.Binary(op, l, r);
+    return this.RoundInterpreterArithmetic(result, resultPb);
+  }
+
+  private IrAlloca? _mbf32ArithmeticResult;
+  private IrAlloca? _mbf64ArithmeticResult;
+
+  /// <summary>Interpreter arithmetic crosses an MBF precision boundary before its next consumer.</summary>
+  private IrValue RoundInterpreterArithmetic(IrValue value, PbType resultType) {
+    if (!this._model.Dialect.IsGwBasica()
+        || resultType is not ScalarType { Kind: ScalarKind.Single or ScalarKind.Double } scalar)
+      return value;
+    var storageType = scalar.Kind == ScalarKind.Double ? IrType.Mbf64 : IrType.Mbf32;
+    // The existing address-bound conversions express rounding, underflow and overflow together.
+    // MBF cells cannot be promoted/forwarded, so optimization retains this observable boundary.
+    // Each load captures an SSA value, so sequential operations can share one cell per precision.
+    ref var slot = ref (scalar.Kind == ScalarKind.Double
+      ? ref this._mbf64ArithmeticResult : ref this._mbf32ArithmeticResult);
+    slot ??= this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(storageType) { Name = "mbf.result" });
+    this._b.Store(this._b.Cast(IrCastOp.FPToMbf, value, storageType), slot);
+    return this._b.Cast(IrCastOp.MbfToFP, this._b.Load(storageType, slot), IrType.F80);
   }
 
   /// <summary>
@@ -7265,8 +7286,8 @@ public sealed partial class IrLowering {
   /// The x87 scalar an MBF cell converts through. Microsoft Binary Format is STORAGE - the x87
   /// cannot add two of them - so a value is converted the moment it is used and back when it is
   /// stored. MBF32's low exponent range cannot survive an IEEE single, while MBF64 has 56
-  /// significant bits that cannot survive an IEEE double. Both need x87 extended until their
-  /// respective MBF storage boundary applies its own rounding.
+  /// significant bits that cannot survive an IEEE double. Both need x87 extended between the
+  /// explicit MBF boundaries at storage and after interpreter arithmetic operations.
   /// </summary>
   private static ScalarType IeeeFormOf(MbfType mbf) => PbType.Ext;
 
