@@ -31,6 +31,15 @@ public sealed class ParserExpressionTests {
   }
 
   [Test]
+  public void Parse_GivenDecimalWiderThanBinary64_WhenParsed_ThenSourceDigitsSurvive() {
+    var expr = ParseExpression<FloatLiteralExpr>("1.0000000000000001D0");
+    Assert.Multiple(() => {
+      Assert.That(expr.Value, Is.EqualTo(1.0));
+      Assert.That(expr.SourceText, Is.EqualTo("1.0000000000000001D0"));
+    });
+  }
+
+  [Test]
   public void Parse_GivenStringLiteral_WhenParsed_ThenValueIsKept() {
     var expr = ParseExpression<StringLiteralExpr>("\"hello\"");
     Assert.That(expr.Value, Is.EqualTo("hello"));

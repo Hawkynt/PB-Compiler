@@ -7,7 +7,8 @@ public abstract record Expression(SourcePosition Position);
 public sealed record IntegerLiteralExpr(SourcePosition Position, long Value, TypeSuffix Suffix) : Expression(Position);
 
 /// <summary>Floating-point literal; suffix may force SINGLE/DOUBLE/EXT.</summary>
-public sealed record FloatLiteralExpr(SourcePosition Position, double Value, TypeSuffix Suffix) : Expression(Position);
+public sealed record FloatLiteralExpr(
+  SourcePosition Position, double Value, TypeSuffix Suffix, string? SourceText = null) : Expression(Position);
 
 /// <summary>String literal.</summary>
 public sealed record StringLiteralExpr(SourcePosition Position, string Value) : Expression(Position);

@@ -352,7 +352,9 @@ public sealed partial class InstructionSelector {
     MOperand cell;
     MOpcode opcode;
     if (bin.Rhs is IrConstantFloat constant) {
-      cell = new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword);
+      cell = FloatConstantCell(constant);
+      if (cell is MOperand.DataCell { Size: MRegSize.Tbyte })
+        return false; // FADD/FSUB/FMUL/FDIV have no ten-byte memory form.
       opcode = forms.Real;
     } else if (bin.Rhs is IrCast widening && this._integerOperands.TryGetValue(widening, out var staged)
                && staged is not null) {
@@ -392,8 +394,10 @@ public sealed partial class InstructionSelector {
       return false;
     // the right operand where it lives: a literal in the qword pool, or a SINGLE/DOUBLE-wide cell
     MOperand? right = cmp.Rhs is IrConstantFloat constant
-      ? new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword)
+      ? FloatConstantCell(constant)
       : this.NarrowFloatCell(cmp.Rhs);
+    if (right is MOperand.DataCell { Size: MRegSize.Tbyte })
+      return false; // FCOMP has no ten-byte memory form.
     if (right is null || !this.TryFloatOperand(cmp.Lhs, out var lhs))
       return false;
 

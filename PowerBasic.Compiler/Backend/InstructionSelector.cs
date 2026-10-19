@@ -4609,7 +4609,7 @@ public sealed partial class InstructionSelector {
       return true;
     }
     if (value is IrConstantFloat constant) {
-      cell = new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword);
+      cell = FloatConstantCell(constant);
       return true;
     }
     // An INTEGER constant reaching the float path is a constant the front end typed as a float and
@@ -4628,6 +4628,14 @@ public sealed partial class InstructionSelector {
   /// <summary>The pool name a float literal resolves through - its bits, so equal values share a cell.</summary>
   internal static string FloatConstantName(double value)
     => ".fc." + System.BitConverter.DoubleToInt64Bits(value).ToString("x16");
+
+  /// <summary>Keep a literal that needs MBF64's extra bits in a ten-byte x87 pool cell.</summary>
+  private static MOperand.DataCell FloatConstantCell(IrConstantFloat constant) {
+    if (constant.Type is { IsIeeeFloat: true, Bits: 80 }
+        && !constant.TryGetDoubleExact(out _))
+      return new MOperand.DataCell(".fc80." + constant.Float80.ToBitString(), 0, MRegSize.Tbyte);
+    return new MOperand.DataCell(FloatConstantName(constant.Value), 0, MRegSize.Qword);
+  }
 
   private static readonly Dictionary<IrBinaryOp, MOpcode> _floatOps = new() {
     [IrBinaryOp.FAdd] = MOpcode.Faddp,

@@ -369,7 +369,7 @@ public sealed partial class Parser {
       case TokenKind.IntegerLiteral:
         return new IntegerLiteralExpr(this.Advance().Position, token.IntegerValue, token.Suffix);
       case TokenKind.FloatLiteral:
-        return new FloatLiteralExpr(this.Advance().Position, token.FloatValue, this.InferFloatSuffix(token));
+        return new FloatLiteralExpr(this.Advance().Position, token.FloatValue, this.InferFloatSuffix(token), token.Text);
       case TokenKind.StringLiteral:
         return new StringLiteralExpr(this.Advance().Position, token.StringValue!);
       case TokenKind.InterpString:
