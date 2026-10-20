@@ -90,7 +90,7 @@ public sealed class BackendMbf32BoundsTests {
   [TestCaseSource(nameof(_dialectsAndModes))]
   public void Load_GivenTinyStoredMbf32_ThenWidensWithoutLosingItsSignificand(Dialect dialect, bool optimize) {
     var output = Run("""
-      10 X!=1D-38:Y#=X!
+      10 X!=1D-38:Y#=X!+0D0
       20 P%=VARPTR(Y#)
       30 FOR I%=0 TO 7:PRINT PEEK(P%+I%):NEXT I%
       40 END
@@ -103,6 +103,7 @@ public sealed class BackendMbf32BoundsTests {
   public void Load_GivenEveryNonzeroMbf32Exponent_ThenWidensBothSignsExactly(Dialect dialect, bool optimize) {
     // GW-BASIC 3.23's SWPNZ.TXT reports zero mismatches for the same raw-cell sweep. Exponent-zero
     // cells with stray mantissa bits are a separate representation case, not part of this sweep.
+    // Addition forces a numeric load instead of the representation-preserving assignment path.
     var output = Run("""
       10 X!=0:Y#=0:P%=VARPTR(X!):Q%=VARPTR(Y#):DIM V%(7):F%=0:N%=0
       20 FOR S%=0 TO 128 STEP 128
@@ -110,7 +111,7 @@ public sealed class BackendMbf32BoundsTests {
       40 POKE P%,91:POKE P%+1,167:POKE P%+2,45+S%:POKE P%+3,E%
       50 FOR I%=0 TO 7:V%(I%)=0:NEXT I%
       60 V%(4)=91:V%(5)=167:V%(6)=45+S%:V%(7)=E%
-      70 Y#=X!
+      70 Y#=X!+0D0
       75 N%=N%+1
       80 FOR I%=0 TO 7:IF PEEK(Q%+I%)<>V%(I%) THEN F%=F%+1
       90 NEXT I%
@@ -127,7 +128,7 @@ public sealed class BackendMbf32BoundsTests {
     var output = Run("""
       10 X!=0:Y#=0:P%=VARPTR(X!):Q%=VARPTR(Y#)
       20 POKE P%,91:POKE P%+1,167:POKE P%+2,45:POKE P%+3,1
-      30 Y#=X!
+      30 Y#=X!+0D0
       40 FOR I%=0 TO 7:PRINT PEEK(Q%+I%):NEXT I%
       50 END
       """, dialect, optimize);

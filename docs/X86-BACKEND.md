@@ -1308,11 +1308,17 @@ PowerBASIC's IEEE-range promotion rule. `X#=1E-38` now widens a 24-bit MBF value
 preserves the transported x87 width instead of narrowing through IEEE single/double. Captured
 `SGLIT.TXT`, `SGLWID.TXT` and `NEGPREC.TXT` from GW-BASIC 3.23 pin those observable bytes.
 
-Raw exponent-zero MBF cells with stray mantissa bits remain a compatibility gap. GW-BASIC preserves
-their payload on copy/widening, rounds it on narrowing, and treats some zero operations asymmetrically:
-`X!+0!` canonicalizes such a cell, while `0!+X!` preserves it. The current numeric transport canonicalizes
-the payload on load. Captured `RAWZERO.TXT`, `RAW64Z.TXT` and `RAWZOP.TXT` establish the distinction;
-the nonzero-exponent sweep does not cover it.
+Same-width assignments and SINGLE-to-DOUBLE widening now move MBF storage through ordinary IR word
+loads/stores instead of numeric conversion. This preserves all bytes, including a zero exponent's stray
+mantissa/sign bits. Widening adds four low fraction bytes; the original sign/exponent word is unchanged.
+All source words are read before any destination write, preserving self-assignment. Captured GW-BASIC
+3.23 `RAWZERO.TXT`, `RAW64Z.TXT` and `RAWARR.TXT` cover scalar and near static-array copies with both
+signs. The nonzero-exponent numeric-load sweep uses addition to exercise conversion rather than copying.
+
+Raw exponent-zero cells remain a compatibility gap in narrowing and computed operations. GW-BASIC
+rounds their payload on narrowing and treats some zero operations asymmetrically: `X!+0!` canonicalizes
+such a cell, while `0!+X!` preserves it. The current numeric transport canonicalizes the payload on load.
+Captured `RAW64Z.TXT` and `RAWZOP.TXT` establish those remaining distinctions.
 
 ### MBF64 arithmetic and emulator precision
 
