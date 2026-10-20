@@ -1295,6 +1295,25 @@ flushes to zero, even if rounding would have raised the value to the smallest MB
 `tests/diff/gw/MBF32MIN.BAS` checks positive and negative `1D-38`, the smallest MBF32 value,
 values just below it, and underflowing `1D-40` against GW-BASIC 3.23, including the cell bytes.
 
+MBF32 loads construct the exact x87 encoding directly, using the same exponent-bias translation as
+the MBF64 loader. Passing an exponent-1 or exponent-2 cell through IEEE single had corrupted its
+magnitude or produced infinity. A GW-BASIC 3.23 oracle sweep checks every nonzero exponent with
+both signs and a nonzero pattern in each mantissa byte. The load keeps all 24 significant bits.
+MBF conversion calls also declare their AX pointer operand in machine IR, so physical-register
+liveness accounts for that input; the same sweep guards the optimizer-disabled path.
+
+Tiny `E` literals retain SINGLE source precision in BASICA/GW, where the parser previously applied
+PowerBASIC's IEEE-range promotion rule. `X#=1E-38` now widens a 24-bit MBF value; `X#=1D-38` retains
+56 significant bits. Literal conversion uses the explicit MBF precision boundary, and negation
+preserves the transported x87 width instead of narrowing through IEEE single/double. Captured
+`SGLIT.TXT`, `SGLWID.TXT` and `NEGPREC.TXT` from GW-BASIC 3.23 pin those observable bytes.
+
+Raw exponent-zero MBF cells with stray mantissa bits remain a compatibility gap. GW-BASIC preserves
+their payload on copy/widening, rounds it on narrowing, and treats some zero operations asymmetrically:
+`X!+0!` canonicalizes such a cell, while `0!+X!` preserves it. The current numeric transport canonicalizes
+the payload on load. Captured `RAWZERO.TXT`, `RAW64Z.TXT` and `RAWZOP.TXT` establish the distinction;
+the nonzero-exponent sweep does not cover it.
+
 ### MBF64 arithmetic and emulator precision
 
 GW-BASIC 3.23 stores `1D0 + 1D-16` as MBF64 with low mantissa byte `4`; an IEEE binary64 addition

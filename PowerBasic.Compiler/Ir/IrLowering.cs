@@ -5313,11 +5313,13 @@ public sealed partial class IrLowering {
         return new IrConstantInt(MapType(this._model.TypeOf(lit)), lit.Value);
       case FloatLiteralExpr lit: {
         var type = this._model.TypeOf(lit);
-        if (this._model.Dialect.IsGwBasica() && type is ScalarType { Kind: ScalarKind.Double }
+        if (this._model.Dialect.IsGwBasica()
+            && type is ScalarType { Kind: ScalarKind.Single or ScalarKind.Double } scalar
             && lit.SourceText is { } sourceText
             && Mbf64.TryParseDecimalLiteral(sourceText, out var mbf)) {
           var bytes = mbf.ToExtended80().ToBytes();
-          return IrConstantFloat.FromFloat80Bits(BitConverter.ToUInt16(bytes, 8), BitConverter.ToUInt64(bytes));
+          var literal = IrConstantFloat.FromFloat80Bits(BitConverter.ToUInt16(bytes, 8), BitConverter.ToUInt64(bytes));
+          return scalar.Kind == ScalarKind.Double ? literal : this.RoundInterpreterFloat(literal, scalar);
         }
         // The parser carries every decimal in a host double, but an unsuffixed PB literal is a
         // SINGLE. Quantize at the source boundary before a later FPExt can make the wider container
@@ -6907,6 +6909,8 @@ public sealed partial class IrLowering {
 
   private IrValue LowerUnary(UnaryExpr u) {
     var pb = this._model.TypeOf(u);
+    if (this._model.Dialect.IsGwBasica() && pb is ScalarType { IsFloat: true })
+      pb = PbType.Ext; // Negation changes the sign without narrowing an MBF value through IEEE storage.
     var ty = MapType(pb);
     var operand = this.Coerce(this.LowerExpr(u.Operand), this._model.TypeOf(u.Operand), pb);
     return u.Op switch {
@@ -6942,7 +6946,7 @@ public sealed partial class IrLowering {
     // give 66.66666. The declared type chooses the FORMATTER; it does not round the value.
     //
     // PowerBASIC narrows at declared storage. BASICA/GW instead round every arithmetic result to
-    // their MBF precision; RoundInterpreterArithmetic records that boundary before the next use.
+    // their MBF precision; RoundInterpreterFloat records that boundary before the next use.
     var arithPb = resultPb is ScalarType { IsFloat: true } ? PbType.Ext : resultPb;
     var resultTy = MapType(arithPb);
     var signed = resultPb is ScalarType { Signed: true };
@@ -6957,7 +6961,7 @@ public sealed partial class IrLowering {
       case BinaryOp.Power:
         if (!resultTy.IsFloat)
           throw new IrLoweringException("integer exponentiation");   // PB ^ yields a floating result
-        return this.RoundInterpreterArithmetic(
+        return this.RoundInterpreterFloat(
           this._b.Call(resultTy, this.RuntimeFn($"llvm.pow.f{resultTy.Bits}", resultTy, resultTy, resultTy), l, r),
           resultPb);
       // The pb36 ROTATE operators. The IR has no rotate instruction and does not need one: by a KNOWN
@@ -7012,14 +7016,14 @@ public sealed partial class IrLowering {
     var result = this._checkOverflow && op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.Mul
       ? this.CheckedArithmetic(op, l, r, resultTy, signed)
       : this._b.Binary(op, l, r);
-    return this.RoundInterpreterArithmetic(result, resultPb);
+    return this.RoundInterpreterFloat(result, resultPb);
   }
 
-  private IrAlloca? _mbf32ArithmeticResult;
-  private IrAlloca? _mbf64ArithmeticResult;
+  private IrAlloca? _mbf32Result;
+  private IrAlloca? _mbf64Result;
 
-  /// <summary>Interpreter arithmetic crosses an MBF precision boundary before its next consumer.</summary>
-  private IrValue RoundInterpreterArithmetic(IrValue value, PbType resultType) {
+  /// <summary>Interpreter literals and arithmetic cross their MBF precision boundary before the next consumer.</summary>
+  private IrValue RoundInterpreterFloat(IrValue value, PbType resultType) {
     if (!this._model.Dialect.IsGwBasica()
         || resultType is not ScalarType { Kind: ScalarKind.Single or ScalarKind.Double } scalar)
       return value;
@@ -7028,7 +7032,7 @@ public sealed partial class IrLowering {
     // MBF cells cannot be promoted/forwarded, so optimization retains this observable boundary.
     // Each load captures an SSA value, so sequential operations can share one cell per precision.
     ref var slot = ref (scalar.Kind == ScalarKind.Double
-      ? ref this._mbf64ArithmeticResult : ref this._mbf32ArithmeticResult);
+      ? ref this._mbf64Result : ref this._mbf32Result);
     slot ??= this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(storageType) { Name = "mbf.result" });
     this._b.Store(this._b.Cast(IrCastOp.FPToMbf, value, storageType), slot);
     return this._b.Cast(IrCastOp.MbfToFP, this._b.Load(storageType, slot), IrType.F80);

@@ -170,9 +170,20 @@ public sealed class BackendMbf64Tests {
     """, dialect, optimize, "4|129");
 
   /// <summary>
-  /// GW-BASIC 3.23 reads decimal digits through staged precision. This case distinguishes that
-  /// historical conversion from correctly rounding the exact decimal fraction to MBF64.
+  /// GW-BASIC 3.23's NEGPREC.TXT preserves the low bits when negating this MBF64 literal.
   /// </summary>
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Negate_GivenAnMbf64LiteralBeyondBinary64Precision_ThenPreservesItsLowBits(
+      Dialect dialect, bool optimize) => Prints("""
+    10 X# = -1.0000000000000001D0
+    20 P% = VARPTR(X#)
+    30 PRINT PEEK(P%)
+    40 PRINT PEEK(P% + 6)
+    50 PRINT PEEK(P% + 7)
+    60 END
+    """, dialect, optimize, "4|128|129");
+
+  /// <summary>GW-BASIC 3.23's staged conversion differs from rounding only the final fraction.</summary>
   [TestCase(false)]
   [TestCase(true)]
   public void Store_GivenHistoricalDecimalTie_ThenMatchesGwBasicDigitAccumulation(bool optimize) => Prints("""

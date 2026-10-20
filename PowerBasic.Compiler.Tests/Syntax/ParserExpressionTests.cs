@@ -45,6 +45,19 @@ public sealed class ParserExpressionTests {
     Assert.That(expr.Value, Is.EqualTo("hello"));
   }
 
+  [TestCase(Dialect.Gw, "1E-38", TypeSuffix.Single)]
+  [TestCase(Dialect.Basica, "1E-38", TypeSuffix.Single)]
+  [TestCase(Dialect.Pb35, "1E-38", TypeSuffix.Double)]
+  [TestCase(Dialect.Gw, "1D-38", TypeSuffix.Double)]
+  [TestCase(Dialect.Gw, "1.23456789E-38", TypeSuffix.Double)]
+  [TestCase(Dialect.Gw, "1E-16", TypeSuffix.Single)]
+  public void Parse_GivenScientificLiteral_ThenUsesItsDialectSourcePrecision(
+      Dialect dialect, string text, TypeSuffix expected) {
+    var unit = Parse("10 X=" + text, dialect);
+    var literal = (FloatLiteralExpr)unit.Statements.OfType<AssignStmt>().Single().Value;
+    Assert.That(literal.Suffix, Is.EqualTo(expected));
+  }
+
   [Test]
   public void Parse_GivenNamedConstant_WhenParsed_ThenNameIsKept() {
     var expr = ParseExpression<NamedConstantExpr>("%SVGA_MODEX");
