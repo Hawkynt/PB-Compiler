@@ -87,6 +87,75 @@ public sealed class BackendMbf64Tests {
     """, dialect, optimize, "4|129");
 
   /// <summary>
+  /// GW-BASIC 3.23 rounds each DOUBLE arithmetic result before the next operation, even when no
+  /// variable store intervenes. All three rows below were captured as complete MBF64 cells.
+  /// </summary>
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Subtract_GivenCancellationAfterAnAddition_ThenMatchesGwBasicIntermediateRounding(
+      Dialect dialect, bool optimize) {
+    const string source = """
+      10 OPEN "MROUND.TXT" FOR OUTPUT AS #1
+      20 A#=1D0:B#=1D-16
+      30 X#=(A#+B#)-A#:GOSUB 500
+      40 X#=(1D0+1D-16)-1D0:GOSUB 500
+      50 X#=A#+B#:X#=X#-A#:GOSUB 500
+      60 CLOSE #1:SYSTEM
+      500 P%=VARPTR(X#)
+      510 PRINT #1,PEEK(P%);PEEK(P%+1);PEEK(P%+2);PEEK(P%+3);PEEK(P%+4);PEEK(P%+5);PEEK(P%+6);PEEK(P%+7)
+      520 RETURN
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "MROUND.BAS", dialect), "MROUND.BAS", dialect);
+    var model = Binder.Bind(unit, dialect);
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { Optimize = optimize };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    var actual = Cpu8086.Run(image, exactFloatingPoint: true).FileContent("MROUND.TXT");
+    var expected = string.Concat(Enumerable.Repeat(" 0  0  0  0  0  0  0  76 \r\n", 3)) + "\u001a";
+    Assert.That(actual, Is.EqualTo(expected));
+  }
+
+  /// <summary>
+  /// Complete GW-BASIC 3.23 output covers SINGLE cancellation, DOUBLE multiplication/division/
+  /// subtraction/power, an intermediate underflow and an overflow before a later division.
+  /// </summary>
+  [TestCaseSource(nameof(_dialectsAndModes))]
+  public void Arithmetic_GivenInterpreterPrecisionAndRangeBoundaries_ThenMatchesGwBasicFile(
+      Dialect dialect, bool optimize) {
+    const string source = """
+      10 OPEN "MROPS.TXT" FOR OUTPUT AS #1
+      20 A!=1!:B!=1E-7:X!=(A!+B!)-A!
+      30 P%=VARPTR(X!):FOR I%=0 TO 3:PRINT #1,PEEK(P%+I%);:NEXT I%:PRINT #1,
+      40 X#=(0.1D0*0.1D0)-0.01D0:GOSUB 500
+      50 X#=(1D0/10D0)-0.1D0:GOSUB 500
+      60 X#=(1D0-0.1D0)-0.9D0:GOSUB 500
+      70 X#=(2D0^2D0)-4D0:GOSUB 500
+      80 A#=3D-39:X#=(A#/2D0)*2D0:GOSUB 500
+      90 ON ERROR GOTO 900
+      100 A#=1D38:X#=(A#*2D0)/2D0
+      110 PRINT #1,"NO OVERFLOW"
+      120 CLOSE #1:SYSTEM
+      500 P%=VARPTR(X#)
+      510 PRINT #1,PEEK(P%);PEEK(P%+1);PEEK(P%+2);PEEK(P%+3);PEEK(P%+4);PEEK(P%+5);PEEK(P%+6);PEEK(P%+7)
+      520 RETURN
+      900 PRINT #1,"ERROR";ERR:CLOSE #1:SYSTEM
+      """;
+    var unit = Parser.Parse(Lexer.Tokenize(source, "MROPS.BAS", dialect), "MROPS.BAS", dialect);
+    var model = Binder.Bind(unit, dialect);
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { Optimize = optimize };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendRoutedNames, Does.Contain("main"));
+    var actual = Cpu8086.Run(image, exactFloatingPoint: true).FileContent("MROPS.TXT");
+    var expected = " 0  0  0  106 \r\n"
+      + string.Concat(Enumerable.Repeat(" 0  0  0  0  0  0  0  0 \r\n", 5))
+      + "ERROR 6 \r\n\u001a";
+    Assert.That(actual, Is.EqualTo(expected));
+  }
+
+  /// <summary>
   /// Given a 17-digit GW-BASIC decimal literal that lies below binary64's unit in the last place,
   /// when stored as DOUBLE, then its MBF64 cell matches the interpreter's observed low byte.
   /// </summary>

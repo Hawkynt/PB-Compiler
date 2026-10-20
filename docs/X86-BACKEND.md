@@ -1316,6 +1316,15 @@ the test CPU's exact-x87 mode for this comparison, since DOSBox 0.74 narrows the
 The portable C emitter declines an exact x87 literal that cannot fit binary64 instead of narrowing
 it or throwing an unhandled exception.
 
+BASICA/GW arithmetic results also cross an explicit MBF conversion before their next consumer.
+PowerBASIC retains its x87 intermediate precision. For `A#=1D0` and `B#=1D-16`, GW-BASIC 3.23 stores
+the same MBF64 cell for `(A#+B#)-A#` as for a version that stores the addition first: seven zero bytes
+and exponent `76`. Carrying the addition at x87 precision until the final assignment disagreed.
+Typed MBF store/load conversions now preserve this rounding boundary through optimization, sharing
+one scratch cell per precision in each function. Captured complete files also cover SINGLE
+cancellation, DOUBLE multiplication/division/subtraction/power, intermediate underflow and Error 6
+on intermediate overflow. These establish the tested arithmetic boundaries, not every software-math result.
+
 ### FIX and BCD: one of them is a float and the other is not
 
 `@` and `@@` look like one feature and are two. A BCD cell is ten bytes of x87 extended, so its bits

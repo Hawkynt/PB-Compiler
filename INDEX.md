@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-19 05:43 UTC by index_codebase.py.
+Generated 2026-10-19 10:55 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1057 files, 8748 symbols.
+1057 files, 8750 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -557,13 +557,15 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `PEEK(P% + 3)` — PowerBasic.Compiler.Tests/Backend/BackendMbf32BoundsTests.cs:114
 - method `PEEK(P% + 3)` — PowerBasic.Compiler.Tests/Backend/BackendMbf32BoundsTests.cs:126
 
-### BackendMbf64Tests.cs  `C#, 321 lines`
+### BackendMbf64Tests.cs  `C#, 390 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:5
 - class `BackendMbf64Tests` — Microsoft Binary Format DOUBLE storage for BASICA and GW-BASIC. The value computes on the x87, — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:13
 - method `PEEK(P% + I%)` — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:51
-- field `source` — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:124
-- field `expected` — """; — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:141
-- field `source` — Complete PRECV.TXT captured from genuine GW-BASIC 3.23. DOSBox 0.74's C FPU loses the — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:169
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:96
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:126
+- field `source` — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:193
+- field `expected` — """; — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:210
+- field `source` — Complete PRECV.TXT captured from genuine GW-BASIC 3.23. DOSBox 0.74's C FPU loses the — PowerBasic.Compiler.Tests/Backend/BackendMbf64Tests.cs:238
 
 ### BackendMemoryCompareTests.cs  `C#, 97 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendMemoryCompareTests.cs:5
@@ -6710,7 +6712,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `switch(binary.Op)` — PowerBasic.Compiler/Ir/IrLowering.WideIntegers.cs:133
 - method `IrConstantInt(IrType.I16, wt.Words)` — PowerBasic.Compiler/Ir/IrLowering.WideIntegers.cs:203
 
-### IrLowering.cs  `C#, 7393 lines`
+### IrLowering.cs  `C#, 7414 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrLowering.cs:6
 - class `IrLowering` — Lowers high-level functions into the IR in clang-style alloca/load/store form: every — PowerBasic.Compiler/Ir/IrLowering.cs:20
 - record `DataLayout` — PowerBasic.Compiler/Ir/IrLowering.cs:74
@@ -6955,13 +6957,13 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `IrAlloca(IrType.I16)` — PowerBasic.Compiler/Ir/IrLowering.cs:6721
 - method `IrLoweringException($"an argument of the static array {symbol.Name} without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:6747
 - method `IrLoweringException($"an argument of the static array {symbol.Name} without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:6809
-- method `if(!resultTy.IsFloat)` — PowerBasic.Compiler/Ir/IrLowering.cs:6959
-- method `IrLoweringException("integer exponentiation")` — PowerBasic.Compiler/Ir/IrLowering.cs:6960
-- method `IrLoweringException( "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integ…` — PowerBasic.Compiler/Ir/IrLowering.cs:7065
-- method `IrLoweringException($"$ERROR {arm} ON arms a runtime trap the IR lowering does not emit")` — PowerBasic.Compiler/Ir/IrLowering.cs:7196
-- method `IrLoweringException($"metastatement ${meta.Command}")` — PowerBasic.Compiler/Ir/IrLowering.cs:7198
-- method `IrLoweringException("comparison of non-scalar operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:7222
-- method `IrLoweringException("coercion between non-scalar types")` — PowerBasic.Compiler/Ir/IrLowering.cs:7322
+- method `if(!resultTy.IsFloat)` — PowerBasic.Compiler/Ir/IrLowering.cs:6958
+- method `IrLoweringException("integer exponentiation")` — PowerBasic.Compiler/Ir/IrLowering.cs:6959
+- method `IrLoweringException( "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integ…` — PowerBasic.Compiler/Ir/IrLowering.cs:7086
+- method `IrLoweringException($"$ERROR {arm} ON arms a runtime trap the IR lowering does not emit")` — PowerBasic.Compiler/Ir/IrLowering.cs:7217
+- method `IrLoweringException($"metastatement ${meta.Command}")` — PowerBasic.Compiler/Ir/IrLowering.cs:7219
+- method `IrLoweringException("comparison of non-scalar operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:7243
+- method `IrLoweringException("coercion between non-scalar types")` — PowerBasic.Compiler/Ir/IrLowering.cs:7343
 
 ### IrModule.cs  `C#, 154 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrModule.cs:3

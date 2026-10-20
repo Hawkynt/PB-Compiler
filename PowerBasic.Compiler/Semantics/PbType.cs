@@ -90,9 +90,9 @@ public sealed record PointerType(PbType Target) : PbType {
 /// <summary>
 /// Microsoft Binary Format float (BASICA / GW-BASIC): the interpreters store
 /// SINGLE / DOUBLE in MBF, not IEEE - a biased-128 exponent byte with the sign
-/// folded into the mantissa's top bit. The value computes on the x87 as usual;
-/// only the in-memory cell is MBF, with conversion on load/store. Single is
-/// 4 bytes (precision-identical to IEEE single); Double is 8 bytes.
+/// folded into the mantissa's top bit. The DOS backend transports values through the x87, with
+/// explicit MBF conversions at storage and after interpreter arithmetic operations. Single is
+/// 4 bytes (24 significant bits, with a different exponent range from IEEE single); Double is 8 bytes.
 /// </summary>
 public sealed record MbfType(bool IsDouble) : PbType {
   public override int Size => this.IsDouble ? 8 : 4;
