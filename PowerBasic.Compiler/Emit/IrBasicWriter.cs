@@ -288,7 +288,7 @@ public sealed class IrBasicWriter {
       64 => type.Signed ? "QUAD" : "QWORD",
       _ => throw new IrBasicWriterException($"an integer of {type.Bits} bits"),
     },
-    IrTypeKind.Float => type.Bits == 32 ? "SINGLE" : "DOUBLE",
+    IrTypeKind.Float => type.Bits == 80 ? "EXT" : type.Bits == 32 ? "SINGLE" : "DOUBLE",
     // every pointer this lowering produces for a VALUE is a string handle; storage pointers are
     // allocas and arrays, which are declared from what they hold rather than from the pointer
     IrTypeKind.Ptr => "STRING",
@@ -687,6 +687,19 @@ public sealed class IrBasicWriter {
         this.Note("rounding half away from zero (QuickBASIC 1.0-3.0) is written out as "
           + "SGN(x) * INT(ABS(x) + 0.5): pb35's own CINT rounds half to even.");
         this._names[call] = $"(SGN({x}) * INT(ABS({x}) + 0.5))";
+        return true;
+      }
+      case "rt_mbf32_narrow": {
+        var input = this.Temp(IrType.F80);
+        var magnitude = this.Temp(IrType.F80);
+        var scale = this.Temp(IrType.F80);
+        this.Line($"  {input} = {this.Ref(call.Args.First())}");
+        this.Line($"  {magnitude} = SGN({input}) * {input}");
+        // Materialize the argument once. Zero uses LOG2(1); a nonzero magnitude supplies its own
+        // exponent. Scaling by a power of two rounds the 24-bit significand, not a decimal place.
+        this.Line($"  {scale} = 2## ^ (23 - INT(LOG2({magnitude} - ({input} = 0))))");
+        var result = this.Define(call);
+        this.Line($"  {result} = SGN({input}) * FIX({magnitude} * {scale} + 0.5##) / {scale}");
         return true;
       }
 

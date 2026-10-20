@@ -1320,6 +1320,29 @@ rounds their payload on narrowing and treats some zero operations asymmetrically
 such a cell, while `0!+X!` preserves it. The current numeric transport canonicalizes the payload on load.
 Captured `RAW64Z.TXT` and `RAWZOP.TXT` establish those remaining distinctions.
 
+### Interpreter numeric conversions
+
+GW-BASIC distinguishes SINGLE arithmetic from conversion to SINGLE: arithmetic rounds exact ties
+to even, while DOUBLE-to-SINGLE assignment and `CSNG` round ties away from zero. Decimal SINGLE
+literals follow the conversion rule as well. `rt_mbf32_narrow` models that precision change as an
+explicit extended-to-extended runtime call; its DOS ABI consumes and returns ST(0). The separately
+trimmed `rt_mbfsng` routine rounds the x87 significand to 24 bits without passing through IEEE single's
+exponent range. The usual MBF store still checks range and reports Error 6.
+
+`CSNG` retains an extended transport after conversion, preserving MBF32 values below IEEE single's
+normal range. `CDBL` likewise retains MBF64's 56 significant bits instead of narrowing an already-DOUBLE
+value through binary64. Genuine GW-BASIC 3.23 `CNVTIES.TXT`, `CNVRANGE.TXT`, `SGLHALF.TXT`,
+`CNVEDGE.TXT` and `MBFTIES.TXT` captures distinguish ties and their neighbors, both signs, tiny values,
+underflow, overflow, significand carry and identity conversion. Every case runs with and without
+optimization in both interpreter dialects.
+
+The IR BASIC writer renders the precision change as power-of-two scaling in EXT temporaries, followed
+by half-away integer rounding. It evaluates the input once and handles zero without taking `LOG2(0)`.
+F80 declarations retain EXT rather than silently becoming DOUBLE. Execution regressions cover zero,
+both signs, odd/even ties and their neighbors, a significand carry and MBF-range extremes. The generated
+magnitude uses `SGN(x)*x`, retaining EXT throughout the calculation. These changes do not remove the
+writer's existing MBF storage-layout limitation.
+
 ### MBF64 arithmetic and emulator precision
 
 GW-BASIC 3.23 stores `1D0 + 1D-16` as MBF64 with low mantissa byte `4`; an IEEE binary64 addition

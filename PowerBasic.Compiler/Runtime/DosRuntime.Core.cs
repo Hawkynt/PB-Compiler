@@ -261,6 +261,7 @@ public sealed partial class DosRuntime {
     ("rounding", this.EmitRounding),
     ("round_away", this.EmitRoundAway),
     ("mbf", this.EmitMbf),
+    ("mbf_narrow", this.EmitMbfSingleNarrow),
     ("ports", this.EmitPortOut),
     ("wide_shift", this.EmitWideShift),
     ("long_helpers", this.EmitLongHelpers),

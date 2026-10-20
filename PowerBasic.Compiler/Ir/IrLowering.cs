@@ -5321,7 +5321,8 @@ public sealed partial class IrLowering {
             && Mbf64.TryParseDecimalLiteral(sourceText, out var mbf)) {
           var bytes = mbf.ToExtended80().ToBytes();
           var literal = IrConstantFloat.FromFloat80Bits(BitConverter.ToUInt16(bytes, 8), BitConverter.ToUInt64(bytes));
-          return scalar.Kind == ScalarKind.Double ? literal : this.RoundInterpreterFloat(literal, scalar);
+          return scalar.Kind == ScalarKind.Double ? literal
+            : this.RoundInterpreterFloat(this.NarrowInterpreterSingle(literal, PbType.Double), scalar);
         }
         // The parser carries every decimal in a host double, but an unsuffixed PB literal is a
         // SINGLE. Quantize at the source boundary before a later FPExt can make the wider container
@@ -6461,9 +6462,14 @@ public sealed partial class IrLowering {
   }
 
   private IrValue LowerConvert(CallOrIndexExpr call) {
-    // CDBL/CSNG are exactly a type conversion to the result type
     var resultPb = this._model.TypeOf(call);
-    return this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
+    var sourcePb = this._model.TypeOf(call.Arguments[0]);
+    var value = this.LowerExpr(call.Arguments[0]);
+    if (this._model.Dialect.IsGwBasica() && resultPb is ScalarType { Kind: ScalarKind.Single })
+      return this.RoundInterpreterFloat(this.NarrowInterpreterSingle(value, sourcePb), PbType.Single);
+    if (this._model.Dialect.IsGwBasica() && resultPb is ScalarType { Kind: ScalarKind.Double })
+      return this.RoundInterpreterFloat(this.Coerce(value, sourcePb, PbType.Ext), PbType.Double);
+    return this.Coerce(value, sourcePb, resultPb);
   }
 
   private IrValue LowerFix(CallOrIndexExpr call) {
@@ -7317,6 +7323,9 @@ public sealed partial class IrLowering {
     => this._b.Call(IrType.F80, this.RuntimeFn(routine, IrType.F80, IrType.F80), value);
 
   private IrValue Coerce(IrValue value, PbType from, PbType to) {
+    if (this._model.Dialect.IsGwBasica() && to is MbfType { IsDouble: false }
+        && from is MbfType { IsDouble: true } or ScalarType { Kind: ScalarKind.Double })
+      return this._b.Cast(IrCastOp.FPToMbf, this.NarrowInterpreterSingle(value, from), MapType(to));
     // MBF on either side: convert to IEEE to compute, and back to MBF to store. Recording the format
     // in the IR is only worth anything if the conversions it implies are emitted too - a type nobody
     // converts is a type nobody honoured.

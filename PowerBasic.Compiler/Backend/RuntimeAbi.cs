@@ -1077,6 +1077,7 @@ internal static class RuntimeAbi {
     ["rt_mbf32_store"] = new("rt_mbfst", [new(ArgKind.St0, default), new(ArgKind.Word, Reg.AX)], _callerSaved),
     ["rt_mbf64_load"] = new("rt_mbfld8", [new(ArgKind.Word, Reg.AX)], _callerSaved, Answer: ResultKind.St0),
     ["rt_mbf64_store"] = new("rt_mbfst8", [new(ArgKind.St0, default), new(ArgKind.Word, Reg.AX)], _callerSaved),
+    ["rt_mbf32_narrow"] = new("rt_mbfsng", [new(ArgKind.St0, default)], _callerSaved, Answer: ResultKind.St0),
 
     // The BASCOM lineage rounds float-to-integer half AWAY from zero. It is a CALL rather than an
     // instruction pattern for the reason rt_trunc is: the two emitters write into one image and a
