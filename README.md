@@ -73,6 +73,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - `ABS(EXT)` preserves the full x87 significand and exponent, including signed zero and subnormal values;
   GW/BASICA `ABS` also retains MBF range and precision for stored values, literals and expressions;
   `SGN` compares decoded MBF values as floating-point operands rather than rejecting their storage type
+- The 8087 trigonometric runtime retains extended-precision angle-reduction constants instead of
+  narrowing them to host `double` before emitting them
 - A `pb36` superset that adds language features while leaving existing programs behaving as they did
 - Runs on any 64-bit host; the output runs on real DOS or in DOSBox
 - The same program also builds for Linux on x86-32 and x64 and for the Commodore 64, and prints
