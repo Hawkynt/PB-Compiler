@@ -70,6 +70,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - Reads unmodified DOS-era BASIC and emits DOS MZ `.EXE`, flat `.COM`, compiled units (`.PBU`/`.PBL`) and Intel OMF `.OBJ`/`.LIB`
 - Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
+- `ABS(EXT)` preserves the full x87 significand and exponent, including signed zero and subnormal values;
+  GW/BASICA `ABS` also retains MBF range and precision for stored values, literals and expressions
 - A `pb36` superset that adds language features while leaving existing programs behaving as they did
 - Runs on any 64-bit host; the output runs on real DOS or in DOSBox
 - The same program also builds for Linux on x86-32 and x64 and for the Commodore 64, and prints

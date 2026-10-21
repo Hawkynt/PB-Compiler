@@ -921,8 +921,9 @@ public static partial class X86NativeCompiler {
       /// <summary><c>llvm.sqrt.f64</c> and its kin: the function name, or null for anything else.</summary>
       private static string? TryMathIntrinsic(string name) {
         var parts = name.Split('.');
-        return parts is ["llvm", var fn, ['f', ..]] && fn is "sqrt" or "sin" or "cos" or "tan" or "atan" or "log" or "log2"
-          or "log10" or "exp" or "exp2" or "exp10" or "pow" ? fn : null;
+        return parts is ["llvm", var fn, ['f', ..]]
+          && fn is "sqrt" or "fabs" or "sin" or "cos" or "tan" or "atan" or "log" or "log2"
+            or "log10" or "exp" or "exp2" or "exp10" or "pow" ? fn : null;
       }
 
       /// <summary>
@@ -933,6 +934,7 @@ public static partial class X86NativeCompiler {
       private void MathFunction(string fn, IReadOnlyList<IrValue> arguments) {
         var x = arguments[0];
         switch (fn) {
+          case "fabs": this.LoadFloat(x); this._asm.X87(X87Code.Fabs); return;
           case "sqrt":
             this.RequireSign(x, allowZero: true);
             this.LoadFloat(x);

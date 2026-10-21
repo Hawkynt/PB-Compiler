@@ -6549,6 +6549,9 @@ public sealed partial class IrLowering {
 
   private IrValue LowerAbs(CallOrIndexExpr call) {
     var resultPb = this._model.TypeOf(call);
+    // Interpreter floats travel as EXT: IEEE single/double cannot preserve MBF's range/precision.
+    if (this._model.Dialect.IsGwBasica() && resultPb is ScalarType { IsFloat: true })
+      resultPb = PbType.Ext;
     var ty = MapType(resultPb);
     var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
     if (ty.IsInteger) {
@@ -6556,12 +6559,14 @@ public sealed partial class IrLowering {
       var mask = this._b.Binary(IrBinaryOp.AShr, v, new IrConstantInt(ty, ty.Bits - 1));
       return this._b.Sub(this._b.Xor(v, mask), mask);
     }
-    // float abs: clear the sign bit through an integer of the same width
+    if (ty == IrType.F80)
+      return this._b.Call(ty, this.RuntimeFn("llvm.fabs.f80", ty, ty), v);
+    // Narrow float abs can clear the sign through an integer of the same width.
     var intTy = IrType.Integer(ty.Bits);
     var bits = ty.Bits switch {
       32 => 0x7FFFFFFFL,
       64 => long.MaxValue,
-      _ => throw new IrLoweringException("ABS of EXT (80-bit) not supported"),
+      _ => throw new IrLoweringException($"ABS of a {ty.Bits}-bit floating type is not supported"),
     };
     var asInt = this._b.Cast(IrCastOp.BitCast, v, intTy);
     var cleared = this._b.And(asInt, new IrConstantInt(intTy, bits));

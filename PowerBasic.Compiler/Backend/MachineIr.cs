@@ -324,6 +324,9 @@ public enum MOpcode {
   /// <summary>Square root of ST(0), in place - no operand, because the x87 answers where it was asked.</summary>
   Fsqrt,
 
+  /// <summary>Clear ST(0)'s sign without narrowing its extended significand or exponent.</summary>
+  Fabs,
+
   // The transcendental family: each is a bare x87 instruction the direct emitter also writes inline.
   // They take no operand for the same reason FSQRT does not - the stack is where the answer goes.
   Fsin, Fcos, Fptan, Fpatan, Fyl2x, Fxch, FstpSt0,
@@ -357,7 +360,7 @@ public static class MOpcodes {
     or MOpcode.Fadd or MOpcode.Fsub or MOpcode.Fmul or MOpcode.Fdiv or MOpcode.Fcomp
     or MOpcode.Fiadd or MOpcode.Fisub or MOpcode.Fimul or MOpcode.Fidiv
     or MOpcode.Fcompp or MOpcode.FstswAx
-    or MOpcode.Fsqrt
+    or MOpcode.Fsqrt or MOpcode.Fabs
     or MOpcode.Fsin or MOpcode.Fcos or MOpcode.Fptan or MOpcode.Fpatan or MOpcode.Fyl2x
     or MOpcode.Fxch or MOpcode.FstpSt0
     or MOpcode.Fld1 or MOpcode.Fldln2 or MOpcode.Fldlg2 or MOpcode.Fldl2e or MOpcode.Fldl2t;

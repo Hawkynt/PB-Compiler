@@ -4190,6 +4190,7 @@ public sealed partial class InstructionSelector {
     var cut = bare.IndexOf(".f", StringComparison.Ordinal);
     return (cut > 0 ? bare[..cut] : bare) switch {
       "sqrt" => ([MOpcode.Fsqrt], null),
+      "fabs" => ([MOpcode.Fabs], null),
       "sin" => use386Instructions ? ([MOpcode.Fsin], null) : ([], "rt_sin"),
       "cos" => use386Instructions ? ([MOpcode.Fcos], null) : ([], "rt_cos"),
       // FPTAN; FSTP ST(0) is the 387 reading - discard what was pushed, keep the tangent under it.
