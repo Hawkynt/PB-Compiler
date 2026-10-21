@@ -444,7 +444,7 @@ public static class X87StackOptimizer {
       => new(2, -1),
     MOpcode.Fadd or MOpcode.Fsub or MOpcode.Fmul or MOpcode.Fdiv
       or MOpcode.Fiadd or MOpcode.Fisub or MOpcode.Fimul or MOpcode.Fidiv
-      or MOpcode.Fsqrt or MOpcode.Fsin or MOpcode.Fcos
+      or MOpcode.Fsqrt or MOpcode.Fabs or MOpcode.Fsin or MOpcode.Fcos
       => new(1, 0),
     // FXCH swaps ST(0) with ST(1), so it needs two transient slots of its own; with only one it would
     // exchange a retained value out from under the region that owns it.

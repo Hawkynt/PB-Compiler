@@ -1151,6 +1151,40 @@ load or store needs and what a word-sized reference would have silently halved.
 
 Selection 69 → 81 of 139, routing 52 → 57.
 
+### Extended and interpreter absolute value
+
+`ABS(EXT)` lowers to `llvm.fabs.f80`, not an unsupported 80-bit integer bitcast. x86-16 selection
+uses `MOpcode.Fabs` and emits the existing assembler's `FABS`; the operation clears the sign without
+narrowing the significand or exponent. Scheduling marks it as an x87 stack operation, and stack
+optimization models one required value with no depth change. The hosted native backend recognizes
+the same intrinsic, while C and LLVM retain their standard `fabsl` / `llvm.fabs.f80` spellings.
+
+`BackendExtendedAbsTests` checks every output byte for both signs of zero, the smallest normal and
+subnormal values, a near-one value with its lowest significand bit set, and a maximum-exponent value.
+The cases cover every Borland-family dialect, optimization off/on, SPEED/SIZE objectives and composed
+absolute-value expressions. The ordinary optimization modes assert and execute both MZ and automatic
+COM images. Each executable reaches verified Low IR with no routing decline.
+`tests/diff/EXTABS.BAS` adds a genuine-PBC differential probe for ordinary EXT values, signed zero
+and composition; the wide-range byte checks use the exact x87 execution harness.
+
+GW/BASICA scalar floating literals and expressions also use EXT transport for `ABS`, just as their
+negation does. Narrowing to an IEEE value first loses low MBF64 bits and changes tiny MBF32 values;
+clearing the sign needs neither conversion. `tests/diff/gw/MBFABS.BAS` compares stored values, literals
+and expressions at both widths against genuine GW-BASIC. The unit tests retain the complete captured
+GW-BASIC 3.23 output file, including whitespace and DOS EOF, for optimization off/on in both interpreter
+dialects. Raw zero-exponent cells with nonzero payloads remain a distinct compatibility gap: numeric
+loading canonicalizes them before the arithmetic operation, unlike same-width storage copies.
+The BASIC round-trip of `MBFABS.BAS` still diverges: `$COMPAT gw` does not give PB35 variables MBF
+storage, and the source writer loses extra DOUBLE literal digits. Native DOS execution matches the
+captured 210-byte file under DOSBox Staging; that does not establish back-emitter compatibility.
+
+`SGN` explicitly converts MBF storage to EXT before choosing comparisons from the lowered arithmetic
+type. Without that conversion, integer predicates from the non-ScalarType storage descriptor produced
+invalid MIR and a mandatory routing decline; floating predicates alone still reject encoded MBF.
+`BackendMbfSignTests` compares the complete genuine GW-BASIC 3.23 output for negative, zero
+and positive SINGLE/DOUBLE cells, expressions and literals, with optimization off/on in GW/BASICA.
+`tests/diff/gw/MBFSGN.BAS` adds that sign battery to the configured differential and routing census.
+
 ### IEEE real procedure calls - declared width on the stack, x87 width between operations
 
 The procedure bridge now admits BYVAL `SINGLE`/`DOUBLE` parameters and functions returning those
@@ -1319,6 +1353,29 @@ Raw exponent-zero cells remain a compatibility gap in narrowing and computed ope
 rounds their payload on narrowing and treats some zero operations asymmetrically: `X!+0!` canonicalizes
 such a cell, while `0!+X!` preserves it. The current numeric transport canonicalizes the payload on load.
 Captured `RAW64Z.TXT` and `RAWZOP.TXT` establish those remaining distinctions.
+
+### Interpreter numeric conversions
+
+GW-BASIC distinguishes SINGLE arithmetic from conversion to SINGLE: arithmetic rounds exact ties
+to even, while DOUBLE-to-SINGLE assignment and `CSNG` round ties away from zero. Decimal SINGLE
+literals follow the conversion rule as well. `rt_mbf32_narrow` models that precision change as an
+explicit extended-to-extended runtime call; its DOS ABI consumes and returns ST(0). The separately
+trimmed `rt_mbfsng` routine rounds the x87 significand to 24 bits without passing through IEEE single's
+exponent range. The usual MBF store still checks range and reports Error 6.
+
+`CSNG` retains an extended transport after conversion, preserving MBF32 values below IEEE single's
+normal range. `CDBL` likewise retains MBF64's 56 significant bits instead of narrowing an already-DOUBLE
+value through binary64. Genuine GW-BASIC 3.23 `CNVTIES.TXT`, `CNVRANGE.TXT`, `SGLHALF.TXT`,
+`CNVEDGE.TXT` and `MBFTIES.TXT` captures distinguish ties and their neighbors, both signs, tiny values,
+underflow, overflow, significand carry and identity conversion. Every case runs with and without
+optimization in both interpreter dialects.
+
+The IR BASIC writer renders the precision change as power-of-two scaling in EXT temporaries, followed
+by half-away integer rounding. It evaluates the input once and handles zero without taking `LOG2(0)`.
+F80 declarations retain EXT rather than silently becoming DOUBLE. Execution regressions cover zero,
+both signs, odd/even ties and their neighbors, a significand carry and MBF-range extremes. The generated
+magnitude uses `SGN(x)*x`, retaining EXT throughout the calculation. These changes do not remove the
+writer's existing MBF storage-layout limitation.
 
 ### MBF64 arithmetic and emulator precision
 

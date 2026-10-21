@@ -5,6 +5,14 @@ namespace PowerBasic.Compiler.Ir;
 
 public sealed partial class IrLowering {
 
+  /// <summary>DOUBLE-to-SINGLE conversion rounds ties away; SINGLE arithmetic rounds ties to even.</summary>
+  private IrValue NarrowInterpreterSingle(IrValue value, PbType sourceType) {
+    var extended = this.Coerce(value, sourceType, PbType.Ext);
+    return sourceType is MbfType { IsDouble: true } or ScalarType { Kind: ScalarKind.Double }
+      ? this._b.Call(IrType.F80, this.RuntimeFn("rt_mbf32_narrow", IrType.F80, IrType.F80), extended)
+      : extended;
+  }
+
   /// <summary>Copies MBF storage without canonicalizing a zero exponent's observable mantissa bytes.</summary>
   private bool TryLowerMbfStorageCopy(AssignStmt assignment) {
     if (this.GetMbfStorageType(assignment.Target) is not { } target
