@@ -39,7 +39,13 @@ public sealed partial class SoftwareX87Engine {
   private void CallMath(Label procedure, int left, int right, int result) {
     this.CopyScratch(left, Math0);
     this.CopyScratch(right, Math1);
+    // The arithmetic routines use ScratchA..D internally. Transcendental callers keep live
+    // operands there across a call, so those cells are callee-saved, not shared temporaries.
+    for (var offset = ScratchA; offset < ScratchD + SlotBytes; offset += 2)
+      this._asm.Push(this.Scratch(offset, OperandSize.Word));
     this._asm.Call(procedure);
+    for (var offset = ScratchD + SlotBytes - 2; offset >= ScratchA; offset -= 2)
+      this._asm.Pop(this.Scratch(offset, OperandSize.Word));
     this.CopyScratch(Math2, result);
   }
 

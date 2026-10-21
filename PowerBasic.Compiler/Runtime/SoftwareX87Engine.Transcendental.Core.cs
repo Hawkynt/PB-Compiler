@@ -3,9 +3,10 @@ using PowerBasic.Compiler.Asm;
 namespace PowerBasic.Compiler.Runtime;
 
 public sealed partial class SoftwareX87Engine {
-  private const int IntScratch = ScratchMisc;
-  private const int SavedControlScratch = ScratchMisc + 8;
-  private const int QuadrantScratch = ScratchMisc + 10;
+  // Arithmetic/conversion helpers own ScratchMisc..ScratchMisc+9. These values survive their calls.
+  private const int IntScratch = ScratchMisc + 12;
+  private const int SavedControlScratch = ScratchMisc + 20;
+  private const int QuadrantScratch = ScratchMisc + 22;
 
   private bool EmitInlineTranscendental(string mnemonic, IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, out string? error) {
     if (!RequireNoOperands(operands, out error)) return false;

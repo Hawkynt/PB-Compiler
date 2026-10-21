@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-21 04:20 UTC by index_codebase.py.
+Generated 2026-10-21 10:28 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1064 files, 8767 symbols.
+1066 files, 8773 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -2463,99 +2463,109 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `InvalidOperationException($"BRK at ${at:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu6502.cs:448
 - method `InvalidOperationException($"undocumented opcode ${opcode:X2} at ${at:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu6502.cs:450
 
-### Cpu8086.cs  `C#, 2489 lines`
+### Cpu8086.X87Software.cs  `C#, 81 lines`
+- namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:4
+- class `Cpu8086` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:6
+- record `SoftwareX87Program` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:8
+- method `Cpu8086Exception($"software x87 cannot execute D9 {instruction:X2}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:71
+
+### Cpu8086.cs  `C#, 2492 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:3
-- class `Cpu8086` — A real-mode 8086 interpreter, enough of one to run the executables this compiler emits. — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:23
-- class `MemoryFile` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:57
-- class `OpenFile` — One DOS handle onto a file. The POSITION belongs to the handle rather than to the file, which is — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:68
-- record `EmsMapping` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:72
-- record `FindEntry` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:74
-- method `Cpu8086Exception($"EXEC nesting exceeded {_MAX_EXEC_DEPTH} images")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:282
-- method `if(mode == 2)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:390
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:590
-- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:594
-- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:601
-- method `if((opcode & 1) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:610
-- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:612
-- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:616
-- method `if(this.Condition(opcode - 0x70))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:659
-- method `if(opcode == 0x80)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:666
-- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:668
-- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:673
-- method `if(mode == 3)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:692
-- method `Cpu8086Exception("LEA with a register operand")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:693
-- method `if(opcode == 0xC0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:741
-- method `if((opcode & 1) == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:758
-- method `if(taken)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:772
-- method `Cpu8086Exception( $"unimplemented opcode {opcode:X2} at {this._cs:X4}:{this._ip - 1:X…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:816
-- method `if(toRegister)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:843
-- method `unchecked((uint)(int)(sbyte)this.Fetch())` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:853
-- method `Cpu8086Exception($"unimplemented dword C7 operation /{operation}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:863
-- method `Cpu8086Exception($"unimplemented opcode 66 0F {opcode:X2}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:950
-- method `Cpu8086Exception("only register dword SHLD/SHRD is supported")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:954
-- method `if(operand == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1007
-- method `if(quotient > uint.MaxValue)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1011
-- method `if(divisor == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1019
-- method `if(dividend == long.MinValue && divisor == -1)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1022
-- method `if(quotient is < int.MinValue or > int.MaxValue)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1025
-- record `X87Value` — One x87 value. The optional extended representation is populated by exact-mode calculations — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1040
-- method `Exact` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1049
-- method `Floating` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1051
-- method `Floating` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1053
-- method `Extended` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1055
-- method `Abs` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1057
-- method `Negate` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1063
-- method `if(this._exactFloatingPoint)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1152
-- method `Cpu8086Exception($"unimplemented x87 {opcode:X2} /{reg} at {this._cs:X4}:{start:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1175
-- method `if((bits & 1) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1250
-- method `if((bits & 2) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1252
-- method `if((bits & 4) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1254
-- method `if(modrm >= 0xD8)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1285
-- method `if(!intoStack0 && op >= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1298
-- method `Arithmetic(op, this.St(0), this.St(index))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1301
-- method `if(intoStack0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1303
-- method `if(opcode == 0xDE)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1307
-- method `Cpu8086Exception($"unimplemented x87 {opcode:X2} {modrm:X2} at {this._cs:X4}:{start:X…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1312
-- method `if(ai == bi)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1424
-- method `if(comparison < 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1432
-- method `if(comparison == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1434
-- method `if(this.Condition(opcode - 0x80))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1511
-- method `if(count == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1534
-- method `Cpu8086Exception($"unimplemented 0F {opcode:X2} at {this._cs:X4}:{this._ip - 2:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1548
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1707
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1721
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1734
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1747
-- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1766
-- method `if(compares && this._zf != (repeat == 2))` — this._r[_CX]; — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1845
-- method `if(this.Reg8(4) is 0x01 or 0x11)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1874
-- method `Cpu8086Exception( $"INT 16h AH={this.Reg8(4):X2}h would block: nothing has typed anyt…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1878
-- method `if(subfunction != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1986
-- method `Cpu8086Exception($"unhandled DOS EXEC AL={subfunction:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1987
-- method `if(!this._executables.TryGetValue(name, out var image))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1989
-- method `Cpu8086Exception($"unavailable EXEC target {name}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1990
-- method `if(handle is 1 or 2)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2002
-- method `for(var i = 0; i < count; ++i)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2003
-- method `if(handle == 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2007
-- method `if(this._files.TryGetValue(handle, out var open))` — A write lands AT the file position and advances it - it does not append. Appending is what — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2015
-- method `while(bytes.Count < open.Position)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2017
-- method `if(count == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2019
-- method `for(var i = 0; i < count; ++i, ++open.Position)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2022
-- method `if(open.Position < bytes.Count)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2024
-- method `if(name.Contains('\\') || name.Contains('/'))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2037
-- method `if(!this._byName.TryGetValue(name, out var file))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2042
-- method `if(!this._byName.TryGetValue(name, out var file))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2052
-- method `if(!this._byName.Remove(from, out var file) || this._byName.ContainsKey…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2093
-- method `if(!removed)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2108
-- method `if(subfunction != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2114
-- method `Cpu8086Exception($"unhandled DOS IOCTL AL={subfunction:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2115
-- method `if(handle <= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2117
-- method `foreach(var c in "PBC")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2186
-- method `if(DosWildcardMatch(dosName, mask))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2217
-- method `if(this._videoMode == 0x13)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2308
-- method `for(var column = 0; column < _SCREEN_COLUMNS; ++column)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2386
-- method `while(this._cursorColumn % 8 != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2418
-- class `Cpu8086Exception` — Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runa… — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2488
+- class `Cpu8086` — A real-mode 8086 interpreter, enough of one to run the executables this compiler emits. — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:24
+- class `MemoryFile` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:58
+- class `OpenFile` — One DOS handle onto a file. The POSITION belongs to the handle rather than to the file, which is — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:69
+- record `EmsMapping` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:73
+- record `FindEntry` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:75
+- method `Cpu8086Exception($"EXEC nesting exceeded {_MAX_EXEC_DEPTH} images")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:283
+- method `if(mode == 2)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:391
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:591
+- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:595
+- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:602
+- method `if((opcode & 1) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:611
+- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:613
+- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:617
+- method `if(this.Condition(opcode - 0x70))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:660
+- method `if(opcode == 0x80)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:667
+- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:669
+- method `if(op != 7)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:674
+- method `if(mode == 3)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:693
+- method `Cpu8086Exception("LEA with a register operand")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:694
+- method `if(opcode == 0xC0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:742
+- method `if((opcode & 1) == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:759
+- method `if(taken)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:773
+- method `Cpu8086Exception( $"unimplemented opcode {opcode:X2} at {this._cs:X4}:{this._ip - 1:X…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:817
+- method `if(toRegister)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:844
+- method `unchecked((uint)(int)(sbyte)this.Fetch())` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:854
+- method `Cpu8086Exception($"unimplemented dword C7 operation /{operation}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:864
+- method `Cpu8086Exception($"unimplemented opcode 66 0F {opcode:X2}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:951
+- method `Cpu8086Exception("only register dword SHLD/SHRD is supported")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:955
+- method `if(operand == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1008
+- method `if(quotient > uint.MaxValue)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1012
+- method `if(divisor == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1020
+- method `if(dividend == long.MinValue && divisor == -1)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1023
+- method `if(quotient is < int.MinValue or > int.MaxValue)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1026
+- record `X87Value` — One x87 value. The optional extended representation is populated by exact-mode calculations — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1041
+- method `Exact` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1050
+- method `Floating` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1052
+- method `Floating` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1054
+- method `Extended` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1056
+- method `Abs` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1058
+- method `Negate` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1064
+- method `if(this._exactFloatingPoint)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1153
+- method `Cpu8086Exception($"unimplemented x87 {opcode:X2} /{reg} at {this._cs:X4}:{start:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1176
+- method `if((bits & 1) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1253
+- method `if((bits & 2) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1255
+- method `if((bits & 4) != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1257
+- method `if(modrm >= 0xD8)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1288
+- method `if(!intoStack0 && op >= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1301
+- method `Arithmetic(op, this.St(0), this.St(index))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1304
+- method `if(intoStack0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1306
+- method `if(opcode == 0xDE)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1310
+- method `Cpu8086Exception($"unimplemented x87 {opcode:X2} {modrm:X2} at {this._cs:X4}:{start:X…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1315
+- method `if(ai == bi)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1427
+- method `if(comparison < 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1435
+- method `if(comparison == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1437
+- method `if(this.Condition(opcode - 0x80))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1514
+- method `if(count == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1537
+- method `Cpu8086Exception($"unimplemented 0F {opcode:X2} at {this._cs:X4}:{this._ip - 2:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1551
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1710
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1724
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1737
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1750
+- method `if(wide)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1769
+- method `if(compares && this._zf != (repeat == 2))` — this._r[_CX]; — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1848
+- method `if(this.Reg8(4) is 0x01 or 0x11)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1877
+- method `Cpu8086Exception( $"INT 16h AH={this.Reg8(4):X2}h would block: nothing has typed anyt…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1881
+- method `if(subfunction != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1989
+- method `Cpu8086Exception($"unhandled DOS EXEC AL={subfunction:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1990
+- method `if(!this._executables.TryGetValue(name, out var image))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1992
+- method `Cpu8086Exception($"unavailable EXEC target {name}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:1993
+- method `if(handle is 1 or 2)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2005
+- method `for(var i = 0; i < count; ++i)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2006
+- method `if(handle == 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2010
+- method `if(this._files.TryGetValue(handle, out var open))` — A write lands AT the file position and advances it - it does not append. Appending is what — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2018
+- method `while(bytes.Count < open.Position)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2020
+- method `if(count == 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2022
+- method `for(var i = 0; i < count; ++i, ++open.Position)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2025
+- method `if(open.Position < bytes.Count)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2027
+- method `if(name.Contains('\\') || name.Contains('/'))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2040
+- method `if(!this._byName.TryGetValue(name, out var file))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2045
+- method `if(!this._byName.TryGetValue(name, out var file))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2055
+- method `if(!this._byName.Remove(from, out var file) || this._byName.ContainsKey…` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2096
+- method `if(!removed)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2111
+- method `if(subfunction != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2117
+- method `Cpu8086Exception($"unhandled DOS IOCTL AL={subfunction:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2118
+- method `if(handle <= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2120
+- method `foreach(var c in "PBC")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2189
+- method `if(DosWildcardMatch(dosName, mask))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2220
+- method `if(this._videoMode == 0x13)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2311
+- method `for(var column = 0; column < _SCREEN_COLUMNS; ++column)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2389
+- method `while(this._cursorColumn % 8 != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2421
+- class `Cpu8086Exception` — Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runa… — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2491
+
+### Cpu8086X87PrecisionTests.cs  `C#, 99 lines`
+- namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086X87PrecisionTests.cs:3
+- class `Cpu8086X87PrecisionTests` — PowerBasic.Compiler.Tests/Exec/Cpu8086X87PrecisionTests.cs:5
 
 ### DosImageCode.cs  `C#, 20 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/DosImageCode.cs:1
@@ -9487,7 +9497,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `SoftwareX87Backend` — 8086 software implementation of the x87 architectural stack. Values are stored in their native — PowerBasic.Compiler/Runtime/SoftwareX87Backend.cs:11
 - method `if(st.Register.Index is < 0 or > 7)` — PowerBasic.Compiler/Runtime/SoftwareX87Backend.cs:154
 
-### SoftwareX87Engine.Arithmetic.AddSub.cs  `C#, 164 lines`
+### SoftwareX87Engine.Arithmetic.AddSub.cs  `C#, 167 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Arithmetic.AddSub.cs:2
 - class `SoftwareX87Engine` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Arithmetic.AddSub.cs:4
 
@@ -9499,11 +9509,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(operands.Count == 2 && operands[0] is TextAssembler.ParsedAsmSt d &&…` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Arithmetic.Dispatch.cs:59
 - method `Fail` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Arithmetic.Dispatch.cs:71
 
-### SoftwareX87Engine.Arithmetic.Helpers.cs  `C#, 378 lines`
+### SoftwareX87Engine.Arithmetic.Helpers.cs  `C#, 380 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Arithmetic.Helpers.cs:2
 - class `SoftwareX87Engine` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Arithmetic.Helpers.cs:4
 
-### SoftwareX87Engine.Arithmetic.MulDiv.cs  `C#, 215 lines`
+### SoftwareX87Engine.Arithmetic.MulDiv.cs  `C#, 218 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Arithmetic.MulDiv.cs:2
 - class `SoftwareX87Engine` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Arithmetic.MulDiv.cs:4
 
@@ -9512,7 +9522,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `SoftwareX87Engine` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Compare.cs:4
 - method `Fail($"{mnemonic} expects word/dword integer memory", out error)` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Compare.cs:14
 
-### SoftwareX87Engine.Conversions.cs  `C#, 636 lines`
+### SoftwareX87Engine.Conversions.cs  `C#, 638 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Conversions.cs:2
 - class `SoftwareX87Engine` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Conversions.cs:4
 
@@ -9520,7 +9530,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Exceptions.cs:2
 - class `SoftwareX87Engine` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Exceptions.cs:4
 
-### SoftwareX87Engine.MathHelpers.cs  `C#, 100 lines`
+### SoftwareX87Engine.MathHelpers.cs  `C#, 106 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.MathHelpers.cs:3
 - class `SoftwareX87Engine` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.MathHelpers.cs:5
 
@@ -9532,10 +9542,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Fail("FILD expects integer memory", out error)` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Stack.cs:104
 - method `Fail("FIST/FISTP expects integer memory", out error)` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Stack.cs:116
 
-### SoftwareX87Engine.Transcendental.Core.cs  `C#, 307 lines`
+### SoftwareX87Engine.Transcendental.Core.cs  `C#, 308 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Transcendental.Core.cs:2
 - class `SoftwareX87Engine` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Transcendental.Core.cs:4
-- enum `TrigResult` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Transcendental.Core.cs:36
+- enum `TrigResult` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Transcendental.Core.cs:37
 
 ### SoftwareX87Engine.Transcendental.ExpLog.cs  `C#, 137 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/SoftwareX87Engine.Transcendental.ExpLog.cs:2
