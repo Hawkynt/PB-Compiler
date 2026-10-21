@@ -6577,8 +6577,11 @@ public sealed partial class IrLowering {
     var argPb = this._model.TypeOf(call.Arguments[0]);
     var resultTy = MapType(this._model.TypeOf(call));   // INTEGER (-1/0/1)
     var v = this.LowerExpr(call.Arguments[0]);
+    if (argPb is MbfType)
+      v = this.Coerce(v, argPb, PbType.Ext);
     IrValue pos, neg;
-    if (argPb is ScalarType { IsFloat: true }) {
+    // Compare the decoded arithmetic value, not MBF's storage format or source classification.
+    if (v.Type.IsFloat) {
       pos = this._b.Cmp(IrCmpPred.Fogt, v, new IrConstantFloat(v.Type, 0.0));
       neg = this._b.Cmp(IrCmpPred.Folt, v, new IrConstantFloat(v.Type, 0.0));
     } else {

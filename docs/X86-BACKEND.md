@@ -1178,6 +1178,13 @@ The BASIC round-trip of `MBFABS.BAS` still diverges: `$COMPAT gw` does not give 
 storage, and the source writer loses extra DOUBLE literal digits. Native DOS execution matches the
 captured 210-byte file under DOSBox Staging; that does not establish back-emitter compatibility.
 
+`SGN` explicitly converts MBF storage to EXT before choosing comparisons from the lowered arithmetic
+type. Without that conversion, integer predicates from the non-ScalarType storage descriptor produced
+invalid MIR and a mandatory routing decline; floating predicates alone still reject encoded MBF.
+`BackendMbfSignTests` compares the complete genuine GW-BASIC 3.23 output for negative, zero
+and positive SINGLE/DOUBLE cells, expressions and literals, with optimization off/on in GW/BASICA.
+`tests/diff/gw/MBFSGN.BAS` adds that sign battery to the configured differential and routing census.
+
 ### IEEE real procedure calls - declared width on the stack, x87 width between operations
 
 The procedure bridge now admits BYVAL `SINGLE`/`DOUBLE` parameters and functions returning those

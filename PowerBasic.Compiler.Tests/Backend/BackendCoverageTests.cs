@@ -744,6 +744,7 @@ public sealed class BackendCoverageTests {
     "MBF32MIN.BAS", // MBF32 values below IEEE's normal range still route through Low IR
     "MBF32OVR.BAS", // GW-BASIC SINGLE assignment overflow reaches verified Low IR
     "MBFABS.BAS",   // absolute value preserves interpreter MBF range and precision
+    "MBFSGN.BAS",   // sign compares decoded MBF operands in their floating arithmetic domain
     "HIBYTE.BAS",   // string literals keep their bytes above 127
     "INCRLV.BAS",   // INCR / DECR of an array element, a record field and a float
     "INSTRC.BAS",   // INSTR of compile-time needles, short and Horspool
@@ -963,6 +964,7 @@ public sealed class BackendCoverageTests {
     "MBF32MIN.BAS",
     "MBF32OVR.BAS",
     "MBFABS.BAS",
+    "MBFSGN.BAS",
     "HIBYTE.BAS",
     "INCRLV.BAS",
     "INSTRC.BAS",
