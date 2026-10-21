@@ -2134,6 +2134,8 @@ public sealed partial class IrLowering {
   }
 
   private void LowerAssign(AssignStmt a) {
+    if (this.TryLowerMbfStorageCopy(a))
+      return;
     // p = VARPTR32(x) / p = q: a pointer variable takes a pointer, never a number. The value is
     // lowered as an ADDRESS rather than coerced, because there is no conversion between the two.
     if (a.Target is NameExpr && this._model.VariableBindings.TryGetValue(a.Target, out var ptrSym) && ptrSym.Type is PointerType) {
