@@ -1119,6 +1119,12 @@ models, is now the largest single thing between this back end and the corpus.
 
 ### x87 — the values that do not live in registers
 
+The shared 8087 sine/cosine/tangent routine loads π/2 and π/4 as raw 80-bit constants, using the
+same significand as the integer-only software-x87 engine. Binary64 constants discard significant
+bits before the reduction and are insufficient for MBF64 and EXT results. This fixes a native
+DOSBox Staging MBF64 sine comparison against QuickBASIC 1–3; it does not establish every dialect's
+software transcendental algorithm or make DOSBox 0.74's binary64 FPU an extended-precision oracle.
+
 Floating point was the largest single blocker (38 of 70 declines), and it does not fit the machine
 model at all: x87 computes on a **stack**, not in a register file the linear-scan allocator can hand
 out. The answer is not to make it fit. Every float SSA value lives in a **frame cell**, and each
