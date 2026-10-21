@@ -109,6 +109,7 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("ifconv", (fn, _) => Conservative(() => IfConversion.Run(fn)))
     .AddAnalyzed("simplifycfg", (fn, _) => Conservative(() => SimplifyCfg.Run(fn)))
     .AddAnalyzed("tailrec", (fn, _) => Conservative(() => TailRecursion.Run(fn)))
+    .AddAnalyzed("console-setters", ConsoleSetterCoalescing.Run)
     .AddAnalyzed("switchform", (fn, _) => Conservative(() => SwitchFormation.Run(fn)))
     .InModulePhase(IrMiddleEndPhase.Interprocedural)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)

@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-21 04:20 UTC by index_codebase.py.
+Generated 2026-10-21 10:06 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1064 files, 8767 symbols.
+1066 files, 8772 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -2793,6 +2793,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 ### DemandedBitsTests.cs  `C#, 86 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DemandedBitsTests.cs:3
 - class `DemandedBitsTests` — PowerBasic.Compiler.Tests/Ir/DemandedBitsTests.cs:5
+
+### DisplayStateEliminationTests.cs  `C#, 85 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DisplayStateEliminationTests.cs:7
+- class `DisplayStateEliminationTests` — PowerBasic.Compiler.Tests/Ir/DisplayStateEliminationTests.cs:9
 
 ### DynamicArrayLoweringTests.cs  `C#, 174 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DynamicArrayLoweringTests.cs:6
@@ -7630,6 +7634,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(instruction is IrIndirectBr jump)` — PowerBasic.Compiler/Ir/Passes/ComputedJumpOrdinals.cs:36
 - method `ReplaceJump(function, block, jump, OrdinalOf)` — PowerBasic.Compiler/Ir/Passes/ComputedJumpOrdinals.cs:37
 
+### ConsoleSetterCoalescing.cs  `C#, 67 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ConsoleSetterCoalescing.cs:2
+- class `ConsoleSetterCoalescing` — Removes overwritten cursor positions and full-screen clears without crossing an observer or a trap. — PowerBasic.Compiler/Ir/Passes/ConsoleSetterCoalescing.cs:6
+- method `if(locate is not null && Covers(position, locate))` — PowerBasic.Compiler/Ir/Passes/ConsoleSetterCoalescing.cs:36
+
 ### ConstantDataMerging.cs  `C#, 204 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:1
 - class `ConstantDataMerging` — O0285 — merges identical, contained, and prefix/suffix-overlapping read-only byte blobs. — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:21
@@ -8288,16 +8297,16 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrLowIrLegalization.cs:1
 - class `IrLowIrLegalization` — Establishes the first target-independent Low IR boundary. The initial implementation is — PowerBasic.Compiler/Ir/Passes/IrLowIrLegalization.cs:8
 
-### IrMiddleEndPipeline.cs  `C#, 310 lines`
+### IrMiddleEndPipeline.cs  `C#, 311 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:2
 - class `IrMiddleEndPipeline` — The sole owner of production IR middle-end policy. is the execution — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:10
-- method `foreach(var function in module.Functions.ToList())` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:194
-- method `if(!function.IsDeclaration && AddressInduction.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:202
-- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:206
-- method `if(!function.IsDeclaration && SwitchFormation.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:215
-- method `Standard(optimizeForSpeed: optimizeForSpeed, enableFpLookupTables: enableFpLo…` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:253
-- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:259
-- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:280
+- method `foreach(var function in module.Functions.ToList())` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:195
+- method `if(!function.IsDeclaration && AddressInduction.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:203
+- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:207
+- method `if(!function.IsDeclaration && SwitchFormation.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:216
+- method `Standard(optimizeForSpeed: optimizeForSpeed, enableFpLookupTables: enableFpLo…` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:254
+- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:260
+- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:281
 
 ### IrModulePassPipeline.cs  `C#, 62 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrModulePassPipeline.cs:2
