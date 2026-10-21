@@ -2,24 +2,31 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — exact dedup and containment are implemented; prefix/suffix overlap is not implemented on the IR path |
-| **Stage** | String-literal pool layout (image data) |
-| **Source** | `CodeGen/CodeGenerator.cs` — `EmitStringLiterals` |
+| **Status** | 🟡 Partial — exact dedup and proven containment; partial prefix/suffix overlap remains open |
+| **Stage** | Final shared IR literal layout, after string folding |
+| **Source** | `Ir/Passes/LiteralPooling.cs`, owned by `IrMiddleEndPipeline` |
 | **Gate** | `--optimize` |
 | **Related** | [O0009](O0009-string-temp-economy.md), [P0006](P0006-header-squeeze.md) |
 
 ## What it is
 
-String literals are stored once in a pool and addressed by offset + length.
-Beyond exact deduplication, `EmitStringLiterals` lays the pool out longest first
-and, when optimizing, gives a literal whose bytes occur inside an already placed
-one no bytes of its own: its label marks the place inside the longer literal.
+Identical string literals are interned during lowering, even without optimization.
+The optimized middle end additionally visits eligible literals longest first and
+replaces contained globals with a host pointer plus a byte offset. Explicit lengths
+remain unchanged, including when the smaller literal starts at offset zero.
 `"World!"` is a slice of `"Hello, World!"`, and so is `"lo, W"`. Unoptimized,
-each literal keeps its own bytes, as the vintage compilers lay them out.
+distinct literals retain separate byte arrays.
+
+Both production pipeline runners apply this final transform, so C and LLVM receive
+the same shared bytes as native targets. The BASIC writer reconstructs the exact
+slice using its offset and length. The x86-16 selector accepts constant byte offsets
+for literal-address runtime arguments. This is an IR optimization, not a request
+for the host C compiler to merge arrays. Native image layout still packs literals
+created outside the IR, such as runtime-owned strings.
 
 Literals that merely overlap — the suffix of one being the prefix of another —
-are not merged. Not implemented on the IR path; the syntax-level version was
-retired with the direct emitter.
+are not merged by this pass. General constant-data merging (O0285) remains separate
+and deliberately excludes string globals.
 
 Because every use site supplies its own length, any slice of the pool is a valid
 literal address — no terminator is needed and no copy is made.
@@ -78,7 +85,21 @@ PRINT MID$(base$, 4, 5)
 
 ## Why it is safe
 
-Sound only while the pool stays **read-only**. Every consumer of a literal
-copies its bytes by address and length and never writes the pool, so two
-labels into one run of bytes cannot be told apart from two separate runs. The
-layout reads nothing but the pool itself.
+Both host and contained globals must have only proven read-only uses: declaration
+calls to `rt_print_str`, `rt_fprint_str`, `rt_str_const`, or `rt_str_append_lit`,
+with an explicit constant length within the original byte vector. Those routines
+read or copy the supplied bytes; they do not expose the source address. A defined
+function with the same name is not assumed to satisfy that contract.
+
+Stores, pointer comparisons, unknown calls, dynamic or invalid lengths, other
+pointer uses, and empty payloads are not pooled. Opaque inline assembly disables
+the transform for the module. Bytes are compared directly, including embedded NULs
+and high-bit bytes; no encoding conversion or terminator is involved. More general
+read-only/escape proofs, including calls to defined portable-runtime bodies, remain
+outside this conservative slice.
+
+`LiteralPoolingTests` checks production routing for every target, native COM/MZ
+execution, BASIC round-tripping, bounded consumer slices, binary bytes, unsafe uses,
+idempotence, and re-interning after removal. `CBackendTests` builds and executes the
+generated C: `"Hallo"` and `"World"` share `"Hallo World"`, leaving 15 rather than
+25 stored bytes when `"Test"` is also printed.
