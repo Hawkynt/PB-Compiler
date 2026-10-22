@@ -479,6 +479,10 @@ public static class DialectFacts {
   public static bool IsGwBasica(this Dialect dialect)
     => dialect is Dialect.Basica or Dialect.Gw;
 
+  /// <summary>The MBF storage used by the interpreters and default QuickBASIC compilers before 4.0.</summary>
+  public static bool HasMbfStorage(this Dialect dialect)
+    => dialect is Dialect.Basica or Dialect.Gw or Dialect.Qb10 or Dialect.Qb20 or Dialect.Qb30;
+
   /// <summary>Turbo Basic 1.x - Borland's PB predecessor (16-digit double-everything runtime).</summary>
   public static bool IsTurboBasic(this Dialect dialect) => dialect <= Dialect.Tb11;
 

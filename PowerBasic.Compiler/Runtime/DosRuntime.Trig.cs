@@ -88,7 +88,7 @@ public sealed partial class DosRuntime {
     asm.MarkLabel(abs);
 
     // r = |x| mod pi/2, with the quadrant left in the status word
-    asm.Fld(Mem.Qword(asm.Lbl("rt_const_pi2_m64")));
+    asm.Fld(Mem.Tbyte(asm.Lbl("rt_const_pi2_m80")));
     asm.Fxch();                                    // ST0 = |x|, ST1 = pi/2
     asm.MarkLabel(prem);
     asm.Fprem();
@@ -108,12 +108,12 @@ public sealed partial class DosRuntime {
     asm.Fstp(St.St1);                              // drop pi/2, keep r
 
     // fold r > pi/4 to pi/2 - r and swap the two functions
-    asm.Fld(Mem.Qword(asm.Lbl("rt_const_pi4_m64")));
+    asm.Fld(Mem.Tbyte(asm.Lbl("rt_const_pi4_m80")));
     asm.Fcomp();                                   // compare pi/4 with r, pop
     asm.FstswAx();
     asm.Sahf();
     asm.Jnc(noFold);                               // pi/4 >= r: already in range
-    asm.Fld(Mem.Qword(asm.Lbl("rt_const_pi2_m64")));
+    asm.Fld(Mem.Tbyte(asm.Lbl("rt_const_pi2_m80")));
     asm.Fsubrp();                                  // ST0 = pi/2 - r
     asm.Xor(Reg.BL, (Imm)1);
     asm.MarkLabel(noFold);

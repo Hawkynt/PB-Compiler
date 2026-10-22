@@ -70,6 +70,11 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - Reads unmodified DOS-era BASIC and emits DOS MZ `.EXE`, flat `.COM`, compiled units (`.PBU`/`.PBL`) and Intel OMF `.OBJ`/`.LIB`
 - Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
+- Default QuickBASIC 1–3 uses MBF32/MBF64 storage, including numeric string codecs, near static arrays,
+  BYREF calls, input/DATA, local function results and floating FOR counters; precision rules remain
+  distinct from GW/BASICA, and captured original-compiler files test the observable bytes
+- IR-to-BASIC rendering preserves finite EXT constants beyond binary64, including exponent boundaries
+  and signed zero; raw-byte round-trips cover optimized and unoptimized recompilation
 - `ABS(EXT)` preserves the full x87 significand and exponent, including signed zero and subnormal values;
   GW/BASICA `ABS` also retains MBF range and precision for stored values, literals and expressions;
   `SGN` compares decoded MBF values as floating-point operands rather than rejecting their storage type
@@ -99,7 +104,7 @@ the Microsoft lineage (QuickBASIC → BASIC PDS).
 | **PowerBASIC 3.5** | **`pb35`** | Borland, 1997 | **The reference dialect (default).** ASCIIZ, `&` concat, VIRTUAL arrays, `REDIM PRESERVE`, indexed pointers, STDIN/STDOUT, `TRIM$`, `SIZEOF`, and more. Output verified against PBC.EXE 3.50. |
 | **PowerBASIC 3.6** | **`pb36`** | Hawkynt | **The language-features superset.** A strict superset of `pb35`: every `pb35` program compiles unchanged and behaves identically, plus opt-in modern syntax. |
 | BASICA / GW-BASIC | `basica` `gw` | Microsoft (interpreters) | The classic line-numbered interpreters. Scalar and near static-array SINGLE/DOUBLE cells use genuine 4/8-byte Microsoft Binary Format (MBF), with x87 conversion on load/store in the DOS backend; MBF32 loads and stores preserve representable values below IEEE single's normal range, and stores raise Error 6 on overflow. Tiny SINGLE literals keep their 24-bit source precision when widened. Same-width assignments and SINGLE-to-DOUBLE copies preserve raw zero-exponent payloads. MBF64 decimal DOUBLE literals retain their source digits through staged conversion. SINGLE literals and DOUBLE-to-SINGLE conversion round ties away from zero; arithmetic rounds ties to even at explicit MBF boundaries. `CSNG` preserves MBF's exponent range and `CDBL` preserves MBF64 precision. Precision regressions use an exact x87 emulator because DOSBox 0.74 narrows FPU intermediates. Dynamic/far-array and procedure-ABI MBF coverage remains on the roadmap. |
-| QuickBASIC 1.0–4.5 | `qb10` `qb20` `qb30` `qb40` `qb45` | Microsoft | QB display model (D exponents), BASCOM runtime heritage (^Z, half-away rounding) through 3.0. Output verified against the genuine BASCOM/BC/QB toolchains. |
+| QuickBASIC 1.0–4.5 | `qb10` `qb20` `qb30` `qb40` `qb45` | Microsoft | Default 1–3 uses MBF storage and preserves 56-bit DOUBLE math operands; 4.x uses IEEE. QB display model (D exponents), BASCOM runtime heritage (^Z, half-away integer rounding) through 3.0. Captured BASCOM/QB outputs distinguish early-QB nearest/even SINGLE conversion from GW/BASICA's away-from-zero ties. Foreign/BYVAL MBF ABIs and complete software-math equivalence remain open. |
 | QBasic | `qbasic` | Microsoft (interpreter) | The MS-DOS 5.0+ interpreter — the QuickBASIC 4.5 language (IEEE floats) minus the compiler. Compiles via the QB 4.5 front end; oracle-verified by interpreter output diff (in progress). |
 | BASIC PDS 7.0 / 7.1 | `pds70` `pds71` | Microsoft | "QB Extended"; 15-digit DOUBLE display. Output verified against BC.EXE 7.0/7.1. |
 

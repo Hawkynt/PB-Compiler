@@ -347,6 +347,8 @@ public sealed partial class IrLowering {
       // the function - see IrFunction.ReturnsClosure.
       else if (proc.ReturnType is ProcPtrType)
         (ret, returnsClosure) = (IrType.Ptr, true);
+      else if (proc.ReturnType is MbfType && !proc.IsExternal)
+        ret = IrType.F80;                              // local numeric channel; storage stays encoded
       else if (proc.ReturnType is BcdType { IsFixedPoint: true })
         // A FIX cell is a scaled i64, but a FIX RESULT is not: the direct emitter's epilogue loads the
         // cell with FILD and calls rt_fixdn, so what crosses the boundary is the NUMERIC value in
@@ -395,7 +397,7 @@ public sealed partial class IrLowering {
         args.Add(new IrArgument(IrType.I16, args.Count, p.Name + ".codeoff"));
         continue;
       }
-      if (!IrTypeMapper.TryMap(p.Type, out var pty) || pty.IsMbf)
+      if (!IrTypeMapper.TryMap(p.Type, out var pty) || p.ByVal && pty.IsMbf)
         return false;                                  // scalar parameters only
       args.Add(new IrArgument(p.ByVal ? pty : IrType.Ptr, args.Count, p.Name));  // BYREF parameters arrive as pointers
     }
@@ -706,8 +708,8 @@ public sealed partial class IrLowering {
       this.SlotFor(this._resultVar));
     // The FIX result channel is the numeric value, not the scaled cell - see TrySignature. Coerce does
     // exactly the epilogue's FILD + rt_fixdn, because that is the same conversion spelled once.
-    this._b.Ret(this._resultVar.Type is BcdType { IsFixedPoint: true } fix
-      ? this.Coerce(cell, fix, PbType.Ext)
+    this._b.Ret(this._resultVar.Type is MbfType or BcdType { IsFixedPoint: true }
+      ? this.Coerce(cell, this._resultVar.Type, PbType.Ext)
       : cell);
   }
 
@@ -2464,7 +2466,8 @@ public sealed partial class IrLowering {
   /// wrong one wastes the next pass. Two guesses were already spent that way.
   /// </param>
   private (IrValue Address, PbType Type) LValue(Expression e, string what = "an lvalue") {
-    if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var sym) && sym.Type is ScalarType)
+    if (e is NameExpr && this._model.VariableBindings.TryGetValue(e, out var sym)
+        && sym.Type is ScalarType or MbfType)
       return (this.SlotFor(sym), sym.Type);
     if (e is CallOrIndexExpr ci && this._model.VariableBindings.TryGetValue(ci, out var arr) && arr.Type is ArrayType)
       return this.ElementAddress(ci);
@@ -2485,12 +2488,12 @@ public sealed partial class IrLowering {
   /// <summary>The storage address and field type of a UDT member (or a flat QB-style dotted variable).</summary>
   private (IrValue Address, PbType Type) MemberLValue(MemberExpr m) {
     if (this._model.VariableBindings.TryGetValue(m, out var flat)) {       // Max.X where Max is not a UDT: one flat scalar variable
-      if (flat.Type is not ScalarType)
+      if (flat.Type is not (ScalarType or MbfType))
         throw new IrLoweringException("non-scalar dotted variable");
       return (this.SlotFor(flat), flat.Type);
     }
     var (address, field) = this.MemberFieldAddress(m);
-    if (field.Type is not ScalarType || field.ElementCount != 1)
+    if (field.Type is not (ScalarType or MbfType) || field.ElementCount != 1)
       throw new IrLoweringException("non-scalar UDT field");
     return (address, field.Type);
   }
@@ -3171,9 +3174,7 @@ public sealed partial class IrLowering {
       this.EmitIo(file, "print", "str", IrType.Void, [IrType.Ptr, IrType.I32], space, new IrConstantInt(IrType.I32, 1));
       return;
     }
-    if (printed is MbfType mbf)
-      printed = IeeeFormOf(mbf);
-    printed = Valued(printed);
+    printed = GetDisplayType(printed);
     if (printed is not ScalarType s)
       throw new IrLoweringException("PRINT of a non-numeric, non-literal item");
     // A float is handed to the formatter at the x87's own width whatever its declared type, and the
@@ -3219,10 +3220,10 @@ public sealed partial class IrLowering {
         continue;
       }
       var (addr, type) = this.LValue(target, "INPUT");
-      if (type is not ScalarType s)
+      if (Valued(type) is not ScalarType s)
         throw new IrLoweringException("INPUT into a non-scalar target");
       var (suffix, ty) = NumericSuffix(s);
-      this._b.Store(this.EmitIo(file, "input", suffix, ty, []), addr);
+      this._b.Store(this.Coerce(this.EmitIo(file, "input", suffix, ty, []), s, type), addr);
     }
   }
 
@@ -4890,7 +4891,7 @@ public sealed partial class IrLowering {
   private void LowerFor(HirForStatement f) {
     var symbol = this.SymbolOf(f.Variable);
     var ty = MapType(symbol.Type);
-    if (ty.IsIeeeFloat) {
+    if (ty.IsFloat) {
       this.LowerFloatFor(f, symbol, ty);
       return;
     }
@@ -4971,6 +4972,9 @@ public sealed partial class IrLowering {
   /// forever, which is what comparing on the x87 does.
   /// </summary>
   private void LowerFloatFor(HirForStatement f, VariableSymbol symbol, IrType ty) {
+    var arithmeticPb = ty.IsMbf ? PbType.Ext : symbol.Type;
+    var arithmeticType = MapType(arithmeticPb);
+    IrValue LoadValue(IrValue address) => this.Coerce(this._b.Load(ty, address), symbol.Type, arithmeticPb);
     var slot = this.SlotFor(symbol);
     var limitSlot = this._entry.InsertAt(this._entryAllocaCount++, new IrAlloca(ty) { Name = symbol.Name + ".limit" });
 
@@ -4982,12 +4986,12 @@ public sealed partial class IrLowering {
     double? constStep = f.Step is null
       ? 1
       : this._folder.TryFold(f.Step) is { IsNumeric: true } folded ? folded.AsFloat : null;
+    if (ty.IsMbf)
+      constStep = null; // STEP's direction follows its rounded value, including underflow to zero.
     // The value still goes through ordinary expression lowering even when only its sign is needed at
     // run time. In particular, an unsuffixed 0.3 is a SINGLE literal before it widens to a DOUBLE
     // counter; constructing a raw f64 constant from ConstantFolder's host double loses that boundary.
-    var stepValue = f.Step is null
-      ? (IrValue)new IrConstantFloat(ty, 1)
-      : this.Coerce(this.LowerExpr(f.Step), this._model.TypeOf(f.Step), symbol.Type);
+    var stepValue = this.LowerFloatForStep(f, symbol);
 
     var header = this.NewBlock("for.head");
     var body = this.NewBlock("for.body");
@@ -4996,13 +5000,13 @@ public sealed partial class IrLowering {
     this._b.Br(header);
 
     this._b.Position(header);
-    var i = this._b.Load(ty, slot);
-    var limit = this._b.Load(ty, limitSlot);
+    var i = LoadValue(slot);
+    var limit = LoadValue(limitSlot);
     IrValue cond;
     if (constStep is { } cs and not 0) {
       cond = this._b.Cmp(cs > 0 ? IrCmpPred.Fole : IrCmpPred.Foge, i, limit);
     } else {
-      var ascending = this._b.Cmp(IrCmpPred.Foge, stepValue!, new IrConstantFloat(ty, 0));
+      var ascending = this._b.Cmp(IrCmpPred.Foge, stepValue!, new IrConstantFloat(arithmeticType, 0));
       var inAsc = this._b.And(ascending, this._b.Cmp(IrCmpPred.Fole, i, limit));
       var notAsc = this._b.Xor(ascending, new IrConstantInt(IrType.I1, 1));
       var inDesc = this._b.And(notAsc, this._b.Cmp(IrCmpPred.Foge, i, limit));
@@ -5018,8 +5022,8 @@ public sealed partial class IrLowering {
       this._b.Br(inc);
 
     this._b.Position(inc);
-    var iv = this._b.Load(ty, slot);
-    this._b.Store(this._b.Binary(IrBinaryOp.FAdd, iv, stepValue), slot);
+    var iv = LoadValue(slot);
+    this._b.Store(this.Coerce(this._b.Binary(IrBinaryOp.FAdd, iv, stepValue), arithmeticPb, symbol.Type), slot);
     this._b.Br(header);
 
     this._b.Position(exit);
@@ -5273,7 +5277,9 @@ public sealed partial class IrLowering {
 
   private IrValue LowerCondition(Expression expr) {
     var value = this.LowerExpr(expr);
-    var comparison = this._model.TypeOf(expr) is ScalarType { IsFloat: true }
+    if (this._model.TypeOf(expr) is MbfType mbf)
+      value = this.Coerce(value, mbf, PbType.Ext);
+    var comparison = value.Type.IsFloat
       ? this._b.Cmp(IrCmpPred.Fone, value, new IrConstantFloat(value.Type, 0.0))
       : this._b.Cmp(IrCmpPred.Ne, value, new IrConstantInt(value.Type, 0));
     comparison.IsSourceCondition = true;
@@ -5315,14 +5321,14 @@ public sealed partial class IrLowering {
         return new IrConstantInt(MapType(this._model.TypeOf(lit)), lit.Value);
       case FloatLiteralExpr lit: {
         var type = this._model.TypeOf(lit);
-        if (this._model.Dialect.IsGwBasica()
+        if (this._model.EffectiveDialect.HasMbfStorage()
             && type is ScalarType { Kind: ScalarKind.Single or ScalarKind.Double } scalar
             && lit.SourceText is { } sourceText
             && Mbf64.TryParseDecimalLiteral(sourceText, out var mbf)) {
           var bytes = mbf.ToExtended80().ToBytes();
           var literal = IrConstantFloat.FromFloat80Bits(BitConverter.ToUInt16(bytes, 8), BitConverter.ToUInt64(bytes));
           return scalar.Kind == ScalarKind.Double ? literal
-            : this.RoundInterpreterFloat(this.NarrowInterpreterSingle(literal, PbType.Double), scalar);
+            : this.RoundMbfSingleConversion(literal, PbType.Double);
         }
         // The parser carries every decimal in a host double, but an unsuffixed PB literal is a
         // SINGLE. Quantize at the source boundary before a later FPExt can make the wider container
@@ -6056,6 +6062,8 @@ public sealed partial class IrLowering {
         source,
         this.Coerce(this.LowerExpr(call.Arguments[1]), this._model.TypeOf(call.Arguments[1]), PbType.Long),
         new IrConstantInt(IrType.I32, size));
+    if (this._model.EffectiveDialect.HasMbfStorage() && fn is "rt_str_cvs" or "rt_str_cvd")
+      return this.DecodeMbfString(source, fn == "rt_str_cvd");
     return this._b.Call(resultType, this.RuntimeFn(fn, resultType, IrType.Ptr), source);
   }
 
@@ -6204,6 +6212,8 @@ public sealed partial class IrLowering {
       "MKL$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkl", IrType.Ptr, IrType.I32), Val(0, PbType.Long)),
       "MKDWD$" => this._b.Call(IrType.Ptr,
         this.RuntimeFn("rt_str_mkdwd", IrType.Ptr, IrType.U32), Val(0, PbType.Dword)),
+      "MKS$" when this._model.EffectiveDialect.HasMbfStorage() => this.EncodeMbfString(ci, isDouble: false),
+      "MKD$" when this._model.EffectiveDialect.HasMbfStorage() => this.EncodeMbfString(ci, isDouble: true),
       "MKS$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mks", IrType.Ptr, IrType.F32), Val(0, PbType.Single)),
       "MKD$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkd", IrType.Ptr, IrType.F64), Val(0, PbType.Double)),
       "MKE$" => this._b.Call(IrType.Ptr, this.RuntimeFn("rt_str_mkd", IrType.Ptr, IrType.F64), Val(0, PbType.Double)),
@@ -6308,7 +6318,7 @@ public sealed partial class IrLowering {
     var stored = this._model.TypeOf(arg);
     if (stored is WideIntType wide)
       return this.LowerWideStr(arg, wide);
-    if (Valued(stored) is not ScalarType s)
+    if (GetDisplayType(stored) is not ScalarType s)
       throw new IrLoweringException("STR$ of a non-numeric value");
     // Only a SINGLE takes the seven-digit formatter. The test used to name the DOUBLE by its width
     // and let everything else fall to the single, which put the two WIDER formats on the wrong side
@@ -6339,11 +6349,16 @@ public sealed partial class IrLowering {
   /// </summary>
   private IrValue LowerMath(CallOrIndexExpr call, string fn) {
     var resultPb = this._model.TypeOf(call);
-    var ty = MapType(resultPb);
+    var computationPb = this.GetFloatComputationType(resultPb);
+    var ty = MapType(computationPb);
     if (!ty.IsFloat)
       throw new IrLoweringException($"{fn} on a non-float result");
-    var arg = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
-    return this._b.Call(ty, this.RuntimeFn($"llvm.{fn}.f{ty.Bits}", ty, ty), arg);
+    var arg = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), computationPb);
+    if (this._model.EffectiveDialect.IsGwBasica())
+      arg = this.RoundMbfSingleConversion(arg, computationPb);
+    if (this._model.EffectiveDialect.IsGwBasica() && fn is "sin" or "cos" or "tan")
+      return this.LowerInterpreterTrig(arg, fn);
+    return this.RoundInterpreterFloat(this._b.Call(ty, this.RuntimeFn($"llvm.{fn}.f{ty.Bits}", ty, ty), arg), resultPb);
   }
 
   /// <summary>
@@ -6465,15 +6480,15 @@ public sealed partial class IrLowering {
     var resultPb = this._model.TypeOf(call);
     var sourcePb = this._model.TypeOf(call.Arguments[0]);
     var value = this.LowerExpr(call.Arguments[0]);
-    if (this._model.Dialect.IsGwBasica() && resultPb is ScalarType { Kind: ScalarKind.Single })
-      return this.RoundInterpreterFloat(this.NarrowInterpreterSingle(value, sourcePb), PbType.Single);
-    if (this._model.Dialect.IsGwBasica() && resultPb is ScalarType { Kind: ScalarKind.Double })
+    if (this._model.EffectiveDialect.HasMbfStorage() && resultPb is ScalarType { Kind: ScalarKind.Single })
+      return this.RoundMbfSingleConversion(value, sourcePb);
+    if (this._model.EffectiveDialect.HasMbfStorage() && resultPb is ScalarType { Kind: ScalarKind.Double })
       return this.RoundInterpreterFloat(this.Coerce(value, sourcePb, PbType.Ext), PbType.Double);
     return this.Coerce(value, sourcePb, resultPb);
   }
 
   private IrValue LowerFix(CallOrIndexExpr call) {
-    var resultPb = this._model.TypeOf(call);
+    var resultPb = this.GetFloatComputationType(this._model.TypeOf(call));
     var ty = MapType(resultPb);
     var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
     if (ty.IsInteger)
@@ -6483,7 +6498,7 @@ public sealed partial class IrLowering {
   }
 
   private IrValue LowerInt(CallOrIndexExpr call) {
-    var resultPb = this._model.TypeOf(call);
+    var resultPb = this.GetFloatComputationType(this._model.TypeOf(call));
     var ty = MapType(resultPb);
     var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
     if (ty.IsInteger)
@@ -6501,7 +6516,7 @@ public sealed partial class IrLowering {
   /// the opposite sign of it.
   /// </summary>
   private IrValue LowerCeil(CallOrIndexExpr call) {
-    var resultPb = this._model.TypeOf(call);
+    var resultPb = this.GetFloatComputationType(this._model.TypeOf(call));
     var ty = MapType(resultPb);
     var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
     if (ty.IsInteger)
@@ -6550,7 +6565,7 @@ public sealed partial class IrLowering {
   private IrValue LowerAbs(CallOrIndexExpr call) {
     var resultPb = this._model.TypeOf(call);
     // Interpreter floats travel as EXT: IEEE single/double cannot preserve MBF's range/precision.
-    if (this._model.Dialect.IsGwBasica() && resultPb is ScalarType { IsFloat: true })
+    if (this._model.EffectiveDialect.HasMbfStorage() && resultPb is ScalarType { IsFloat: true })
       resultPb = PbType.Ext;
     var ty = MapType(resultPb);
     var v = this.Coerce(this.LowerExpr(call.Arguments[0]), this._model.TypeOf(call.Arguments[0]), resultPb);
@@ -6697,9 +6712,11 @@ public sealed partial class IrLowering {
     // not a round trip introduced here: the direct emitter does the identical pair - rt_fixdn in the
     // callee's epilogue, rt_fixup where the caller stores the result - and pbvFixDigits is a runtime
     // cell, so neither half may be folded away.
-    var result = directCall.ReturnType is BcdType { IsFixedPoint: true } fix
-      ? this.Coerce(call, PbType.Ext, fix)
-      : call;
+    var result = directCall.ReturnType switch {
+      BcdType { IsFixedPoint: true } fix => this.Coerce(call, PbType.Ext, fix),
+      MbfType mbf => this.CaptureMbfReturn(call, mbf),
+      _ => (IrValue)call,
+    };
     foreach (var temporary in stringTemporaries)
       this.FreeOwnedStringSlot(temporary);
     return result;
@@ -6925,7 +6942,7 @@ public sealed partial class IrLowering {
 
   private IrValue LowerUnary(UnaryExpr u) {
     var pb = this._model.TypeOf(u);
-    if (this._model.Dialect.IsGwBasica() && pb is ScalarType { IsFloat: true })
+    if (this._model.EffectiveDialect.HasMbfStorage() && pb is ScalarType { IsFloat: true })
       pb = PbType.Ext; // Negation changes the sign without narrowing an MBF value through IEEE storage.
     var ty = MapType(pb);
     var operand = this.Coerce(this.LowerExpr(u.Operand), this._model.TypeOf(u.Operand), pb);
@@ -7032,7 +7049,10 @@ public sealed partial class IrLowering {
     var result = this._checkOverflow && op is IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.Mul
       ? this.CheckedArithmetic(op, l, r, resultTy, signed)
       : this._b.Binary(op, l, r);
-    return this.RoundInterpreterFloat(result, resultPb);
+    return this._model.EffectiveDialect.IsGwBasica() && resultPb == PbType.Single
+        && op is IrBinaryOp.FAdd or IrBinaryOp.FSub or IrBinaryOp.FMul or IrBinaryOp.FDiv
+      ? this.RoundInterpreterSingleArithmetic(result)
+      : this.RoundInterpreterFloat(result, resultPb);
   }
 
   private IrAlloca? _mbf32Result;
@@ -7040,7 +7060,7 @@ public sealed partial class IrLowering {
 
   /// <summary>Interpreter literals and arithmetic cross their MBF precision boundary before the next consumer.</summary>
   private IrValue RoundInterpreterFloat(IrValue value, PbType resultType) {
-    if (!this._model.Dialect.IsGwBasica()
+    if (!this._model.EffectiveDialect.HasMbfStorage()
         || resultType is not ScalarType { Kind: ScalarKind.Single or ScalarKind.Double } scalar)
       return value;
     var storageType = scalar.Kind == ScalarKind.Double ? IrType.Mbf64 : IrType.Mbf32;
@@ -7331,7 +7351,7 @@ public sealed partial class IrLowering {
     => this._b.Call(IrType.F80, this.RuntimeFn(routine, IrType.F80, IrType.F80), value);
 
   private IrValue Coerce(IrValue value, PbType from, PbType to) {
-    if (this._model.Dialect.IsGwBasica() && to is MbfType { IsDouble: false }
+    if (this._model.EffectiveDialect.IsGwBasica() && to is MbfType { IsDouble: false }
         && from is MbfType { IsDouble: true } or ScalarType { Kind: ScalarKind.Double })
       return this._b.Cast(IrCastOp.FPToMbf, this.NarrowInterpreterSingle(value, from), MapType(to));
     // MBF on either side: convert to IEEE to compute, and back to MBF to store. Recording the format

@@ -1008,7 +1008,7 @@ public sealed class PowerBasic35Emitter {
 
     return e switch {
       IntegerLiteralExpr x => this.FormatInt(x),
-      FloatLiteralExpr x => FormatFloat(x.Value) + Suffix(x.Suffix),
+      FloatLiteralExpr x => this.FormatFloatLiteral(x),
       StringLiteralExpr x => "\"" + x.Value.Replace("\"", "\"\"") + "\"",
       NamedConstantExpr x => "%" + x.Name,
       NameExpr x => (this._nameRemap is { } m && m.TryGetValue(x.Name, out var rn) ? rn : Id(x.Name)) + Suffix(x.Suffix),   // remap a renamed overload's result; Id() maps synthesized locals
@@ -1192,6 +1192,13 @@ public sealed class PowerBasic35Emitter {
     };
   }
 
+  private string FormatFloatLiteral(FloatLiteralExpr literal) {
+    // MBF64 has more precision than host double; its original decimal digits must survive rendering.
+    var text = this._model.EffectiveDialect.HasMbfStorage() && literal.SourceText is { } source
+      ? source : FormatFloat(literal.Value);
+    return text + Suffix(literal.Suffix);
+  }
+
   private static string FormatFloat(double v) {
     var s = v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
     return s.Contains('.') || s.Contains('E') || s.Contains('e') ? s : s + ".0";   // keep it a float literal
@@ -1278,6 +1285,7 @@ public sealed class PowerBasic35Emitter {
     ScalarType { Kind: ScalarKind.Single } => "SINGLE", ScalarType { Kind: ScalarKind.Double } => "DOUBLE",
     ScalarType { Kind: ScalarKind.Ext } => "EXT", ScalarType { Kind: ScalarKind.SByte } => "INTEGER",
     ScalarType { Kind: ScalarKind.QWord } => "QUAD",
+    MbfType mbf => mbf.IsDouble ? "DOUBLE" : "SINGLE",
     StringType or FlexType => "STRING", FixedStringType f => $"STRING * {f.Length}",
     AsciizType a => $"ASCIIZ * {a.Length}",
     WideIntType => "QUAD",

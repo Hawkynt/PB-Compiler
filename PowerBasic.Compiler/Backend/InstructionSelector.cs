@@ -3221,7 +3221,7 @@ public sealed partial class InstructionSelector {
       // which is what makes FILD's signed read give the unsigned value back.
       case IrCastOp.UIToFP when to.IsIeeeFloat:
         return this.SelectIntToFloat(cast);
-      case IrCastOp.FPToSIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 16 or 32:
+      case IrCastOp.FPToSI or IrCastOp.FPToSIRound when from.IsIeeeFloat && to.IsInteger && to.Bits is 16 or 32:
         return this.SelectFloatToInt(cast);
       case IrCastOp.FPToSIRound when from.IsIeeeFloat && IsQuad(to):
         return this.SelectRoundingToQword(cast);
@@ -5056,6 +5056,11 @@ public sealed partial class InstructionSelector {
     var cell = new MOperand.StackSlot(slot, MRegSize.Word);
 
     this.EmitX87(MOpcode.Fld, source, reads: true);
+    if (cast.Op == IrCastOp.FPToSI)
+      this._current.Instructions.Add(new MInstr(MOpcode.Call, [new MOperand.LabelRef("rt_trunc")],
+        new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,
+          ReadsMemory: true, WritesMemory: true),
+        condition: null, clobbers: _callClobbers));
     this.EmitX87(MOpcode.Fistp, new MOperand.StackSlot(slot, MRegSize.Dword), reads: false);
 
     if (IsWide(cast.Type)) {

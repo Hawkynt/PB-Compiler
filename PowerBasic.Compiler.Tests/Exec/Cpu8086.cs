@@ -17,10 +17,11 @@ namespace PowerBasic.Compiler.Tests.Exec;
 /// hit and where. An interpreter that quietly does the wrong thing would prove the opposite of what it
 /// is for, so a program it cannot run is a skipped test, never a passing one. Its default x87 model
 /// preserves integers exactly and uses host doubles for throughput. Tests that assert storage below
-/// IEEE64 precision opt into the compiler's software <see cref="Extended80"/> arithmetic; the
-/// transcendental instructions remain host-double approximations in either mode.
+/// IEEE64 precision opt into the compiler's software <see cref="Extended80"/> arithmetic and
+/// integer-only software-x87 transcendental kernels. Those approximations are not a model of a
+/// particular Intel microcode revision; genuine-emulator comparisons remain independent evidence.
 /// </summary>
-public sealed class Cpu8086 {
+public sealed partial class Cpu8086 {
 
   private const int _MEMORY = 1 << 20;                 // one megabyte, the real-mode address space
   private const int _MAX_EXEC_DEPTH = 32;
@@ -1096,8 +1097,8 @@ public sealed class Cpu8086 {
   /// <summary>
   /// x87, with exact software extended values for the specified arithmetic operations.
   ///
-  /// Transcendentals still convert through host doubles: real x87 implementations do not promise
-  /// correctly-rounded transcendentals, so matching those needs an instruction-specific oracle. Add,
+  /// Fast-mode transcendentals convert through host doubles; extended mode reuses the integer-only
+  /// software engine. Matching a particular hardware revision still needs an instruction oracle. Add,
   /// subtract, multiply, divide, square root, conversion and comparison do have specified rounding
   /// and use <see cref="Extended80"/> so an MBF64 or EXT test can observe all 64 significand bits.
   /// </summary>
@@ -1187,6 +1188,8 @@ public sealed class Cpu8086 {
   }
 
   private void X87Register(byte opcode, byte modrm, int start) {
+    if (this._exactFloatingPoint && opcode == 0xD9 && this.TryExecuteSoftwareX87(modrm))
+      return;
     var index = modrm & 7;
     switch (opcode, modrm) {
       case (0xDB, 0xE3): this._top = 8; this._status = 0; return;             // FINIT / FNINIT

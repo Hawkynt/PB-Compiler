@@ -552,10 +552,14 @@ public sealed partial class DosRuntime {
     asm.Dq(10.0);
     asm.MarkLabel("rt_const_half_m64");
     asm.Dq(0.5);
-    asm.MarkLabel("rt_const_pi2_m64");
-    asm.Dq(Math.PI / 2);
-    asm.MarkLabel("rt_const_pi4_m64");
-    asm.Dq(Math.PI / 4);
+    // Keep the same full significand as SoftwareX87Engine.LoadPiOver2/LoadPiOver4.
+    // A binary64 reduction constant already loses observable MBF64 bits before FPTAN runs.
+    asm.MarkLabel("rt_const_pi2_m80");
+    asm.Dq(0xC90FDAA22168C235UL);
+    asm.Dw(0x3FFF);
+    asm.MarkLabel("rt_const_pi4_m80");
+    asm.Dq(0xC90FDAA22168C235UL);
+    asm.Dw(0x3FFE);
     asm.MarkLabel("rt_const_65536");
     asm.Dq(65536.0);
     asm.MarkLabel("rt_const_2p31");

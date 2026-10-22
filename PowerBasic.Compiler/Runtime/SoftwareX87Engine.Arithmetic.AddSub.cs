@@ -133,18 +133,21 @@ public sealed partial class SoftwareX87Engine {
     var aGreater = this._asm.DefineLabel();
     var bGreater = this._asm.DefineLabel();
     var exactZero = this._asm.DefineLabel();
+    var normalizeResult = this._asm.DefineLabel();
     this.CompareGuards(ScratchGuardA, ScratchGuardB, aGreater, bGreater, exactZero);
     this._asm.MarkLabel(bGreater);
     this.SubtractGuards(ScratchGuardB, ScratchGuardA);
     this.CopyGuard(ScratchGuardB, ScratchGuardA);
     this._asm.Mov(Reg.AX, Reg.DX); this._asm.Mov(this.Scratch(Tmp1, OperandSize.Word), Reg.AX);
-    this._asm.Jmp(aGreater);
+    this._asm.Jmp(normalizeResult);
 
     this._asm.MarkLabel(exactZero);
     this.EmitExactZero(result);
     var finish = this._asm.DefineLabel(); this._asm.Jmp(finish);
 
     this._asm.MarkLabel(aGreater);
+    this.SubtractGuards(ScratchGuardA, ScratchGuardB);
+    this._asm.MarkLabel(normalizeResult);
     // Cancellation may expose leading zeros. The guard retains sticky in bit0 while normalization proceeds.
     var normalized = this._asm.DefineLabel();
     var normalize = this._asm.DefineLabel();

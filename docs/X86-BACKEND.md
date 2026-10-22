@@ -1174,9 +1174,60 @@ and expressions at both widths against genuine GW-BASIC. The unit tests retain t
 GW-BASIC 3.23 output file, including whitespace and DOS EOF, for optimization off/on in both interpreter
 dialects. Raw zero-exponent cells with nonzero payloads remain a distinct compatibility gap: numeric
 loading canonicalizes them before the arithmetic operation, unlike same-width storage copies.
-The BASIC round-trip of `MBFABS.BAS` still diverges: `$COMPAT gw` does not give PB35 variables MBF
-storage, and the source writer loses extra DOUBLE literal digits. Native DOS execution matches the
-captured 210-byte file under DOSBox Staging; that does not establish back-emitter compatibility.
+The AST source writer preserves original floating literal digits and explicit suffixes, and binding
+uses the effective `$COMPAT` dialect for MBF storage. Complete numeric and BYREF file captures now
+round-trip through that writer for both interpreter profiles and default QuickBASIC 1–3. This is
+not proof that the separate IR-to-BASIC writer reproduces every MBF storage layout.
+
+### Default QuickBASIC 1–3 MBF storage and math
+
+`HasMbfStorage` selects BASICA, GW-BASIC, QB 1.00, QB 2.00 and default QB 3.00/BCOM30. Syntax-family
+checks remain separate. Alternate QB87/IEEE configurations are not implied by selecting default QB30.
+The existing typed MBF conversions cover scalars, near static arrays, raw `MKS$`/`MKD$` and
+`CVS`/`CVD`, BYREF procedure arguments, INPUT/READ, local function return cells, conditions and
+floating FOR counters. Local function ABI results travel as F80 and are re-encoded by their caller;
+this does not model an external software-MBF return ABI or MBF BYVAL arguments.
+
+Genuine BASCOM 1.00, QB 2.00/BCOM20 and QB 3.00/BCOM30 produce identical complete files for the
+205-byte numeric battery, BYREF scalar/array battery, input/DATA/function battery, and FOR/control
+battery. Tests retain the full files, including spaces, CRLF and DOS EOF. Separate GW-BASIC captures
+distinguish SINGLE decimal/conversion ties (away from zero) from early QuickBASIC ties (nearest/even).
+SINGLE formatting retains its display precision while computation uses F80 transport.
+
+The captures use the default compilers and libraries below, identified by SHA-256. Their source
+programs and complete expected files are retained in `BackendEarlyQuickBasicMbfTests`; the original
+proprietary toolchains are not distributed with the tests.
+
+| Original tool | SHA-256 |
+|---|---|
+| QB 1.00 `BASCOM.EXE` | `A42F5826D0754BD849E132EC0643C01932BCFD9F477BD9ADA31972BE3C8874C7` |
+| QB 1.00 `BCOM10.LIB` | `9FB772EB86BE5F3C2B9D47E13C169E65D49FD319CBD2A3D1B88C1594D8E83F55` |
+| QB 2.00 `QB.EXE` | `DBBBB4AB63CA49698418BB711DC530598C6AD011AE015C4E41C7F9402196154E` |
+| QB 2.00 `BCOM20.LIB` | `611814F0D7D048FFD75DCAE9EF6834B935675869B3551425A50D301785912CF5` |
+| QB 3.00 `QB.EXE` | `3A172FCEA306B2B5FAEB52B36C99AF0A5E26633E3A1DD21AF7A54F3623492BA3` |
+| QB 3.00 `BCOM30.LIB` | `3D74061CD34417D1C342D32D1495C32B4E3D67C5014BD783CB7B36BD4EB19E5B` |
+
+Early QuickBASIC DOUBLE math keeps 56-bit operands and results. Default GW/BASICA math narrows its
+argument and result to SINGLE; the optional interpreter `/D` startup profile is not modelled here.
+GW sine/cosine/tangent lowering converts Microsoft's MIT-licensed reduction and Horner polynomial
+into ordinary typed IR, retaining raw MBF coefficients and explicit rounding effects. `$ROUNS`
+discards all but three guard bits before nearest/even arithmetic rounding; an independent genuine
+GW-BASIC multiplication capture distinguishes this from IEEE rounding. Native unoptimized MZ and
+optimized COM match 59 of 60 rows in the broader trig grid; negative-zero raw encoding remains a
+known disagreement, not a tolerance or a passing conformance claim.
+
+The exact test CPU now reuses the integer-only software-x87 engine for transcendental operations,
+instead of narrowing inputs/constants through host double. Its helper-state, scratch allocation,
+subtraction and long-branch fixes are execution-tested. These approximations do not emulate a
+particular Intel microcode revision; independent native DOSBox Staging comparisons remain necessary.
+The numeric-print optimizer only reads host double when that conversion is exact. The IR BASIC
+writer reconstructs non-binary64 F80 constants from exact 16-bit limbs rather than losing bits.
+Raw-byte round-trips cover both optimization modes, extra significand bits, the smallest subnormal,
+smallest normal, largest finite value, and signed zero. Negative zero uses the existing binary
+`CVE` IEEE codec instead of textual unary minus or dialect-dependent `CVD`. NaN, infinity and
+noncanonical EXT constants decline explicitly. General floating unary negation still lowers as
+positive-zero subtraction; its signed-zero compatibility needs separate original-compiler checks
+and is not established by these writer tests.
 
 `SGN` explicitly converts MBF storage to EXT before choosing comparisons from the lowered arithmetic
 type. Without that conversion, integer predicates from the non-ScalarType storage descriptor produced
