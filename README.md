@@ -69,6 +69,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 
 - Reads unmodified DOS-era BASIC and emits DOS MZ `.EXE`, flat `.COM`, compiled units (`.PBU`/`.PBL`) and Intel OMF `.OBJ`/`.LIB`
 - Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
+- Software-x87 math preserves live operands and control state across helpers; precision tests retain
+  full-width operands for transcendental kernels rather than converting them through host `double`
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
 - Default QuickBASIC 1–3 uses MBF32/MBF64 storage, including numeric string codecs, near static arrays,
   BYREF calls, input/DATA, local function results and floating FOR counters; precision rules remain
@@ -78,6 +80,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - `ABS(EXT)` preserves the full x87 significand and exponent, including signed zero and subnormal values;
   GW/BASICA `ABS` also retains MBF range and precision for stored values, literals and expressions;
   `SGN` compares decoded MBF values as floating-point operands rather than rejecting their storage type
+- The 8087 trigonometric runtime retains extended-precision angle-reduction constants instead of
+  narrowing them to host `double` before emitting them
 - A `pb36` superset that adds language features while leaving existing programs behaving as they did
 - Runs on any 64-bit host; the output runs on real DOS or in DOSBox
 - The same program also builds for Linux on x86-32 and x64 and for the Commodore 64, and prints

@@ -1,6 +1,6 @@
 # Codebase Index
 
-Generated 2026-10-21 11:28 UTC by index_codebase.py.
+Generated 2026-10-22 14:47 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after

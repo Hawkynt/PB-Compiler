@@ -1119,6 +1119,12 @@ models, is now the largest single thing between this back end and the corpus.
 
 ### x87 — the values that do not live in registers
 
+The shared 8087 sine/cosine/tangent routine loads π/2 and π/4 as raw 80-bit constants, using the
+same significand as the integer-only software-x87 engine. Binary64 constants discard significant
+bits before the reduction and are insufficient for MBF64 and EXT results. This fixes a native
+DOSBox Staging MBF64 sine comparison against QuickBASIC 1–3; it does not establish every dialect's
+software transcendental algorithm or make DOSBox 0.74's binary64 FPU an extended-precision oracle.
+
 Floating point was the largest single blocker (38 of 70 declines), and it does not fit the machine
 model at all: x87 computes on a **stack**, not in a register file the linear-scan allocator can hand
 out. The answer is not to make it fit. Every float SSA value lives in a **frame cell**, and each
@@ -1235,6 +1241,26 @@ invalid MIR and a mandatory routing decline; floating predicates alone still rej
 `BackendMbfSignTests` compares the complete genuine GW-BASIC 3.23 output for negative, zero
 and positive SINGLE/DOUBLE cells, expressions and literals, with optimization off/on in GW/BASICA.
 `tests/diff/gw/MBFSGN.BAS` adds that sign battery to the configured differential and routing census.
+
+### Software-x87 helper state and precision execution
+
+The integer-only software engine's transcendental routines keep live operands in ScratchA–D.
+Arithmetic helper calls preserve those cells, and the transcendental integer/control/quadrant
+scratch lies outside the arithmetic conversion temporaries. Finite subtraction now performs the
+missing larger-left guard subtraction before normalization. Generated zero-count branches and
+the multiword divide loop use 8086-safe long forms rather than out-of-range JCXZ/LOOP branches.
+
+The test CPU's extended mode reuses those emitted integer kernels for transcendental instructions
+and constants. Basic arithmetic still uses `Extended80`; fast mode still uses host-double
+approximations. Executing the emitted software kernels avoids a second independently maintained
+transcendental implementation, but cannot independently validate those same kernels. Genuine
+compiler/emulator comparisons remain necessary, and the kernels do not claim to emulate an Intel
+microcode revision bit for bit.
+
+Raw instruction tests retain all five extended constant significands, a remainder below its
+divisor, tangent's stack ratio and a logarithm whose input increment disappears in binary64.
+Out-of-range FPTAN/FSINCOS tests verify C2, the unchanged argument, and the untouched neighboring
+stack value: range refusal must not manufacture their ordinary extra pushed result.
 
 ### IEEE real procedure calls - declared width on the stack, x87 width between operations
 
