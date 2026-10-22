@@ -69,6 +69,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 
 - Reads unmodified DOS-era BASIC and emits DOS MZ `.EXE`, flat `.COM`, compiled units (`.PBU`/`.PBL`) and Intel OMF `.OBJ`/`.LIB`
 - Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
+- Software-x87 math preserves live operands and control state across helpers; precision tests retain
+  full-width operands for transcendental kernels rather than converting them through host `double`
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
 - `ABS(EXT)` preserves the full x87 significand and exponent, including signed zero and subnormal values;
   GW/BASICA `ABS` also retains MBF range and precision for stored values, literals and expressions;

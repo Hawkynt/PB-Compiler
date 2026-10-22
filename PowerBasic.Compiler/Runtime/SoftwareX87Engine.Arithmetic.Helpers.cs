@@ -57,7 +57,9 @@ public sealed partial class SoftwareX87Engine {
     var huge = this._asm.DefineLabel();
     var loop = this._asm.DefineLabel();
     var noSticky = this._asm.DefineLabel();
-    this._asm.Jcxz(done);
+    // The generated sticky/large-shift arms exceed JCXZ's signed-byte reach.
+    this._asm.Or(Reg.CX, Reg.CX);
+    this._asm.J(Condition.Equal, done);
     this._asm.Cmp(Reg.CX, 80); this._asm.J(Condition.AboveOrEqual, huge);
     this._asm.Mov(this.Scratch(Tmp4, OperandSize.Word), 0);
     this._asm.MarkLabel(loop);

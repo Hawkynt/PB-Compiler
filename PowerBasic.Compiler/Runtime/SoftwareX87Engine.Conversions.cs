@@ -522,7 +522,9 @@ public sealed partial class SoftwareX87Engine {
     this._asm.Mov(sticky, 0); this._asm.Mov(guard, 0);
     this._asm.Mov(Reg.CX, countRegister);
     var noShift = this._asm.DefineLabel(); var loop = this._asm.DefineLabel(); var last = this._asm.DefineLabel(); var shifted = this._asm.DefineLabel();
-    this._asm.Jcxz(noShift);
+    // Rounding emits a substantial arm; use a condition with an 8086-safe long form.
+    this._asm.Or(Reg.CX, Reg.CX);
+    this._asm.J(Condition.Equal, noShift);
     this._asm.MarkLabel(loop);
     this.ShiftCanonicalRightOne(value);
     this._asm.Pushf(); this._asm.Pop(Reg.AX); this._asm.And(Reg.AX, 1);

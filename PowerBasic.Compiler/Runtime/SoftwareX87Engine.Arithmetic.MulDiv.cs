@@ -194,7 +194,10 @@ public sealed partial class SoftwareX87Engine {
     this._asm.MarkLabel(less);
     this._asm.MarkLabel(appendDone);
     this.ShiftWideLeftOne(ScratchWide, 5);
-    this._asm.Loop(loop);
+    // The multiword division body is larger than LOOP's signed-byte reach. No flags survive
+    // this edge: the next iteration clears carry and the exit computes its own sticky test.
+    this._asm.Dec(Reg.CX);
+    this._asm.J(Condition.NotEqual, loop);
 
     // Any remainder after the 80th quotient bit is sticky information for final rounding.
     this._asm.Mov(Reg.AX, this.Scratch(ScratchWide, OperandSize.Word));
