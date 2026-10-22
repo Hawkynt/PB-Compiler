@@ -206,7 +206,7 @@ public sealed class IrPassManagerTests {
       "ownership-elision", "fpsimplify", "reassociate", "fpfast", "eqsat", "verified-arith",
       "polynomial", "demote", "ivsimplify", "phicong", "gvn", "memopt", "dse",
       "interchange", "licm", "reciprocal-reuse", "unswitch", "loopversion", "dce",
-      "allocsink", "closed-form", "deadloop", "ifconv", "simplifycfg", "tailrec", "switchform",
+      "allocsink", "closed-form", "deadloop", "ifconv", "simplifycfg", "tailrec", "console-setters", "switchform",
     };
 
     Assert.Multiple(() => {

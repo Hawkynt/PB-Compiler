@@ -116,7 +116,18 @@ public sealed class IrModule(string name, Dialect dialect = Dialect.Pb35, Dialec
   }
 
   /// <summary>Removes a global variable from the module (global dead-code elimination); returns whether it was present.</summary>
-  public bool RemoveGlobal(IrGlobalVariable global) => this._globals.Remove(global);
+  public bool RemoveGlobal(IrGlobalVariable global) {
+    if (!this._globals.Remove(global))
+      return false;
+    // Late literal pooling removes interned globals. A subsequent folding sweep must not recover
+    // a detached object from this cache and leave a call pointing outside the module.
+    if (global.Bytes is { } bytes) {
+      var key = Convert.ToBase64String(bytes);
+      if (this._internedStrings.TryGetValue(key, out var interned) && ReferenceEquals(interned, global))
+        this._internedStrings.Remove(key);
+    }
+    return true;
+  }
 
   /// <summary>Adds (or reuses) a private byte-array constant for a string literal; identical literals are interned to one global.</summary>
   public IrGlobalVariable AddStringConstant(byte[] bytes) {
