@@ -132,6 +132,7 @@ public static class IrMiddleEndPipeline {
     .AddModuleConservativeWhen(includeModulePasses, "lutelim", LookupTableElimination.Run)
     .AddModuleConservativeWhen(includeModulePasses, "const-data-merge", ConstantDataMerging.Run)
     .AddModuleConservativeWhen(includeModulePasses, "strfold", StringConstantFold.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "draw-string-specialization", DrawStringSpecialization.Run)
     .AddModuleConservativeWhen(includeModulePasses, "strchain", StringConcatChain.Run)
     .AddModuleConservativeWhen(includeModulePasses, "strappend", StringAppendInPlace.Run)
     .AddModuleConservativeWhen(includeModulePasses, "strcapacity", StringCapacityHoisting.Run)

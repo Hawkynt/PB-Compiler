@@ -3319,7 +3319,9 @@ public sealed partial class InstructionSelector {
       if (RuntimeAbi.For(callee.Name) is { } routine)
         return this.SelectRuntimeCall(call, callee, routine);
       if (IsRuntimeName(callee.Name))
-        return this.Decline($"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
+        return this.Decline(callee.Name == "rt_draw"
+          ? "DRAW: text is not a proved supported constant; dynamic DRAW interpretation is not implemented"
+          : $"call: {callee.Name} (runtime declaration - not in the runtime ABI table)");
     }
 
     var calleeName = callee?.Name ?? "indirect procedure";
