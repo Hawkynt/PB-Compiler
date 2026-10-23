@@ -1375,6 +1375,10 @@ internal static class DataLayoutTransformCore {
       }
       var block = before.Parent!;
       switch (current) {
+        case IrFNeg negation:
+          if (!Clone(negation.Value, out var operand, depth + 1)) return false;
+          result = block.InsertBefore(new IrFNeg(operand!) { FastMathFlags = negation.FastMathFlags }, before);
+          break;
         case IrBinary binary:
           if (!Clone(binary.Lhs, out var l, depth + 1) || !Clone(binary.Rhs, out var r, depth + 1)) return false;
           result = block.InsertBefore(new IrBinary(binary.Op, l!, r!), before);

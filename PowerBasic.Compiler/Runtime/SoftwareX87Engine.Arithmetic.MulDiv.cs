@@ -3,7 +3,10 @@ using PowerBasic.Compiler.Asm;
 namespace PowerBasic.Compiler.Runtime;
 
 public sealed partial class SoftwareX87Engine {
-  private void EmitCanonicalMultiply(int left, int right, int result) {
+  private void EmitCanonicalMultiply(int left, int right, int result) =>
+    this.EmitKernel(OpMul, left, right, result, () => this.EmitCanonicalMultiplyCore(left, right, result));
+
+  private void EmitCanonicalMultiplyCore(int left, int right, int result) {
     this.CopyScratch(left, ScratchA);
     this.CopyScratch(right, ScratchB);
     var aFinite = this._asm.DefineLabel();
@@ -96,7 +99,10 @@ public sealed partial class SoftwareX87Engine {
     this.RoundGuardToCanonical(ScratchGuardA, this.Scratch(Tmp0, OperandSize.Word), this.Scratch(Tmp1, OperandSize.Word), result);
   }
 
-  private void EmitCanonicalDivide(int left, int right, int result) {
+  private void EmitCanonicalDivide(int left, int right, int result) =>
+    this.EmitKernel(OpDiv, left, right, result, () => this.EmitCanonicalDivideCore(left, right, result));
+
+  private void EmitCanonicalDivideCore(int left, int right, int result) {
     this.CopyScratch(left, ScratchA);
     this.CopyScratch(right, ScratchB);
     var aFinite = this._asm.DefineLabel();

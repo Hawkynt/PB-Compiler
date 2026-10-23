@@ -814,6 +814,8 @@ public sealed partial class InstructionSelector {
         return this.SelectMbfLoad(mbfLoad);
       case IrStore { Value: IrCast { Op: IrCastOp.FPToMbf } } mbfStore:
         return this.SelectMbfStore(mbfStore);
+      case IrFNeg neg:
+        return this.SelectFloatNegation(neg);
       case IrBinary bin when bin.Type.IsFloat:
         return this.SelectFloatBinary(bin);
       case IrLoad load when load.Type.IsFloat:
@@ -4651,6 +4653,15 @@ public sealed partial class InstructionSelector {
     [IrBinaryOp.FMul] = MOpcode.Fmulp,
     [IrBinaryOp.FDiv] = MOpcode.Fdivp,
   };
+
+  private bool SelectFloatNegation(IrFNeg neg) {
+    if (!this.TryFloatOperand(neg.Value, out var value))
+      return false;
+    this.EmitX87(MOpcode.Fld, value, reads: true);
+    this._current.Instructions.Add(new MInstr(MOpcode.Fchs, [], MInstrEffect.None));
+    this.PopRoundedInto(neg);
+    return true;
+  }
 
   /// <summary>
   /// <c>FLD lhs; FLD rhs; F&lt;op&gt;P; FSTP result</c> - the textbook stack form. Pushing the left

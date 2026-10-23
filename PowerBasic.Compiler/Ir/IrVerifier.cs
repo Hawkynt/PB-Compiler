@@ -184,6 +184,10 @@ public sealed class IrVerifier {
     switch (inst) {
       // operand agreement is a STORAGE question, so signedness may differ (the op carries it:
       // sdiv/udiv, slt/ult) but an MBF float never mixes with an IEEE one - the encodings differ
+      case IrFNeg neg:
+        if (!neg.Type.IsIeeeFloat || !neg.Value.Type.Equals(neg.Type))
+          this.Error($"floating negation operand/result types disagree ({neg.Value.Type} -> {neg.Type})");
+        break;
       case IrBinary b:
         if (!b.Lhs.Type.SameStorage(b.Rhs.Type) || !b.Type.SameStorage(b.Lhs.Type))
           this.Error($"binary '{b.Op}' operand/result types disagree ({b.Lhs.Type}, {b.Rhs.Type} -> {b.Type})");

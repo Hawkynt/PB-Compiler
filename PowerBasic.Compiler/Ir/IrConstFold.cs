@@ -11,6 +11,7 @@ public static class IrConstFold {
 
   /// <summary>Folds an instruction to a constant, or returns null if it cannot or must not be folded.</summary>
   public static IrConstant? TryFold(IrInstruction inst) => inst switch {
+    IrFNeg { Value: IrConstantFloat value } neg when value.Type.Equals(neg.Type) => NegateFloat(value),
     IrBinary b => FoldBinary(b),
     IrCmp c => FoldCmp(c),
     IrCast cast => FoldCast(cast),
@@ -28,6 +29,16 @@ public static class IrConstFold {
   }
 
   private static ulong Unsigned(IrConstantInt c) => c.ZeroExtended;
+
+  private static IrConstantFloat? NegateFloat(IrConstantFloat value) => value.Type.Bits switch {
+    32 => new(value.Type, BitConverter.Int32BitsToSingle(
+      BitConverter.SingleToInt32Bits((float)value.Value) ^ int.MinValue)),
+    64 => new(value.Type, BitConverter.Int64BitsToDouble(
+      BitConverter.DoubleToInt64Bits(value.Value) ^ long.MinValue)),
+    80 => IrConstantFloat.FromFloat80Bits(
+      (ushort)(value.Float80.SignExponent ^ 0x8000), value.Float80.Significand),
+    _ => null,
+  };
 
   private static IrConstant? FoldBinary(IrBinary b) {
     if (b.Lhs is IrConstantFloat fl && b.Rhs is IrConstantFloat fr)

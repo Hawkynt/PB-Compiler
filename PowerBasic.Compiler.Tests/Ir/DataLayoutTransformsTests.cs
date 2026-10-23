@@ -311,8 +311,9 @@ public sealed class DataLayoutTransformsTests {
     Assert.That(entry.Instructions.OfType<IrAlloca>().Any(a => a.Name == "img.transpose"), Is.True);
   }
 
-  [Test]
-  public void O0328_ProducerTemporary_IsForwardedIntoConsumerLoop() {
+  [TestCase(false)]
+  [TestCase(true)]
+  public void O0328_ProducerTemporary_IsForwardedIntoConsumerLoop(bool negate) {
     var fn = new IrFunction("f", IrType.Void);
     var entry = fn.CreateBlock("entry");
     var pHeader = fn.CreateBlock("p.header");
@@ -323,18 +324,20 @@ public sealed class DataLayoutTransformsTests {
     var cBody = fn.CreateBlock("c.body");
     var cLatch = fn.CreateBlock("c.latch");
     var exit = fn.CreateBlock("exit");
-    var source = entry.Append(new IrAlloca(IrType.I16) { Count = 8, Name = "src" });
-    var temp = entry.Append(new IrAlloca(IrType.I16) { Count = 8, Name = "tmp" });
-    var output = entry.Append(new IrAlloca(IrType.I16) { Count = 8, Name = "out" });
+    var element = negate ? IrType.F64 : IrType.I16;
+    var source = entry.Append(new IrAlloca(element) { Count = 8, Name = "src" });
+    var temp = entry.Append(new IrAlloca(element) { Count = 8, Name = "tmp" });
+    var output = entry.Append(new IrAlloca(element) { Count = 8, Name = "out" });
     entry.Append(new IrBr(pHeader));
 
     var p = pHeader.AppendPhi(new IrPhi(IrType.I32));
     p.AddIncoming(new IrConstantInt(IrType.I32, 0), entry);
     pHeader.Append(new IrCondBr(pHeader.Append(new IrCmp(IrCmpPred.Slt, p, new IrConstantInt(IrType.I32, 8))), pBody, between));
-    var srcPtr = pBody.Append(new IrGep(source, p, IrType.I16));
-    var src = pBody.Append(new IrLoad(IrType.I16, srcPtr));
-    var doubled = pBody.Append(new IrBinary(IrBinaryOp.Mul, src, new IrConstantInt(IrType.I16, 2)));
-    var tmpOut = pBody.Append(new IrGep(temp, p, IrType.I16));
+    var srcPtr = pBody.Append(new IrGep(source, p, element));
+    var src = pBody.Append(new IrLoad(element, srcPtr));
+    IrValue doubled = negate ? pBody.Append(new IrFNeg(src))
+      : pBody.Append(new IrBinary(IrBinaryOp.Mul, src, new IrConstantInt(element, 2)));
+    var tmpOut = pBody.Append(new IrGep(temp, p, element));
     pBody.Append(new IrStore(doubled, tmpOut));
     pBody.Append(new IrBr(pLatch));
     var pNext = pLatch.Append(new IrBinary(IrBinaryOp.Add, p, new IrConstantInt(IrType.I32, 1)));
@@ -345,10 +348,11 @@ public sealed class DataLayoutTransformsTests {
     var c = cHeader.AppendPhi(new IrPhi(IrType.I32));
     c.AddIncoming(new IrConstantInt(IrType.I32, 0), between);
     cHeader.Append(new IrCondBr(cHeader.Append(new IrCmp(IrCmpPred.Slt, c, new IrConstantInt(IrType.I32, 8))), cBody, exit));
-    var tmpIn = cBody.Append(new IrGep(temp, c, IrType.I16));
-    var tempValue = cBody.Append(new IrLoad(IrType.I16, tmpIn));
-    var plusOne = cBody.Append(new IrBinary(IrBinaryOp.Add, tempValue, new IrConstantInt(IrType.I16, 1)));
-    var outPtr = cBody.Append(new IrGep(output, c, IrType.I16));
+    var tmpIn = cBody.Append(new IrGep(temp, c, element));
+    var tempValue = cBody.Append(new IrLoad(element, tmpIn));
+    IrValue plusOne = negate ? tempValue
+      : cBody.Append(new IrBinary(IrBinaryOp.Add, tempValue, new IrConstantInt(element, 1)));
+    var outPtr = cBody.Append(new IrGep(output, c, element));
     cBody.Append(new IrStore(plusOne, outPtr));
     cBody.Append(new IrBr(cLatch));
     var cNext = cLatch.Append(new IrBinary(IrBinaryOp.Add, c, new IrConstantInt(IrType.I32, 1)));

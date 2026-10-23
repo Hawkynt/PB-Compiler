@@ -49,10 +49,14 @@ public sealed partial class SoftwareX87Engine : IX87InstructionSink {
   private readonly Label _control;
   private readonly Label _status;
   private readonly Label _scratch;
+  private readonly bool _shareRoutines;
   private bool _stateEmitted;
 
-  public SoftwareX87Engine(Assembler assembler) {
+  public SoftwareX87Engine(Assembler assembler) : this(assembler, false) { }
+
+  internal SoftwareX87Engine(Assembler assembler, bool shareRoutines) {
     this._asm = assembler ?? throw new ArgumentNullException(nameof(assembler));
+    this._shareRoutines = shareRoutines;
     this._textAssembler = new TextAssembler(assembler);
     this._slots = assembler.DefineLabel();
     this._valid = assembler.DefineLabel();
@@ -68,6 +72,14 @@ public sealed partial class SoftwareX87Engine : IX87InstructionSink {
       return false;
     mnemonic = mnemonic.ToUpperInvariant();
 
+    this._asm.Pushf();
+    var emitted = this.EmitParsedInline(mnemonic, operands, out error);
+    this._asm.Popf();
+    return emitted;
+  }
+
+  private bool EmitParsedInline(string mnemonic, IReadOnlyList<TextAssembler.ParsedAsmOperand> operands, out string? error) {
+    error = null;
     switch (mnemonic) {
       case "FLD": return this.EmitInlineFld(operands, out error);
       case "FST": return this.EmitInlineFst(operands, pop: false, out error);
@@ -107,91 +119,91 @@ public sealed partial class SoftwareX87Engine : IX87InstructionSink {
   }
 
   public bool TryEmitMemory(byte opcode, int regField, Mem memory) {
-    this.EnsureState();
-    return (opcode, regField) switch {
-      (0xD9, 0) => this.EmitLoadReal(memory, 32),
-      (0xDD, 0) => this.EmitLoadReal(memory, 64),
-      (0xDB, 5) => this.EmitLoadReal(memory, 80),
-      (0xD9, 2) => this.EmitStoreReal(memory, 32, pop: false),
-      (0xD9, 3) => this.EmitStoreReal(memory, 32, pop: true),
-      (0xDD, 2) => this.EmitStoreReal(memory, 64, pop: false),
-      (0xDD, 3) => this.EmitStoreReal(memory, 64, pop: true),
-      (0xDB, 7) => this.EmitStoreReal(memory, 80, pop: true),
-      (0xDF, 0) => this.EmitLoadInteger(memory, 16),
-      (0xDB, 0) => this.EmitLoadInteger(memory, 32),
-      (0xDF, 5) => this.EmitLoadInteger(memory, 64),
-      (0xDF, 2) => this.EmitStoreInteger(memory, 16, pop: false),
-      (0xDF, 3) => this.EmitStoreInteger(memory, 16, pop: true),
-      (0xDB, 2) => this.EmitStoreInteger(memory, 32, pop: false),
-      (0xDB, 3) => this.EmitStoreInteger(memory, 32, pop: true),
-      (0xDF, 7) => this.EmitStoreInteger(memory, 64, pop: true),
-      (0xD9, 5) => this.EmitLoadControl(memory),
-      (0xD9, 7) => this.EmitStoreControl(memory),
-      (0xDD, 7) => this.EmitStoreStatus(memory),
-      (0xD8, >= 0 and <= 7) => this.EmitArithmeticMemory(regField, memory, integer: false, bits: 32),
-      (0xDC, >= 0 and <= 7) => this.EmitArithmeticMemory(regField, memory, integer: false, bits: 64),
-      (0xDA, >= 0 and <= 7) => this.EmitArithmeticMemory(regField, memory, integer: true, bits: 32),
-      (0xDE, >= 0 and <= 7) => this.EmitArithmeticMemory(regField, memory, integer: true, bits: 16),
-      _ => false,
+    Func<bool>? emit = (opcode, regField) switch {
+      (0xD9, 0) => () => this.EmitLoadReal(memory, 32),
+      (0xDD, 0) => () => this.EmitLoadReal(memory, 64),
+      (0xDB, 5) => () => this.EmitLoadReal(memory, 80),
+      (0xD9, 2) => () => this.EmitStoreReal(memory, 32, pop: false),
+      (0xD9, 3) => () => this.EmitStoreReal(memory, 32, pop: true),
+      (0xDD, 2) => () => this.EmitStoreReal(memory, 64, pop: false),
+      (0xDD, 3) => () => this.EmitStoreReal(memory, 64, pop: true),
+      (0xDB, 7) => () => this.EmitStoreReal(memory, 80, pop: true),
+      (0xDF, 0) => () => this.EmitLoadInteger(memory, 16),
+      (0xDB, 0) => () => this.EmitLoadInteger(memory, 32),
+      (0xDF, 5) => () => this.EmitLoadInteger(memory, 64),
+      (0xDF, 2) => () => this.EmitStoreInteger(memory, 16, pop: false),
+      (0xDF, 3) => () => this.EmitStoreInteger(memory, 16, pop: true),
+      (0xDB, 2) => () => this.EmitStoreInteger(memory, 32, pop: false),
+      (0xDB, 3) => () => this.EmitStoreInteger(memory, 32, pop: true),
+      (0xDF, 7) => () => this.EmitStoreInteger(memory, 64, pop: true),
+      (0xD9, 5) => () => this.EmitLoadControl(memory),
+      (0xD9, 7) => () => this.EmitStoreControl(memory),
+      (0xDD, 7) => () => this.EmitStoreStatus(memory),
+      (0xD8, >= 0 and <= 7) => () => this.EmitArithmeticMemory(regField, memory, integer: false, bits: 32),
+      (0xDC, >= 0 and <= 7) => () => this.EmitArithmeticMemory(regField, memory, integer: false, bits: 64),
+      (0xDA, >= 0 and <= 7) => () => this.EmitArithmeticMemory(regField, memory, integer: true, bits: 32),
+      (0xDE, >= 0 and <= 7) => () => this.EmitArithmeticMemory(regField, memory, integer: true, bits: 16),
+      _ => null,
     };
+    return this.EmitRoutine((opcode, regField, memory), emit);
   }
 
   public bool TryEmitStack(byte opcode, byte modRmBase, St register) {
-    this.EnsureState();
-    return (opcode, modRmBase) switch {
-      (0xD9, 0xC0) => this.EmitLoadStack(register.Index),
-      (0xD9, 0xC8) => this.EmitExchange(register.Index),
-      (0xDD, 0xC0) => this.EmitFree(register.Index),
-      (0xDD, 0xD0) => this.EmitStoreStack(register.Index, pop: false),
-      (0xDD, 0xD8) => this.EmitStoreStack(register.Index, pop: true),
+    Func<bool>? emit = (opcode, modRmBase) switch {
+      (0xD9, 0xC0) => () => this.EmitLoadStack(register.Index),
+      (0xD9, 0xC8) => () => this.EmitExchange(register.Index),
+      (0xDD, 0xC0) => () => this.EmitFree(register.Index),
+      (0xDD, 0xD0) => () => this.EmitStoreStack(register.Index, pop: false),
+      (0xDD, 0xD8) => () => this.EmitStoreStack(register.Index, pop: true),
       // D8 D0/D8 are compare encodings and sit inside the broad D8 C0..F8 arithmetic range.
       // Match them first or the specific arms are statically unreachable and, worse, decode wrong.
-      (0xD8, 0xD0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: false),
-      (0xD8, 0xD8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: false),
-      (0xD8, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
-      (0xDC, >= 0xC0 and <= 0xF8) => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
-      (0xDE, 0xC0 or 0xC8 or 0xE0 or 0xE8 or 0xF0 or 0xF8) => this.EmitArithmeticPop(modRmBase, register.Index),
-      (0xDD, 0xE0) => this.EmitCompareStack(register.Index, popCount: 0, unordered: true),
-      (0xDD, 0xE8) => this.EmitCompareStack(register.Index, popCount: 1, unordered: true),
-      _ => false,
+      (0xD8, 0xD0) => () => this.EmitCompareStack(register.Index, popCount: 0, unordered: false),
+      (0xD8, 0xD8) => () => this.EmitCompareStack(register.Index, popCount: 1, unordered: false),
+      (0xD8, >= 0xC0 and <= 0xF8) => () => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
+      (0xDC, >= 0xC0 and <= 0xF8) => () => this.EmitArithmeticStack(opcode, modRmBase, register.Index),
+      (0xDE, 0xC0 or 0xC8 or 0xE0 or 0xE8 or 0xF0 or 0xF8) => () => this.EmitArithmeticPop(modRmBase, register.Index),
+      (0xDD, 0xE0) => () => this.EmitCompareStack(register.Index, popCount: 0, unordered: true),
+      (0xDD, 0xE8) => () => this.EmitCompareStack(register.Index, popCount: 1, unordered: true),
+      _ => null,
     };
+    return this.EmitRoutine((opcode, modRmBase + register.Index, default), emit);
   }
 
   public bool TryEmitSimple(byte opcode, byte modRm) {
-    this.EnsureState();
-    return (opcode, modRm) switch {
-      (0xD9, 0xE0) => this.EmitChangeSign(absolute: false),
-      (0xD9, 0xE1) => this.EmitChangeSign(absolute: true),
-      (0xD9, 0xE4) => this.EmitTestZero(),
-      (0xD9, 0xE8) => this.EmitConstant("FLD1"),
-      (0xD9, 0xE9) => this.EmitConstant("FLDL2T"),
-      (0xD9, 0xEA) => this.EmitConstant("FLDL2E"),
-      (0xD9, 0xEB) => this.EmitConstant("FLDPI"),
-      (0xD9, 0xEC) => this.EmitConstant("FLDLG2"),
-      (0xD9, 0xED) => this.EmitConstant("FLDLN2"),
-      (0xD9, 0xEE) => this.EmitConstant("FLDZ"),
-      (0xD9, 0xF0) => this.EmitUnaryMath("F2XM1"),
-      (0xD9, 0xF1) => this.EmitUnaryMath("FYL2X"),
-      (0xD9, 0xF2) => this.EmitUnaryMath("FPTAN"),
-      (0xD9, 0xF3) => this.EmitUnaryMath("FPATAN"),
-      (0xD9, 0xF5) => this.EmitUnaryMath("FPREM1"),
-      (0xD9, 0xF6) => this.EmitRotateLogicalStack(-1),
-      (0xD9, 0xF7) => this.EmitRotateLogicalStack(+1),
-      (0xD9, 0xF8) => this.EmitUnaryMath("FPREM"),
-      (0xD9, 0xF9) => this.EmitUnaryMath("FYL2XP1"),
-      (0xD9, 0xFA) => this.EmitUnaryMath("FSQRT"),
-      (0xD9, 0xFB) => this.EmitUnaryMath("FSINCOS"),
-      (0xD9, 0xFC) => this.EmitUnaryMath("FRNDINT"),
-      (0xD9, 0xFD) => this.EmitUnaryMath("FSCALE"),
-      (0xD9, 0xFE) => this.EmitUnaryMath("FSIN"),
-      (0xD9, 0xFF) => this.EmitUnaryMath("FCOS"),
-      (0xDB, 0xE2) => this.EmitClearExceptions(),
-      (0xDB, 0xE3) => this.EmitInit(),
-      (0xDF, 0xE0) => this.EmitStatusToAx(),
-      (0xDE, 0xD9) => this.EmitCompareStack(1, popCount: 2, unordered: false),
-      (0xDA, 0xE9) => this.EmitCompareStack(1, popCount: 2, unordered: true),
-      _ => false,
+    Func<bool>? emit = (opcode, modRm) switch {
+      (0xD9, 0xE0) => () => this.EmitChangeSign(absolute: false),
+      (0xD9, 0xE1) => () => this.EmitChangeSign(absolute: true),
+      (0xD9, 0xE4) => this.EmitTestZero,
+      (0xD9, 0xE8) => () => this.EmitConstant("FLD1"),
+      (0xD9, 0xE9) => () => this.EmitConstant("FLDL2T"),
+      (0xD9, 0xEA) => () => this.EmitConstant("FLDL2E"),
+      (0xD9, 0xEB) => () => this.EmitConstant("FLDPI"),
+      (0xD9, 0xEC) => () => this.EmitConstant("FLDLG2"),
+      (0xD9, 0xED) => () => this.EmitConstant("FLDLN2"),
+      (0xD9, 0xEE) => () => this.EmitConstant("FLDZ"),
+      (0xD9, 0xF0) => () => this.EmitUnaryMath("F2XM1"),
+      (0xD9, 0xF1) => () => this.EmitUnaryMath("FYL2X"),
+      (0xD9, 0xF2) => () => this.EmitUnaryMath("FPTAN"),
+      (0xD9, 0xF3) => () => this.EmitUnaryMath("FPATAN"),
+      (0xD9, 0xF5) => () => this.EmitUnaryMath("FPREM1"),
+      (0xD9, 0xF6) => () => this.EmitRotateLogicalStack(-1),
+      (0xD9, 0xF7) => () => this.EmitRotateLogicalStack(+1),
+      (0xD9, 0xF8) => () => this.EmitUnaryMath("FPREM"),
+      (0xD9, 0xF9) => () => this.EmitUnaryMath("FYL2XP1"),
+      (0xD9, 0xFA) => () => this.EmitUnaryMath("FSQRT"),
+      (0xD9, 0xFB) => () => this.EmitUnaryMath("FSINCOS"),
+      (0xD9, 0xFC) => () => this.EmitUnaryMath("FRNDINT"),
+      (0xD9, 0xFD) => () => this.EmitUnaryMath("FSCALE"),
+      (0xD9, 0xFE) => () => this.EmitUnaryMath("FSIN"),
+      (0xD9, 0xFF) => () => this.EmitUnaryMath("FCOS"),
+      (0xDB, 0xE2) => this.EmitClearExceptions,
+      (0xDB, 0xE3) => this.EmitInit,
+      (0xDF, 0xE0) => this.EmitStatusToAx,
+      (0xDE, 0xD9) => () => this.EmitCompareStack(1, popCount: 2, unordered: false),
+      (0xDA, 0xE9) => () => this.EmitCompareStack(1, popCount: 2, unordered: true),
+      _ => null,
     };
+    return this.EmitRoutine((opcode, modRm, default), emit);
   }
 
   public void EmitWait() { /* all software operations are synchronous */ }

@@ -100,7 +100,7 @@ public static class Sccp {
     private void VisitValue(IrInstruction inst) {
       Lat result;
       switch (inst) {
-        case IrBinary or IrCmp or IrCast:
+        case IrBinary or IrFNeg or IrCmp or IrCast:
           result = this.EvalFoldable(inst);
           break;
         default:
@@ -125,6 +125,7 @@ public static class Sccp {
 
       // all operands constant: rebuild with the constants, fold, then detach the temp
       IrInstruction? temp = inst switch {
+        IrFNeg neg => new IrFNeg(this.ConstOf(neg.Value)),
         IrBinary b => new IrBinary(b.Op, this.ConstOf(b.Lhs), this.ConstOf(b.Rhs)),
         IrCmp c => new IrCmp(c.Pred, this.ConstOf(c.Lhs), this.ConstOf(c.Rhs)),
         IrCast cast => new IrCast(cast.Op, this.ConstOf(cast.Value), cast.Type),

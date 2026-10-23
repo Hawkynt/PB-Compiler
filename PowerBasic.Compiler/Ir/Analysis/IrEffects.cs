@@ -239,7 +239,7 @@ public static class IrEffects {
     return instruction switch {
       IrBinary { Op: IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem or IrBinaryOp.FDiv }
         => _mayTrap,
-      IrBinary or IrCmp or IrCast or IrGep or IrFarPtr or IrPhi or IrSelect
+      IrBinary or IrFNeg or IrCmp or IrCast or IrGep or IrFarPtr or IrPhi or IrSelect
         => _pureDeterministic,
       IrAlloca => _pureUnique,
       IrLoad => _read,
