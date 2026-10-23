@@ -4915,6 +4915,7 @@ public sealed partial class IrLowering {
     }
 
     var header = this.NewBlock("for.head");
+    header.IsSourceEmptyLoopHeader = f.IsSourceEmpty;
     var body = this.NewBlock("for.body");
     var inc = this.NewBlock("for.inc");
     var exit = this.NewBlock("for.exit");
@@ -4990,6 +4991,7 @@ public sealed partial class IrLowering {
       : this.Coerce(this.LowerExpr(f.Step), this._model.TypeOf(f.Step), symbol.Type);
 
     var header = this.NewBlock("for.head");
+    header.IsSourceEmptyLoopHeader = f.IsSourceEmpty;
     var body = this.NewBlock("for.body");
     var inc = this.NewBlock("for.inc");
     var exit = this.NewBlock("for.exit");
@@ -5030,6 +5032,7 @@ public sealed partial class IrLowering {
 
   private void LowerDo(HirDoLoopStatement d) {
     var header = this.NewBlock("do.head");
+    header.IsSourceEmptyLoopHeader = d.IsSourceEmpty;
     var body = this.NewBlock("do.body");
     var latch = this.NewBlock("do.latch");
     var exit = this.NewBlock("do.exit");

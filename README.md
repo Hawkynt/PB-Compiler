@@ -434,7 +434,7 @@ next free number rather than displacing anything.
 | ✅ | [O0017](docs/optimizations/O0017-sccp.md) | SCCP / branch folding | Sparse conditional constant propagation over SSA folds constant branches and proves zero-initialized reads (`Ssa/Sccp`). |
 | ✅ | [O0018](docs/optimizations/O0018-interprocedural-constant-propagation.md) | Interprocedural constant propagation | A parameter that is the same constant at every call site and never written reads as that literal inside the callee (`IpConstantProp`). |
 | ✅ | [O0019](docs/optimizations/O0019-zero-elision.md) | Definite-assignment zero elision | Drops per-invocation frame zeroing when a straight-line proof shows no local is read before assignment. |
-| 🟡 | [O0020](docs/optimizations/O0020-idiom-replacement.md) | Algorithmic idiom replacement | An empty loop becomes its counter end value, a constant fill one `REP STOSW`, an arithmetic series its closed form. |
+| 🟡 | [O0020](docs/optimizations/O0020-idiom-replacement.md) | Algorithmic idiom replacement | Removes unobserved computation loops, recognizes constant fill and arithmetic series; preserves source-empty waits. |
 | ✅ | [O0021](docs/optimizations/O0021-register-parameters.md) | Register parameters | Fully-owned word, near-pointer and LONG parameters use Watcom's AX/DX/BX/CX allocation before stack overflow. |
 | ✅ | [O0022](docs/optimizations/O0022-dead-procedure-elimination.md) | Dead procedure elimination | Procedures unreachable from the program entry are not emitted, transitively (`GlobalDce`). |
 | 🟡 | [O0023](docs/optimizations/O0023-dead-global-elimination.md) | Dead global / data tree-shaking | A module global nothing reachable ever reads stops being a data cell: `LocalizeGlobals` turns a write-first global one procedure uses into a local, which `Mem2Reg`/`Dce` then remove. |
@@ -663,7 +663,7 @@ next free number rather than displacing anything.
 | ✅ | [O0241](docs/optimizations/O0241-dword-string-copy.md) | DWORD-wide string copy | The string runtime's literal and concat copy moves DWORDs plus a ≤ 3-byte tail instead of `REP MOVSB` — roughly 4× on long strings. |
 | 🟡 | [O0242](docs/optimizations/O0242-movsd-block-copy.md) | DWORD block copy for TYPE and `LSET` | Whole-`TYPE` copies, `LSET` and BCD block moves run word-wide (`REP MOVSW`, 8086-safe) under the optimizer and DWORD-wide (`REP MOVSD`) under `$CPU 80386`. |
 
-| ✅ | [O0407](docs/optimizations/O0407-dead-loop-elimination.md) | Dead loop elimination | A loop whose body cannot be observed - no store, no call, no output - is deleted outright rather than left to spin (`deadloop`, `$OPTIMIZE SPEED`). |
+| ✅ | [O0407](docs/optimizations/O0407-dead-loop-elimination.md) | Dead loop elimination | Removes unobserved computation loops under SPEED; source-empty waits are tagged before optimization and preserved. |
 | ✅ | [O0408](docs/optimizations/O0408-6502-frame-slot-sharing.md) | Frame slot sharing (6502, x86-32, x64) | SSA values whose lives never meet share a frame cell on the flat back ends; on the 6502 more frames then fit the page-zero window. |
 | ✅ | [O0409](docs/optimizations/O0409-6502-accumulator-load-elimination.md) | 6502 accumulator-load elimination | An `LDA` of the immediate or cell A already holds is dropped, kept wherever N and Z could still be read. |
 | ✅ | [O0410](docs/optimizations/O0410-6502-branch-shaping.md) | 6502 branch shaping | A branch whose true side comes next tests the complement and falls through; a comparison kept as a value steps over `LDA #1` with a one-byte `BIT`. |

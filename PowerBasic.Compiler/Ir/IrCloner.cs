@@ -54,8 +54,11 @@ public sealed class IrCloner {
       out IReadOnlyDictionary<IrValue, IrValue> values) {
     var cloner = new IrCloner(seed);
     values = cloner._values;
-    foreach (var block in source)
-      cloner._blocks[block] = into.CreateBlock(labelPrefix + block.Label);
+    foreach (var block in source) {
+      var clone = into.CreateBlock(labelPrefix + block.Label);
+      clone.IsSourceEmptyLoopHeader = block.IsSourceEmptyLoopHeader;
+      cloner._blocks[block] = clone;
+    }
     foreach (var block in source)
       cloner.CloneInstructions(block);
     cloner.ResolveOperands();

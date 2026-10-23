@@ -14,6 +14,9 @@ public sealed class IrBasicBlock : IrValue {
   /// <summary>A label for printing / referencing the block.</summary>
   public string Label { get; set; }
 
+  /// <summary>Source-empty loop provenance: optimizers must not erase the wait or unroll its iterations.</summary>
+  public bool IsSourceEmptyLoopHeader { get; set; }
+
   /// <summary>The function this block belongs to.</summary>
   public IrFunction? Parent { get; internal set; }
 

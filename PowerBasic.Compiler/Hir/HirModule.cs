@@ -85,6 +85,7 @@ public sealed record HirForStatement(
     Expression To,
     Expression? Step,
     IReadOnlyList<HirStatement> Body) : HirStatement {
+  public bool IsSourceEmpty => this.Source.IsSourceEmpty;
   public override SourcePosition Position => this.Source.Position;
   internal override Statement BoundSource => this.Source;
 }
@@ -97,6 +98,7 @@ public sealed record HirDoLoopStatement(
     LoopTestKind PostTest,
     Expression? PostCondition,
     IReadOnlyList<HirStatement> Body) : HirStatement {
+  public bool IsSourceEmpty => this.Source.IsSourceEmpty;
   public override SourcePosition Position => this.Source.Position;
   internal override Statement BoundSource => this.Source;
 }

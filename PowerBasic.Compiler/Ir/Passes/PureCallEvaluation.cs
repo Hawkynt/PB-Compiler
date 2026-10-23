@@ -66,6 +66,7 @@ public static class PureCallEvaluation {
 
   private static bool IsLocallyPure(IrFunction function)
     => !function.IsDeclaration && !function.HasErrorHandler && !function.HasInlineAsm
+       && !function.Blocks.Any(block => block.IsSourceEmptyLoopHeader)
        && function.ReturnType.IsInteger
        && function.Parameters.All(parameter => parameter.Type.IsInteger)
        && function.AllInstructions.All(IsPureInstruction);
