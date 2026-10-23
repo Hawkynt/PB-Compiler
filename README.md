@@ -68,6 +68,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 ## ✨ Features
 
 - Reads unmodified DOS-era BASIC and emits DOS MZ `.EXE`, flat `.COM`, compiled units (`.PBU`/`.PBL`) and Intel OMF `.OBJ`/`.LIB`
+- Pixel primitives retain direct packed mode-13 access and use BIOS-backed access for other active layouts;
+  mode-12 pixel separation is checked against genuine QuickBASIC captures
 - Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
 - Software-x87 math preserves live operands and control state across helpers; precision tests retain
   full-width operands for transcendental kernels rather than converting them through host `double`

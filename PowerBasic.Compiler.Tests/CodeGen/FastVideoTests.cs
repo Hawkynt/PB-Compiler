@@ -89,7 +89,7 @@ public sealed class FastVideoTests {
   [Test]
   public void Execute_GivenScreen13PixelPrimitives_WhenRun_ThenPointReadsBackPsetColors() {
     // R2: PSET/POINT are direct A000 stores/loads (mode 13h linear addressing) - no BIOS
-    // per-pixel path exists at all, so 'fast graphics' holds by construction; verified by
+    // per-pixel rendering is used in that mode; other modes use the BIOS fallback. Verified by
     // writing pixels and reading them back through POINT into the file oracle
     const string subject = """
       OPEN "R.TXT" FOR OUTPUT AS #1

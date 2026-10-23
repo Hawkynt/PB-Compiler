@@ -1,0 +1,11 @@
+BIOS pixel-service reference
+
+The INT 10h AH=0Ch/0Dh register contract and the test model's indexed-color XOR
+rule were checked against SeaBIOS revision 28aa46349b97ef0ebf742ae4fb9f9fad03578670:
+https://github.com/qemu/seabios/blob/28aa46349b97ef0ebf742ae4fb9f9fad03578670/vgasrc/vgabios.c
+https://github.com/qemu/seabios/blob/28aa46349b97ef0ebf742ae4fb9f9fad03578670/vgasrc/vgafb.c
+
+These files identify their license as GNU LGPL version 3 and credit Kevin
+O'Connor and the LGPL VGABios developers Team. The runtime delegates pixel
+encoding to the machine's BIOS; no SeaBIOS framebuffer implementation is vendored.
+The test model uses logical pixels rather than implementing planar VGA memory.

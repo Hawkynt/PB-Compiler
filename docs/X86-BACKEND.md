@@ -1191,6 +1191,26 @@ invalid MIR and a mandatory routing decline; floating predicates alone still rej
 and positive SINGLE/DOUBLE cells, expressions and literals, with optimization off/on in GW/BASICA.
 `tests/diff/gw/MBFSGN.BAS` adds that sign battery to the configured differential and routing census.
 
+### Mode-aware pixel fallback
+
+`rt_pset` and `rt_point` query the active BIOS mode before selecting their packed
+mode-13 path. Other layouts use INT 10h pixel services rather than applying the
+incorrect `y * 320 + x` formula to planar memory. Coordinates and the existing
+runtime ABI are preserved; page zero remains the supported page.
+
+`PixelModeFallbackTests` retains a genuine QuickBASIC 4.50 capture in which
+`(320,0)` and `(0,1)` hold distinct mode-12 colors. The old packed calculation
+aliased both to offset 320. The corrected runtime matches the captured file in
+COM/MZ images with optimization off/on under native DOSBox Staging, and the
+mode-13 edge-pixel capture remains unchanged.
+
+The BIOS register contract is checked against the LGPLv3
+[SeaBIOS implementation](https://github.com/qemu/seabios/blob/28aa46349b97ef0ebf742ae4fb9f9fad03578670/vgasrc/vgabios.c).
+The runtime delegates framebuffer encoding to firmware; the test CPU models
+logical mode-12 pixels and retains direct memory for mode 13. This does not
+establish planar-memory emulation, clipping, page/viewport behavior, graphics
+error semantics, or complete support for other graphics statements and modes.
+
 ### Software-x87 helper state and precision execution
 
 The integer-only software engine's transcendental routines keep live operands in ScratchA–D.

@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-22 14:52 UTC by index_codebase.py.
+Generated 2026-10-23 07:58 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1070 files, 8785 symbols.
+1073 files, 8795 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -2065,6 +2065,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `usingForm` — """; — PowerBasic.Compiler.Tests/CodeGen/Pb36LanguageFeatureTests.cs:979
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/Pb36LanguageFeatureTests.cs:989
 
+### PixelModeFallbackTests.cs  `C#, 41 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/PixelModeFallbackTests.cs:5
+- class `PixelModeFallbackTests` — PowerBasic.Compiler.Tests/CodeGen/PixelModeFallbackTests.cs:7
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/PixelModeFallbackTests.cs:19
+- method `PSET` — PowerBasic.Compiler.Tests/CodeGen/PixelModeFallbackTests.cs:20
+
 ### PlayFunctionTests.cs  `C#, 60 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/PlayFunctionTests.cs:5
 - class `PlayFunctionTests` — PLAY(n) - how many notes are still queued for background music. — PowerBasic.Compiler.Tests/CodeGen/PlayFunctionTests.cs:22
@@ -2463,13 +2469,19 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `InvalidOperationException($"BRK at ${at:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu6502.cs:448
 - method `InvalidOperationException($"undocumented opcode ${opcode:X2} at ${at:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu6502.cs:450
 
+### Cpu8086.Video.cs  `C#, 33 lines`
+- namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:1
+- class `Cpu8086` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:2
+- method `Cpu8086Exception($"BIOS pixel service in unmodelled mode {this._videoMode:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:11
+- method `Cpu8086Exception("out-of-range BIOS pixel access is not modelled")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:14
+
 ### Cpu8086.X87Software.cs  `C#, 81 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:4
 - class `Cpu8086` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:6
 - record `SoftwareX87Program` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:8
 - method `Cpu8086Exception($"software x87 cannot execute D9 {instruction:X2}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:71
 
-### Cpu8086.cs  `C#, 2492 lines`
+### Cpu8086.cs  `C#, 2496 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:3
 - class `Cpu8086` — A real-mode 8086 interpreter, enough of one to run the executables this compiler emits. — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:24
 - class `MemoryFile` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:58
@@ -2558,10 +2570,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(handle <= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2120
 - method `foreach(var c in "PBC")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2189
 - method `if(DosWildcardMatch(dosName, mask))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2220
-- method `if(this._videoMode == 0x13)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2311
-- method `for(var column = 0; column < _SCREEN_COLUMNS; ++column)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2389
-- method `while(this._cursorColumn % 8 != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2421
-- class `Cpu8086Exception` — Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runa… — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2491
+- method `if(this._videoMode == 0x13)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2312
+- method `for(var column = 0; column < _SCREEN_COLUMNS; ++column)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2393
+- method `while(this._cursorColumn % 8 != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2425
+- class `Cpu8086Exception` — Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runa… — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2495
 
 ### Cpu8086X87PrecisionTests.cs  `C#, 99 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086X87PrecisionTests.cs:3
@@ -9434,14 +9446,18 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Memory.cs:2
 - class `DosRuntime` — Raw memory operations shared by UDTs, arrays, and fixed-width storage. — PowerBasic.Compiler/Runtime/DosRuntime.Memory.cs:6
 
-### DosRuntime.Misc.cs  `C#, 731 lines`
+### DosRuntime.Misc.cs  `C#, 684 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:2
 - class `DosRuntime` — Console, keyboard, timing and conversion helpers. Conventions: — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:17
-- method `Map(int pb, int bios)` — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:434
+- method `Map(int pb, int bios)` — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:387
 
 ### DosRuntime.Packed.cs  `C#, 143 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Packed.cs:2
 - class `DosRuntime` — PowerBasic.Compiler/Runtime/DosRuntime.Packed.cs:4
+
+### DosRuntime.Pixels.cs  `C#, 98 lines`
+- namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Pixels.cs:2
+- class `DosRuntime` — PowerBasic.Compiler/Runtime/DosRuntime.Pixels.cs:4
 
 ### DosRuntime.Ports.cs  `C#, 39 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Ports.cs:2
