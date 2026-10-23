@@ -20,8 +20,17 @@ public sealed partial class CodeGenerator {
   private SoftwareX87Engine? _softwareX87Engine;
 
   private SoftwareX87Engine EnsureSoftwareX87Engine() {
-    var engine = this._softwareX87Engine ??= new SoftwareX87Engine(this._asm);
+    var engine = this._softwareX87Engine ??= new SoftwareX87Engine(this._asm, shareRoutines: true);
     this._asm.X87Sink = engine;
     return engine;
+  }
+
+  private void ConfigureSoftwareX87(RuntimeTarget target) {
+    var policy = this.RuntimeIsaPolicyForRuntime();
+    if (!(policy.TryGet("X87", out var mode) || policy.TryGet("FPU", out mode)
+        || policy.TryGet("DEFAULT", out mode)))
+      return;
+    if (mode == IsaFallbackMode.Emulate || mode == IsaFallbackMode.Auto && !target.Has(RuntimeCpuFeatures.X87))
+      this.EnsureSoftwareX87Engine();
   }
 }

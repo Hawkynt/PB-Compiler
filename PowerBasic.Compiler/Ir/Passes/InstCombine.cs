@@ -54,6 +54,7 @@ public static class InstCombine {
 
   private static IrValue? SimplifyCanonical(IrInstruction inst) {
     return inst switch {
+      IrFNeg { Value: IrFNeg neg } => neg.Value,
       IrBinary b => SimplifyBinary(b),
       IrCmp c => SimplifyCmp(c),
       IrGep g => SimplifyGep(g),

@@ -84,6 +84,7 @@ public static class Gvn {
     }
 
     private string? KeyOf(IrInstruction inst) => inst switch {
+      IrFNeg neg => $"fneg:{neg.Type}({this.Operand(neg.Value)})",
       IrBinary b => $"b{b.Op}({this.Pair(b.Lhs, b.Rhs, IsCommutative(b.Op))})",
       IrCmp c => $"c{c.Pred}({this.Pair(c.Lhs, c.Rhs, IsCommutative(c.Pred))})",
       IrCast x => $"x{x.Op}:{x.Type}({this.Operand(x.Value)})",

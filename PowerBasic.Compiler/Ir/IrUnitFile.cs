@@ -31,7 +31,7 @@ public static class IrUnitFile {
 
   private enum Op : byte {
     Binary, Cmp, Cast, Alloca, Load, Store, InlineAsm, Gep, FarPtr, Phi, Select, Call, Ret, Br, CondBr,
-    Switch, IndirectBr, Unreachable,
+    Switch, IndirectBr, Unreachable, FNeg,
   }
 
   private static ReadOnlySpan<byte> LibraryMagic => "PBIRLIB\0"u8;
@@ -215,6 +215,9 @@ public static class IrUnitFile {
 
     private void WriteInstruction(IrInstruction instruction) {
       switch (instruction) {
+        case IrFNeg:
+          w.Write((byte)Op.FNeg);
+          break;
         case IrBinary binary:
           w.Write((byte)Op.Binary);
           w.Write((byte)binary.Op);
@@ -492,6 +495,9 @@ public static class IrUnitFile {
       Func<IrValue[], IrInstruction> build;
       int[]? phiBlocks = null;
       switch (op) {
+        case Op.FNeg:
+          build = operands => new IrFNeg(operands[0]);
+          break;
         case Op.Binary: {
           var binary = (IrBinaryOp)r.ReadByte();
           build = operands => new IrBinary(binary, operands[0], operands[1]);

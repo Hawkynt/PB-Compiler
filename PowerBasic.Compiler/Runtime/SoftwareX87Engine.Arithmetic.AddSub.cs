@@ -9,7 +9,10 @@ public sealed partial class SoftwareX87Engine {
     this.EmitCanonicalAdd(left, ScratchD, result);
   }
 
-  private void EmitCanonicalAdd(int left, int right, int result) {
+  private void EmitCanonicalAdd(int left, int right, int result) =>
+    this.EmitKernel(OpAdd, left, right, result, () => this.EmitCanonicalAddCore(left, right, result));
+
+  private void EmitCanonicalAddCore(int left, int right, int result) {
     this.CopyScratch(left, ScratchA);
     this.CopyScratch(right, ScratchB);
     var aFinite = this._asm.DefineLabel();

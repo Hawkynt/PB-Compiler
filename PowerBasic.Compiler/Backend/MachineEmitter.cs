@@ -573,6 +573,7 @@ public sealed class MachineEmitter {
       case MOpcode.Sahf: asm.Sahf(); break;
       case MOpcode.Fsqrt: asm.Fsqrt(); break;
       case MOpcode.Fabs: asm.Fabs(); break;
+      case MOpcode.Fchs: asm.Fchs(); break;
       case MOpcode.Fsin: asm.Fsin(); break;
       case MOpcode.Fcos: asm.Fcos(); break;
       case MOpcode.Fptan: asm.Fptan(); break;

@@ -147,6 +147,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // $CPU is target legality, not an optimization. Backend routing consults SelectionTarget before
     // normal image emission reaches the later runtime setup, so initialize it before any routing query.
     this._rt.Target = this.RuntimeTargetForRuntime();
+    this.ConfigureSoftwareX87(this._rt.Target);
 
     // Production compilation never mutates executable semantics through the legacy bound-AST
     // optimizer. The bound program crosses IrLowering once; optimization then belongs exclusively to
@@ -232,7 +233,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
 
     // pb36 (docs/PB36.md P1): the runtime is emitted AFTER user code, trimmed
     // to the sections the program actually reaches; pb35 keeps today's layout
-    var trimRuntime = this.Optimize && !this._allowExternalCalls;
+    var trimRuntime = (this.Optimize || this._softwareX87Engine is not null) && !this._allowExternalCalls;
     if (!trimRuntime)
       this._rt.EmitProcedures(asm);
     else

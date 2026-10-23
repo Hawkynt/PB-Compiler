@@ -29,6 +29,17 @@ public sealed class FloatDemotionTests {
 
   private static int FloatPhis(IrFunction fn) => fn.AllInstructions.OfType<IrPhi>().Count(p => p.Type.IsIeeeFloat);
 
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Counter_GivenNegation_ThenDemotesOnlyWhenTheSignCannotEscape(bool escapes) {
+    var expression = escapes ? "-i" : "CINT(-i)";
+    var fn = Lowered($"DIM i AS SINGLE\nFOR i = 0 TO 10\nPRINT {expression}\nNEXT i");
+    Assert.That(fn.AllInstructions.OfType<IrFNeg>(), Is.Not.Empty);
+    Assert.That(FloatDemotion.Run(fn), Is.EqualTo(escapes ? 0 : 1));
+    Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    Assert.That(FloatPhis(fn), escapes ? Is.GreaterThan(0) : Is.Zero);
+  }
+
   [Test]
   public void Counter_GivenASingleCountingUpToAConstant_ThenItBecomesAnInteger() {
     var fn = Lowered("""

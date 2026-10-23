@@ -1191,6 +1191,35 @@ invalid MIR and a mandatory routing decline; floating predicates alone still rej
 and positive SINGLE/DOUBLE cells, expressions and literals, with optimization off/on in GW/BASICA.
 `tests/diff/gw/MBFSGN.BAS` adds that sign battery to the configured differential and routing census.
 
+### Floating negation and shared software-FPU state
+
+Unary IEEE negation lowers to `IrFNeg`, selected as `FLD; FCHS; FSTP` on x86,
+not subtraction from positive zero. `FCHS` retains the loaded operand's precision
+when arithmetic precision control is reduced. The 6502 backend flips the stored
+sign byte; C and LLVM retain unary negation and `fneg`, respectively.
+
+`BackendFloatingNegationTests` retains the complete 82-byte `NEGZERO.TXT` captured
+from genuine QuickBASIC 4.50 BC.EXE and BCOM45.LIB under DOSBox Staging 0.83.
+The compiler/library fingerprints are recorded beside the test. Constant and
+procedure negation must reproduce that file with optimization off/on in COM and
+MZ images. Raw-bit folding tests cover zero, finite boundaries, subnormals and
+nonfinite values; compiled-C execution checks IEEE32/64 payloads separately.
+
+Whole-program software-FPU policy is selected before entry and runtime emission.
+This prevents an early hardware `rt_mkd` from reading a different stack from a
+later software caller. The same engine owns inline x87, generated operations and
+runtime calls. Repeated encoded operations and canonical arithmetic kernels share
+near-call helpers. Their memory operands remain caller-relative; explicit SP/ESP
+operands are not outlined. Carry-preservation tests cover inline and register/frame
+operations; raw SP/ESP operands and mixed per-instruction policies remain unproven.
+Local trampolines let `LOOP`/`JCXZ` cross expanded software operations
+without assuming their bodies fit an 8-bit displacement.
+
+`SoftwareX87RuntimeIntegrationTests` exercises COM/MZ record encoding, policy
+aliases without an inline trigger, BYREF procedure frames, integer carry and
+numeric printing. These checks establish those paths, not complete software-FPU
+or dialect fidelity. General DOS runtime and numeric conformance remain open.
+
 ### Software-x87 helper state and precision execution
 
 The integer-only software engine's transcendental routines keep live operands in ScratchA–D.

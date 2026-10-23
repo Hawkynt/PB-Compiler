@@ -60,6 +60,49 @@ public sealed class CBackendTests {
         yield return Path.GetFileName(file);
   }
 
+  [TestCase(32)]
+  [TestCase(64)]
+  public void Emit_GivenFloatingNegation_WhenExecutedAsC_ThenChangesOnlyTheSignBit(int width) {
+    Assume.That(_cc, Is.Not.Null, "no C compiler on PATH");
+    var type = width == 32 ? IrType.F32 : IrType.F64;
+    var native = width == 32 ? "float" : "double";
+    var bits = width == 32
+      ? "0, 0x80000000, 1, 0x7F7FFFFF, 0x7F800000, 0x7FC12345, 0x7F800001"
+      : "0, 0x8000000000000000, 1, 0x7FEFFFFFFFFFFFFF, 0x7FF0000000000000, 0x7FF8123456789ABC, 0x7FF0000000000001";
+    var module = new IrModule("negation");
+    var argument = new IrArgument(type, 0);
+    var block = module.AddFunction(new IrFunction("NegValue", type, [argument])).CreateBlock("entry");
+    block.Append(new IrRet(block.Append(new IrFNeg(argument))));
+    var driver = $$"""
+
+      int main(void) {
+        uint{{width}}_t inputs[] = { {{bits}} };
+        for (unsigned i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i) {
+          {{native}} value;
+          memcpy(&value, &inputs[i], sizeof(value));
+          {{native}} result = NegValue(value);
+          uint{{width}}_t observed;
+          memcpy(&observed, &result, sizeof(observed));
+          if (observed != (inputs[i] ^ ((uint{{width}}_t)1 << {{width - 1}})))
+            return 1;
+        }
+        return 0;
+      }
+      """;
+    var work = Directory.CreateTempSubdirectory("pbc-c-negation-").FullName;
+    try {
+      var source = Path.Combine(work, "negation.c");
+      File.WriteAllText(source, CEmitter.Emit(module) + driver);
+      var executable = Path.Combine(work, "negation.exe");
+      var runtime = Path.Combine(_repoRoot, "runtime");
+      var build = Run(_cc!, $"-std=c99 -O2 -I \"{runtime}\" -o \"{executable}\" \"{source}\"", work, null);
+      Assert.That(build.ExitCode, Is.Zero, build.Output);
+      Assert.That(Run(executable, "", work, null).ExitCode, Is.Zero, "a floating payload changed beyond its sign");
+    } finally {
+      Directory.Delete(work, recursive: true);
+    }
+  }
+
   [TestCaseSource(nameof(Programs))]
   public void Emit_GivenBatteryProgram_WhenBuiltThroughCBackend_ThenPrintsTheDosGoldenOutput(string program) {
     Assume.That(_cc, Is.Not.Null, "no C compiler on PATH - C back-end test skipped");

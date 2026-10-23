@@ -71,6 +71,10 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
 - Software-x87 math preserves live operands and control state across helpers; precision tests retain
   full-width operands for transcendental kernels rather than converting them through host `double`
+- Explicit software-FPU policies share one state across generated code, inline assembly and runtime
+  calls; repeated operations and arithmetic kernels reuse code rather than expanding every call site
+- Typed floating negation preserves signed zero and full EXT precision without zero-subtraction
+  or multiplication; captured QuickBASIC output and raw-byte tests cover optimized and plain builds
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
 - IR console-state coalescing removes unobserved repeated `CLS` and covered, proven-valid `LOCATE`
   calls while preserving observers, invalid coordinates, and potentially failing mode changes

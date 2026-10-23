@@ -6930,7 +6930,7 @@ public sealed partial class IrLowering {
     var ty = MapType(pb);
     var operand = this.Coerce(this.LowerExpr(u.Operand), this._model.TypeOf(u.Operand), pb);
     return u.Op switch {
-      UnaryOp.Negate when ty.IsFloat => this._b.Binary(IrBinaryOp.FSub, new IrConstantFloat(ty, 0.0), operand),
+      UnaryOp.Negate when ty.IsFloat => this._b.FNeg(operand),
       UnaryOp.Negate => this._b.Binary(IrBinaryOp.Sub, new IrConstantInt(ty, 0), operand),
       UnaryOp.Not => this._b.Xor(operand, new IrConstantInt(ty, -1)),
       _ => throw new IrLoweringException($"unary {u.Op}"),
@@ -7188,6 +7188,8 @@ public sealed partial class IrLowering {
       // on: a routed module body never executes the statement list, so a directive applied during
       // emission would be lost - and this one is not, because it was never applied there.
       case "ISA":
+      case "FPU":
+      case "X87":
       // $OPTION is four arms and not one of them is a statement. SIGNED changes the RESULT TYPE the
       // binder gives VARPTR/VARSEG and their relatives; VIDEO sets model.FastVideo, which the codegen
       // reads off the MODEL; CNTLBREAK installs an INT 23h handler from a codegen PRE-PASS over

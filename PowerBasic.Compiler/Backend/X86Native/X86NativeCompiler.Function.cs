@@ -246,13 +246,14 @@ public static partial class X86NativeCompiler {
         switch (instruction) {
           case IrPhi or IrAlloca:
             return;
+          case IrFNeg neg when this.Stored(neg): this.LowerNegation(neg); return;
           case IrBinary binary when this._paired.Contains(binary): return;
           case IrBinary binary when this.Stored(binary): this.LowerBinary(binary); return;
           case IrCmp compare when this.Stored(compare): this.LowerCompare(compare); return;
           case IrCast cast when this.Stored(cast): this.LowerCast(cast); return;
           case IrSelect select when this.Stored(select): this.LowerSelect(select); return;
           case IrGep gep when this.Stored(gep): this.LowerGep(gep); return;
-          case IrBinary or IrCmp or IrCast or IrSelect or IrGep:
+          case IrBinary or IrFNeg or IrCmp or IrCast or IrSelect or IrGep:
             return;
           case IrLoad load: this.LowerLoad(load); return;
           case IrStore store: this.LowerStore(store); return;
@@ -269,6 +270,12 @@ public static partial class X86NativeCompiler {
           default:
             throw Decline($"'{function.Name}' uses {instruction.GetType().Name}, which has no native lowering yet");
         }
+      }
+
+      private void LowerNegation(IrFNeg neg) {
+        this.LoadFloat(neg.Value);
+        this._asm.X87(X87Code.Fchs);
+        this._asm.Fstp(FormatOf(neg.Type), this.Place(neg));
       }
 
       private void LowerBinary(IrBinary binary) {

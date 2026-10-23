@@ -299,6 +299,7 @@ public sealed class IrBasicWriter {
 
   private void Instruction(IrInstruction instruction, IrFunction function) {
     switch (instruction) {
+      case IrFNeg neg: this.Line($"  {this.Define(neg)} = -({this.Ref(neg.Value)})"); return;
       case IrBinary b: this.Line($"  {this.Define(b)} = {this.Binary(b)}"); return;
       case IrCmp c: this.Line($"  {this.Define(c)} = -({this.Ref(c.Lhs)} {Predicate(c.Pred)} {this.Ref(c.Rhs)})"); return;
       case IrCast cast: this.Cast(cast); return;

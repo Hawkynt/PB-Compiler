@@ -307,6 +307,9 @@ public sealed class CEmitter {
   private void EmitInstruction(StringBuilder sb, IrInstruction inst, IrBasicBlock block) {
     var lhs = inst.Type.Kind == IrTypeKind.Void ? "" : this.Name(inst) + " = ";
     switch (inst) {
+      case IrFNeg neg:
+        sb.Append("  ").Append(lhs).Append("-(").Append(this.Ref(neg.Value)).Append(");\n");
+        break;
       case IrBinary b:
         sb.Append("  ").Append(lhs).Append(this.Binary(b)).Append(";\n");
         break;

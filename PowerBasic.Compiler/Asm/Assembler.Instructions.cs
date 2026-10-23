@@ -1004,6 +1004,19 @@ public sealed partial class Assembler {
 
   private void ShortBranch(byte opcode, Label target) {
     ArgumentNullException.ThrowIfNull(target);
+    // Inline software x87 can expand a loop body by kilobytes. LOOP*/JCXZ have no near
+    // encoding; local hops plus a near JMP preserve CX and FLAGS without a range guess.
+    if (this.X87Sink is not null && (!target.IsBound || !FitsSByte(target.Position - (this.Position + 2)))) {
+      var taken = this.DefineLabel();
+      var done = this.DefineLabel();
+      this.EmitByte(opcode);
+      this.EmitRel8(taken);
+      this.JmpShort(done);
+      this.MarkLabel(taken);
+      this.JmpNear(target);
+      this.MarkLabel(done);
+      return;
+    }
     this.EmitByte(opcode);
     this.EmitRel8(target);
   }

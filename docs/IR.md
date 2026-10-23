@@ -6,10 +6,10 @@ DOS**: bound PowerBASIC is lowered into a target-independent IR, optimized hard,
 and then either emitted as textual LLVM (handed to LLVM's back end for
 x86-64/ARM/…) or lowered by the in-house native x86-16 back end.
 
-It is a **parallel path**. The direct bound-AST → x86-16 emitter
-(`CodeGen/CodeGenerator*.cs`) remains the fallback fidelity path; the IR's native
-x86-16 back end can own eligible functions or the whole main body behind
-`--x-backend`, with executed differential tests against the direct emitter.
+Production emission uses the shared multi-stage IR pipeline. Missing lowering or
+native selection is a routing diagnostic, not a direct bound-AST emitter fallback.
+The backend receives verified Low IR; the remaining compatibility work is language
+semantics, operation coverage and runtime behavior, not another emitter migration.
 
 `IrModule` retains both the source dialect and the effective runtime dialect (the
 latter may come from `$COMPAT`). This is part of the IR contract: optimization
@@ -93,12 +93,24 @@ near cell address, so scalar cells and near static-array elements route through 
 frame allocas and computed element pointers. Dynamic/far-array elements and procedure
 ABI crossings still decline rather than lose their format.
 
+### Floating negation
+
+`IrFNeg` changes the sign of an IEEE `f32`, `f64` or `f80` value. It is not
+`fsub +0, x`: the two differ at signed zero, and arithmetic can round under the
+x87 precision-control setting. MBF storage is decoded before this operation.
+Constant folding changes the stored sign bit without projecting EXT through
+`double`. Cloning, serialization, SCCP, GVN and all writers retain the operation.
+
+Integer recovery may turn negation into `0 - x` only when a closing integer
+conversion makes signed zero unobservable. Counter demotion applies the same
+restriction; a floating negation whose result escapes stays floating point.
+
 ## Core data model
 
 - `IrValue` — base of constants, arguments, globals and instructions, with an
   intrusive **use-list** and `ReplaceAllUsesWith`.
 - `IrInstruction` — operands are values; mutation goes through `SetOperand`, which
-  keeps use-lists exact. Instruction set: binary arithmetic/bitwise, `icmp`/`fcmp`,
+  keeps use-lists exact. Instruction set: binary arithmetic/bitwise, floating `fneg`, `icmp`/`fcmp`,
   the LLVM cast set, `alloca`/`load`/`store`/byte-`gep`, `phi`, `call`, and the
   terminators `ret`/`br`/`condbr`/`switch`/`unreachable`.
 - `IrCall` — carries source calling-convention identity independently of the callee operand. Back ends

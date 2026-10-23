@@ -121,6 +121,7 @@ public sealed class IrCloner {
   }
 
   private IrInstruction CloneInstruction(IrInstruction inst) => inst switch {
+    IrFNeg neg => new IrFNeg(this.Map(neg.Value)),
     IrBinary b => new IrBinary(b.Op, this.Map(b.Lhs), this.Map(b.Rhs)),
     IrCmp c => new IrCmp(c.Pred, this.Map(c.Lhs), this.Map(c.Rhs)) { IsSourceCondition = c.IsSourceCondition },
     IrCast x => new IrCast(x.Op, this.Map(x.Value), x.Type),

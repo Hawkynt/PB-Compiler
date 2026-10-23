@@ -142,6 +142,7 @@ public sealed class LlvmEmitter {
     }
     var lhs = inst.Type.IsVoid ? "" : this.Ref(inst) + " = ";
     return lhs + inst switch {
+      IrFNeg neg => $"fneg{FastMath(neg)} {Ty(neg.Type)} {this.Ref(neg.Value)}",
       IrBinary b when b.IsFloatOp => $"{Mnemonic(b.Op)}{FastMath(b)} {Ty(b.Type)} {this.Ref(b.Lhs)}, {this.Ref(b.Rhs)}",
       IrBinary b => $"{Mnemonic(b.Op)} {Ty(b.Type)} {this.Ref(b.Lhs)}, {this.Ref(b.Rhs)}",
       IrCmp c when IsFloatPred(c.Pred) => $"fcmp{FastMath(c)} {Mnemonic(c.Pred)} {Ty(c.Lhs.Type)} {this.Ref(c.Lhs)}, {this.Ref(c.Rhs)}",

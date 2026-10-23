@@ -112,6 +112,9 @@ public static class FloatDemotion {
   /// </summary>
   private static bool IsRewritableUse(IrInstruction user, IrPhi phi) => user switch {
     IrCast { Op: IrCastOp.FPToSIRound or IrCastOp.FPToSI } cast => !IsWide(cast.Type) || cast.Type.Bits <= 32,
+    // Negation's sign may escape as -0, so recover it only behind integer conversions.
+    IrFNeg negation => negation.Users.All(consumer => consumer is IrCast {
+      Op: IrCastOp.FPToSIRound or IrCastOp.FPToSI, Type.Bits: <= 32 }),
     IrBinary { Op: IrBinaryOp.FAdd or IrBinaryOp.FSub or IrBinaryOp.FMul } b
       => Integral(ReferenceEquals(b.Lhs, phi) ? b.Rhs : b.Lhs) is not null,
     IrCmp c => Integral(ReferenceEquals(c.Lhs, phi) ? c.Rhs : c.Lhs) is not null,
@@ -137,6 +140,9 @@ public static class FloatDemotion {
       if (ReferenceEquals(user, step))
         continue;
       switch (user) {
+        case IrFNeg negation:
+          RewriteNegation(negation, counter);
+          break;
         case IrCast { Op: IrCastOp.FPToSIRound or IrCastOp.FPToSI } cast:
           // the round trip disappears: the counter already IS the integer this was producing
           cast.ReplaceAllUsesWith(Narrowed(cast, counter));
@@ -164,6 +170,18 @@ public static class FloatDemotion {
 
     step.EraseFromParent();
     phi.EraseFromParent();
+  }
+
+  private static void RewriteNegation(IrFNeg negation, IrPhi counter) {
+    var negative = negation.Parent!.InsertBefore(
+      new IrBinary(IrBinaryOp.Sub, new IrConstantInt(IrType.I32, 0), counter), negation);
+    foreach (var cast in negation.Users.OfType<IrCast>().ToArray()) {
+      IrValue narrowed = cast.Type.Bits == 32 ? negative
+        : cast.Parent!.InsertBefore(new IrCast(IrCastOp.Trunc, negative, cast.Type), cast);
+      cast.ReplaceAllUsesWith(narrowed);
+      cast.EraseFromParent();
+    }
+    negation.EraseFromParent();
   }
 
   /// <summary>

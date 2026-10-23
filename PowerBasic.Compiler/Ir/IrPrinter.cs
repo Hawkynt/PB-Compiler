@@ -69,6 +69,7 @@ public sealed class IrPrinter {
   private string PrintInstruction(IrInstruction inst) {
     var lhs = inst.Type.IsVoid ? "" : this.Ref(inst) + " = ";
     return lhs + inst switch {
+      IrFNeg neg => $"fneg {neg.Type} {this.Ref(neg.Value)}",
       IrBinary b => $"{Mnemonic(b.Op)} {b.Type} {this.Ref(b.Lhs)}, {this.Ref(b.Rhs)}",
       IrCmp c => $"{(IsFloatPred(c.Pred) ? "fcmp" : "icmp")} {Mnemonic(c.Pred)} {c.Lhs.Type} {this.Ref(c.Lhs)}, {this.Ref(c.Rhs)}",
       IrCast c => $"{Mnemonic(c.Op)} {c.Value.Type} {this.Ref(c.Value)} to {c.Type}",

@@ -29,6 +29,7 @@ public sealed class IrBuilder {
   // ---- arithmetic ----------------------------------------------------------
 
   public IrBinary Binary(IrBinaryOp op, IrValue lhs, IrValue rhs) => this.Emit(new IrBinary(op, lhs, rhs));
+  public IrFNeg FNeg(IrValue value) => this.Emit(new IrFNeg(value));
   public IrBinary Add(IrValue l, IrValue r) => this.Binary(IrBinaryOp.Add, l, r);
   public IrBinary Sub(IrValue l, IrValue r) => this.Binary(IrBinaryOp.Sub, l, r);
   public IrBinary Mul(IrValue l, IrValue r) => this.Binary(IrBinaryOp.Mul, l, r);

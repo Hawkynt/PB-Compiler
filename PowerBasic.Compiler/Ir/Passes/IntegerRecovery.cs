@@ -93,6 +93,12 @@ public static class IntegerRecovery {
       case IrConstantFloat c when c.TryGetDoubleExact(out var constant) && IsExactInteger(constant, intType):
         return new IrConstantInt(intType, (long)constant);  // a float constant that is an exact integer
 
+      case IrFNeg negation:
+        if (TryRecover(negation.Value, intType, block, at, fitsNarrow) is not { } operand)
+          return null;
+        // Only the closing integer conversion makes signed zero unobservable here.
+        return block.InsertBefore(new IrBinary(IrBinaryOp.Sub, new IrConstantInt(intType, 0), operand), at);
+
       case IrBinary b when MapOp(b.Op) is { } op: {
         if (TryRecover(b.Lhs, intType, block, at, fitsNarrow) is not { } lhs
             || TryRecover(b.Rhs, intType, block, at, fitsNarrow) is not { } rhs)

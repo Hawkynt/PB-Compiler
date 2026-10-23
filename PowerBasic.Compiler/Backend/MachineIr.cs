@@ -334,6 +334,9 @@ public enum MOpcode {
 
   /// <summary>A block of inline assembly, assembled verbatim at emission (see <see cref="MOperand.InlineAsmText"/>).</summary>
   InlineAsm,
+
+  /// <summary>Toggle ST(0)'s sign bit without floating arithmetic or rounding.</summary>
+  Fchs,
 }
 
 /// <summary>Facts about opcodes that the scheduler and the selector both need to agree on.</summary>
@@ -360,7 +363,7 @@ public static class MOpcodes {
     or MOpcode.Fadd or MOpcode.Fsub or MOpcode.Fmul or MOpcode.Fdiv or MOpcode.Fcomp
     or MOpcode.Fiadd or MOpcode.Fisub or MOpcode.Fimul or MOpcode.Fidiv
     or MOpcode.Fcompp or MOpcode.FstswAx
-    or MOpcode.Fsqrt or MOpcode.Fabs
+    or MOpcode.Fsqrt or MOpcode.Fabs or MOpcode.Fchs
     or MOpcode.Fsin or MOpcode.Fcos or MOpcode.Fptan or MOpcode.Fpatan or MOpcode.Fyl2x
     or MOpcode.Fxch or MOpcode.FstpSt0
     or MOpcode.Fld1 or MOpcode.Fldln2 or MOpcode.Fldlg2 or MOpcode.Fldl2e or MOpcode.Fldl2t;
