@@ -775,6 +775,8 @@ internal static class RuntimeAbi {
     // referenced from the values it already had.
     ["rt_pset"] = new("rt_pset",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.BX), new(ArgKind.Word, Reg.DX)], _callerSaved),
+    ["rt_pset_mode13_offset"] = new("rt_pset_mode13_offset",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),
     // LINE and CIRCLE take everything through the runtime's own cells instead (rt_gx1 and friends),
     // because the same cells ARE the graphics cursor: LINE with no start point reads where the last
     // statement finished, and DRAW's whole notion of position is that pair. Passing the arguments in

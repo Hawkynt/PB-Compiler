@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-23 08:10 UTC by index_codebase.py.
+Generated 2026-10-23 08:35 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1079 files, 8833 symbols.
+1085 files, 8856 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -2087,6 +2087,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - field `usingForm` — """; — PowerBasic.Compiler.Tests/CodeGen/Pb36LanguageFeatureTests.cs:979
 - field `source` — PowerBasic.Compiler.Tests/CodeGen/Pb36LanguageFeatureTests.cs:989
 
+### PixelModeFallbackTests.cs  `C#, 41 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/PixelModeFallbackTests.cs:5
+- class `PixelModeFallbackTests` — PowerBasic.Compiler.Tests/CodeGen/PixelModeFallbackTests.cs:7
+- field `source` — PowerBasic.Compiler.Tests/CodeGen/PixelModeFallbackTests.cs:19
+- method `PSET` — PowerBasic.Compiler.Tests/CodeGen/PixelModeFallbackTests.cs:20
+
 ### PlayFunctionTests.cs  `C#, 60 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/PlayFunctionTests.cs:5
 - class `PlayFunctionTests` — PLAY(n) - how many notes are still queued for background music. — PowerBasic.Compiler.Tests/CodeGen/PlayFunctionTests.cs:22
@@ -2485,13 +2491,19 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `InvalidOperationException($"BRK at ${at:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu6502.cs:448
 - method `InvalidOperationException($"undocumented opcode ${opcode:X2} at ${at:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu6502.cs:450
 
+### Cpu8086.Video.cs  `C#, 33 lines`
+- namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:1
+- class `Cpu8086` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:2
+- method `Cpu8086Exception($"BIOS pixel service in unmodelled mode {this._videoMode:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:11
+- method `Cpu8086Exception("out-of-range BIOS pixel access is not modelled")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:14
+
 ### Cpu8086.X87Software.cs  `C#, 81 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:4
 - class `Cpu8086` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:6
 - record `SoftwareX87Program` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:8
 - method `Cpu8086Exception($"software x87 cannot execute D9 {instruction:X2}")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:71
 
-### Cpu8086.cs  `C#, 2492 lines`
+### Cpu8086.cs  `C#, 2496 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:3
 - class `Cpu8086` — A real-mode 8086 interpreter, enough of one to run the executables this compiler emits. — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:24
 - class `MemoryFile` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:58
@@ -2580,10 +2592,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(handle <= 4)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2120
 - method `foreach(var c in "PBC")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2189
 - method `if(DosWildcardMatch(dosName, mask))` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2220
-- method `if(this._videoMode == 0x13)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2311
-- method `for(var column = 0; column < _SCREEN_COLUMNS; ++column)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2389
-- method `while(this._cursorColumn % 8 != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2421
-- class `Cpu8086Exception` — Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runa… — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2491
+- method `if(this._videoMode == 0x13)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2312
+- method `for(var column = 0; column < _SCREEN_COLUMNS; ++column)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2393
+- method `while(this._cursorColumn % 8 != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2425
+- class `Cpu8086Exception` — Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runa… — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2495
 
 ### Cpu8086X87PrecisionTests.cs  `C#, 99 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086X87PrecisionTests.cs:3
@@ -3409,6 +3421,13 @@ with unrelated edits, so treat them as anchors, not gospel.
 ### PipelineSoundnessTests.cs  `C#, 82 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PipelineSoundnessTests.cs:5
 - class `PipelineSoundnessTests` — A safety net for the whole middle-end: lower a spread of representative programs and — PowerBasic.Compiler.Tests/Ir/PipelineSoundnessTests.cs:14
+
+### PixelRuntimeInliningTests.cs  `C#, 169 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PixelRuntimeInliningTests.cs:8
+- class `PixelRuntimeInliningTests` — PowerBasic.Compiler.Tests/Ir/PixelRuntimeInliningTests.cs:10
+- method `IrConstantInt(IrType.I16, 1)` — PowerBasic.Compiler.Tests/Ir/PixelRuntimeInliningTests.cs:86
+- field `source` — PowerBasic.Compiler.Tests/Ir/PixelRuntimeInliningTests.cs:151
+- method `POINT(3,0)` — PowerBasic.Compiler.Tests/Ir/PixelRuntimeInliningTests.cs:155
 
 ### PointerCompressionTests.cs  `C#, 110 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/PointerCompressionTests.cs:3
@@ -5098,7 +5117,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `foreach(var value in writes)` — PowerBasic.Compiler/Backend/ProfileGuidedSpillCost.cs:26
 - method `Add(costs, value, frequency)` — PowerBasic.Compiler/Backend/ProfileGuidedSpillCost.cs:27
 
-### RuntimeAbi.cs  `C#, 1184 lines`
+### RuntimeAbi.cs  `C#, 1186 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:2
 - class `RuntimeAbi` — The bridge between the IR's runtime declarations and the DOS runtime the direct code generator — PowerBasic.Compiler/Backend/RuntimeAbi.cs:20
 - enum `ArgKind` — Where one IR argument goes: registers, the x87 stack, or a target address. — PowerBasic.Compiler/Backend/RuntimeAbi.cs:23
@@ -5111,7 +5130,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `new(ArgKind.Word, Reg.BX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:540
 - method `new(ArgKind.Offset, Reg.SI)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:607
 - method `new(ArgKind.Pointer, Reg.DI, Reg.SI)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:696
-- method `new(ArgKind.Word, Reg.CX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:902
+- method `new(ArgKind.Word, Reg.CX)` — PowerBasic.Compiler/Backend/RuntimeAbi.cs:904
 
 ### SelectionTarget.cs  `C#, 42 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/SelectionTarget.cs:1
@@ -7271,7 +7290,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `StructuralAlignment(select.IfTrue, active)` — PowerBasic.Compiler/Ir/Analysis/IrAlignmentAnalysis.cs:128
 - method `foreach(var incoming in phi.Operands)` — PowerBasic.Compiler/Ir/Analysis/IrAlignmentAnalysis.cs:133
 
-### IrAnalyses.cs  `C#, 79 lines`
+### IrAnalyses.cs  `C#, 83 lines`
 - namespace `PowerBasic.Compiler.Ir.Analysis` — PowerBasic.Compiler/Ir/Analysis/IrAnalyses.cs:1
 - class `IrAnalyses` — Shared identities for function analyses used across optimization passes. — PowerBasic.Compiler/Ir/Analysis/IrAnalyses.cs:4
 
@@ -7479,6 +7498,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - record `AddRecurrence` — One loop-carried additive recurrence. — PowerBasic.Compiler/Ir/Analysis/IrScalarEvolution.cs:14
 - method `if(ReferenceEquals(update.Rhs, phi) && IsLoopInvariant(update.Lhs, loop…` — PowerBasic.Compiler/Ir/Analysis/IrScalarEvolution.cs:90
 - method `if` — PowerBasic.Compiler/Ir/Analysis/IrScalarEvolution.cs:92
+
+### IrScreenModeAnalysis.cs  `C#, 76 lines`
+- namespace `PowerBasic.Compiler.Ir.Analysis` — PowerBasic.Compiler/Ir/Analysis/IrScreenModeAnalysis.cs:1
+- class `IrScreenModeAnalysis` — Forward must-facts about the DOS screen mode on normal CFG edges. — PowerBasic.Compiler/Ir/Analysis/IrScreenModeAnalysis.cs:4
+- method `if(mode is { } known)` — PowerBasic.Compiler/Ir/Analysis/IrScreenModeAnalysis.cs:28
 
 ### IrSlotInitialization.cs  `C#, 121 lines`
 - namespace `PowerBasic.Compiler.Ir.Analysis` — PowerBasic.Compiler/Ir/Analysis/IrSlotInitialization.cs:1
@@ -8372,16 +8396,17 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrLowIrLegalization.cs:1
 - class `IrLowIrLegalization` — Establishes the first target-independent Low IR boundary. The initial implementation is — PowerBasic.Compiler/Ir/Passes/IrLowIrLegalization.cs:8
 
-### IrMiddleEndPipeline.cs  `C#, 317 lines`
+### IrMiddleEndPipeline.cs  `C#, 320 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:2
 - class `IrMiddleEndPipeline` — The sole owner of production IR middle-end policy. is the execution — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:10
-- method `foreach(var function in module.Functions.ToList())` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:195
-- method `if(!function.IsDeclaration && AddressInduction.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:203
-- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:207
-- method `if(!function.IsDeclaration && SwitchFormation.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:216
-- method `Standard(optimizeForSpeed: optimizeForSpeed, enableFpLookupTables: enableFpLo…` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:258
-- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:264
-- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:285
+- method `IrPassManager()` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:180
+- method `foreach(var function in module.Functions.ToList())` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:198
+- method `if(!function.IsDeclaration && AddressInduction.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:206
+- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:210
+- method `if(!function.IsDeclaration && SwitchFormation.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:219
+- method `Standard(optimizeForSpeed: optimizeForSpeed, enableFpLookupTables: enableFpLo…` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:261
+- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:267
+- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:288
 
 ### IrModulePassPipeline.cs  `C#, 62 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrModulePassPipeline.cs:2
@@ -8703,6 +8728,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(latch is not null)` — PowerBasic.Compiler/Ir/Passes/PhiCongruence.cs:154
 - method `if` — PowerBasic.Compiler/Ir/Passes/PhiCongruence.cs:160
 - method `new(phi, entry, latch, start, step)` — PowerBasic.Compiler/Ir/Passes/PhiCongruence.cs:168
+
+### PixelRuntimeInlining.cs  `C#, 47 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/PixelRuntimeInlining.cs:2
+- class `PixelRuntimeInlining` — Exposes proven SCREEN 13 address arithmetic as an ordinary inlineable IR runtime body. — PowerBasic.Compiler/Ir/Passes/PixelRuntimeInlining.cs:6
+- method `if(calls.Length == 0)` — PowerBasic.Compiler/Ir/Passes/PixelRuntimeInlining.cs:23
+- method `foreach(var call in calls)` — PowerBasic.Compiler/Ir/Passes/PixelRuntimeInlining.cs:26
 
 ### PointerCheckElim.cs  `C#, 57 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/PointerCheckElim.cs:2
@@ -9493,14 +9524,18 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Memory.cs:2
 - class `DosRuntime` — Raw memory operations shared by UDTs, arrays, and fixed-width storage. — PowerBasic.Compiler/Runtime/DosRuntime.Memory.cs:6
 
-### DosRuntime.Misc.cs  `C#, 731 lines`
+### DosRuntime.Misc.cs  `C#, 685 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:2
 - class `DosRuntime` — Console, keyboard, timing and conversion helpers. Conventions: — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:17
-- method `Map(int pb, int bios)` — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:434
+- method `Map(int pb, int bios)` — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:388
 
 ### DosRuntime.Packed.cs  `C#, 143 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Packed.cs:2
 - class `DosRuntime` — PowerBasic.Compiler/Runtime/DosRuntime.Packed.cs:4
+
+### DosRuntime.Pixels.cs  `C#, 114 lines`
+- namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Pixels.cs:2
+- class `DosRuntime` — PowerBasic.Compiler/Runtime/DosRuntime.Pixels.cs:4
 
 ### DosRuntime.Ports.cs  `C#, 39 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Ports.cs:2

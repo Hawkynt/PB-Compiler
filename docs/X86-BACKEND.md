@@ -1286,6 +1286,53 @@ Arrays and fixed buffers lowered to stack allocas are not a runtime-BSS test:
 frame-size, stack-overlap and linked-image multi-segment validation remain separate
 requirements. This guard does not establish those broader layout properties.
 
+### Mode-proven pixel runtime inlining
+
+The native optimizing pipeline computes forward screen-mode must-facts through
+`IrAnalyses.ScreenModes`. A successful constant `rt_screen_mode` establishes its
+normal-edge mode. Joins require agreement from every reachable predecessor;
+backedges converge before facts are published. Unknown calls, assembly, raw
+memory access and port operations invalidate knowledge. Error-handler and
+inline-assembly functions are excluded.
+Non-BASIC call conventions retain their original calls rather than changing ABI through specialization.
+
+For proven `SCREEN 13`, `PixelRuntimeInlining` supplies a small ordinary IR body
+for `rt_pset_mode13`: calculate `y * 320 + x`, then call the volatile
+`rt_pset_mode13_offset` store. The regular inliner exposes that arithmetic to
+the shared scalar/loop passes. A 200-row regression verifies no multiply or
+shift remains inside the loop: the packed offset advances as a recurrence.
+Only the segmented video-memory write remains assembly; the old runtime formula
+is reused, not replaced by a new graphics algorithm.
+
+`PixelRuntimeInliningTests` checks agreeing/disagreeing joins, invalidating
+backedges, fallback paths and COM/MZ execution. Its full `PIXELS.TXT` golden
+capture comes from genuine QuickBASIC 4.50 under DOSBox Staging 0.83; compiler
+and library fingerprints are retained beside the source.
+
+This is a packed mode-13 slice, not general graphics conformance. Other modes
+keep the mode-aware `rt_pset` fallback described below. Direct planar specialization,
+clipping, viewport/page semantics and complete error behavior remain open.
+
+### Mode-aware pixel fallback
+
+`rt_pset` and `rt_point` query the active BIOS mode before selecting their packed
+mode-13 path. Other layouts use INT 10h pixel services rather than applying the
+incorrect `y * 320 + x` formula to planar memory. Coordinates and the existing
+runtime ABI are preserved; page zero remains the supported page.
+
+`PixelModeFallbackTests` retains a genuine QuickBASIC 4.50 capture in which
+`(320,0)` and `(0,1)` hold distinct mode-12 colors. The old packed calculation
+aliased both to offset 320. The corrected runtime matches the captured file in
+COM/MZ images with optimization off/on under native DOSBox Staging, and the
+mode-13 edge-pixel capture remains unchanged.
+
+The BIOS register contract is checked against the LGPLv3
+[SeaBIOS implementation](https://github.com/qemu/seabios/blob/28aa46349b97ef0ebf742ae4fb9f9fad03578670/vgasrc/vgabios.c).
+The runtime delegates framebuffer encoding to firmware; the test CPU models
+logical mode-12 pixels and retains direct memory for mode 13. This does not
+establish planar-memory emulation, clipping, page/viewport behavior, graphics
+error semantics, or complete support for other graphics statements and modes.
+
 ### Software-x87 helper state and precision execution
 
 The integer-only software engine's transcendental routines keep live operands in ScratchA–D.

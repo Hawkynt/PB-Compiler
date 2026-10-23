@@ -371,57 +371,11 @@ public sealed partial class DosRuntime {
   public Label Pset { get; private set; } = null!;
   public Label Point { get; private set; } = null!;
 
-  /// <summary>R2 direct-video pixel primitives for mode 13h (SCREEN 13: 320x200x256, linear A000:y*320+x). No BIOS per-pixel call - direct by construction.</summary>
+  /// <summary>Mode-aware pixel primitives with direct packed access for mode 13h and a BIOS fallback.</summary>
   private void EmitPixelProcedures(Assembler asm) {
-    // rt_pset: AX = x, BX = y, DL = color
-    this.Pset = asm.MarkLabel("rt_pset");
-    {
-      asm.Push(Reg.ES);
-      asm.Push(Reg.DI);
-      asm.Push(Reg.CX);
-      asm.Push(Reg.BX);
-      asm.Mov(Reg.DI, Reg.BX);                    // y*320 = (y<<8) + (y<<6)
-      asm.Mov(Reg.CL, (Imm)8);
-      asm.Shl(Reg.DI, Reg.CL);
-      asm.Mov(Reg.CL, (Imm)6);
-      asm.Shl(Reg.BX, Reg.CL);
-      asm.Add(Reg.DI, Reg.BX);
-      asm.Add(Reg.DI, Reg.AX);
-      asm.Mov(Reg.BX, 0xA000);
-      asm.Mov(Reg.ES, Reg.BX);
-      asm.Mov(Mem.Byte(Reg.DI).Seg(Reg.ES), Reg.DL);
-      asm.Pop(Reg.BX);
-      asm.Pop(Reg.CX);
-      asm.Pop(Reg.DI);
-      asm.Pop(Reg.ES);
-      asm.Ret();
-    }
-
-    // rt_point: AX = x, BX = y -> DX:AX = color (LONG)
-    this.Point = asm.MarkLabel("rt_point");
-    {
-      asm.Push(Reg.ES);
-      asm.Push(Reg.DI);
-      asm.Push(Reg.CX);
-      asm.Push(Reg.BX);
-      asm.Mov(Reg.DI, Reg.BX);
-      asm.Mov(Reg.CL, (Imm)8);
-      asm.Shl(Reg.DI, Reg.CL);
-      asm.Mov(Reg.CL, (Imm)6);
-      asm.Shl(Reg.BX, Reg.CL);
-      asm.Add(Reg.DI, Reg.BX);
-      asm.Add(Reg.DI, Reg.AX);
-      asm.Mov(Reg.BX, 0xA000);
-      asm.Mov(Reg.ES, Reg.BX);
-      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
-      asm.Xor(Reg.AH, Reg.AH);
-      asm.Xor(Reg.DX, Reg.DX);
-      asm.Pop(Reg.BX);
-      asm.Pop(Reg.CX);
-      asm.Pop(Reg.DI);
-      asm.Pop(Reg.ES);
-      asm.Ret();
-    }
+    this.EmitSetPixel(asm);
+    EmitPackedPixelWriter(asm);
+    this.EmitReadPixel(asm);
   }
 
   private void EmitMiscProcedures2(Assembler asm) {

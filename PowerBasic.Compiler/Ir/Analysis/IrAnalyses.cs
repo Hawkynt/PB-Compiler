@@ -3,6 +3,10 @@ namespace PowerBasic.Compiler.Ir.Analysis;
 /// <summary>Shared identities for function analyses used across optimization passes.</summary>
 public static class IrAnalyses {
 
+  /// <summary>Proven DOS screen modes at instruction boundaries.</summary>
+  public static IrAnalysisKey<IrScreenModeAnalysis> ScreenModes { get; } =
+    new("screen-modes", static (function, _) => new IrScreenModeAnalysis(function));
+
   /// <summary>CFG dominators and dominance frontiers.</summary>
   public static IrAnalysisKey<IrDominators?> Dominators { get; } =
     new("dominators", static (function, _) => IrDominators.Build(function), IrAnalysisSets.Cfg);

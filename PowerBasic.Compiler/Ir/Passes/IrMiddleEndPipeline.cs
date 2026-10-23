@@ -176,6 +176,9 @@ public static class IrMiddleEndPipeline {
       : () => Legalize(recoverIntegerArithmetic);
 
     pipeline().RunOnModule(module);
+    if (optimize)
+      new IrPassManager().InEarlyModulePhase(IrMiddleEndPhase.ArithmeticSimplification)
+        .AddEarlyModuleConservative("pixel-runtime-inline", PixelRuntimeInlining.Run).RunOnModule(module);
     CompleteSsaBoundary(module);
     pipeline().RunOnModule(module);
 

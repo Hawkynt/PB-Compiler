@@ -2308,6 +2308,7 @@ public sealed partial class Cpu8086 {
       case 0x00: {
         this._videoMode = this.Reg8(_AX);
         this._memory[0x449] = this._videoMode;
+        this._biosPixels?.Clear();
         if (this._videoMode == 0x13)
           Array.Clear(this._memory, 0xA0000, 320 * 200);
         else
@@ -2334,6 +2335,9 @@ public sealed partial class Cpu8086 {
           this.PutCell(this._cursorRow, column, this.Reg8(_AX), attribute);
         return;
       }
+      case 0x0C or 0x0D:
+        this.BiosPixel();
+        return;
       case 0x0E:                                                    // teletype
         this._output.Append((char)this.Reg8(_AX));
         this.ConsoleWrite(this.Reg8(_AX));

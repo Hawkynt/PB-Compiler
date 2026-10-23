@@ -69,6 +69,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 
 - Reads unmodified DOS-era BASIC and emits DOS MZ `.EXE`, flat `.COM`, compiled units (`.PBU`/`.PBL`) and Intel OMF `.OBJ`/`.LIB`
 - Standalone MZ generation rejects physical images or virtual runtime BSS beyond its single 64-KiB near segment
+- Pixel primitives retain direct packed mode-13 access and use BIOS-backed access for other active layouts;
+  mode-12 pixel separation is checked against genuine QuickBASIC captures
 - Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
 - Software-x87 math preserves live operands and control state across helpers; precision tests retain
   full-width operands for transcendental kernels rather than converting them through host `double`
@@ -77,6 +79,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - Typed floating negation preserves signed zero and full EXT precision without zero-subtraction
   or multiplication; captured QuickBASIC output and raw-byte tests cover optimized and plain builds
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
+- Proven DOS `SCREEN 13` pixel calls use an inlineable IR address calculation, exposing row strides
+  to ordinary loop strength reduction; unknown modes retain the generic runtime call
 - Default QuickBASIC 1–3 uses MBF32/MBF64 storage, including numeric string codecs, near static arrays,
   BYREF calls, input/DATA, local function results and floating FOR counters; precision rules remain
   distinct from GW/BASICA, and captured original-compiler files test the observable bytes
