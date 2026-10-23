@@ -109,6 +109,7 @@ public static class IrMiddleEndPipeline {
     .AddAnalyzed("ifconv", (fn, _) => Conservative(() => IfConversion.Run(fn)))
     .AddAnalyzed("simplifycfg", (fn, _) => Conservative(() => SimplifyCfg.Run(fn)))
     .AddAnalyzed("tailrec", (fn, _) => Conservative(() => TailRecursion.Run(fn)))
+    .AddAnalyzed("console-setters", ConsoleSetterCoalescing.Run)
     .AddAnalyzed("switchform", (fn, _) => Conservative(() => SwitchFormation.Run(fn)))
     .InModulePhase(IrMiddleEndPhase.Interprocedural)
     .AddModuleConservativeWhen(includeModulePasses && optimizeForSpeed, "cold-outline", ColdCodeOutlining.Run)
@@ -227,6 +228,10 @@ public static class IrMiddleEndPipeline {
     // O0282: with the call graph final, owned procedures may take their words in registers
     if (optimizeForSpeed)
       PrivateCallingConvention.Run(module);
+    // Final layout follows every literal-producing fold. Earlier string transforms deliberately
+    // operate on whole literal globals; consumers now receive ordinary pointer/length slices.
+    if (optimize)
+      LiteralPooling.Run(module);
   }
 
   /// <summary>
@@ -289,6 +294,8 @@ public static class IrMiddleEndPipeline {
         Dce.Run(function);
       }
     GlobalDce.Run(module);
+    // The same final literal layout as native emission, not an emitter-local string optimization.
+    LiteralPooling.Run(module);
   }
 
   private static void CompleteSsaBoundary(IrModule module) {

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 using PowerBasic.Compiler.Semantics;
@@ -114,6 +115,39 @@ public sealed class CBackendTests {
       Assert.That(Normalize(run.Output), Is.EqualTo(expected), $"{program}: C back end disagrees with the DOS golden");
     } finally {
       try { Directory.Delete(work, recursive: true); } catch (IOException) { /* best effort */ }
+    }
+  }
+
+  [Test]
+  public void Emit_GivenContainedLiterals_WhenPooledInTheMiddleEnd_ThenCPrintsTheOriginalSlices() {
+    Assume.That(_cc, Is.Not.Null, "no C compiler on PATH");
+    const string source = "PRINT \"Hallo World\":PRINT \"Test\":PRINT \"Hallo\":PRINT \"World\"";
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb35),
+      "T.BAS", Dialect.Pb35), Dialect.Pb35);
+    Assert.That(model.Errors, Is.Empty);
+    var compiled = IrBackendModule.TryCompile(model, new() {
+      Target = IrBackendTarget.C,
+      Optimize = true,
+    }, out var why);
+    Assert.That(compiled, Is.Not.Null, why);
+    var module = compiled!.Module;
+    Assert.That(module.Globals.Where(g => g.Bytes is not null).Sum(g => g.Bytes!.Length), Is.EqualTo(15));
+    var work = Path.Combine(Path.GetTempPath(), "pbc-c-pool-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(work);
+    try {
+      var csource = Path.Combine(work, "prog.c");
+      File.WriteAllText(csource, CEmitter.Emit(module));
+      var exe = Path.Combine(work, "prog.exe");
+      var runtime = Path.Combine(_repoRoot, "runtime");
+      var build = Run(_cc!,
+        $"-std=c99 -O2 -I \"{runtime}\" -o \"{exe}\" \"{csource}\" \"{Path.Combine(runtime, "pbc_rt.c")}\" -lm",
+        work, null);
+      Assert.That(build.ExitCode, Is.Zero, build.Output);
+      var run = Run(exe, "", work, null);
+      Assert.That(run.ExitCode, Is.Zero, run.Output);
+      Assert.That(Normalize(run.Output), Is.EqualTo("Hallo World\nTest\nHallo\nWorld"));
+    } finally {
+      Directory.Delete(work, recursive: true);
     }
   }
 

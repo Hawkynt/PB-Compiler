@@ -3796,10 +3796,17 @@ public sealed partial class InstructionSelector {
         }
         case RuntimeAbi.ArgKind.Offset: {
           // the address of the data object, not its contents - a string literal the codegen pools
-          if (arg is not IrGlobalVariable global)
+          var global = arg as IrGlobalVariable;
+          var displacement = 0;
+          if (arg is IrGep { BasePtr: IrGlobalVariable { Bytes: not null } blob, ElementType: null,
+              ByteOffset: IrConstantInt { Value: >= 0 and <= ushort.MaxValue } index }) {
+            global = blob;
+            displacement = (int)index.Value;
+          }
+          if (global is null)
             return this.Decline($"call: {callee.Name} wants the address of a global, not {arg.GetType().Name}");
           var dest = new MOperand.Register(MReg.Physical_(slot.Register, MRegSize.Word));
-          var address = new MOperand.DataOffset(global.Name, 0);
+          var address = new MOperand.DataOffset(global.Name, displacement);
           this._current.Instructions.Add(new MInstr(MOpcode.Mov, [dest, address], MovEffect(dest, address),
             condition: null, clobbers: stagedRegisters[i]));
           break;

@@ -77,6 +77,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
   distinct from GW/BASICA, and captured original-compiler files test the observable bytes
 - IR-to-BASIC rendering preserves finite EXT constants beyond binary64, including exponent boundaries
   and signed zero; raw-byte round-trips cover optimized and unoptimized recompilation
+- IR console-state coalescing removes unobserved repeated `CLS` and covered, proven-valid `LOCATE`
+  calls while preserving observers, invalid coordinates, and potentially failing mode changes
 - `ABS(EXT)` preserves the full x87 significand and exponent, including signed zero and subnormal values;
   GW/BASICA `ABS` also retains MBF range and precision for stored values, literals and expressions;
   `SGN` compares decoded MBF values as floating-point operands rather than rejecting their storage type
@@ -402,10 +404,10 @@ status column below cannot drift apart:
 | Family | ✅ implemented | 🟡 partial | ⬜ planned | total |
 |---|---:|---:|---:|---:|
 | C — target-CPU code generation | 2 | 1 | 0 | 3 |
-| O — optimization passes | 173 | 84 | 153 | 410 |
+| O — optimization passes | 173 | 85 | 152 | 410 |
 | P — lean output | 6 | 0 | 1 | 7 |
 | R — runtime speed | 4 | 0 | 0 | 4 |
-| **all** | **185** | **85** | **154** | **424** |
+| **all** | **185** | **86** | **153** | **424** |
 
 
 **One entry, one optimization.** Where a single ID used to cover a family — "peephole",
@@ -428,7 +430,7 @@ next free number rather than displacing anything.
 | ✅ | [O0008](docs/optimizations/O0008-peephole-zero-idiom.md) | Peephole / zero-idiom | `XOR r,r` for zero, immediate-folded ALU ops, `INC`/`DEC` and `OR AX,AX` collapses (16- and 32-bit paths). |
 | ✅ | [O0009](docs/optimizations/O0009-string-temp-economy.md) | String-temp economy | Folds literal concatenations into one pooled literal; self-append grows the topmost heap block in place instead of recopying. |
 | 🟡 | [O0010](docs/optimizations/O0010-redundant-statement-elimination.md) | Redundant-statement / statement coalescing | Drops a `DEF SEG`/`LOCATE` whose window contains only segment-transparent statements. |
-| 🟡 | [O0011](docs/optimizations/O0011-literal-overlap-pooling.md) | Literal overlap pooling | Overlapping/contained string literals share bytes in one pool. |
+| 🟡 | [O0011](docs/optimizations/O0011-literal-overlap-pooling.md) | Literal overlap pooling | Proven contained literals share bytes in the common IR, including C/LLVM output; partial overlaps remain open. |
 | 🟡 | [O0012](docs/optimizations/O0012-float-demotion.md) | Float demotion | Re-types accidental SINGLE/DOUBLE loop counters back to INTEGER/LONG when every use is value-exact (`FloatDemotion`). |
 | ✅ | [O0013](docs/optimizations/O0013-promotion-lowering.md) | Promotion lowering | PB computes `+ - *` over integral operands in floating point; those trees run on the plain 16- or 32-bit ALU whenever that is bit-identical. |
 | 🟡 | [O0014](docs/optimizations/O0014-tail-call-optimization.md) | Tail-call optimization | A tail self-call jumps to frame entry, a tail `CALL B` reuses the caller's frame — recursion in constant stack space. |
@@ -633,7 +635,7 @@ next free number rather than displacing anything.
 | ✅ | [O0208](docs/optimizations/O0208-inplace-literal-append.md) | In-place literal append | `s$ = s$ + "literal"` calls `rt_strcatlit`, which — when `s$` is the topmost heap block and there is room under the `$STRING` cap. |
 | ✅ | [O0209](docs/optimizations/O0209-inplace-variable-append.md) | In-place variable append | `s$ = s$ + v$` (with `v$` a bare string variable) reads `v$`'s raw handle — no `StrDup` temp, so `s$` stays topmost. |
 | ✅ | [O0210](docs/optimizations/O0210-concat-chain-temp-reuse.md) | Concat-chain dead-temp reuse | In a left-associative chain `a$ + b$ + c$` = `(a$ + b$) + c$`, the inner concat produces a fresh, dead, topmost temp. |
-| ⬜ | [O0211](docs/optimizations/O0211-console-setter-elimination.md) | Redundant console-setter elimination | A console-state statement that sets the value already in effect changes nothing observable and is dropped. |
+| 🟡 | [O0211](docs/optimizations/O0211-console-setter-elimination.md) | Redundant console-setter elimination | Coalesces full clears and covered, proven-valid cursor positions; screen-mode changes and observers remain barriers. |
 | ✅ | [O0212](docs/optimizations/O0212-promotion-lowering-32.md) | 32-bit promotion lowering | `total& = total& + delta&` lowered faithfully is `FILD` / the x87 op / `FISTP` plus a memory staging cell at each end. |
 | 🟡 | [O0213](docs/optimizations/O0213-cross-procedure-tail-call.md) | Cross-procedure tail call | A `SUB A` whose last action is `CALL B(args)` — B another in-module `SUB`. |
 | ⬜ | [O0214](docs/optimizations/O0214-udt-compare-widening.md) | Whole-UDT compare widening | The PowerBASIC 3.1 whole-value `=`/`<>` comparison of two `TYPE` values is a memory compare. |
