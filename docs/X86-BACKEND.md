@@ -1327,6 +1327,11 @@ coordinates/deltas cannot be represented with both signs in a word are left unre
 `DRAW.TXT` capture for `"C9 " + UCASE$("r5")` matches genuine QuickBASIC 4.50 under DOSBox Staging 0.83;
 compiler/library fingerprints are retained beside the regression.
 
+`DrawMacroStateTests` retains a separate genuine capture for `B`/`N` before a colour change.
+Both prefixes survive until the next movement, and combining them neither draws nor moves.
+Literal lowering and IR-proven text share this behavior. Word-sized movement scaling, numeric
+tokenization across spaces and stateful angle/scale commands still require oracle-driven correction.
+
 This is not yet partial evaluation of mixed static/dynamic strings: unresolved `rt_draw` calls still
 decline explicitly on DOS. Runtime interpretation, angle/scale state, token boundaries crossing string
 fragments, and handoff between interpreted and inlined commands remain prerequisites. No command span

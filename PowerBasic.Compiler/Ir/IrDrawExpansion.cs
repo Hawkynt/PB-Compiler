@@ -18,8 +18,10 @@ internal static class IrDrawExpansion {
       builder.Store(Endpoint(builder, x1, step.X, step.Kind), x2);
       builder.Store(Endpoint(builder, y1, step.Y, step.Kind), y2);
       if (step.Blank) {
-        builder.Store(builder.Load(IrType.I16, x2), x1);
-        builder.Store(builder.Load(IrType.I16, y2), y1);
+        if (!step.NoUpdate) {
+          builder.Store(builder.Load(IrType.I16, x2), x1);
+          builder.Store(builder.Load(IrType.I16, y2), y1);
+        }
         continue;
       }
       var keptX = step.NoUpdate ? builder.Load(IrType.I16, x1) : null;

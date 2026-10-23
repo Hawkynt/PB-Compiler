@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-23 11:57 UTC by index_codebase.py.
+Generated 2026-10-23 12:27 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1089 files, 8859 symbols.
+1090 files, 8862 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -1397,6 +1397,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(!minimized)` — PowerBasic.Compiler.Tests/CodeGen/DosBoxRunner.cs:315
 - method `if(completed)` — PowerBasic.Compiler.Tests/CodeGen/DosBoxRunner.cs:327
 - method `if(File.Exists(path))` — PowerBasic.Compiler.Tests/CodeGen/DosBoxRunner.cs:342
+
+### DrawMacroStateTests.cs  `C#, 50 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/DrawMacroStateTests.cs:5
+- class `DrawMacroStateTests` — PowerBasic.Compiler.Tests/CodeGen/DrawMacroStateTests.cs:7
 
 ### DrawStatementTests.cs  `C#, 130 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/DrawStatementTests.cs:5
@@ -6716,9 +6720,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(newIdom is not null && (!this._idom.TryGetValue(block, out var cur) …` — PowerBasic.Compiler/Ir/IrDominators.cs:108
 - method `while(!ReferenceEquals(runner, idom))` — PowerBasic.Compiler/Ir/IrDominators.cs:137
 
-### IrDrawExpansion.cs  `C#, 47 lines`
+### IrDrawExpansion.cs  `C#, 49 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrDrawExpansion.cs:2
 - class `IrDrawExpansion` — The shared IR expansion for the currently modeled DRAW movement/colour commands. — PowerBasic.Compiler/Ir/IrDrawExpansion.cs:6
+- method `if(!step.NoUpdate)` — PowerBasic.Compiler/Ir/IrDrawExpansion.cs:21
 
 ### IrFNeg.cs  `C#, 17 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrFNeg.cs:1

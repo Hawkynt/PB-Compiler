@@ -97,7 +97,7 @@ public static class MacroStringValidator {
           var start = at;
           ReadNumber(picture, ref at);
           steps.Add(new(DrawStepKind.Colour, int.Parse(picture[start..at]), 0, false, false));
-          break;
+          continue; // B/N attach to the next movement, not to a colour change.
         }
 
         default:
