@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Hir;
 using PowerBasic.Compiler.Emit;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
@@ -10,7 +11,7 @@ namespace PowerBasic.Compiler.Tests.Ir;
 
 /// <summary>
 /// Deleting a counted loop nobody can observe - and, just as much a part of the contract, NOT
-/// deleting one under <c>$OPTIMIZE SIZE</c>, where a busy-wait is taken at its word.
+/// deleting a source-empty busy-wait under any optimization objective.
 ///
 /// <para>
 /// The gate is the interesting half. Every other pass here can be judged by "does the program still
@@ -91,13 +92,81 @@ public sealed class DeadLoopEliminationTests {
   }
 
   /// <summary>
-  /// A delay loop is the same shape written on purpose, so under SPEED it goes too. That is the
-  /// trade the gate exists to make, and it is asserted rather than left implied.
+  /// Source-empty loops may be intentional delays even under SPEED.
   /// </summary>
   [Test]
-  public void DelayLoop_WhenOptimizingForSpeed_ThenItGoesToo() {
-    Assert.That(HasLoop(Optimized(_DELAY_LOOP, forSpeed: true)), Is.False);
+  public void DelayLoop_WhenOptimizingForSpeed_ThenItKeepsTheWait() {
+    Assert.That(HasLoop(Optimized(_DELAY_LOOP, forSpeed: true)), Is.True);
     Assert.That(HasLoop(Optimized(_DELAY_LOOP, forSpeed: false)), Is.True, "SIZE must keep the wait");
+  }
+
+  [TestCase("FOR i%=1 TO 4:NEXT", true)]
+  [TestCase("FOR i%=1 TO 4:NEXT", false)]
+  [TestCase("INPUT n%:FOR i%=1 TO n%:NEXT", true)]
+  [TestCase("FOR i%=1 TO 3:FOR j%=1 TO 300:NEXT:NEXT", true)]
+  public void Optimize_GivenSourceEmptyLoops_ThenPreservesACycle(string source, bool forSpeed) {
+    Assert.That(HasLoop(Optimized(source + "\nEND", forSpeed)), Is.True);
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Summarize_GivenADelayProcedure_ThenItsCallCannotBeDiscardedOrEvaluated(bool returnsValue) {
+    var source = returnsValue ? """
+      PRINT Wait%()
+      END
+      FUNCTION Wait%()
+        FOR i%=1 TO 4:NEXT
+        Wait%=1
+      END FUNCTION
+      """ : """
+      CALL Wait
+      END
+      SUB Wait
+        FOR i%=1 TO 4:NEXT
+      END SUB
+      """;
+    var module = IrLowering.TryLowerModule(Bind(source), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    foreach (var function in module!.Functions.Where(function => !function.IsDeclaration)) {
+      IntegerRecovery.Run(function);
+      Mem2Reg.Run(function);
+    }
+    var delay = module.Functions.Single(function => function.Blocks.Any(block => block.IsSourceEmptyLoopHeader));
+    Assert.Multiple(() => {
+      Assert.That(FunctionSummaries.Compute(module).For(delay).CanDiscard, Is.False);
+      Assert.That(FunctionSummaries.Compute(module).For(delay).IsPure, Is.False);
+      Assert.That(PureCallEvaluation.Run(module), Is.Zero);
+      Assert.That(FunctionSummaries.RemoveDeadPureCalls(module), Is.Zero);
+    });
+  }
+
+  [TestCase("FOR i%=1 TO 3:NEXT", true)]
+  [TestCase("FOR i%=1 TO 3:t%=t%+1:NEXT", false)]
+  [TestCase("DO WHILE TIMER < 1:LOOP", true)]
+  [TestCase("DO WHILE TIMER < 1:t%=t%+1:LOOP", false)]
+  public void Lower_GivenLoopProvenance_ThenSnapshotsItThroughHirCloningAndUnitFiles(string source, bool empty) {
+    var model = Bind(source + "\nEND");
+    var hir = BoundAstToHir.Lower(model);
+    var loop = hir.Functions[0].Body[0];
+    var sourceEmpty = loop switch {
+      HirForStatement counted => counted.IsSourceEmpty,
+      HirDoLoopStatement conditional => conditional.IsSourceEmpty,
+      _ => throw new AssertionException("expected a source loop"),
+    };
+    var module = IrLowering.TryLowerModule(model, out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    var function = module!.Functions.Single(function => function.Name == "main");
+    var copy = new IrFunction("copy", IrType.Void);
+    IrCloner.Clone(copy, function.Blocks, [], "clone.");
+    var restored = IrUnitFile.Read(IrUnitFile.Write(module));
+    Assert.Multiple(() => {
+      Assert.That(sourceEmpty, Is.EqualTo(empty), "HIR source snapshots have empty Body even for computation loops");
+      Assert.That(function.Blocks.Any(block => block.IsSourceEmptyLoopHeader), Is.EqualTo(empty));
+      Assert.That(copy.Blocks.Any(block => block.IsSourceEmptyLoopHeader), Is.EqualTo(empty));
+      Assert.That(restored.Functions.SelectMany(function => function.Blocks)
+        .Any(block => block.IsSourceEmptyLoopHeader), Is.EqualTo(empty));
+      Assert.That(IrVerifier.Verify(restored), Is.Empty);
+    });
   }
 
   /// <summary>

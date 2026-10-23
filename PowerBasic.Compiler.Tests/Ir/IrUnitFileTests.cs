@@ -12,6 +12,19 @@ namespace PowerBasic.Compiler.Tests.Ir;
 [TestFixture]
 public sealed class IrUnitFileTests {
 
+  [Test]
+  public void Read_GivenALegacyVersionTwoUnit_ThenStillReadsItsBody() {
+    // Captured with the version-two writer: main contains one untagged entry block and RET.
+    const string legacy = "UEJJUlVOSVQCAAAADGxlZ2FjeS1kZWxheSMAAAAjAAAAAAAAAAABAAAABG1haW4AAAAAAAEAAAAAAAAAAAAAAAAAAAAA"
+      + "AAEAAAAFZW50cnkBAAAAAAAAAAABAAAAAAABAAAADAAAAAAAAAAAAA==";
+    var module = IrUnitFile.Read(Convert.FromBase64String(legacy));
+    Assert.Multiple(() => {
+      Assert.That(module.Functions.Single().Blocks.Single().Instructions.Single(), Is.InstanceOf<IrRet>());
+      Assert.That(module.Functions.Single().Blocks.Single().IsSourceEmptyLoopHeader, Is.False);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
   private static readonly string _repoRoot =
     Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", ".."));
 

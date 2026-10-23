@@ -272,12 +272,18 @@ public sealed record CaseArm(SourcePosition Position, IReadOnlyList<CaseSelector
 
 public sealed record SelectStmt(SourcePosition Position, Expression Subject, IReadOnlyList<CaseArm> Arms) : Statement(Position);
 
-public sealed record ForStmt(SourcePosition Position, Expression Variable, Expression From, Expression To, Expression? Step, IReadOnlyList<Statement> Body) : Statement(Position);
+public sealed record ForStmt(SourcePosition Position, Expression Variable, Expression From, Expression To, Expression? Step, IReadOnlyList<Statement> Body) : Statement(Position) {
+  /// <summary>Captured at construction, not recomputed when a later rewrite empties the body.</summary>
+  public bool IsSourceEmpty { get; init; } = Body.Count == 0;
+}
 
 public enum LoopTestKind { None, While, Until }
 
 /// <summary>DO/LOOP with optional pre- or post-test; also covers WHILE/WEND (pre-test While).</summary>
-public sealed record DoLoopStmt(SourcePosition Position, LoopTestKind PreTest, Expression? PreCondition, LoopTestKind PostTest, Expression? PostCondition, IReadOnlyList<Statement> Body) : Statement(Position);
+public sealed record DoLoopStmt(SourcePosition Position, LoopTestKind PreTest, Expression? PreCondition, LoopTestKind PostTest, Expression? PostCondition, IReadOnlyList<Statement> Body) : Statement(Position) {
+  /// <summary>Source-empty loops may be intentional waits, regardless of optimization objective.</summary>
+  public bool IsSourceEmpty { get; init; } = Body.Count == 0;
+}
 
 /// <summary>
 /// FOR EACH variable IN collection (PB 3.6): the binder lowers it per the collection's static

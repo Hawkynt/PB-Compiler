@@ -50,6 +50,8 @@ public sealed class IrPrinter {
     sb.Append(" {\n");
     foreach (var block in fn.Blocks) {
       sb.Append(block.Label).Append(":\n");
+      if (block.IsSourceEmptyLoopHeader)
+        sb.Append("  ; source-empty loop: preserve execution\n");
       foreach (var inst in block.Instructions)
         sb.Append("  ").Append(this.PrintInstruction(inst)).Append('\n');
     }

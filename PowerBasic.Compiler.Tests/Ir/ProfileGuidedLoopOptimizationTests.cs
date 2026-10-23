@@ -55,6 +55,21 @@ public sealed class ProfileGuidedLoopOptimizationTests {
     => IrProfileMetadata.SetLoopTripCounts(header, new(histogram));
 
   [Test]
+  public void Profile_GivenASourceEmptyWait_ThenDoesNotPeelIt() {
+    var module = Lowered("INPUT n%\nFOR i%=1 TO n%:NEXT\nEND");
+    var main = module.FindFunction("main")!;
+    var header = LoopHeader(main);
+    Attach(header, (3, 100));
+
+    Assert.Multiple(() => {
+      Assert.That(header.IsSourceEmptyLoopHeader, Is.True);
+      Assert.That(ProfileGuidedLoopOptimization.Run(main), Is.Zero);
+      Assert.That(LoopUnroll.Run(main), Is.Zero);
+      Assert.That(IrVerifier.Verify(main), Is.Empty);
+    });
+  }
+
+  [Test]
   public void Profile_GivenDominantSmallTripCount_ThenThePrefixIsPeeledAndTheLoopRemainsAsFallback() {
     var module = Lowered(RuntimeBoundProgram(3));
     var main = module.FindFunction("main")!;

@@ -20,6 +20,10 @@ the literal for that copy ([O0066](O0066-unrolled-counter-propagation.md)).
 **Nested** loops unroll inner-out, each inner unroll leaving the outer body
 straight-line for the next sweep.
 
+Source-empty loops are excluded, including runtime and profile-guided unrolling:
+they may be intentional delays. An AST provenance tag distinguishes them from
+computation loops whose bodies become empty only after optimization.
+
 Uses after the loop are rewritten to each phi's value after the last
 iteration, so the counter holds the **increment-then-test final value**
 (QUIRK 2.28), exactly as the rolled loop would have left it.

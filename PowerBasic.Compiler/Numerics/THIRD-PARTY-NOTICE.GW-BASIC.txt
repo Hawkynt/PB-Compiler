@@ -5,6 +5,13 @@ Sources: https://github.com/microsoft/GW-BASIC/blob/master/MATH2.ASM
          https://github.com/microsoft/GW-BASIC/blob/master/MATH1.ASM
 License: https://github.com/microsoft/GW-BASIC/blob/master/LICENSE
 
+The interpreter trigonometric lowering in Ir/IrLowering.MicrosoftTrig.cs converts
+MATH1.ASM ($SIN/$COS/RR/$SINCN) and MATH2.ASM ($POLYX/$POLY) to typed IR operations
+with explicit MBF rounding. Coefficient and reciprocal bytes are retained exactly.
+Pinned revision: edf82c2ebf6bfe099c2054e0ae125c3efe5769c4.
+Ir/IrLowering.Mbf.cs also models MATH2.ASM $ROUNS's three retained guard bits
+before nearest/even SINGLE arithmetic rounding.
+
 MIT License
 
 Copyright (c) Microsoft Corporation.

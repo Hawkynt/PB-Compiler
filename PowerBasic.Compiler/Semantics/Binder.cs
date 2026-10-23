@@ -2126,12 +2126,11 @@ public sealed class Binder {
     : e.Builtin.ToString();
 
   /// <summary>
-  /// BASICA / GW-BASIC store SINGLE and DOUBLE in Microsoft Binary Format, so map
-  /// both IEEE scalar types to their MBF storage widths in those dialects. QBasic
-  /// and the other dialects keep IEEE storage.
+  /// BASICA/GW and default QuickBASIC 1-3 store SINGLE/DOUBLE in Microsoft Binary Format.
+  /// Later Microsoft products and the Borland dialects keep their IEEE storage.
   /// </summary>
   private PbType? AsMbfIfInterpreter(PbType? type) {
-    if (!this._dialect.IsGwBasica())
+    if (!this.EffectiveDialect.HasMbfStorage())
       return type;
     return type switch {
       ScalarType { Kind: ScalarKind.Single } => new MbfType(IsDouble: false),
@@ -2727,7 +2726,7 @@ public sealed class Binder {
 
       case ForStmt f: {
         var counter = this.BindExpression(f.Variable, scope);
-        if (counter is not ScalarType)
+        if (NumericValueType(counter) is not ScalarType)
           this.Error(f.Position, "FOR counter must be numeric");
         this.BindExpression(f.From, scope);
         this.BindExpression(f.To, scope);
@@ -4799,13 +4798,18 @@ public sealed class Binder {
   };
 
   private PbType ReturnTypeOf(IntrinsicInfo intrinsic, PbType? firstArg) => intrinsic.Returns switch {
+    // GW/BASICA's default math package narrows the argument and result to SINGLE. The optional
+    // interpreter /D startup mode is not represented by selecting the default dialect.
+    IntrinsicReturn.Ext when this.EffectiveDialect.IsGwBasica() && _argTypedMath.Contains(intrinsic.Name)
+      => PbType.Single,
     // QB math functions return their argument's precision: SQR(2) prints the
     // SINGLE "1.414214", LOG(e#) the DOUBLE-rounded " 1 " (oracle-verified). The DOUBLE/SINGLE
     // return type makes codegen NARROW the extended FYL2X result to that precision before PRINT
     // (pb35 keeps it extended, printing 1 ULP off at 16 digits). EffectiveDialect honours $COMPAT so
     // a transpiled-to-pb35 program narrows identically to its source dialect.
     IntrinsicReturn.Ext when this.EffectiveDialect.Family() == DialectFamily.Microsoft && _argTypedMath.Contains(intrinsic.Name)
-      => firstArg is ScalarType { IsFloat: true, ByteSize: >= 8 } ? PbType.Double : PbType.Single,
+      => firstArg is ScalarType { IsFloat: true, ByteSize: >= 8 } or MbfType { IsDouble: true }
+        ? PbType.Double : PbType.Single,
     IntrinsicReturn.Integer => PbType.Integer,
     IntrinsicReturn.Quad => PbType.Quad,
     IntrinsicReturn.Fix => PbType.Fix,
@@ -4817,7 +4821,8 @@ public sealed class Binder {
     IntrinsicReturn.Double => PbType.Double,
     IntrinsicReturn.Ext => PbType.Ext,
     IntrinsicReturn.String => PbType.String,
-    _ => firstArg as ScalarType ?? PbType.Ext,
+    _ => firstArg is MbfType mbf ? mbf.IsDouble ? PbType.Double : PbType.Single
+      : firstArg as ScalarType ?? PbType.Ext,
   };
 
   private VariableSymbol? LookupVariable(string key, Scope scope) {

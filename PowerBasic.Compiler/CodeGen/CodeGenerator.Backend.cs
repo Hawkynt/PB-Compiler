@@ -139,7 +139,8 @@ public sealed partial class CodeGenerator {
   private static string? BackendAbiShapeReason(ProcedureSymbol proc) {
     // a FUNCTION with no resolved return type is refused along with the rest, exactly as the pattern
     // this replaced did - `null is not ScalarType{...}` was true, and the shape has no ABI either way
-    if (proc.IsFunction && (proc.ReturnType is not { } returnType || !IsBackendResultAbiType(returnType)))
+    if (proc.IsFunction && (proc.ReturnType is not { } returnType
+        || !IsBackendResultAbiType(returnType) && (proc.IsExternal || returnType is not MbfType)))
       return $"filter: return type outside the routed ABI "
         + $"({(proc.ReturnType is null ? "unresolved" : DescribeType(proc.ReturnType))})";
     foreach (var parameter in proc.Parameters) {
@@ -155,7 +156,7 @@ public sealed partial class CodeGenerator {
         continue;
       // Every other near BYREF argument is one pointer word too, but its pointee must be a value shape
       // the routed lowering already models. Dynamic strings use the word as a handle-cell pointer.
-      if (!parameter.ByVal && !IsBackendAbiType(parameter.Type))
+      if (!parameter.ByVal && parameter.Type is not MbfType && !IsBackendAbiType(parameter.Type))
         return $"filter: BYREF parameter ({DescribeType(parameter.Type)})";
       if (parameter.ByVal && !IsBackendByValParameterAbiType(parameter.Type))
         return $"filter: parameter type outside the routed ABI ({DescribeType(parameter.Type)})";

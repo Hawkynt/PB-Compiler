@@ -80,7 +80,8 @@ public static class ConstantNumericPrint {
     long? whole = value switch {
       IrConstantInt integer when suffix.StartsWith('u') => (long)integer.ZeroExtended,
       IrConstantInt integer when suffix.StartsWith('i') => integer.Value,
-      IrConstantFloat real when suffix is "single" or "double" or "ext" => WholeWithoutExponent(real.Value, suffix),
+      IrConstantFloat real when suffix is "single" or "double" or "ext"
+          && real.TryGetDoubleExact(out var exact) => WholeWithoutExponent(exact, suffix),
       _ => null,
     };
     // a QUAD is printed through the runtime's real formatter: exact digits only below 10^15, the

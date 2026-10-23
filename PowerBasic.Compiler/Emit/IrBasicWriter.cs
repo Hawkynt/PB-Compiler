@@ -235,14 +235,36 @@ public sealed class IrBasicWriter {
   /// <summary>A value as a BASIC expression: a literal, or the variable holding it.</summary>
   private string Ref(IrValue value) => value switch {
     IrConstantInt c => Literal(c),
-    IrConstantFloat f => f.Value.ToString("R", CultureInfo.InvariantCulture) is var s
-      && !s.Contains('.') && !s.Contains('E') ? s + ".0" : f.Value.ToString("R", CultureInfo.InvariantCulture),
+    IrConstantFloat f => FloatLiteral(f),
     IrUndef => "0",
     IrNullPtr => "\"\"",   // the null string handle IS the empty string
     _ => this._names.TryGetValue(value, out var name)
       ? name
       : throw new IrBasicWriterException($"a value with no BASIC name ({value.GetType().Name})"),
   };
+
+  private static string FloatLiteral(IrConstantFloat constant) {
+    if (constant.Type == IrType.F80 && (!constant.Float80.IsCanonical || constant.Float80.Exponent == 0x7FFF))
+      throw new IrBasicWriterException("a non-finite or non-canonical EXT literal");
+    if (constant.TryGetDoubleExact(out var exact)) {
+      // A textual unary minus is arithmetic in the source language and may canonicalize zero.
+      // CVE is the existing IEEE binary-record codec even under MBF compatibility; CVD is not.
+      if (BitConverter.DoubleToInt64Bits(exact) == long.MinValue)
+        return "CVE(STRING$(7, 0) + CHR$(128))";
+      var text = exact.ToString("R", CultureInfo.InvariantCulture);
+      if (!text.Contains('.') && !text.Contains('E'))
+        text += ".0";
+      return constant.Type == IrType.F80 ? text + "##" : text;
+    }
+    var bits = constant.Float80;
+    // Four exactly representable limbs reconstruct all 64 significand bits in EXT arithmetic.
+    // A decimal/host-double intermediate would silently lose bits before PB35 could read them.
+    var limbs = Enumerable.Range(0, 4).Select(index =>
+      ((bits.Significand >> (48 - index * 16)) & 0xFFFF).ToString(CultureInfo.InvariantCulture) + "##");
+    var significand = limbs.Aggregate((left, right) => $"({left} * 65536## + {right})");
+    var scale = (bits.Exponent == 0 ? 1 : bits.Exponent) - 16383 - 63;
+    return $"({(bits.Sign ? "-" : "")}{significand} * 2## ^ ({scale}))";
+  }
 
   /// <summary>An integer literal, with the suffix that gives it the right width.</summary>
   private static string Literal(IrConstantInt c) {

@@ -25,7 +25,7 @@ namespace PowerBasic.Compiler.Ir;
 public static class IrUnitFile {
 
   private static ReadOnlySpan<byte> Magic => "PBIRUNIT"u8;
-  private const int Version = 2;
+  private const int Version = 3;
 
   private enum Ref : byte { Instruction, Argument, Global, Function, Int, Float, Null, BlockAddress, FarEntry, Undef }
 
@@ -72,7 +72,7 @@ public static class IrUnitFile {
     using var r = new BinaryReader(new MemoryStream(bytes), Encoding.UTF8);
     r.ReadBytes(LibraryMagic.Length);
     var version = r.ReadInt32();
-    if (version != Version)
+    if (version is < 2 or > Version)
       throw new InvalidDataException($"IR library version {version}; this compiler reads version {Version}");
     var members = new List<(string, byte[])>();
     var count = r.ReadInt32();
@@ -98,9 +98,9 @@ public static class IrUnitFile {
     using var reader = new BinaryReader(new MemoryStream(bytes), Encoding.UTF8);
     reader.ReadBytes(Magic.Length);
     var version = reader.ReadInt32();
-    if (version != Version)
+    if (version is < 2 or > Version)
       throw new InvalidDataException($"IR unit version {version}; this compiler reads version {Version}");
-    return new UnitReader(reader).Read();
+    return new UnitReader(reader, version).Read();
   }
 
   private static void WriteType(BinaryWriter w, IrType type) {
@@ -199,6 +199,7 @@ public static class IrUnitFile {
       foreach (var block in function.Blocks) {
         this._blocks.Add(block, this._blocks.Count);
         w.Write(block.Label);
+        w.Write(block.IsSourceEmptyLoopHeader);
       }
       var all = function.AllInstructions.ToList();
       w.Write(all.Count);
@@ -372,7 +373,7 @@ public static class IrUnitFile {
     }
   }
 
-  private sealed class UnitReader(BinaryReader r) {
+  private sealed class UnitReader(BinaryReader r, int version) {
 
     private readonly List<IrGlobalVariable> _globals = [];
     private readonly List<IrFunction> _functions = [];
@@ -450,8 +451,11 @@ public static class IrUnitFile {
       this._function = function;
       this._blocks = [];
       var blocks = r.ReadInt32();
-      for (var i = 0; i < blocks; ++i)
-        this._blocks.Add(function.CreateBlock(r.ReadString()));
+      for (var i = 0; i < blocks; ++i) {
+        var block = function.CreateBlock(r.ReadString());
+        block.IsSourceEmptyLoopHeader = version >= 3 && r.ReadBoolean();
+        this._blocks.Add(block);
+      }
       var instructions = r.ReadInt32();
       this._types = new IrType[instructions];
       for (var i = 0; i < instructions; ++i)

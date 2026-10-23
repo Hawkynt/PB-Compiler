@@ -41,12 +41,12 @@ internal static class DialectRuntimeClaims {
       "the BASCOM lineage rounds half AWAY from zero; QB 4+ and Borland take the FPU's half-to-even",
       d => d.IsBascomRuntime()),
 
-    // Microsoft Binary Format storage. Only the two interpreters have it, and the conversions are the
+    // Microsoft Binary Format storage. The interpreters and default QuickBASIC 1-3 use it; conversions are the
     // proof that the format is honoured rather than merely recorded in a type.
     new("float.mbf",
       "DIM s AS SINGLE\ns = 1.5\nPRINT s\nEND",
       "mbf",
-      "BASICA and GW-BASIC store SINGLE in Microsoft Binary Format, so loads and stores convert",
-      d => d.IsGwBasica()),
+      "BASICA/GW and default QuickBASIC 1-3 store SINGLE in Microsoft Binary Format, so loads and stores convert",
+      d => d.HasMbfStorage()),
   ];
 }

@@ -36,9 +36,9 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <para>
 /// <b>Gated on <c>$OPTIMIZE SPEED</c>.</b> A DOS-era delay loop is precisely this shape written on
 /// purpose: <c>FOR i = 1 TO 30000 / NEXT</c> has no effect the IR can see and every effect the author
-/// wanted. Deleting it preserves every printed byte and destroys the program. PB spells the intent
-/// <c>SLEEP</c> and <c>DELAY</c>, so under SPEED the busy-wait is taken to be an accident; under SIZE
-/// it is left alone.
+/// wanted. Source-empty loop headers therefore carry provenance from the AST: those waits remain
+/// under every objective. A computation loop emptied by other optimizations has no such tag and
+/// remains eligible for deletion under SPEED.
 /// </para>
 /// </summary>
 public static class DeadLoopElimination {
@@ -59,6 +59,8 @@ public static class DeadLoopElimination {
     if (CountedLoop.Match(fn, header) is not { } loop || !loop.RunsItsFullCount(fn))
       return false;
     var (_, preheader, _, exit, region, _, _, _) = loop;
+    if (region.Any(block => block.IsSourceEmptyLoopHeader))
+      return false; // Includes a delay nested inside a computation loop.
 
     // The preheader is rewired to reach the exit directly, and only the edges that went into the
     // header may move: it can perfectly well end in a CONDITIONAL branch, which is exactly what
