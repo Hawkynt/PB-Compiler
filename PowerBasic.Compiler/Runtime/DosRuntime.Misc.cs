@@ -397,6 +397,20 @@ public sealed partial class DosRuntime {
       asm.Ret();
     }
 
+    // The IR runtime body computes the packed offset; only the volatile video write stays opaque.
+    asm.MarkLabel("rt_pset_mode13_offset");
+    asm.Push(Reg.ES);
+    asm.Push(Reg.DI);
+    asm.Push(Reg.BX);
+    asm.Mov(Reg.DI, Reg.AX);
+    asm.Mov(Reg.BX, 0xA000);
+    asm.Mov(Reg.ES, Reg.BX);
+    asm.Mov(Mem.Byte(Reg.DI).Seg(Reg.ES), Reg.DL);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.DI);
+    asm.Pop(Reg.ES);
+    asm.Ret();
+
     // rt_point: AX = x, BX = y -> DX:AX = color (LONG)
     this.Point = asm.MarkLabel("rt_point");
     {

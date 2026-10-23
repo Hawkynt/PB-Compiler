@@ -1191,6 +1191,34 @@ invalid MIR and a mandatory routing decline; floating predicates alone still rej
 and positive SINGLE/DOUBLE cells, expressions and literals, with optimization off/on in GW/BASICA.
 `tests/diff/gw/MBFSGN.BAS` adds that sign battery to the configured differential and routing census.
 
+### Mode-proven pixel runtime inlining
+
+The native optimizing pipeline computes forward screen-mode must-facts through
+`IrAnalyses.ScreenModes`. A successful constant `rt_screen_mode` establishes its
+normal-edge mode. Joins require agreement from every reachable predecessor;
+backedges converge before facts are published. Unknown calls, assembly, raw
+memory access and port operations invalidate knowledge. Error-handler and
+inline-assembly functions are excluded.
+Non-BASIC call conventions retain their original calls rather than changing ABI through specialization.
+
+For proven `SCREEN 13`, `PixelRuntimeInlining` supplies a small ordinary IR body
+for `rt_pset_mode13`: calculate `y * 320 + x`, then call the volatile
+`rt_pset_mode13_offset` store. The regular inliner exposes that arithmetic to
+the shared scalar/loop passes. A 200-row regression verifies no multiply or
+shift remains inside the loop: the packed offset advances as a recurrence.
+Only the segmented video-memory write remains assembly; the old runtime formula
+is reused, not replaced by a new graphics algorithm.
+
+`PixelRuntimeInliningTests` checks agreeing/disagreeing joins, invalidating
+backedges, fallback paths and COM/MZ execution. Its full `PIXELS.TXT` golden
+capture comes from genuine QuickBASIC 4.50 under DOSBox Staging 0.83; compiler
+and library fingerprints are retained beside the source.
+
+This is a packed mode-13 slice, not general graphics conformance. Other modes
+keep `rt_pset`; that generic implementation still assumes packed mode 13.
+Correct planar mode-12 access, mode-aware fallback, clipping, viewport/page
+semantics and error behavior remain open and must not be inferred from these tests.
+
 ### Software-x87 helper state and precision execution
 
 The integer-only software engine's transcendental routines keep live operands in ScratchA–D.

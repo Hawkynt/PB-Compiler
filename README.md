@@ -72,6 +72,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - Software-x87 math preserves live operands and control state across helpers; precision tests retain
   full-width operands for transcendental kernels rather than converting them through host `double`
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
+- Proven DOS `SCREEN 13` pixel calls use an inlineable IR address calculation, exposing row strides
+  to ordinary loop strength reduction; unknown modes retain the generic runtime call
 - IR console-state coalescing removes unobserved repeated `CLS` and covered, proven-valid `LOCATE`
   calls while preserving observers, invalid coordinates, and potentially failing mode changes
 - `ABS(EXT)` preserves the full x87 significand and exponent, including signed zero and subnormal values;
