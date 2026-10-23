@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — full clears and covered constant cursor positions coalesce |
+| **Status** | 🟡 Partial — full clears, identical constant modes and covered cursor positions coalesce |
 | **Stage** | IR late scalar cleanup |
 | **Source** | `Ir/Passes/ConsoleSetterCoalescing.cs` through `IrMiddleEndPipeline.Standard` |
 | **Gate** | `--optimize` |
@@ -18,11 +18,15 @@ The IR pass removes an earlier argumentless `CLS` before a second full clear,
 and cursor positions overwritten by a clear or a covering `LOCATE`. Constant
 coordinates must be in the conservative common range (rows 0–25, columns 0–40);
 zero means an omitted coordinate, not a write. Dynamic or invalid positions are
-barriers. `COLOR` coalescing is not implemented.
+barriers. A repeated constant `SCREEN` request removes the later call, never the
+first potentially failing request. Different or dynamic modes remain intact.
+`COLOR` coalescing is not implemented.
 
 Only straight-line, non-observing operations may intervene. Calls, loads/stores,
 inline assembly, potentially trapping arithmetic, and block boundaries end the
-window. Argument side effects are never deleted with a setter.
+window. `CLS`, `LOCATE` and drawing also end the known-mode window: repeating a
+mode after observable output need not be redundant. Functions with error handlers
+or inline assembly are excluded. Argument side effects are never deleted with a setter.
 
 ## Sample
 
@@ -50,5 +54,9 @@ as it does for [O0010](O0010-redundant-statement-elimination.md).
 Staging leaves `POS(0)=2`, `CSRLIN=3` after `LOCATE 3,2:SCREEN 0` when text mode
 is already active. The same VGA probe raises Error 5 for `SCREEN 4` and for a
 following `PSET (1,1)` in text mode. Eliminating those calls would erase errors.
-Mode and drawing elimination therefore require additional mode/capability and
-error-flow proofs; this pass keeps them.
+Distinct-mode and drawing elimination therefore require additional
+mode/capability and error-flow proofs; this pass keeps them. For
+`SCREEN 12:SCREEN 12`, normal execution reaches the second request only after
+the first succeeds. With no intervening observer or invalidation, the second
+identical request is redundant. Tests explicitly retain the first IR call and
+check barriers, hidden error flow and execution equivalence.

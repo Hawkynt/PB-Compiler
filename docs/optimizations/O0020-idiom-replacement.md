@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🟡 Partial — inline `SWAP` of scalar cells is implemented; an empty loop is deleted only when nothing reads its counter afterwards (fill, series and copy are on their split pages) |
+| **Status** | 🟡 Partial — inline scalar `SWAP` and unobserved computation-loop removal; source-empty waits survive (fill, series and copy are on their split pages) |
 | **Stage** | IR lowering and middle end (loop passes); x86 back end (peephole) for `SWAP` |
 | **Source** | `Ir/Passes/DeadLoopElimination.cs`, `Ir/Passes/RecurrenceClosedForm.cs` (empty loop); `Ir/IrLowering.cs` — `LowerSwap`, `Backend/Peephole.cs` — `FoldSwaps` (`SWAP`) |
 | **Gate** | `--optimize` + `$OPTIMIZE SPEED` |
@@ -15,7 +15,7 @@ Instead of optimizing a loop instruction by instruction, the compiler recognizes
 what the **whole loop computes** and substitutes a better algorithm — but only
 where the result is provably bit-identical.
 
-**This page covers the empty loop**: a counted loop whose body computes nothing
+**This page covers optimizer-emptied computation loops**: counted loops whose bodies compute nothing
 anyone reads. `DeadLoopElimination` deletes it under `$OPTIMIZE SPEED` when its
 trip count is a known finite number, every body instruction is discardable, and
 nothing the loop defines — the counter included — is read after it. An
@@ -25,6 +25,10 @@ empties such a loop. The counter's own exit value is not computed, so a loop
 whose counter is read afterwards stays. The other recognized shapes — constant
 fill, arithmetic series, array copy — each have their own entry (see *Split
 into* above).
+
+A loop empty in the source is tagged before optimization and is not deleted or
+unrolled. Its timing intent is retained through AST, HIR and IR; empty optimized
+IR alone is not evidence that the author intended a delay.
 
 **Inline `SWAP`** is a non-loop idiom in the same spirit: `LowerSwap` lowers
 `SWAP a, b` of two scalars — INTEGER/LONG/BYTE, or a dynamic string's handle —
@@ -55,7 +59,7 @@ back-edge.
 ## With the optimizer
 
 ```asm
-    mov     word ptr [i], 03E9h    ; 1001: the empty loop IS its end value
+    ; The source-empty first loop remains a real counted loop.
     push    ds                     ; constant fill
     pop     es
     lea     di, [a]

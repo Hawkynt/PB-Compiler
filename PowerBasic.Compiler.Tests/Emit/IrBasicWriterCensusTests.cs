@@ -168,6 +168,7 @@ public sealed class IrBasicWriterCensusTests {
     // writer renders and pb35 then rejects. The material is right now and the round trip is the gap.
     "basica/DIFF01.BAS",
     "gw/DIFF01.BAS",
+    "gw/MBFSGN.BAS",
     "pb21/DIFF01.BAS",
     "pb21/DIFF02.BAS",
     "pb30/QUIRK30.BAS",

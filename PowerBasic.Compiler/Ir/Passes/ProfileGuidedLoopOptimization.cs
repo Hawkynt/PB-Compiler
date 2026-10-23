@@ -27,7 +27,7 @@ public static class ProfileGuidedLoopOptimization {
 
     var transformed = 0;
     foreach (var header in fn.Blocks.ToList()) {
-      if (!IrProfileMetadata.TryGetLoopTripCounts(header, out var profile)
+      if (header.IsSourceEmptyLoopHeader || !IrProfileMetadata.TryGetLoopTripCounts(header, out var profile)
           || ChoosePeelCount(profile) is not { } peelCount
           || Match(fn, header) is not { } loop
           || !Profitable(loop, peelCount))

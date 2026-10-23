@@ -68,6 +68,9 @@ real optimization pipeline and a lean backend — that existing programs opt int
 ## ✨ Features
 
 - Reads unmodified DOS-era BASIC and emits DOS MZ `.EXE`, flat `.COM`, compiled units (`.PBU`/`.PBL`) and Intel OMF `.OBJ`/`.LIB`
+- Standalone MZ generation rejects physical images or virtual runtime BSS beyond its single 64-KiB near segment
+- Pixel primitives retain direct packed mode-13 access and use BIOS-backed access for other active layouts;
+  mode-12 pixel separation is checked against genuine QuickBASIC captures
 - Fidelity as a hard contract: the historic dialects are driven against the original binaries until program behaviour matches, documented bugs included
 - Software-x87 math preserves live operands and control state across helpers; precision tests retain
   full-width operands for transcendental kernels rather than converting them through host `double`
@@ -76,7 +79,15 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - Typed floating negation preserves signed zero and full EXT precision without zero-subtraction
   or multiplication; captured QuickBASIC output and raw-byte tests cover optimized and plain builds
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
-- IR console-state coalescing removes unobserved repeated `CLS` and covered, proven-valid `LOCATE`
+- Proven DOS `SCREEN 13` pixel calls use an inlineable IR address calculation, exposing row strides
+  to ordinary loop strength reduction; unknown modes retain the generic runtime call
+- Default QuickBASIC 1–3 uses MBF32/MBF64 storage, including numeric string codecs, near static arrays,
+  BYREF calls, input/DATA, local function results and floating FOR counters; precision rules remain
+  distinct from GW/BASICA, and captured original-compiler files test the observable bytes
+- IR-to-BASIC rendering preserves finite EXT constants beyond binary64, including exponent boundaries
+  and signed zero; raw-byte round-trips cover optimized and unoptimized recompilation
+- IR console-state coalescing removes unobserved repeated `CLS`, identical constant `SCREEN` requests,
+  and covered, proven-valid `LOCATE`
   calls while preserving observers, invalid coordinates, and potentially failing mode changes
 - `ABS(EXT)` preserves the full x87 significand and exponent, including signed zero and subnormal values;
   GW/BASICA `ABS` also retains MBF range and precision for stored values, literals and expressions;
@@ -109,7 +120,7 @@ the Microsoft lineage (QuickBASIC → BASIC PDS).
 | **PowerBASIC 3.5** | **`pb35`** | Borland, 1997 | **The reference dialect (default).** ASCIIZ, `&` concat, VIRTUAL arrays, `REDIM PRESERVE`, indexed pointers, STDIN/STDOUT, `TRIM$`, `SIZEOF`, and more. Output verified against PBC.EXE 3.50. |
 | **PowerBASIC 3.6** | **`pb36`** | Hawkynt | **The language-features superset.** A strict superset of `pb35`: every `pb35` program compiles unchanged and behaves identically, plus opt-in modern syntax. |
 | BASICA / GW-BASIC | `basica` `gw` | Microsoft (interpreters) | The classic line-numbered interpreters. Scalar and near static-array SINGLE/DOUBLE cells use genuine 4/8-byte Microsoft Binary Format (MBF), with x87 conversion on load/store in the DOS backend; MBF32 loads and stores preserve representable values below IEEE single's normal range, and stores raise Error 6 on overflow. Tiny SINGLE literals keep their 24-bit source precision when widened. Same-width assignments and SINGLE-to-DOUBLE copies preserve raw zero-exponent payloads. MBF64 decimal DOUBLE literals retain their source digits through staged conversion. SINGLE literals and DOUBLE-to-SINGLE conversion round ties away from zero; arithmetic rounds ties to even at explicit MBF boundaries. `CSNG` preserves MBF's exponent range and `CDBL` preserves MBF64 precision. Precision regressions use an exact x87 emulator because DOSBox 0.74 narrows FPU intermediates. Dynamic/far-array and procedure-ABI MBF coverage remains on the roadmap. |
-| QuickBASIC 1.0–4.5 | `qb10` `qb20` `qb30` `qb40` `qb45` | Microsoft | QB display model (D exponents), BASCOM runtime heritage (^Z, half-away rounding) through 3.0. Output verified against the genuine BASCOM/BC/QB toolchains. |
+| QuickBASIC 1.0–4.5 | `qb10` `qb20` `qb30` `qb40` `qb45` | Microsoft | Default 1–3 uses MBF storage and preserves 56-bit DOUBLE math operands; 4.x uses IEEE. QB display model (D exponents), BASCOM runtime heritage (^Z, half-away integer rounding) through 3.0. Captured BASCOM/QB outputs distinguish early-QB nearest/even SINGLE conversion from GW/BASICA's away-from-zero ties. Foreign/BYVAL MBF ABIs and complete software-math equivalence remain open. |
 | QBasic | `qbasic` | Microsoft (interpreter) | The MS-DOS 5.0+ interpreter — the QuickBASIC 4.5 language (IEEE floats) minus the compiler. Compiles via the QB 4.5 front end; oracle-verified by interpreter output diff (in progress). |
 | BASIC PDS 7.0 / 7.1 | `pds70` `pds71` | Microsoft | "QB Extended"; 15-digit DOUBLE display. Output verified against BC.EXE 7.0/7.1. |
 
@@ -438,7 +449,7 @@ next free number rather than displacing anything.
 | ✅ | [O0017](docs/optimizations/O0017-sccp.md) | SCCP / branch folding | Sparse conditional constant propagation over SSA folds constant branches and proves zero-initialized reads (`Ssa/Sccp`). |
 | ✅ | [O0018](docs/optimizations/O0018-interprocedural-constant-propagation.md) | Interprocedural constant propagation | A parameter that is the same constant at every call site and never written reads as that literal inside the callee (`IpConstantProp`). |
 | ✅ | [O0019](docs/optimizations/O0019-zero-elision.md) | Definite-assignment zero elision | Drops per-invocation frame zeroing when a straight-line proof shows no local is read before assignment. |
-| 🟡 | [O0020](docs/optimizations/O0020-idiom-replacement.md) | Algorithmic idiom replacement | An empty loop becomes its counter end value, a constant fill one `REP STOSW`, an arithmetic series its closed form. |
+| 🟡 | [O0020](docs/optimizations/O0020-idiom-replacement.md) | Algorithmic idiom replacement | Removes unobserved computation loops, recognizes constant fill and arithmetic series; preserves source-empty waits. |
 | ✅ | [O0021](docs/optimizations/O0021-register-parameters.md) | Register parameters | Fully-owned word, near-pointer and LONG parameters use Watcom's AX/DX/BX/CX allocation before stack overflow. |
 | ✅ | [O0022](docs/optimizations/O0022-dead-procedure-elimination.md) | Dead procedure elimination | Procedures unreachable from the program entry are not emitted, transitively (`GlobalDce`). |
 | 🟡 | [O0023](docs/optimizations/O0023-dead-global-elimination.md) | Dead global / data tree-shaking | A module global nothing reachable ever reads stops being a data cell: `LocalizeGlobals` turns a write-first global one procedure uses into a local, which `Mem2Reg`/`Dce` then remove. |
@@ -634,7 +645,7 @@ next free number rather than displacing anything.
 | ✅ | [O0208](docs/optimizations/O0208-inplace-literal-append.md) | In-place literal append | `s$ = s$ + "literal"` calls `rt_strcatlit`, which — when `s$` is the topmost heap block and there is room under the `$STRING` cap. |
 | ✅ | [O0209](docs/optimizations/O0209-inplace-variable-append.md) | In-place variable append | `s$ = s$ + v$` (with `v$` a bare string variable) reads `v$`'s raw handle — no `StrDup` temp, so `s$` stays topmost. |
 | ✅ | [O0210](docs/optimizations/O0210-concat-chain-temp-reuse.md) | Concat-chain dead-temp reuse | In a left-associative chain `a$ + b$ + c$` = `(a$ + b$) + c$`, the inner concat produces a fresh, dead, topmost temp. |
-| 🟡 | [O0211](docs/optimizations/O0211-console-setter-elimination.md) | Redundant console-setter elimination | Coalesces full clears and covered, proven-valid cursor positions; screen-mode changes and observers remain barriers. |
+| 🟡 | [O0211](docs/optimizations/O0211-console-setter-elimination.md) | Redundant console-setter elimination | Coalesces full clears, identical constant screen modes and covered cursor positions; distinct modes and observers remain barriers. |
 | ✅ | [O0212](docs/optimizations/O0212-promotion-lowering-32.md) | 32-bit promotion lowering | `total& = total& + delta&` lowered faithfully is `FILD` / the x87 op / `FISTP` plus a memory staging cell at each end. |
 | 🟡 | [O0213](docs/optimizations/O0213-cross-procedure-tail-call.md) | Cross-procedure tail call | A `SUB A` whose last action is `CALL B(args)` — B another in-module `SUB`. |
 | ⬜ | [O0214](docs/optimizations/O0214-udt-compare-widening.md) | Whole-UDT compare widening | The PowerBASIC 3.1 whole-value `=`/`<>` comparison of two `TYPE` values is a memory compare. |
@@ -667,7 +678,7 @@ next free number rather than displacing anything.
 | ✅ | [O0241](docs/optimizations/O0241-dword-string-copy.md) | DWORD-wide string copy | The string runtime's literal and concat copy moves DWORDs plus a ≤ 3-byte tail instead of `REP MOVSB` — roughly 4× on long strings. |
 | 🟡 | [O0242](docs/optimizations/O0242-movsd-block-copy.md) | DWORD block copy for TYPE and `LSET` | Whole-`TYPE` copies, `LSET` and BCD block moves run word-wide (`REP MOVSW`, 8086-safe) under the optimizer and DWORD-wide (`REP MOVSD`) under `$CPU 80386`. |
 
-| ✅ | [O0407](docs/optimizations/O0407-dead-loop-elimination.md) | Dead loop elimination | A loop whose body cannot be observed - no store, no call, no output - is deleted outright rather than left to spin (`deadloop`, `$OPTIMIZE SPEED`). |
+| ✅ | [O0407](docs/optimizations/O0407-dead-loop-elimination.md) | Dead loop elimination | Removes unobserved computation loops under SPEED; source-empty waits are tagged before optimization and preserved. |
 | ✅ | [O0408](docs/optimizations/O0408-6502-frame-slot-sharing.md) | Frame slot sharing (6502, x86-32, x64) | SSA values whose lives never meet share a frame cell on the flat back ends; on the 6502 more frames then fit the page-zero window. |
 | ✅ | [O0409](docs/optimizations/O0409-6502-accumulator-load-elimination.md) | 6502 accumulator-load elimination | An `LDA` of the immediate or cell A already holds is dropped, kept wherever N and Z could still be read. |
 | ✅ | [O0410](docs/optimizations/O0410-6502-branch-shaping.md) | 6502 branch shaping | A branch whose true side comes next tests the complement and falls through; a comparison kept as a value steps over `LDA #1` with a one-byte `BIT`. |

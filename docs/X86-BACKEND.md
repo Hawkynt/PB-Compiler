@@ -1180,9 +1180,60 @@ and expressions at both widths against genuine GW-BASIC. The unit tests retain t
 GW-BASIC 3.23 output file, including whitespace and DOS EOF, for optimization off/on in both interpreter
 dialects. Raw zero-exponent cells with nonzero payloads remain a distinct compatibility gap: numeric
 loading canonicalizes them before the arithmetic operation, unlike same-width storage copies.
-The BASIC round-trip of `MBFABS.BAS` still diverges: `$COMPAT gw` does not give PB35 variables MBF
-storage, and the source writer loses extra DOUBLE literal digits. Native DOS execution matches the
-captured 210-byte file under DOSBox Staging; that does not establish back-emitter compatibility.
+The AST source writer preserves original floating literal digits and explicit suffixes, and binding
+uses the effective `$COMPAT` dialect for MBF storage. Complete numeric and BYREF file captures now
+round-trip through that writer for both interpreter profiles and default QuickBASIC 1–3. This is
+not proof that the separate IR-to-BASIC writer reproduces every MBF storage layout.
+
+### Default QuickBASIC 1–3 MBF storage and math
+
+`HasMbfStorage` selects BASICA, GW-BASIC, QB 1.00, QB 2.00 and default QB 3.00/BCOM30. Syntax-family
+checks remain separate. Alternate QB87/IEEE configurations are not implied by selecting default QB30.
+The existing typed MBF conversions cover scalars, near static arrays, raw `MKS$`/`MKD$` and
+`CVS`/`CVD`, BYREF procedure arguments, INPUT/READ, local function return cells, conditions and
+floating FOR counters. Local function ABI results travel as F80 and are re-encoded by their caller;
+this does not model an external software-MBF return ABI or MBF BYVAL arguments.
+
+Genuine BASCOM 1.00, QB 2.00/BCOM20 and QB 3.00/BCOM30 produce identical complete files for the
+205-byte numeric battery, BYREF scalar/array battery, input/DATA/function battery, and FOR/control
+battery. Tests retain the full files, including spaces, CRLF and DOS EOF. Separate GW-BASIC captures
+distinguish SINGLE decimal/conversion ties (away from zero) from early QuickBASIC ties (nearest/even).
+SINGLE formatting retains its display precision while computation uses F80 transport.
+
+The captures use the default compilers and libraries below, identified by SHA-256. Their source
+programs and complete expected files are retained in `BackendEarlyQuickBasicMbfTests`; the original
+proprietary toolchains are not distributed with the tests.
+
+| Original tool | SHA-256 |
+|---|---|
+| QB 1.00 `BASCOM.EXE` | `A42F5826D0754BD849E132EC0643C01932BCFD9F477BD9ADA31972BE3C8874C7` |
+| QB 1.00 `BCOM10.LIB` | `9FB772EB86BE5F3C2B9D47E13C169E65D49FD319CBD2A3D1B88C1594D8E83F55` |
+| QB 2.00 `QB.EXE` | `DBBBB4AB63CA49698418BB711DC530598C6AD011AE015C4E41C7F9402196154E` |
+| QB 2.00 `BCOM20.LIB` | `611814F0D7D048FFD75DCAE9EF6834B935675869B3551425A50D301785912CF5` |
+| QB 3.00 `QB.EXE` | `3A172FCEA306B2B5FAEB52B36C99AF0A5E26633E3A1DD21AF7A54F3623492BA3` |
+| QB 3.00 `BCOM30.LIB` | `3D74061CD34417D1C342D32D1495C32B4E3D67C5014BD783CB7B36BD4EB19E5B` |
+
+Early QuickBASIC DOUBLE math keeps 56-bit operands and results. Default GW/BASICA math narrows its
+argument and result to SINGLE; the optional interpreter `/D` startup profile is not modelled here.
+GW sine/cosine/tangent lowering converts Microsoft's MIT-licensed reduction and Horner polynomial
+into ordinary typed IR, retaining raw MBF coefficients and explicit rounding effects. `$ROUNS`
+discards all but three guard bits before nearest/even arithmetic rounding; an independent genuine
+GW-BASIC multiplication capture distinguishes this from IEEE rounding. Native unoptimized MZ and
+optimized COM match 59 of 60 rows in the broader trig grid; negative-zero raw encoding remains a
+known disagreement, not a tolerance or a passing conformance claim.
+
+The exact test CPU now reuses the integer-only software-x87 engine for transcendental operations,
+instead of narrowing inputs/constants through host double. Its helper-state, scratch allocation,
+subtraction and long-branch fixes are execution-tested. These approximations do not emulate a
+particular Intel microcode revision; independent native DOSBox Staging comparisons remain necessary.
+The numeric-print optimizer only reads host double when that conversion is exact. The IR BASIC
+writer reconstructs non-binary64 F80 constants from exact 16-bit limbs rather than losing bits.
+Raw-byte round-trips cover both optimization modes, extra significand bits, the smallest subnormal,
+smallest normal, largest finite value, and signed zero. Negative zero uses the existing binary
+`CVE` IEEE codec instead of textual unary minus or dialect-dependent `CVD`. NaN, infinity and
+noncanonical EXT constants decline explicitly. General floating unary negation still lowers as
+positive-zero subtraction; its signed-zero compatibility needs separate original-compiler checks
+and is not established by these writer tests.
 
 `SGN` explicitly converts MBF storage to EXT before choosing comparisons from the lowered arithmetic
 type. Without that conversion, integer predicates from the non-ScalarType storage descriptor produced
@@ -1219,6 +1270,68 @@ without assuming their bodies fit an 8-bit displacement.
 aliases without an inline trigger, BYREF procedure frames, integer carry and
 numeric printing. These checks establish those paths, not complete software-FPU
 or dialect fidelity. General DOS runtime and numeric conformance remain open.
+
+### Standalone MZ resident-size diagnostics
+
+The standalone DOS MZ layout uses one near segment for code, data and runtime BSS.
+After final assembler layout, `CodeGenerator` rejects a physical image or virtual
+`rt_bss_end` beyond 65536 bytes rather than emitting wrapped offsets. Exactly
+65536 bytes is the address-space boundary; COM keeps its separate PSP-adjusted limit.
+The general MZ writer is not restricted to single-segment files.
+
+`MzSegmentLimitTests` covers physical overflow with optimization off/on, runtime
+BSS overflow, and executable small MZ images. The BSS regression previously
+produced a 64607-byte file while its resident near data ended at 67335.
+Arrays and fixed buffers lowered to stack allocas are not a runtime-BSS test:
+frame-size, stack-overlap and linked-image multi-segment validation remain separate
+requirements. This guard does not establish those broader layout properties.
+
+### Mode-proven pixel runtime inlining
+
+The native optimizing pipeline computes forward screen-mode must-facts through
+`IrAnalyses.ScreenModes`. A successful constant `rt_screen_mode` establishes its
+normal-edge mode. Joins require agreement from every reachable predecessor;
+backedges converge before facts are published. Unknown calls, assembly, raw
+memory access and port operations invalidate knowledge. Error-handler and
+inline-assembly functions are excluded.
+Non-BASIC call conventions retain their original calls rather than changing ABI through specialization.
+
+For proven `SCREEN 13`, `PixelRuntimeInlining` supplies a small ordinary IR body
+for `rt_pset_mode13`: calculate `y * 320 + x`, then call the volatile
+`rt_pset_mode13_offset` store. The regular inliner exposes that arithmetic to
+the shared scalar/loop passes. A 200-row regression verifies no multiply or
+shift remains inside the loop: the packed offset advances as a recurrence.
+Only the segmented video-memory write remains assembly; the old runtime formula
+is reused, not replaced by a new graphics algorithm.
+
+`PixelRuntimeInliningTests` checks agreeing/disagreeing joins, invalidating
+backedges, fallback paths and COM/MZ execution. Its full `PIXELS.TXT` golden
+capture comes from genuine QuickBASIC 4.50 under DOSBox Staging 0.83; compiler
+and library fingerprints are retained beside the source.
+
+This is a packed mode-13 slice, not general graphics conformance. Other modes
+keep the mode-aware `rt_pset` fallback described below. Direct planar specialization,
+clipping, viewport/page semantics and complete error behavior remain open.
+
+### Mode-aware pixel fallback
+
+`rt_pset` and `rt_point` query the active BIOS mode before selecting their packed
+mode-13 path. Other layouts use INT 10h pixel services rather than applying the
+incorrect `y * 320 + x` formula to planar memory. Coordinates and the existing
+runtime ABI are preserved; page zero remains the supported page.
+
+`PixelModeFallbackTests` retains a genuine QuickBASIC 4.50 capture in which
+`(320,0)` and `(0,1)` hold distinct mode-12 colors. The old packed calculation
+aliased both to offset 320. The corrected runtime matches the captured file in
+COM/MZ images with optimization off/on under native DOSBox Staging, and the
+mode-13 edge-pixel capture remains unchanged.
+
+The BIOS register contract is checked against the LGPLv3
+[SeaBIOS implementation](https://github.com/qemu/seabios/blob/28aa46349b97ef0ebf742ae4fb9f9fad03578670/vgasrc/vgabios.c).
+The runtime delegates framebuffer encoding to firmware; the test CPU models
+logical mode-12 pixels and retains direct memory for mode 13. This does not
+establish planar-memory emulation, clipping, page/viewport behavior, graphics
+error semantics, or complete support for other graphics statements and modes.
 
 ### Software-x87 helper state and precision execution
 

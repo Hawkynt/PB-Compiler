@@ -236,6 +236,10 @@ public static class IrEffects {
   /// </summary>
   public static IrEffectSummary ForInstruction(IrInstruction instruction) {
     ArgumentNullException.ThrowIfNull(instruction);
+    // A source-empty loop's execution is intentional even when its data result is unused.
+    // Model a synchronization/blocking boundary so function summaries cannot discard or CSE its caller.
+    if (instruction.IsTerminator && instruction.Parent is { IsSourceEmptyLoopHeader: true })
+      return new(IrEffectKind.MayBlock | IrEffectKind.MaySynchronize, Deterministic: false);
     return instruction switch {
       IrBinary { Op: IrBinaryOp.SDiv or IrBinaryOp.UDiv or IrBinaryOp.SRem or IrBinaryOp.URem or IrBinaryOp.FDiv }
         => _mayTrap,

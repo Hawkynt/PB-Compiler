@@ -58,6 +58,8 @@ public static class LoopUnroll {
     // expose straight-line copies for the simplification passes that follow.
     var unrolled = ProfileGuidedLoopOptimization.Run(fn);
     foreach (var header in fn.Blocks.ToList()) {
+      if (header.IsSourceEmptyLoopHeader)
+        continue;
       if (Match(fn, header) is { } loop && TryUnroll(fn, loop)) {
         ++unrolled;
         continue;

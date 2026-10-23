@@ -71,13 +71,19 @@ FOR i% = 1 TO 30000 : NEXT       ' wait a moment
 It has no effect the IR can see and every effect the author wanted. Deleting it
 preserves every printed byte and destroys the program.
 
-PB spells the intent `SLEEP` and `DELAY`, so under `$OPTIMIZE SPEED` the
-busy-wait is taken to be an accident and goes; under `$OPTIMIZE SIZE` it is left
-alone. This is the first transform in the middle end whose licence comes from the
-optimization *mode* rather than from the IR alone, which is why
-`IrPassManager.Standard` gained a parameter for it and why
-`OptimizeSpeedCorpusTests` exists — a pass that only runs under a flag is a pass
-the rest of the suite never sees.
+Source-empty `FOR`, `DO` and `WHILE` loops are tagged when the AST is constructed.
+HIR retains that snapshot even though its source wrapper drops executable bodies;
+IR loop headers carry it through cloning and unit serialization. Unrolling,
+profile-guided peeling and dead-loop elimination respect it, including nested waits.
+Its loop-control effect also prevents dead-call removal and compile-time evaluation
+from erasing a delay-only procedure call.
+The tag is not inferred from optimized IR: a computation loop emptied by recurrence
+folding has no timing-intent tag and remains removable under SPEED.
+
+This preserves execution of a possible busy-wait, not an exact elapsed duration.
+Normal counter representation and instruction selection may still change its speed.
+IR unit version 3 stores the provenance; version 2 remains readable but has no such
+source facts. Recompile legacy units to obtain the preservation guarantee.
 
 ## Limits
 

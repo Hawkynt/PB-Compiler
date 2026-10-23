@@ -246,6 +246,7 @@ public static class SimplifyCfg {
     var addressed = fn.AddressTakenBlocks();
     foreach (var block in fn.Blocks.ToList()) {
       if (block.Parent is null || ReferenceEquals(block, fn.Entry) || addressed.Contains(block)
+          || block.IsSourceEmptyLoopHeader
           || block.Terminator is not IrBr br || ReferenceEquals(br.Target, block))
         continue;
 
@@ -345,7 +346,8 @@ public static class SimplifyCfg {
       if (block.Parent is null || block.Terminator is not IrBr br)
         continue;
       var succ = br.Target;
-      if (ReferenceEquals(succ, block) || ReferenceEquals(succ, fn.Entry) || addressed.Contains(succ))
+      if (ReferenceEquals(succ, block) || ReferenceEquals(succ, fn.Entry) || addressed.Contains(succ)
+          || block.IsSourceEmptyLoopHeader || succ.IsSourceEmptyLoopHeader)
         continue;
       var preds = succ.Predecessors.ToList();
       if (preds.Count != 1 || !ReferenceEquals(preds[0], block))
