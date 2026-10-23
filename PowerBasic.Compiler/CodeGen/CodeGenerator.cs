@@ -352,6 +352,15 @@ public sealed partial class CodeGenerator(SemanticModel model) {
       }
     }
 
+    var residentEnd = this._rt.EnableBss
+      ? Math.Max(image.Length, asm.Lbl("rt_bss_end").Position)
+      : image.Length;
+    if (!this._allowExternalCalls && residentEnd > 0x10000) {
+      this.Errors.Add(new(default, $"EXE: standalone image plus virtual BSS is {residentEnd} bytes; "
+        + "at most 65536 bytes fit in the single near segment"));
+      return [];
+    }
+
     // grow the single segment to its full 64 KiB so data + stack always fit,
     // then reserve the far string and array heap segments behind it - under
     // pb36 trimming unused heap segments are not reserved at all (P4)

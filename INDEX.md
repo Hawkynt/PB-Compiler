@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-22 14:52 UTC by index_codebase.py.
+Generated 2026-10-23 07:42 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1070 files, 8785 symbols.
+1071 files, 8787 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -1649,6 +1649,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `TryReadSource(string name, string? includedFrom, out string sourceText, out string…` — PowerBasic.Compiler.Tests/CodeGen/MultiConcatTests.cs:18
 - method `LEN(r$)` — PowerBasic.Compiler.Tests/CodeGen/MultiConcatTests.cs:82
 - field `source` — output-equivalence: the optimized (pb36) and unoptimized (pb35) builds produce identical text. — PowerBasic.Compiler.Tests/CodeGen/MultiConcatTests.cs:146
+
+### MzSegmentLimitTests.cs  `C#, 52 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/MzSegmentLimitTests.cs:5
+- class `MzSegmentLimitTests` — PowerBasic.Compiler.Tests/CodeGen/MzSegmentLimitTests.cs:7
 
 ### O0308ArrayPreflightTests.cs  `C#, 174 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/O0308ArrayPreflightTests.cs:5
@@ -6085,10 +6089,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `switch` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:268
 - method `if(value < codeLength)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Units.cs:272
 
-### CodeGenerator.cs  `C#, 536 lines`
+### CodeGenerator.cs  `C#, 545 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:8
 - class `CodeGenerator` — Translates a bound program into a 16-bit real-mode DOS executable. — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:20
-- method `if(bytes > resource.Length)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:483
+- method `if(bytes > resource.Length)` — PowerBasic.Compiler/CodeGen/CodeGenerator.cs:492
 
 ### DosContainer.cs  `C#, 10 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/DosContainer.cs:1

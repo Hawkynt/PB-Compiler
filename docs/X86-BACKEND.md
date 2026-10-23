@@ -1191,6 +1191,21 @@ invalid MIR and a mandatory routing decline; floating predicates alone still rej
 and positive SINGLE/DOUBLE cells, expressions and literals, with optimization off/on in GW/BASICA.
 `tests/diff/gw/MBFSGN.BAS` adds that sign battery to the configured differential and routing census.
 
+### Standalone MZ resident-size diagnostics
+
+The standalone DOS MZ layout uses one near segment for code, data and runtime BSS.
+After final assembler layout, `CodeGenerator` rejects a physical image or virtual
+`rt_bss_end` beyond 65536 bytes rather than emitting wrapped offsets. Exactly
+65536 bytes is the address-space boundary; COM keeps its separate PSP-adjusted limit.
+The general MZ writer is not restricted to single-segment files.
+
+`MzSegmentLimitTests` covers physical overflow with optimization off/on, runtime
+BSS overflow, and executable small MZ images. The BSS regression previously
+produced a 64607-byte file while its resident near data ended at 67335.
+Arrays and fixed buffers lowered to stack allocas are not a runtime-BSS test:
+frame-size, stack-overlap and linked-image multi-segment validation remain separate
+requirements. This guard does not establish those broader layout properties.
+
 ### Software-x87 helper state and precision execution
 
 The integer-only software engine's transcendental routines keep live operands in ScratchA–D.
