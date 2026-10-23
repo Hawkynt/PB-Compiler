@@ -649,8 +649,9 @@ public sealed class IrBasicWriter {
     }
     switch (name) {
       // rt_str_const(bytes, length) IS a string literal - it is what one lowers to
-      case "rt_str_const" when call.Args.FirstOrDefault() is IrGlobalVariable { Bytes: { } bytes }:
-        this._names[call] = Quote(System.Text.Encoding.Latin1.GetString(bytes));
+      case "rt_str_const" when call.ArgCount == 2
+          && LiteralText(call.GetOperand(1), call.GetOperand(2)) is { } text:
+        this._names[call] = Quote(text);
         return true;
       case "rt_str_concat":
         this._names[call] = $"({this.Ref(call.Args.ElementAt(0))} + {this.Ref(call.Args.ElementAt(1))})";
@@ -669,8 +670,8 @@ public sealed class IrBasicWriter {
         this._names[call] = $"({this.Ref(call.Args.ElementAt(0))} + {this.Ref(call.Args.ElementAt(1))})";
         return true;
       case "rt_str_append_lit" when call.ArgCount == 3
-          && call.Args.ElementAt(1) is IrGlobalVariable { Bytes: { } appended }:
-        this._names[call] = $"({this.Ref(call.Args.ElementAt(0))} + {Quote(System.Text.Encoding.Latin1.GetString(appended))})";
+          && LiteralText(call.GetOperand(2), call.GetOperand(3)) is { } appended:
+        this._names[call] = $"({this.Ref(call.Args.ElementAt(0))} + {Quote(appended)})";
         return true;
       // a copy of a string value is that value: BASIC assigns strings by value, so the ownership
       // bookkeeping the handle model needs has no spelling here and no need of one
@@ -739,8 +740,9 @@ public sealed class IrBasicWriter {
       case "rt_fprint_nl" when args.Count == 1:
         this.Line($"  PRINT #{this.Ref(args[0])}, \"\"");
         return true;
-      case "rt_fprint_str" when args is [{ } number, IrGlobalVariable { Bytes: { } bytes }, _]:
-        this.Line($"  PRINT #{this.Ref(number)}, {Quote(System.Text.Encoding.Latin1.GetString(bytes))};");
+      case "rt_fprint_str" when args is [{ } number, var pointer, var length]
+          && LiteralText(pointer, length) is { } text:
+        this.Line($"  PRINT #{this.Ref(number)}, {Quote(text)};");
         return true;
       case "rt_fprint_strview" when args.Count == 4:
         this.Line($"  PRINT #{this.Ref(args[0])}, {this.Substring(args[1], args[2], args[3])};");
@@ -806,6 +808,9 @@ public sealed class IrBasicWriter {
   }
 
   private IrValue ArrayElement(IrGep gep) {
+    // A literal-pool offset is consumed by address and length at its call, not a BASIC array place.
+    if (LiteralText(gep, new IrConstantInt(IrType.I32, 0)) is not null)
+      return gep;
     // a module-level array is declared by the module render and named by its own identifier
     if (gep.BasePtr is IrGlobalVariable { Bytes: null } global) {
       var globalElement = gep.ElementType ?? global.ValueType;
@@ -883,8 +888,9 @@ public sealed class IrBasicWriter {
       }
       // PRINT of a literal: the lowering passes the bytes and their length, and the length is
       // implied by the literal itself once it is written back out
-      if (callee.Name == "rt_print_str" && call.Args.FirstOrDefault() is IrGlobalVariable { Bytes: { } bytes }) {
-        this.Line($"  PRINT {Quote(System.Text.Encoding.Latin1.GetString(bytes))};");
+      if (callee.Name == "rt_print_str" && call.ArgCount == 2
+          && LiteralText(call.GetOperand(1), call.GetOperand(2)) is { } text) {
+        this.Line($"  PRINT {Quote(text)};");
         return;
       }
       if (_printItem.Contains(callee.Name)) {
@@ -906,5 +912,20 @@ public sealed class IrBasicWriter {
     this.Line(call.Type.IsVoid
       ? $"  CALL {Sanitize(callee.Name)}({args})"
       : $"  {this.Define(call)} = {Sanitize(callee.Name)}({args})");
+  }
+
+  private static string? LiteralText(IrValue pointer, IrValue length) {
+    if (length is not IrConstantInt { Value: >= 0 and <= int.MaxValue } count)
+      return null;
+    long offset = 0;
+    while (pointer is IrGep { ElementType: null, ByteOffset: IrConstantInt { Value: >= 0 and <= int.MaxValue } index } gep) {
+      offset += index.Value;
+      if (offset > int.MaxValue)
+        return null;
+      pointer = gep.BasePtr;
+    }
+    if (pointer is not IrGlobalVariable { Bytes: { } bytes } || offset + count.Value > bytes.Length)
+      return null;
+    return System.Text.Encoding.Latin1.GetString(bytes.AsSpan((int)offset, (int)count.Value));
   }
 }
