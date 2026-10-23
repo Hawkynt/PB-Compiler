@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-23 08:35 UTC by index_codebase.py.
+Generated 2026-10-23 12:27 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1085 files, 8856 symbols.
+1090 files, 8862 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -1398,6 +1398,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(completed)` — PowerBasic.Compiler.Tests/CodeGen/DosBoxRunner.cs:327
 - method `if(File.Exists(path))` — PowerBasic.Compiler.Tests/CodeGen/DosBoxRunner.cs:342
 
+### DrawMacroStateTests.cs  `C#, 50 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/DrawMacroStateTests.cs:5
+- class `DrawMacroStateTests` — PowerBasic.Compiler.Tests/CodeGen/DrawMacroStateTests.cs:7
+
 ### DrawStatementTests.cs  `C#, 130 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/DrawStatementTests.cs:5
 - class `DrawStatementTests` — DRAW with a written-down string, checked by reading the pixels back with POINT. — PowerBasic.Compiler.Tests/CodeGen/DrawStatementTests.cs:20
@@ -2096,6 +2100,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 ### PlayFunctionTests.cs  `C#, 60 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/PlayFunctionTests.cs:5
 - class `PlayFunctionTests` — PLAY(n) - how many notes are still queued for background music. — PowerBasic.Compiler.Tests/CodeGen/PlayFunctionTests.cs:22
+
+### ProvenDrawTests.cs  `C#, 42 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/ProvenDrawTests.cs:5
+- class `ProvenDrawTests` — PowerBasic.Compiler.Tests/CodeGen/ProvenDrawTests.cs:7
+- method `PSET` — PowerBasic.Compiler.Tests/CodeGen/ProvenDrawTests.cs:21
 
 ### PureFoldTests.cs  `C#, 94 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/PureFoldTests.cs:5
@@ -2844,6 +2853,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 ### DisplayStateEliminationTests.cs  `C#, 160 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DisplayStateEliminationTests.cs:7
 - class `DisplayStateEliminationTests` — PowerBasic.Compiler.Tests/Ir/DisplayStateEliminationTests.cs:9
+
+### DrawStringSpecializationTests.cs  `C#, 115 lines`
+- namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DrawStringSpecializationTests.cs:3
+- class `DrawStringSpecializationTests` — PowerBasic.Compiler.Tests/Ir/DrawStringSpecializationTests.cs:5
 
 ### DynamicArrayLoweringTests.cs  `C#, 174 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DynamicArrayLoweringTests.cs:6
@@ -4609,7 +4622,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - class `InstructionSelector` — PowerBasic.Compiler/Backend/InstructionSelector.ReciprocalDivision.cs:5
 - method `MInstrEffect(WrittenRegs: [], ReadRegs: [0], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.ReciprocalDivision.cs:40
 
-### InstructionSelector.cs  `C#, 5658 lines`
+### InstructionSelector.cs  `C#, 5660 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4
 - class `InstructionSelector` — Stage 2 of the x86-16 back end (docs/X86-BACKEND.md): selects the typed-SSA IR into the — PowerBasic.Compiler/Backend/InstructionSelector.cs:17
 - method `if(this.UsesNativeDwordRegisters)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:190
@@ -4739,62 +4752,62 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `IsWide(from)` — ...and a dword down to a BYTE is those same two renames composed: the low word holds the low — PowerBasic.Compiler/Backend/InstructionSelector.cs:3186
 - method `if(lo is not MOperand.Register low)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3189
 - method `IsQuad(to)` — ...and when the i64 is a value the program KEEPS - a FIX cell is a scaled int64, so the — PowerBasic.Compiler/Backend/InstructionSelector.cs:3204
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: callReadRegs, ReadsFlags: false, WritesFl…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3417
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3425
-- method `new(MReg.Physical_(Reg.AX, MRegSize.Word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3442
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3451
-- method `if(!this.TryWordOperand(argument, $"{calleeName} register argument {pla…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3503
-- method `if(!this.TryOperandPair(argument, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3508
-- method `for` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3513
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: source is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3627
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3647
-- method `if(call.Args.FirstOrDefault() is not IrBlockAddress unwind)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3656
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3671
-- method `if(call.Args.FirstOrDefault() is not IrBlockAddress handler)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3676
-- method `if(call.Args.ToList() is not [IrBlockAddress start, IrBlockAddress next…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3699
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3713
-- method `if(!arg.Type.IsIeeeFloat)` — the print routines take a float on ST(0) and pop it themselves — PowerBasic.Compiler/Backend/InstructionSelector.cs:3792
-- method `if(!this.TryFloatOperand(arg, out var loaded))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3794
-- method `if(arg is IrGep { BasePtr: IrGlobalVariable { Bytes: not null } blob, E…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3803
-- method `if(global is null)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3808
-- method `if(arg.Type.IsFarPointer || PointerSegmentOf(arg) is not (Reg.DS or Reg…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3817
-- method `if(!this.TryRuntimePointer(arg, callee.Name, out var source, out var se…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3826
-- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 1 }, Value…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3837
-- method `if(!this.TryWordOperand(arg, $"{callee.Name} takes a 32-bit value in a …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3841
-- method `if(!IsWide(arg.Type))` — the row claims the high half does not matter; see ArgKind.LowWord for what backs the claim — PowerBasic.Compiler/Backend/InstructionSelector.cs:3850
-- method `if(!this.TryOperandPair(arg, out var low, out _))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3852
-- method `if(!IsWide(arg.Type))` — four words into one qword cell - the value's own two, then two zeroes - and FILD it. The — PowerBasic.Compiler/Backend/InstructionSelector.cs:3862
-- method `if(!this.TryOperandPair(arg, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3864
-- method `if(IsQuad(arg.Type) && this._qslots.TryGetValue(arg, out var loaded))` — A QUAD read out of storage is already in a qword cell of its own (SelectQwordLoad), so — PowerBasic.Compiler/Backend/InstructionSelector.cs:3880
-- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 64 }, Valu…` — The machine IR does not yet carry a general four-register i64 value. An optimized QUAD — PowerBasic.Compiler/Backend/InstructionSelector.cs:3887
-- method `if(IsWide(arg.Type))` — the word into the low register, the high one cleared - "XOR DX,DX" in the direct emitter — PowerBasic.Compiler/Backend/InstructionSelector.cs:3899
-- method `if(!this.TryOperand(arg, out var word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3901
-- method `if(!IsWide(arg.Type))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3913
-- method `if(!this.TryOperandPair(arg, out var lo, out var hi))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3915
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3948
-- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4159
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4234
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: handle is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4289
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4299
-- method `return(c.Value, c.Value)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4441
-- method `IsWide(bin.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4447
-- method `if(bin.Op == IrBinaryOp.And)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4452
-- method `MaskedRange(lhs, rhs)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4453
-- method `if(lhs is not { } left || rhs is not { } right)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4454
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4554
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4831
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4860
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4891
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5026
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5051
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5079
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5129
-- method `new(MReg.Physical_(Reg.AX, MRegSize.Word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5242
-- method `if(value.Type.Signed)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5298
-- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5305
-- method `MInstrEffect(WrittenRegs: [], ReadRegs: [.. Enumerable.Range(0, registers.Length)…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5340
-- method `IsAddressableGlobal(g)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5472
-- method `if(this._vregs.TryGetValue(value, out var reg))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5479
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: callReadRegs, ReadsFlags: false, WritesFl…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3419
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3427
+- method `new(MReg.Physical_(Reg.AX, MRegSize.Word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3444
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3453
+- method `if(!this.TryWordOperand(argument, $"{calleeName} register argument {pla…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3505
+- method `if(!this.TryOperandPair(argument, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3510
+- method `for` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3515
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: source is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3629
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3649
+- method `if(call.Args.FirstOrDefault() is not IrBlockAddress unwind)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3658
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3673
+- method `if(call.Args.FirstOrDefault() is not IrBlockAddress handler)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3678
+- method `if(call.Args.ToList() is not [IrBlockAddress start, IrBlockAddress next…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3701
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: false…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3715
+- method `if(!arg.Type.IsIeeeFloat)` — the print routines take a float on ST(0) and pop it themselves — PowerBasic.Compiler/Backend/InstructionSelector.cs:3794
+- method `if(!this.TryFloatOperand(arg, out var loaded))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3796
+- method `if(arg is IrGep { BasePtr: IrGlobalVariable { Bytes: not null } blob, E…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3805
+- method `if(global is null)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3810
+- method `if(arg.Type.IsFarPointer || PointerSegmentOf(arg) is not (Reg.DS or Reg…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3819
+- method `if(!this.TryRuntimePointer(arg, callee.Name, out var source, out var se…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3828
+- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 1 }, Value…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3839
+- method `if(!this.TryWordOperand(arg, $"{callee.Name} takes a 32-bit value in a …` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3843
+- method `if(!IsWide(arg.Type))` — the row claims the high half does not matter; see ArgKind.LowWord for what backs the claim — PowerBasic.Compiler/Backend/InstructionSelector.cs:3852
+- method `if(!this.TryOperandPair(arg, out var low, out _))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3854
+- method `if(!IsWide(arg.Type))` — four words into one qword cell - the value's own two, then two zeroes - and FILD it. The — PowerBasic.Compiler/Backend/InstructionSelector.cs:3864
+- method `if(!this.TryOperandPair(arg, out var low, out var high))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3866
+- method `if(IsQuad(arg.Type) && this._qslots.TryGetValue(arg, out var loaded))` — A QUAD read out of storage is already in a qword cell of its own (SelectQwordLoad), so — PowerBasic.Compiler/Backend/InstructionSelector.cs:3882
+- method `if(arg is not IrConstantInt { Type: { IsInteger: true, Bits: 64 }, Valu…` — The machine IR does not yet carry a general four-register i64 value. An optimized QUAD — PowerBasic.Compiler/Backend/InstructionSelector.cs:3889
+- method `if(IsWide(arg.Type))` — the word into the low register, the high one cleared - "XOR DX,DX" in the direct emitter — PowerBasic.Compiler/Backend/InstructionSelector.cs:3901
+- method `if(!this.TryOperand(arg, out var word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3903
+- method `if(!IsWide(arg.Type))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3915
+- method `if(!this.TryOperandPair(arg, out var lo, out var hi))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3917
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:3950
+- method `MInstrEffect([], [], ReadsFlags: false, WritesFlags: false, ReadsMemory: false, W…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4161
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4236
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: handle is MOperand.Register ? [1] : [], R…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4291
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4301
+- method `return(c.Value, c.Value)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4443
+- method `IsWide(bin.Type)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4449
+- method `if(bin.Op == IrBinaryOp.And)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4454
+- method `MaskedRange(lhs, rhs)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4455
+- method `if(lhs is not { } left || rhs is not { } right)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4456
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4556
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [1], ReadsFlags: false, WritesFlags: true…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4833
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4862
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:4893
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5028
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [0], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5053
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false, WritesFlags: true,…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5081
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [], ReadsFlags: false, WritesFlags: fals…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5131
+- method `new(MReg.Physical_(Reg.AX, MRegSize.Word))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5244
+- method `if(value.Type.Signed)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5300
+- method `MInstrEffect(WrittenRegs: [0], ReadRegs: [1], ReadsFlags: false, WritesFlags: tru…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5307
+- method `MInstrEffect(WrittenRegs: [], ReadRegs: [.. Enumerable.Range(0, registers.Length)…` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5342
+- method `IsAddressableGlobal(g)` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5474
+- method `if(this._vregs.TryGetValue(value, out var reg))` — PowerBasic.Compiler/Backend/InstructionSelector.cs:5481
 
 ### IrBackendModule.cs  `C#, 110 lines`
 - namespace `PowerBasic.Compiler.Backend` — PowerBasic.Compiler/Backend/IrBackendModule.cs:6
@@ -6707,6 +6720,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(newIdom is not null && (!this._idom.TryGetValue(block, out var cur) …` — PowerBasic.Compiler/Ir/IrDominators.cs:108
 - method `while(!ReferenceEquals(runner, idom))` — PowerBasic.Compiler/Ir/IrDominators.cs:137
 
+### IrDrawExpansion.cs  `C#, 49 lines`
+- namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrDrawExpansion.cs:2
+- class `IrDrawExpansion` — The shared IR expansion for the currently modeled DRAW movement/colour commands. — PowerBasic.Compiler/Ir/IrDrawExpansion.cs:6
+- method `if(!step.NoUpdate)` — PowerBasic.Compiler/Ir/IrDrawExpansion.cs:21
+
 ### IrFNeg.cs  `C#, 17 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrFNeg.cs:1
 - class `IrFNeg` — Changes an IEEE value's sign bit without arithmetic, rounding, or payload conversion. — PowerBasic.Compiler/Ir/IrFNeg.cs:7
@@ -6831,7 +6849,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `switch(binary.Op)` — PowerBasic.Compiler/Ir/IrLowering.WideIntegers.cs:133
 - method `IrConstantInt(IrType.I16, wt.Words)` — PowerBasic.Compiler/Ir/IrLowering.WideIntegers.cs:203
 
-### IrLowering.cs  `C#, 7462 lines`
+### IrLowering.cs  `C#, 7424 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrLowering.cs:6
 - class `IrLowering` — Lowers high-level functions into the IR in clang-style alloca/load/store form: every — PowerBasic.Compiler/Ir/IrLowering.cs:20
 - record `DataLayout` — PowerBasic.Compiler/Ir/IrLowering.cs:74
@@ -6899,191 +6917,185 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `foreach(var operation in eraseOperations)` — PowerBasic.Compiler/Ir/IrLowering.cs:1669
 - method `if(line.From is { } lineFrom)` — PowerBasic.Compiler/Ir/IrLowering.cs:1788
 - method `if(circle.Start is null && circle.End is null && circle.Aspect is null)` — PowerBasic.Compiler/Ir/IrLowering.cs:1815
-- method `if(!Semantics.MacroStringValidator.TryParseDraw(picture.Value, out var …` — PowerBasic.Compiler/Ir/IrLowering.cs:1834
-- method `IrLoweringException(declined ?? "DRAW string")` — PowerBasic.Compiler/Ir/IrLowering.cs:1835
-- method `foreach(var step in steps)` — PowerBasic.Compiler/Ir/IrLowering.cs:1842
-- method `if(step.Kind == Semantics.DrawStepKind.Colour)` — PowerBasic.Compiler/Ir/IrLowering.cs:1843
-- method `if(step.Kind == Semantics.DrawStepKind.Relative)` — where this step ends: a delta from the current point, or the point itself — PowerBasic.Compiler/Ir/IrLowering.cs:1848
-- method `Stepped(IrGlobalVariable from, int delta)` — PowerBasic.Compiler/Ir/IrLowering.cs:1849
-- method `if(step.Blank)` — B moves without drawing: the endpoint simply becomes the current point — PowerBasic.Compiler/Ir/IrLowering.cs:1860
-- method `if(keptX is not null && keptY is not null)` — PowerBasic.Compiler/Ir/IrLowering.cs:1869
-- method `if(graphics.Verb is { } verbName && !verbs.ContainsKey(verbName))` — PowerBasic.Compiler/Ir/IrLowering.cs:1888
-- method `IrLoweringException($"PUT action '{verbName}'")` — PowerBasic.Compiler/Ir/IrLowering.cs:1889
-- method `if(graphics.IsGet && graphics.To is null)` — PowerBasic.Compiler/Ir/IrLowering.cs:1890
-- method `IrLoweringException("GET without both corners of the rectangle")` — PowerBasic.Compiler/Ir/IrLowering.cs:1891
-- method `if(graphics.To is { } far)` — PowerBasic.Compiler/Ir/IrLowering.cs:1895
-- method `if(graphics.IsGet)` — PowerBasic.Compiler/Ir/IrLowering.cs:1902
-- method `if(hasOffset)` — PowerBasic.Compiler/Ir/IrLowering.cs:1949
-- method `foreach(var tune in playCmd.Arguments)` — PowerBasic.Compiler/Ir/IrLowering.cs:1961
-- method `StringLiteralExpr(files.Position, "*.*")` — PowerBasic.Compiler/Ir/IrLowering.cs:1979
-- method `if(shellCmd.Keyword == "EXECUTE")` — PowerBasic.Compiler/Ir/IrLowering.cs:1994
-- method `if(randomize.Arguments is [{ } seed])` — PowerBasic.Compiler/Ir/IrLowering.cs:2114
-- method `if(randomize.Arguments.Count <= 1)` — PowerBasic.Compiler/Ir/IrLowering.cs:2117
-- method `IrLoweringException` — PowerBasic.Compiler/Ir/IrLowering.cs:2119
-- method `IrLoweringException( $"deferred {this._model.Dialect.DisplayName()} source whose path is…` — PowerBasic.Compiler/Ir/IrLowering.cs:2129
-- method `IrLoweringException("assignment through a pointer to a non-scalar")` — PowerBasic.Compiler/Ir/IrLowering.cs:2150
-- method `if(arrTargetType.Element is UdtType pagedRecord)` — A RECORD element is copied whole and has no value to load, so the ordering argument reads — PowerBasic.Compiler/Ir/IrLowering.cs:2188
-- method `if(field.Type is FixedStringType ffs)` — PowerBasic.Compiler/Ir/IrLowering.cs:2226
-- method `if(field.Type is AsciizType faz)` — PowerBasic.Compiler/Ir/IrLowering.cs:2231
-- method `IrLoweringException("MID$ statement requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2306
-- method `IrLoweringException("ASC assignment requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2336
-- method `IrLoweringException("ASC assignment to a fixed-length or ASCIIZ target")` — PowerBasic.Compiler/Ir/IrLowering.cs:2338
-- method `IrLoweringException($"BIT statement on {targetType}")` — PowerBasic.Compiler/Ir/IrLowering.cs:2371
-- method `IrLoweringException("REPLACE requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2395
-- method `IrLoweringException("REPLACE into a fixed-length or ASCIIZ target")` — PowerBasic.Compiler/Ir/IrLowering.cs:2397
-- method `IrLoweringException("SWAP of differently-typed operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:2424
-- method `IrAlloca(IrType.I8)` — PowerBasic.Compiler/Ir/IrLowering.cs:2428
-- method `IrLoweringException("SWAP of differently-typed operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:2437
-- method `IrLoweringException("non-scalar dotted variable")` — PowerBasic.Compiler/Ir/IrLowering.cs:2492
-- method `IrLoweringException("non-scalar UDT field")` — PowerBasic.Compiler/Ir/IrLowering.cs:2497
-- method `IrLoweringException( $"unsupported member access: target is {m.Target.GetType().Name} of…` — Name the TARGET's shape, for the reason the lvalue decline beside it does: a count of — PowerBasic.Compiler/Ir/IrLowering.cs:2573
-- method `IrLoweringException("UDT array field")` — PowerBasic.Compiler/Ir/IrLowering.cs:2578
-- method `IrLoweringException($"{ix.Arguments.Count} subscripts on the {bounds.Count}-dimensional …` — PowerBasic.Compiler/Ir/IrLowering.cs:2611
-- method `IrLoweringException` — PowerBasic.Compiler/Ir/IrLowering.cs:2664
-- method `IrLoweringException("unsupported pointer value")` — PowerBasic.Compiler/Ir/IrLowering.cs:2669
-- method `IrLoweringException("PRINT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2798
-- method `IrLoweringException("LPRINT to a file number")` — PowerBasic.Compiler/Ir/IrLowering.cs:2800
-- method `if(item.Value is { } expr)` — PowerBasic.Compiler/Ir/IrLowering.cs:2810
-- method `if(item.Separator == PrintSeparator.Comma)` — PowerBasic.Compiler/Ir/IrLowering.cs:2812
-- method `if` — PowerBasic.Compiler/Ir/IrLowering.cs:2815
-- method `IrLoweringException("non-literal PRINT USING format")` — PowerBasic.Compiler/Ir/IrLowering.cs:2877
-- method `IrLoweringException("more PRINT USING values than fields")` — PowerBasic.Compiler/Ir/IrLowering.cs:2897
-- method `IrLoweringException("PRINT USING of a non-numeric, non-string value")` — PowerBasic.Compiler/Ir/IrLowering.cs:2910
-- method `IrLoweringException("non-literal USING$ format with multiple values")` — PowerBasic.Compiler/Ir/IrLowering.cs:2953
-- method `IrLoweringException("non-literal USING$ format")` — PowerBasic.Compiler/Ir/IrLowering.cs:2961
-- method `IrLoweringException("WRITE requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2989
-- method `IrLoweringException("WRITE of a non-numeric, non-string value")` — PowerBasic.Compiler/Ir/IrLowering.cs:3027
-- method `IrLoweringException("PRINT of a non-numeric, non-literal item")` — PowerBasic.Compiler/Ir/IrLowering.cs:3179
-- method `IrLoweringException("INPUT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3192
-- method `IrLoweringException("INPUT into a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:3224
-- method `IrLoweringException("OPEN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3232
-- method `IrLoweringException("GET/PUT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3243
-- method `IrLoweringException("GET/PUT of a non-scalar record")` — PowerBasic.Compiler/Ir/IrLowering.cs:3298
-- method `IrLoweringException("CLOSE requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3312
-- method `IrLoweringException("runtime calls require whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3351
-- method `IrLoweringException("strings require whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3361
-- method `when(device.Name + device.Suffix.KeyText())` — ...and a string intrinsic written WITHOUT parentheses. The binder does not turn a bare name — PowerBasic.Compiler/Ir/IrLowering.cs:3447
-- method `IrNullPtr()` — PowerBasic.Compiler/Ir/IrLowering.cs:3448
-- method `NullaryStringIntrinsic(nullary.Name + nullary.Suffix.KeyText())` — PowerBasic.Compiler/Ir/IrLowering.cs:3449
-- method `when(dirNext.Name + dirNext.Suffix.KeyText())` — DIR$ without a mask is the find-NEXT half of the pair, which is the same routine with a null — PowerBasic.Compiler/Ir/IrLowering.cs:3454
-- method `IrLoweringException($"GOTO to unknown label {g.Target}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3503
-- method `IrLoweringException($"ON ERROR GOTO unknown label {oe.Target}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3534
-- method `Restore` — PowerBasic.Compiler/Ir/IrLowering.cs:3576
-- method `if(!this._labels.TryGetValue(target, out var block))` — PowerBasic.Compiler/Ir/IrLowering.cs:3647
-- method `IrLoweringException($"RESUME to unknown label {target}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3648
-- method `IrLoweringException($"EXIT FAR AT unknown label {label}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3692
-- method `IrLoweringException("GOSUB without return-stack setup")` — PowerBasic.Compiler/Ir/IrLowering.cs:3717
-- method `IrLoweringException($"GOSUB to unknown label {g.Target}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3719
-- method `IrLoweringException("GOSUB DWORD without return-stack setup")` — PowerBasic.Compiler/Ir/IrLowering.cs:3775
-- method `IrLoweringException("RETURN without a matching GOSUB")` — PowerBasic.Compiler/Ir/IrLowering.cs:3790
-- method `IrLoweringException($"RETURN to unknown label {label}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3795
-- method `IrLoweringException("ON GOTO with a non-integer selector")` — PowerBasic.Compiler/Ir/IrLowering.cs:3804
-- method `IrLoweringException("ON ... GOSUB without return-stack setup")` — PowerBasic.Compiler/Ir/IrLowering.cs:3814
-- method `IrLoweringException("DATA item exceeds 64KB")` — PowerBasic.Compiler/Ir/IrLowering.cs:3877
-- method `IrLoweringException("DATA/READ requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3887
-- method `IrLoweringException($"RESTORE to unknown DATA label {label}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3946
-- method `IrConstantInt(IrType.I16, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:3976
-- method `IrLoweringException($"REDIM of the ABSOLUTE array {symbol.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4030
-- method `IrLoweringException($"REDIM PRESERVE on the {operation.ArrayClass} array {symbol.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4037
-- method `IrConstantInt(IrType.I32, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:4083
-- method `if` — PowerBasic.Compiler/Ir/IrLowering.cs:4085
-- method `IrLoweringException($"array parameter {symbol.Name} has no incoming descriptor pointer")` — PowerBasic.Compiler/Ir/IrLowering.cs:4140
-- method `IrLoweringException($"ERASE of {symbol.Name} before its DIM ... AT was lowered")` — PowerBasic.Compiler/Ir/IrLowering.cs:4164
-- record `SortArray` — The three things the sort/scan parameter block needs to know about an array: where its elements — PowerBasic.Compiler/Ir/IrLowering.cs:4206
-- method `IrLoweringException("ARRAY SORT/SCAN of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4216
-- method `IrLoweringException("ARRAY SORT/SCAN of an array parameter")` — PowerBasic.Compiler/Ir/IrLowering.cs:4218
-- method `IrLoweringException("ARRAY SORT/SCAN of a dynamic array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4220
-- method `IrLoweringException("ARRAY SORT/SCAN of a multi-dimensional array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4222
-- method `IrConstantInt` — PowerBasic.Compiler/Ir/IrLowering.cs:4248
-- method `IrLoweringException($"ARRAY SORT/SCAN over {shape.Type.Element} elements")` — PowerBasic.Compiler/Ir/IrLowering.cs:4294
-- method `IrLoweringException("FROM/TO range on a non-string ARRAY SORT/SCAN")` — PowerBasic.Compiler/Ir/IrLowering.cs:4296
-- method `IrLoweringException("ARRAY SORT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:4338
-- method `IrLoweringException("COLLATE on an ARRAY SORT")` — PowerBasic.Compiler/Ir/IrLowering.cs:4340
-- method `IrLoweringException("ARRAY SORT TAGARRAY on a string array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4344
-- method `IrLoweringException("ARRAY SCAN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:4361
-- method `IrLoweringException("COLLATE on an ARRAY SCAN")` — PowerBasic.Compiler/Ir/IrLowering.cs:4363
-- method `IrLoweringException("FIELD target that is not a dynamic string")` — PowerBasic.Compiler/Ir/IrLowering.cs:4409
-- method `IrLoweringException("CHAIN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:4488
-- method `IrLoweringException("COMMON array across CHAIN")` — PowerBasic.Compiler/Ir/IrLowering.cs:4545
-- method `IrLoweringException($"COMMON {symbol.Type} across CHAIN")` — PowerBasic.Compiler/Ir/IrLowering.cs:4556
-- method `IrLoweringException("DIM AT without the ABSOLUTE class")` — PowerBasic.Compiler/Ir/IrLowering.cs:4581
-- method `if(this.ArrayVariable(v) is { } stackSymbol && this.NeedsSharedStorage(…` — PowerBasic.Compiler/Ir/IrLowering.cs:4596
-- method `IrLoweringException("a STACK array with shared storage")` — PowerBasic.Compiler/Ir/IrLowering.cs:4597
-- method `IrLoweringException($"DIM {d.Class} array class")` — PowerBasic.Compiler/Ir/IrLowering.cs:4605
-- method `IrLoweringException("DIM rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.cs:4623
-- method `IrLoweringException("DIM AT a segment that is not a compile-time constant")` — PowerBasic.Compiler/Ir/IrLowering.cs:4659
-- method `IrLoweringException($"DIM {v.Name} AT without array bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:4663
-- method `IrLoweringException($"DIM AT: no array symbol for {v.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4665
-- method `IrLoweringException("DIM AT rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.cs:4667
-- method `IrLoweringException("DIM AT over a dynamic-string element type")` — PowerBasic.Compiler/Ir/IrLowering.cs:4671
-- method `IrConstantInt(IrType.I32, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:4677
-- method `IrAlloca(IrType.I16)` — PowerBasic.Compiler/Ir/IrLowering.cs:4684
-- method `IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:4738
-- method `IrLoweringException($"{cmd.Keyword} of a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:4740
-- method `IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:4788
-- method `IrLoweringException($"{cmd.Keyword} of a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:4790
-- method `IrLoweringException($"{cmd.Keyword} by a runtime count")` — PowerBasic.Compiler/Ir/IrLowering.cs:4792
-- method `IrLoweringException($"{cmd.Keyword} by {n} over a {width}-bit value")` — PowerBasic.Compiler/Ir/IrLowering.cs:4797
-- method `IrLoweringException($"FOR over a {ty} counter")` — PowerBasic.Compiler/Ir/IrLowering.cs:4899
-- method `IrLoweringException("FOR with a runtime STEP over an unsigned counter")` — PowerBasic.Compiler/Ir/IrLowering.cs:4914
-- method `foreach(var loop in this._loops)` — PowerBasic.Compiler/Ir/IrLowering.cs:5083
-- method `IrLoweringException($"EXIT {e.Kind} outside a matching loop")` — PowerBasic.Compiler/Ir/IrLowering.cs:5090
-- method `IrLoweringException(directError ?? $"call to unsupported procedure {c.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:5155
-- method `IrLoweringException($"call to {call.Target.Name} outside the modelled subset")` — PowerBasic.Compiler/Ir/IrLowering.cs:5161
-- method `IrLoweringException("SELECT CASE on a non-scalar subject")` — PowerBasic.Compiler/Ir/IrLowering.cs:5173
-- method `IrConstantFloat(floatType, resolved)` — PowerBasic.Compiler/Ir/IrLowering.cs:5313
-- method `MapType(this._model.TypeOf(lit))` — a whole-number literal the dialect types as a float - Turbo BASIC's 2147483648 is a DOUBLE - — PowerBasic.Compiler/Ir/IrLowering.cs:5321
-- method `IrConstantFloat(floatType, lit.Value)` — PowerBasic.Compiler/Ir/IrLowering.cs:5322
-- method `if(this._model.EffectiveDialect.HasMbfStorage() && type is ScalarType {…` — PowerBasic.Compiler/Ir/IrLowering.cs:5327
-- method `if(type is BcdType bcd)` — A FIX literal is not a float value with a float type. Its CELL holds the number scaled by — PowerBasic.Compiler/Ir/IrLowering.cs:5347
-- method `IrLoweringException($"unknown equate {nc.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:5428
-- method `IrLoweringException("non-numeric equate")` — PowerBasic.Compiler/Ir/IrLowering.cs:5430
-- method `IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset")` — PowerBasic.Compiler/Ir/IrLowering.cs:5439
-- method `IrLoweringException("SUB used in expression position")` — PowerBasic.Compiler/Ir/IrLowering.cs:5441
-- method `IrLoweringException($"unbound name {name.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:5447
-- method `IrConstantFloat` — PowerBasic.Compiler/Ir/IrLowering.cs:5522
-- method `IrLoweringException($"{name} requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:5529
-- method `IrLoweringException($"{name} of an unknown label {labelName}")` — PowerBasic.Compiler/Ir/IrLowering.cs:5616
-- method `IrConstantInt(IrType.I16, 160)` — PowerBasic.Compiler/Ir/IrLowering.cs:5735
-- method `if(call.Arguments[2] is not IntegerLiteralExpr wantsAttribute)` — PowerBasic.Compiler/Ir/IrLowering.cs:5741
-- method `IrLoweringException("SCREEN with a non-constant attribute selector")` — PowerBasic.Compiler/Ir/IrLowering.cs:5742
-- method `if(wantsAttribute.Value != 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:5743
-- method `IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:5762
-- method `IrConstantInt(IrType.I16, Math.Max(this._model.TypeOf(call.Arguments[0]).Size, 1))` — PowerBasic.Compiler/Ir/IrLowering.cs:5800
-- method `IrLoweringException("POS requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:5936
-- method `IrLoweringException("intrinsic PEEK takes one or two arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:5955
-- method `IrConstantInt(IrType.I32, 1)` — PowerBasic.Compiler/Ir/IrLowering.cs:5996
-- method `IrLoweringException("LBOUND/UBOUND of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:6031
-- method `IrLoweringException("LBOUND/UBOUND dimension out of range")` — PowerBasic.Compiler/Ir/IrLowering.cs:6036
-- method `IrLoweringException("static array without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:6042
-- method `IrLoweringException($"INSTR with {call.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:6077
-- method `IrLoweringException($"EXTRACT$ with {ci.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:6200
-- method `Num(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:6252
-- method `Num(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:6263
-- method `Str(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:6269
-- method `Count(1)` — PowerBasic.Compiler/Ir/IrLowering.cs:6301
-- method `IrLoweringException("STR$ of a non-numeric value")` — PowerBasic.Compiler/Ir/IrLowering.cs:6325
-- method `IrLoweringException($"{fn} on a non-float result")` — PowerBasic.Compiler/Ir/IrLowering.cs:6358
-- method `IrLoweringException("LEN of an ASCIIZ expression that is not storage")` — PowerBasic.Compiler/Ir/IrLowering.cs:6408
-- method `IrLoweringException("LEN of a non-string")` — PowerBasic.Compiler/Ir/IrLowering.cs:6419
-- method `IrLoweringException("UDT comparison of non-UDT")` — PowerBasic.Compiler/Ir/IrLowering.cs:6452
-- method `IrConstantInt(ty, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:6544
-- method `IrLoweringException(directError ?? $"unsupported call/index {call.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:6646
-- method `IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset")` — PowerBasic.Compiler/Ir/IrLowering.cs:6648
-- method `IrLoweringException("SUB used in expression position")` — PowerBasic.Compiler/Ir/IrLowering.cs:6650
-- method `if(!address.Type.IsFarPointer)` — PowerBasic.Compiler/Ir/IrLowering.cs:6669
-- method `IrLoweringException("array argument that is not an array")` — PowerBasic.Compiler/Ir/IrLowering.cs:6750
-- method `IrLoweringException($"an argument of the {symbol.ArrayClass} array {symbol.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:6752
-- method `IrAlloca(IrType.I16)` — PowerBasic.Compiler/Ir/IrLowering.cs:6759
-- method `IrLoweringException($"an argument of the static array {symbol.Name} without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:6785
-- method `IrLoweringException($"an argument of the static array {symbol.Name} without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:6847
-- method `if(!resultTy.IsFloat)` — PowerBasic.Compiler/Ir/IrLowering.cs:6998
-- method `IrLoweringException("integer exponentiation")` — PowerBasic.Compiler/Ir/IrLowering.cs:6999
-- method `IrLoweringException( "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integ…` — PowerBasic.Compiler/Ir/IrLowering.cs:7129
-- method `IrLoweringException($"$ERROR {arm} ON arms a runtime trap the IR lowering does not emit")` — PowerBasic.Compiler/Ir/IrLowering.cs:7262
-- method `IrLoweringException($"metastatement ${meta.Command}")` — PowerBasic.Compiler/Ir/IrLowering.cs:7264
-- method `IrLoweringException("comparison of non-scalar operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:7288
-- method `IrLoweringException("coercion between non-scalar types")` — PowerBasic.Compiler/Ir/IrLowering.cs:7391
+- method `if(!Semantics.MacroStringValidator.TryParseDraw(picture.Value, out var …` — PowerBasic.Compiler/Ir/IrLowering.cs:1828
+- method `IrLoweringException(declined ?? "DRAW string")` — PowerBasic.Compiler/Ir/IrLowering.cs:1829
+- method `if(graphics.Verb is { } verbName && !verbs.ContainsKey(verbName))` — PowerBasic.Compiler/Ir/IrLowering.cs:1850
+- method `IrLoweringException($"PUT action '{verbName}'")` — PowerBasic.Compiler/Ir/IrLowering.cs:1851
+- method `if(graphics.IsGet && graphics.To is null)` — PowerBasic.Compiler/Ir/IrLowering.cs:1852
+- method `IrLoweringException("GET without both corners of the rectangle")` — PowerBasic.Compiler/Ir/IrLowering.cs:1853
+- method `if(graphics.To is { } far)` — PowerBasic.Compiler/Ir/IrLowering.cs:1857
+- method `if(graphics.IsGet)` — PowerBasic.Compiler/Ir/IrLowering.cs:1864
+- method `if(hasOffset)` — PowerBasic.Compiler/Ir/IrLowering.cs:1911
+- method `foreach(var tune in playCmd.Arguments)` — PowerBasic.Compiler/Ir/IrLowering.cs:1923
+- method `StringLiteralExpr(files.Position, "*.*")` — PowerBasic.Compiler/Ir/IrLowering.cs:1941
+- method `if(shellCmd.Keyword == "EXECUTE")` — PowerBasic.Compiler/Ir/IrLowering.cs:1956
+- method `if(randomize.Arguments is [{ } seed])` — PowerBasic.Compiler/Ir/IrLowering.cs:2076
+- method `if(randomize.Arguments.Count <= 1)` — PowerBasic.Compiler/Ir/IrLowering.cs:2079
+- method `IrLoweringException` — PowerBasic.Compiler/Ir/IrLowering.cs:2081
+- method `IrLoweringException( $"deferred {this._model.Dialect.DisplayName()} source whose path is…` — PowerBasic.Compiler/Ir/IrLowering.cs:2091
+- method `IrLoweringException("assignment through a pointer to a non-scalar")` — PowerBasic.Compiler/Ir/IrLowering.cs:2112
+- method `if(arrTargetType.Element is UdtType pagedRecord)` — A RECORD element is copied whole and has no value to load, so the ordering argument reads — PowerBasic.Compiler/Ir/IrLowering.cs:2150
+- method `if(field.Type is FixedStringType ffs)` — PowerBasic.Compiler/Ir/IrLowering.cs:2188
+- method `if(field.Type is AsciizType faz)` — PowerBasic.Compiler/Ir/IrLowering.cs:2193
+- method `IrLoweringException("MID$ statement requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2268
+- method `IrLoweringException("ASC assignment requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2298
+- method `IrLoweringException("ASC assignment to a fixed-length or ASCIIZ target")` — PowerBasic.Compiler/Ir/IrLowering.cs:2300
+- method `IrLoweringException($"BIT statement on {targetType}")` — PowerBasic.Compiler/Ir/IrLowering.cs:2333
+- method `IrLoweringException("REPLACE requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2357
+- method `IrLoweringException("REPLACE into a fixed-length or ASCIIZ target")` — PowerBasic.Compiler/Ir/IrLowering.cs:2359
+- method `IrLoweringException("SWAP of differently-typed operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:2386
+- method `IrAlloca(IrType.I8)` — PowerBasic.Compiler/Ir/IrLowering.cs:2390
+- method `IrLoweringException("SWAP of differently-typed operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:2399
+- method `IrLoweringException("non-scalar dotted variable")` — PowerBasic.Compiler/Ir/IrLowering.cs:2454
+- method `IrLoweringException("non-scalar UDT field")` — PowerBasic.Compiler/Ir/IrLowering.cs:2459
+- method `IrLoweringException( $"unsupported member access: target is {m.Target.GetType().Name} of…` — Name the TARGET's shape, for the reason the lvalue decline beside it does: a count of — PowerBasic.Compiler/Ir/IrLowering.cs:2535
+- method `IrLoweringException("UDT array field")` — PowerBasic.Compiler/Ir/IrLowering.cs:2540
+- method `IrLoweringException($"{ix.Arguments.Count} subscripts on the {bounds.Count}-dimensional …` — PowerBasic.Compiler/Ir/IrLowering.cs:2573
+- method `IrLoweringException` — PowerBasic.Compiler/Ir/IrLowering.cs:2626
+- method `IrLoweringException("unsupported pointer value")` — PowerBasic.Compiler/Ir/IrLowering.cs:2631
+- method `IrLoweringException("PRINT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2760
+- method `IrLoweringException("LPRINT to a file number")` — PowerBasic.Compiler/Ir/IrLowering.cs:2762
+- method `if(item.Value is { } expr)` — PowerBasic.Compiler/Ir/IrLowering.cs:2772
+- method `if(item.Separator == PrintSeparator.Comma)` — PowerBasic.Compiler/Ir/IrLowering.cs:2774
+- method `if` — PowerBasic.Compiler/Ir/IrLowering.cs:2777
+- method `IrLoweringException("non-literal PRINT USING format")` — PowerBasic.Compiler/Ir/IrLowering.cs:2839
+- method `IrLoweringException("more PRINT USING values than fields")` — PowerBasic.Compiler/Ir/IrLowering.cs:2859
+- method `IrLoweringException("PRINT USING of a non-numeric, non-string value")` — PowerBasic.Compiler/Ir/IrLowering.cs:2872
+- method `IrLoweringException("non-literal USING$ format with multiple values")` — PowerBasic.Compiler/Ir/IrLowering.cs:2915
+- method `IrLoweringException("non-literal USING$ format")` — PowerBasic.Compiler/Ir/IrLowering.cs:2923
+- method `IrLoweringException("WRITE requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:2951
+- method `IrLoweringException("WRITE of a non-numeric, non-string value")` — PowerBasic.Compiler/Ir/IrLowering.cs:2989
+- method `IrLoweringException("PRINT of a non-numeric, non-literal item")` — PowerBasic.Compiler/Ir/IrLowering.cs:3141
+- method `IrLoweringException("INPUT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3154
+- method `IrLoweringException("INPUT into a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:3186
+- method `IrLoweringException("OPEN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3194
+- method `IrLoweringException("GET/PUT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3205
+- method `IrLoweringException("GET/PUT of a non-scalar record")` — PowerBasic.Compiler/Ir/IrLowering.cs:3260
+- method `IrLoweringException("CLOSE requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3274
+- method `IrLoweringException("runtime calls require whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3313
+- method `IrLoweringException("strings require whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3323
+- method `when(device.Name + device.Suffix.KeyText())` — ...and a string intrinsic written WITHOUT parentheses. The binder does not turn a bare name — PowerBasic.Compiler/Ir/IrLowering.cs:3409
+- method `IrNullPtr()` — PowerBasic.Compiler/Ir/IrLowering.cs:3410
+- method `NullaryStringIntrinsic(nullary.Name + nullary.Suffix.KeyText())` — PowerBasic.Compiler/Ir/IrLowering.cs:3411
+- method `when(dirNext.Name + dirNext.Suffix.KeyText())` — DIR$ without a mask is the find-NEXT half of the pair, which is the same routine with a null — PowerBasic.Compiler/Ir/IrLowering.cs:3416
+- method `IrLoweringException($"GOTO to unknown label {g.Target}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3465
+- method `IrLoweringException($"ON ERROR GOTO unknown label {oe.Target}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3496
+- method `Restore` — PowerBasic.Compiler/Ir/IrLowering.cs:3538
+- method `if(!this._labels.TryGetValue(target, out var block))` — PowerBasic.Compiler/Ir/IrLowering.cs:3609
+- method `IrLoweringException($"RESUME to unknown label {target}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3610
+- method `IrLoweringException($"EXIT FAR AT unknown label {label}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3654
+- method `IrLoweringException("GOSUB without return-stack setup")` — PowerBasic.Compiler/Ir/IrLowering.cs:3679
+- method `IrLoweringException($"GOSUB to unknown label {g.Target}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3681
+- method `IrLoweringException("GOSUB DWORD without return-stack setup")` — PowerBasic.Compiler/Ir/IrLowering.cs:3737
+- method `IrLoweringException("RETURN without a matching GOSUB")` — PowerBasic.Compiler/Ir/IrLowering.cs:3752
+- method `IrLoweringException($"RETURN to unknown label {label}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3757
+- method `IrLoweringException("ON GOTO with a non-integer selector")` — PowerBasic.Compiler/Ir/IrLowering.cs:3766
+- method `IrLoweringException("ON ... GOSUB without return-stack setup")` — PowerBasic.Compiler/Ir/IrLowering.cs:3776
+- method `IrLoweringException("DATA item exceeds 64KB")` — PowerBasic.Compiler/Ir/IrLowering.cs:3839
+- method `IrLoweringException("DATA/READ requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:3849
+- method `IrLoweringException($"RESTORE to unknown DATA label {label}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3908
+- method `IrConstantInt(IrType.I16, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:3938
+- method `IrLoweringException($"REDIM of the ABSOLUTE array {symbol.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3992
+- method `IrLoweringException($"REDIM PRESERVE on the {operation.ArrayClass} array {symbol.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:3999
+- method `IrConstantInt(IrType.I32, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:4045
+- method `if` — PowerBasic.Compiler/Ir/IrLowering.cs:4047
+- method `IrLoweringException($"array parameter {symbol.Name} has no incoming descriptor pointer")` — PowerBasic.Compiler/Ir/IrLowering.cs:4102
+- method `IrLoweringException($"ERASE of {symbol.Name} before its DIM ... AT was lowered")` — PowerBasic.Compiler/Ir/IrLowering.cs:4126
+- record `SortArray` — The three things the sort/scan parameter block needs to know about an array: where its elements — PowerBasic.Compiler/Ir/IrLowering.cs:4168
+- method `IrLoweringException("ARRAY SORT/SCAN of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4178
+- method `IrLoweringException("ARRAY SORT/SCAN of an array parameter")` — PowerBasic.Compiler/Ir/IrLowering.cs:4180
+- method `IrLoweringException("ARRAY SORT/SCAN of a dynamic array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4182
+- method `IrLoweringException("ARRAY SORT/SCAN of a multi-dimensional array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4184
+- method `IrConstantInt` — PowerBasic.Compiler/Ir/IrLowering.cs:4210
+- method `IrLoweringException($"ARRAY SORT/SCAN over {shape.Type.Element} elements")` — PowerBasic.Compiler/Ir/IrLowering.cs:4256
+- method `IrLoweringException("FROM/TO range on a non-string ARRAY SORT/SCAN")` — PowerBasic.Compiler/Ir/IrLowering.cs:4258
+- method `IrLoweringException("ARRAY SORT requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:4300
+- method `IrLoweringException("COLLATE on an ARRAY SORT")` — PowerBasic.Compiler/Ir/IrLowering.cs:4302
+- method `IrLoweringException("ARRAY SORT TAGARRAY on a string array")` — PowerBasic.Compiler/Ir/IrLowering.cs:4306
+- method `IrLoweringException("ARRAY SCAN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:4323
+- method `IrLoweringException("COLLATE on an ARRAY SCAN")` — PowerBasic.Compiler/Ir/IrLowering.cs:4325
+- method `IrLoweringException("FIELD target that is not a dynamic string")` — PowerBasic.Compiler/Ir/IrLowering.cs:4371
+- method `IrLoweringException("CHAIN requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:4450
+- method `IrLoweringException("COMMON array across CHAIN")` — PowerBasic.Compiler/Ir/IrLowering.cs:4507
+- method `IrLoweringException($"COMMON {symbol.Type} across CHAIN")` — PowerBasic.Compiler/Ir/IrLowering.cs:4518
+- method `IrLoweringException("DIM AT without the ABSOLUTE class")` — PowerBasic.Compiler/Ir/IrLowering.cs:4543
+- method `if(this.ArrayVariable(v) is { } stackSymbol && this.NeedsSharedStorage(…` — PowerBasic.Compiler/Ir/IrLowering.cs:4558
+- method `IrLoweringException("a STACK array with shared storage")` — PowerBasic.Compiler/Ir/IrLowering.cs:4559
+- method `IrLoweringException($"DIM {d.Class} array class")` — PowerBasic.Compiler/Ir/IrLowering.cs:4567
+- method `IrLoweringException("DIM rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.cs:4585
+- method `IrLoweringException("DIM AT a segment that is not a compile-time constant")` — PowerBasic.Compiler/Ir/IrLowering.cs:4621
+- method `IrLoweringException($"DIM {v.Name} AT without array bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:4625
+- method `IrLoweringException($"DIM AT: no array symbol for {v.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:4627
+- method `IrLoweringException("DIM AT rank mismatch")` — PowerBasic.Compiler/Ir/IrLowering.cs:4629
+- method `IrLoweringException("DIM AT over a dynamic-string element type")` — PowerBasic.Compiler/Ir/IrLowering.cs:4633
+- method `IrConstantInt(IrType.I32, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:4639
+- method `IrAlloca(IrType.I16)` — PowerBasic.Compiler/Ir/IrLowering.cs:4646
+- method `IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:4700
+- method `IrLoweringException($"{cmd.Keyword} of a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:4702
+- method `IrLoweringException($"{cmd.Keyword} with {cmd.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:4750
+- method `IrLoweringException($"{cmd.Keyword} of a non-scalar target")` — PowerBasic.Compiler/Ir/IrLowering.cs:4752
+- method `IrLoweringException($"{cmd.Keyword} by a runtime count")` — PowerBasic.Compiler/Ir/IrLowering.cs:4754
+- method `IrLoweringException($"{cmd.Keyword} by {n} over a {width}-bit value")` — PowerBasic.Compiler/Ir/IrLowering.cs:4759
+- method `IrLoweringException($"FOR over a {ty} counter")` — PowerBasic.Compiler/Ir/IrLowering.cs:4861
+- method `IrLoweringException("FOR with a runtime STEP over an unsigned counter")` — PowerBasic.Compiler/Ir/IrLowering.cs:4876
+- method `foreach(var loop in this._loops)` — PowerBasic.Compiler/Ir/IrLowering.cs:5045
+- method `IrLoweringException($"EXIT {e.Kind} outside a matching loop")` — PowerBasic.Compiler/Ir/IrLowering.cs:5052
+- method `IrLoweringException(directError ?? $"call to unsupported procedure {c.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:5117
+- method `IrLoweringException($"call to {call.Target.Name} outside the modelled subset")` — PowerBasic.Compiler/Ir/IrLowering.cs:5123
+- method `IrLoweringException("SELECT CASE on a non-scalar subject")` — PowerBasic.Compiler/Ir/IrLowering.cs:5135
+- method `IrConstantFloat(floatType, resolved)` — PowerBasic.Compiler/Ir/IrLowering.cs:5275
+- method `MapType(this._model.TypeOf(lit))` — a whole-number literal the dialect types as a float - Turbo BASIC's 2147483648 is a DOUBLE - — PowerBasic.Compiler/Ir/IrLowering.cs:5283
+- method `IrConstantFloat(floatType, lit.Value)` — PowerBasic.Compiler/Ir/IrLowering.cs:5284
+- method `if(this._model.EffectiveDialect.HasMbfStorage() && type is ScalarType {…` — PowerBasic.Compiler/Ir/IrLowering.cs:5289
+- method `if(type is BcdType bcd)` — A FIX literal is not a float value with a float type. Its CELL holds the number scaled by — PowerBasic.Compiler/Ir/IrLowering.cs:5309
+- method `IrLoweringException($"unknown equate {nc.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:5390
+- method `IrLoweringException("non-numeric equate")` — PowerBasic.Compiler/Ir/IrLowering.cs:5392
+- method `IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset")` — PowerBasic.Compiler/Ir/IrLowering.cs:5401
+- method `IrLoweringException("SUB used in expression position")` — PowerBasic.Compiler/Ir/IrLowering.cs:5403
+- method `IrLoweringException($"unbound name {name.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:5409
+- method `IrConstantFloat` — PowerBasic.Compiler/Ir/IrLowering.cs:5484
+- method `IrLoweringException($"{name} requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:5491
+- method `IrLoweringException($"{name} of an unknown label {labelName}")` — PowerBasic.Compiler/Ir/IrLowering.cs:5578
+- method `IrConstantInt(IrType.I16, 160)` — PowerBasic.Compiler/Ir/IrLowering.cs:5697
+- method `if(call.Arguments[2] is not IntegerLiteralExpr wantsAttribute)` — PowerBasic.Compiler/Ir/IrLowering.cs:5703
+- method `IrLoweringException("SCREEN with a non-constant attribute selector")` — PowerBasic.Compiler/Ir/IrLowering.cs:5704
+- method `if(wantsAttribute.Value != 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:5705
+- method `IrLoweringException($"intrinsic {name} with {call.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:5724
+- method `IrConstantInt(IrType.I16, Math.Max(this._model.TypeOf(call.Arguments[0]).Size, 1))` — PowerBasic.Compiler/Ir/IrLowering.cs:5762
+- method `IrLoweringException("POS requires whole-module lowering")` — PowerBasic.Compiler/Ir/IrLowering.cs:5898
+- method `IrLoweringException("intrinsic PEEK takes one or two arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:5917
+- method `IrConstantInt(IrType.I32, 1)` — PowerBasic.Compiler/Ir/IrLowering.cs:5958
+- method `IrLoweringException("LBOUND/UBOUND of a non-array")` — PowerBasic.Compiler/Ir/IrLowering.cs:5993
+- method `IrLoweringException("LBOUND/UBOUND dimension out of range")` — PowerBasic.Compiler/Ir/IrLowering.cs:5998
+- method `IrLoweringException("static array without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:6004
+- method `IrLoweringException($"INSTR with {call.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:6039
+- method `IrLoweringException($"EXTRACT$ with {ci.Arguments.Count} arguments")` — PowerBasic.Compiler/Ir/IrLowering.cs:6162
+- method `Num(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:6214
+- method `Num(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:6225
+- method `Str(0)` — PowerBasic.Compiler/Ir/IrLowering.cs:6231
+- method `Count(1)` — PowerBasic.Compiler/Ir/IrLowering.cs:6263
+- method `IrLoweringException("STR$ of a non-numeric value")` — PowerBasic.Compiler/Ir/IrLowering.cs:6287
+- method `IrLoweringException($"{fn} on a non-float result")` — PowerBasic.Compiler/Ir/IrLowering.cs:6320
+- method `IrLoweringException("LEN of an ASCIIZ expression that is not storage")` — PowerBasic.Compiler/Ir/IrLowering.cs:6370
+- method `IrLoweringException("LEN of a non-string")` — PowerBasic.Compiler/Ir/IrLowering.cs:6381
+- method `IrLoweringException("UDT comparison of non-UDT")` — PowerBasic.Compiler/Ir/IrLowering.cs:6414
+- method `IrConstantInt(ty, 0)` — PowerBasic.Compiler/Ir/IrLowering.cs:6506
+- method `IrLoweringException(directError ?? $"unsupported call/index {call.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:6608
+- method `IrLoweringException($"call to {directCall.Target.Name} outside the modelled subset")` — PowerBasic.Compiler/Ir/IrLowering.cs:6610
+- method `IrLoweringException("SUB used in expression position")` — PowerBasic.Compiler/Ir/IrLowering.cs:6612
+- method `if(!address.Type.IsFarPointer)` — PowerBasic.Compiler/Ir/IrLowering.cs:6631
+- method `IrLoweringException("array argument that is not an array")` — PowerBasic.Compiler/Ir/IrLowering.cs:6712
+- method `IrLoweringException($"an argument of the {symbol.ArrayClass} array {symbol.Name}")` — PowerBasic.Compiler/Ir/IrLowering.cs:6714
+- method `IrAlloca(IrType.I16)` — PowerBasic.Compiler/Ir/IrLowering.cs:6721
+- method `IrLoweringException($"an argument of the static array {symbol.Name} without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:6747
+- method `IrLoweringException($"an argument of the static array {symbol.Name} without bounds")` — PowerBasic.Compiler/Ir/IrLowering.cs:6809
+- method `if(!resultTy.IsFloat)` — PowerBasic.Compiler/Ir/IrLowering.cs:6960
+- method `IrLoweringException("integer exponentiation")` — PowerBasic.Compiler/Ir/IrLowering.cs:6961
+- method `IrLoweringException( "$ERROR OVERFLOW ON over a 64-bit multiply (there is no wider integ…` — PowerBasic.Compiler/Ir/IrLowering.cs:7091
+- method `IrLoweringException($"$ERROR {arm} ON arms a runtime trap the IR lowering does not emit")` — PowerBasic.Compiler/Ir/IrLowering.cs:7224
+- method `IrLoweringException($"metastatement ${meta.Command}")` — PowerBasic.Compiler/Ir/IrLowering.cs:7226
+- method `IrLoweringException("comparison of non-scalar operands")` — PowerBasic.Compiler/Ir/IrLowering.cs:7250
+- method `IrLoweringException("coercion between non-scalar types")` — PowerBasic.Compiler/Ir/IrLowering.cs:7353
 
 ### IrModule.cs  `C#, 165 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/IrModule.cs:3
@@ -7957,6 +7969,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if` — PowerBasic.Compiler/Ir/Passes/DemandedBits.cs:31
 - method `if` — PowerBasic.Compiler/Ir/Passes/DemandedBits.cs:36
 
+### DrawStringSpecialization.cs  `C#, 63 lines`
+- namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/DrawStringSpecialization.cs:3
+- class `DrawStringSpecialization` — Expands DRAW text proved constant by the middle end, after consuming string folds. — PowerBasic.Compiler/Ir/Passes/DrawStringSpecialization.cs:7
+
 ### EqualitySaturation.cs  `C#, 283 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:1
 - class `EqualitySaturation` — Bounded equality saturation for pure integer expression trees. Instead of committing to the first — PowerBasic.Compiler/Ir/Passes/EqualitySaturation.cs:11
@@ -8396,17 +8412,17 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrLowIrLegalization.cs:1
 - class `IrLowIrLegalization` — Establishes the first target-independent Low IR boundary. The initial implementation is — PowerBasic.Compiler/Ir/Passes/IrLowIrLegalization.cs:8
 
-### IrMiddleEndPipeline.cs  `C#, 320 lines`
+### IrMiddleEndPipeline.cs  `C#, 321 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:2
 - class `IrMiddleEndPipeline` — The sole owner of production IR middle-end policy. is the execution — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:10
-- method `IrPassManager()` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:180
-- method `foreach(var function in module.Functions.ToList())` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:198
-- method `if(!function.IsDeclaration && AddressInduction.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:206
-- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:210
-- method `if(!function.IsDeclaration && SwitchFormation.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:219
-- method `Standard(optimizeForSpeed: optimizeForSpeed, enableFpLookupTables: enableFpLo…` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:261
-- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:267
-- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:288
+- method `IrPassManager()` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:181
+- method `foreach(var function in module.Functions.ToList())` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:199
+- method `if(!function.IsDeclaration && AddressInduction.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:207
+- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:211
+- method `if(!function.IsDeclaration && SwitchFormation.Run(function) > 0)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:220
+- method `Standard(optimizeForSpeed: optimizeForSpeed, enableFpLookupTables: enableFpLo…` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:262
+- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:268
+- method `if(!function.IsDeclaration)` — PowerBasic.Compiler/Ir/Passes/IrMiddleEndPipeline.cs:289
 
 ### IrModulePassPipeline.cs  `C#, 62 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/IrModulePassPipeline.cs:2

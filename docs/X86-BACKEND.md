@@ -1313,6 +1313,30 @@ This is a packed mode-13 slice, not general graphics conformance. Other modes
 keep the mode-aware `rt_pset` fallback described below. Direct planar specialization,
 clipping, viewport/page semantics and complete error behavior remain open.
 
+### IR-proven DRAW text
+
+Literal `DRAW` movements retain their faithful IR expansion without optimization. Computed text now
+lowers to a consuming `rt_draw` call, allowing `StringConstantFold` to expose concatenated or case-mapped
+literal bytes. The registered `DrawStringSpecialization` pass expands supported, proven complete text
+using the same cursor/colour/line IR as literal lowering. It removes the sole owned literal producer,
+preserves surrounding evaluation order, and refuses shared handles, foreign ABIs, conflicting runtime
+symbols, error-handler/assembly functions and unsupported or malformed macro commands. Commands whose
+coordinates/deltas cannot be represented with both signs in a word are left unresolved, not truncated.
+
+`ProvenDrawTests` checks concatenation and case folding in explicit COM/MZ containers. Its eight-byte
+`DRAW.TXT` capture for `"C9 " + UCASE$("r5")` matches genuine QuickBASIC 4.50 under DOSBox Staging 0.83;
+compiler/library fingerprints are retained beside the regression.
+
+`DrawMacroStateTests` retains a separate genuine capture for `B`/`N` before a colour change.
+Both prefixes survive until the next movement, and combining them neither draws nor moves.
+Literal lowering and IR-proven text share this behavior. Word-sized movement scaling, numeric
+tokenization across spaces and stateful angle/scale commands still require oracle-driven correction.
+
+This is not yet partial evaluation of mixed static/dynamic strings: unresolved `rt_draw` calls still
+decline explicitly on DOS. Runtime interpretation, angle/scale state, token boundaries crossing string
+fragments, and handoff between interpreted and inlined commands remain prerequisites. No command span
+may be split merely because its source expression contains a concatenation.
+
 ### Mode-aware pixel fallback
 
 `rt_pset` and `rt_point` query the active BIOS mode before selecting their packed
