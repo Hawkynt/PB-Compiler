@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-22 14:52 UTC by index_codebase.py.
+Generated 2026-10-23 07:02 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1070 files, 8785 symbols.
+1070 files, 8786 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -2805,7 +2805,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DemandedBitsTests.cs:3
 - class `DemandedBitsTests` — PowerBasic.Compiler.Tests/Ir/DemandedBitsTests.cs:5
 
-### DisplayStateEliminationTests.cs  `C#, 85 lines`
+### DisplayStateEliminationTests.cs  `C#, 160 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/DisplayStateEliminationTests.cs:7
 - class `DisplayStateEliminationTests` — PowerBasic.Compiler.Tests/Ir/DisplayStateEliminationTests.cs:9
 
@@ -7650,10 +7650,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(instruction is IrIndirectBr jump)` — PowerBasic.Compiler/Ir/Passes/ComputedJumpOrdinals.cs:36
 - method `ReplaceJump(function, block, jump, OrdinalOf)` — PowerBasic.Compiler/Ir/Passes/ComputedJumpOrdinals.cs:37
 
-### ConsoleSetterCoalescing.cs  `C#, 67 lines`
+### ConsoleSetterCoalescing.cs  `C#, 80 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ConsoleSetterCoalescing.cs:2
-- class `ConsoleSetterCoalescing` — Removes overwritten cursor positions and full-screen clears without crossing an observer or a trap. — PowerBasic.Compiler/Ir/Passes/ConsoleSetterCoalescing.cs:6
-- method `if(locate is not null && Covers(position, locate))` — PowerBasic.Compiler/Ir/Passes/ConsoleSetterCoalescing.cs:36
+- class `ConsoleSetterCoalescing` — Coalesces console setters without crossing an observer or a trap. — PowerBasic.Compiler/Ir/Passes/ConsoleSetterCoalescing.cs:6
+- method `if(screen is not null && ReferenceEquals(screen.Callee, mode.Callee) &&…` — PowerBasic.Compiler/Ir/Passes/ConsoleSetterCoalescing.cs:31
+- method `if(locate is not null && Covers(position, locate))` — PowerBasic.Compiler/Ir/Passes/ConsoleSetterCoalescing.cs:48
 
 ### ConstantDataMerging.cs  `C#, 204 lines`
 - namespace `PowerBasic.Compiler.Ir.Passes` — PowerBasic.Compiler/Ir/Passes/ConstantDataMerging.cs:1

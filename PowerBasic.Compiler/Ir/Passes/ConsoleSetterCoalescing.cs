@@ -2,7 +2,7 @@ using PowerBasic.Compiler.Ir.Analysis;
 
 namespace PowerBasic.Compiler.Ir.Passes;
 
-/// <summary>Removes overwritten cursor positions and full-screen clears without crossing an observer or a trap.</summary>
+/// <summary>Coalesces console setters without crossing an observer or a trap.</summary>
 public static class ConsoleSetterCoalescing {
 
   public static int Run(IrFunction function) {
@@ -23,12 +23,24 @@ public static class ConsoleSetterCoalescing {
   private static int CoalesceBlock(IrBasicBlock block) {
     IrCall? locate = null;
     IrCall? clear = null;
+    IrCall? screen = null;
     var removed = 0;
     foreach (var instruction in block.Instructions.ToArray()) {
+      if (instruction is IrCall { Callee: IrFunction { IsDeclaration: true, Name: "rt_screen_mode" }, ArgCount: 1 } mode
+          && mode.GetOperand(1) is IrConstantInt { Type: var type } value && type == IrType.I16) {
+        if (screen is not null && ReferenceEquals(screen.Callee, mode.Callee)
+            && screen.GetOperand(1) is IrConstantInt previous && previous.Value == value.Value)
+          removed += Erase(mode); // Keep the first call: it is the one that may fail.
+        else
+          screen = mode;
+        clear = locate = null;
+        continue;
+      }
       if (instruction is IrCall { Callee: IrFunction { IsDeclaration: true, Name: "rt_cls" }, ArgCount: 0 } cls) {
         removed += Erase(clear) + Erase(locate);
         clear = cls;
         locate = null;
+        screen = null;
         continue;
       }
       if (instruction is IrCall { Callee: IrFunction { IsDeclaration: true, Name: "rt_locate" }, ArgCount: 2 } position
@@ -36,15 +48,16 @@ public static class ConsoleSetterCoalescing {
         if (locate is not null && Covers(position, locate))
           removed += Erase(locate);
         locate = position;
+        screen = null;
         continue;
       }
       if (instruction is IrAlloca or IrCmp or IrSelect or IrGep
           || instruction is IrBinary { Op: IrBinaryOp.Add or IrBinaryOp.Sub or IrBinaryOp.Mul
             or IrBinaryOp.And or IrBinaryOp.Or or IrBinaryOp.Xor })
         continue;
-      // Calls (including SCREEN), memory access, inline assembly and trapping arithmetic are
-      // barriers. A mode switch may fail or keep an already-active mode without clearing it.
-      clear = locate = null;
+      // Calls, memory access, inline assembly and trapping arithmetic are barriers. Distinct
+      // mode requests cannot kill earlier setters: a mode may fail or keep existing state.
+      clear = locate = screen = null;
     }
     return removed;
   }
