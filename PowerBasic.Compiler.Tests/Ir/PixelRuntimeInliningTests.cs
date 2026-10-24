@@ -44,8 +44,11 @@ public sealed class PixelRuntimeInliningTests {
     var calls = module!.Functions.Where(function => function.Name == "main")
       .SelectMany(function => function.AllInstructions).OfType<IrCall>().ToArray();
     Assert.Multiple(() => {
-      Assert.That(calls.Count(call => call.Callee is IrFunction { Name: "rt_pset_mode13_offset" }),
-        Is.EqualTo(writes));
+      Assert.That(calls.Any(call => call.Callee is IrFunction { Name: "rt_pset_mode13_offset" }),
+        Is.False, "the final lowering must remove the opaque pixel helper call");
+      Assert.That(module.FindFunction("main")!.AllInstructions.OfType<IrStore>().Count(store =>
+        store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }),
+        Is.EqualTo(writes), "each proven packed pixel must become exactly one segmented store");
       Assert.That(calls.Any(call => call.Callee is IrFunction { Name: "rt_pset_mode13" }), Is.False,
         "the ordinary inliner must expose the runtime body to loop optimization");
       Assert.That(IrVerifier.Verify(module), Is.Empty);
