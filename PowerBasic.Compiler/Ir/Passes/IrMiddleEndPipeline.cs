@@ -178,7 +178,8 @@ public static class IrMiddleEndPipeline {
     pipeline().RunOnModule(module);
     if (optimize)
       new IrPassManager().InEarlyModulePhase(IrMiddleEndPhase.ArithmeticSimplification)
-        .AddEarlyModuleConservative("pixel-runtime-inline", PixelRuntimeInlining.Run).RunOnModule(module);
+        .AddEarlyModuleConservative("pixel-runtime-inline", PixelRuntimeInlining.Run)
+        .AddEarlyModuleConservative("poke-mode13-inline", PokeRuntimeInlining.Run).RunOnModule(module);
     CompleteSsaBoundary(module);
     pipeline().RunOnModule(module);
 
