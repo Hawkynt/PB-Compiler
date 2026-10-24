@@ -81,7 +81,9 @@ public static class PixelRuntimeStoreLowering {
         for (var byteIndex = 0; byteIndex < count; ++byteIndex)
           packed |= (uint)bytes[byteIndex] << (byteIndex * 8);
         var type = count == 4 ? IrType.U32 : IrType.U16;
-        block.InsertBefore(new IrStore(new IrConstantInt(type, packed), first.Pointer), first);
+        block.InsertBefore(new IrStore(new IrConstantInt(type, packed), first.Pointer) {
+          IsPackedMode13Write = true,
+        }, first);
         foreach (var store in stores.Take(count))
           store.EraseFromParent();
         changes += count - 1;
