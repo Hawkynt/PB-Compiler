@@ -230,14 +230,14 @@ public sealed class PixelRuntimeInliningTests {
       Assert.That(main.AllInstructions.OfType<IrCall>().Any(call =>
         call.Callee is IrFunction { Name: "rt_poke" }), Is.False);
       Assert.That(videoStores.Length, Is.EqualTo(1));
-      Assert.That(videoStores[0].Value,
-        Is.TypeOf<IrConstantInt>().And.Property("Value").EqualTo(0x0201L));
+      Assert.That(videoStores[0].Value is IrConstantInt pixel && pixel.Value == 0x0201L,
+        Is.True);
       Assert.That(IrVerifier.Verify(module), Is.Empty);
     });
   }
 
   [TestCase("&HB800", 32160)]
-  [TestCase("&HA000", 65000)]
+  [TestCase("&HA000", -536)]
   public void Optimize_GivenUncertifiedPoke_ThenPreservesRawRuntimeCall(
       string segment, int offset) {
     var module = IrLowering.TryLowerModule(Bind($"""
