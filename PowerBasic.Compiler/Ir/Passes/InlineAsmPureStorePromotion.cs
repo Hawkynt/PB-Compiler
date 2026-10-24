@@ -68,7 +68,7 @@ public static class InlineAsmPureStorePromotion {
       var index = block.Names.FindIndex(bound =>
         bound.Equals(name, StringComparison.OrdinalIgnoreCase));
       if (index < 0 || block.Sizes[index] != 2
-          || block.GetOperand(index) is not IrAlloca { Count: 1, Allocated: var type }
+          || block.GetOperand(index) is not IrAlloca { Count: 1, IsSourceVariable: true, Allocated: var type }
           || type != IrType.I16 && type != IrType.U16)
         return false;
 
