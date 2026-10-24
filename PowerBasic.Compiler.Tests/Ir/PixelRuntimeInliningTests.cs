@@ -210,6 +210,70 @@ public sealed class PixelRuntimeInliningTests {
       Is.EqualTo(2));
   }
 
+  [Test]
+  public void Optimize_GivenAProvenDefSeg_ThenPokeAndPsetShareThePackedWordWriter() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      DEF SEG = &HA000
+      POKE 32160,1
+      PSET (161,100),2
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true,
+      targetCost: new TargetCost(CpuTier.I8086, CostObjective.Balanced));
+    var main = module!.FindFunction("main")!;
+    var videoStores = main.AllInstructions.OfType<IrStore>()
+      .Where(store => store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } })
+      .ToArray();
+    Assert.Multiple(() => {
+      Assert.That(main.AllInstructions.OfType<IrCall>().Any(call =>
+        call.Callee is IrFunction { Name: "rt_poke" }), Is.False);
+      Assert.That(videoStores.Length, Is.EqualTo(1));
+      Assert.That(videoStores[0].Value,
+        Is.TypeOf<IrConstantInt>().And.Property("Value").EqualTo(0x0201L));
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [TestCase("&HB800", 32160)]
+  [TestCase("&HA000", 65000)]
+  public void Optimize_GivenUncertifiedPoke_ThenPreservesRawRuntimeCall(
+      string segment, int offset) {
+    var module = IrLowering.TryLowerModule(Bind($"""
+      SCREEN 13
+      DEF SEG = {segment}
+      POKE {offset},1
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true);
+    var main = module!.FindFunction("main")!;
+    Assert.Multiple(() => {
+      Assert.That(main.AllInstructions.OfType<IrCall>().Any(call =>
+        call.Callee is IrFunction { Name: "rt_poke" }), Is.True);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenProvenPokeAndPset_ThenPreservesPointReadback(bool optimize) {
+    const string source = """
+      SCREEN 13
+      DEF SEG = &HA000
+      POKE 32160,1
+      PSET (161,100),2
+      PRINT POINT(160,100);POINT(161,100)
+      END
+      """;
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize, Container = DosContainer.Exe };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendDeclines, Is.Empty);
+    Assert.That(Cpu8086.Run(image).Output, Does.Contain("1  2"));
+  }
+
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenPackedPixelLoops_ThenMatchesTheGenericRuntime(bool com) {
