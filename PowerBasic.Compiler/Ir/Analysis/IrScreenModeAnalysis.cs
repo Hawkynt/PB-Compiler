@@ -27,7 +27,7 @@ public sealed class IrScreenModeAnalysis {
       foreach (var instruction in block.Instructions) {
         if (mode is { } known)
           this._modes[instruction] = known;
-        mode = Transfer(instruction, mode);
+        mode = Transfer(instruction, mode, segments.Before(instruction));
       }
     }
   }
