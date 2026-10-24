@@ -2174,6 +2174,21 @@ public sealed partial class InstructionSelector {
     if (store.Value.Type.IsFloat)
       return this.Decline($"floating point: {store.Value.Type} through the scalar path");
     if (IsWide(store.Value.Type)) {
+      // A proof-marked packed VGA dword is one certified hardware write.
+      // A000h alone is NOT such a proof: user AT/POKE accesses may be
+      // width-sensitive even when they have the same segment. BALANCED and
+      // SIZE avoid 32-bit residents, not 386 immediate stores.
+      if (this._target is { Optimize: true, Cpu386OrLater: true }
+          && store.IsPackedMode13Write
+          && store.Value is IrConstantInt packed) {
+        if (this.PointerMemory(store.Pointer, MRegSize.Dword) is not { } target)
+          return false;
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov,
+          [target, new MOperand.Immediate(unchecked((uint)packed.Value))],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false,
+            WritesFlags: false, ReadsMemory: false, WritesMemory: true)));
+        return true;
+      }
       if (this.TryNativeDwordOperand(store.Value, out var native)) {
         if (this.PointerMemory(store.Pointer, MRegSize.Dword) is not { } cell)
           return false;
