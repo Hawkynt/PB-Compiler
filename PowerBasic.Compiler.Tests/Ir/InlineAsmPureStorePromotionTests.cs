@@ -78,10 +78,14 @@ public sealed class InlineAsmPureStorePromotionTests {
   [Test]
   public void Optimize_GivenASharedVariable_ThenKeepsTheAsmStoreOpaque() {
     var module = IrLowering.TryLowerModule(Bind("""
+      DECLARE SUB Echo()
       DIM n AS SHARED INTEGER
       ! MOV n, 7
-      PRINT n
+      Echo
       END
+      SUB Echo()
+        PRINT n
+      END SUB
       """), out var reason);
     Assert.That(module, Is.Not.Null, reason);
 
