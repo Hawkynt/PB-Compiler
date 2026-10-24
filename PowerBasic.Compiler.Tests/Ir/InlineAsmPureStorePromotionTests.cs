@@ -32,6 +32,7 @@ public sealed class InlineAsmPureStorePromotionTests {
       """), out var reason);
     Assert.That(module, Is.Not.Null, reason);
     var main = module!.FindFunction("main")!;
+    var local = main.AllInstructions.OfType<IrAlloca>().Single(slot => slot.Name == "n");
     Assert.That(main.HasInlineAsm, Is.True);
 
     IrMiddleEndPipeline.RunNativeModule(module, optimize: true,
@@ -41,7 +42,8 @@ public sealed class InlineAsmPureStorePromotionTests {
       Assert.That(main.HasInlineAsm, Is.False);
       Assert.That(main.AllInstructions.OfType<IrInlineAsm>(), Is.Empty);
       Assert.That(main.AllInstructions.OfType<IrStore>()
-        .Any(store => store.Value is IrConstantInt { Value: 1 }), Is.False,
+        .Any(store => ReferenceEquals(store.Pointer, local)
+          && store.Value is IrConstantInt { Value: 1 }), Is.False,
         "ordinary DSE can eliminate a superseded private store");
       Assert.That(IrVerifier.Verify(module), Is.Empty);
     });
