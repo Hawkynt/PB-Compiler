@@ -796,6 +796,15 @@ public sealed partial class IrLowering {
       foreach (var line in stmt.Text.Split('\n'))
         Asm.TextAssembler.Analyze(line, seen);
 
+    // A complete block of MOV <private 16-bit BASIC scalar>, <decimal literal>
+    // writes only its destination bytes: MOV does not touch flags or registers.
+    // Promote it to ordinary stores before marking the function opaque, allowing
+    // the existing SSA passes to fold and eliminate redundant writes.
+    // The assembler must have accepted the full block first: a textual match alone
+    // cannot certify operand types, register names or malformed instructions.
+    if (parsed && this.TryLowerPureAsmImmediateStores(stmt.Text, seen.Collected))
+      return;
+
     var routable = parsed || policyEmits;
     foreach (var name in seen.Collected)
       // a VARIABLE first, exactly as the direct emitter's resolver orders it: a label sharing a
@@ -810,6 +819,60 @@ public sealed partial class IrLowering {
     node.Routable = routable;
     this._b.InlineAsm(node);
     this._fn.HasInlineAsm = true;
+  }
+
+  /// <summary>
+  /// Converts the strictly side-effect-equivalent subset of inline ASM into
+  /// ordinary IR stores. A complete block must qualify; splitting an unknown
+  /// block can break its labels, register lifetimes and cross-line flag uses.
+  /// Only compiler-owned single-word stack slots participate. Video memory,
+  /// far arrays, runtime cells, globals and register-indirect writes stay opaque.
+  /// </summary>
+  private bool TryLowerPureAsmImmediateStores(string source, IReadOnlyCollection<string> parsedNames) {
+    var assignments = new List<(VariableSymbol Symbol, IrType Type, long Value)>();
+    foreach (var sourceLine in source.Split('\n')) {
+      var text = sourceLine.Split(';', 2)[0].Trim();
+      if (text.Length == 0)
+        continue;
+
+      var whitespace = text.IndexOfAny([' ', '\t']);
+      if (whitespace < 0 || !text[..whitespace].Equals("MOV", StringComparison.OrdinalIgnoreCase))
+        return false;
+
+      var operands = text[(whitespace + 1)..].Trim();
+      var separator = operands.IndexOf(',');
+      if (separator <= 0 || separator != operands.LastIndexOf(','))
+        return false;
+
+      var destination = operands[..separator].Trim();
+      var literal = operands[(separator + 1)..].Trim();
+      if (!parsedNames.Contains(destination, StringComparer.OrdinalIgnoreCase)
+          || this.AsmVariable(destination) is not { Type: ScalarType { ByteSize: 2, IsFloat: false } } symbol
+          || !IrTypeMapper.TryMap(symbol.Type, out var type)
+          || type.Bits != 16
+          || !long.TryParse(literal, System.Globalization.NumberStyles.AllowLeadingSign,
+            System.Globalization.CultureInfo.InvariantCulture, out var immediate)
+          || immediate is < short.MinValue or > ushort.MaxValue)
+        return false;
+
+      assignments.Add((symbol, type, immediate));
+    }
+
+    if (assignments.Count == 0)
+      return false;
+
+    // Do not produce any stores until every destination is proven private.
+    var stores = new List<(IrAlloca Pointer, IrType Type, long Value)>(assignments.Count);
+    foreach (var (symbol, type, value) in assignments) {
+      if (this.SlotFor(symbol) is not IrAlloca privateSlot || privateSlot.Allocated != type)
+        return false;
+      stores.Add((privateSlot, type, value));
+    }
+
+    foreach (var (pointer, type, value) in stores)
+      this._b.Store(new IrConstantInt(type,
+        type.Signed ? unchecked((short)value) : unchecked((ushort)value)), pointer);
+    return true;
   }
 
   /// <summary>
