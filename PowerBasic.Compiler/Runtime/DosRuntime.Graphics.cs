@@ -376,6 +376,7 @@ public sealed partial class DosRuntime {
     var scanRightDone = asm.DefineLabel();
     var fillRun = asm.DefineLabel();
     var fillDone = asm.DefineLabel();
+    var packedFill = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var neighbourRow = asm.DefineLabel();
     var scanRow = asm.DefineLabel();
     var scanRowDone = asm.DefineLabel();
@@ -447,6 +448,19 @@ public sealed partial class DosRuntime {
 
     // fill the run before scanning the neighbours, so their fillable tests see it as done
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_px1")));
+    if (packedFill is not null) {
+      // The scanline search normally proves this region is on-screen. Check
+      // again here because a batchable A000h store must never wrap 64 KiB.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_px1")), (Imm)0);
+      asm.Jl(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_px2")), (Imm)319);
+      asm.Jg(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)0);
+      asm.Jl(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)199);
+      asm.Jg(fillRun);
+      EmitPackedModeBranch(asm, packedFill);
+    }
     asm.MarkLabel(fillRun);
     asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_px2")));
     asm.Jg(fillDone);
@@ -456,6 +470,50 @@ public sealed partial class DosRuntime {
     asm.Call(this.Pset);
     asm.Inc(Reg.SI);
     asm.Jmp(fillRun);
+
+    if (packedFill is not null) {
+      var noWordTail = asm.DefineLabel();
+      var noByteTail = asm.DefineLabel();
+      asm.MarkLabel(packedFill);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_py")));
+      asm.Mov(Reg.CX, 320);
+      asm.Mul(Reg.CX);
+      asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_px1")));
+      asm.Mov(Reg.DI, Reg.AX);
+      asm.Mov(Reg.AX, 0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_px2")));
+      asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_px1")));
+      asm.Inc(Reg.BX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcolor")));
+      asm.Mov(Reg.AH, Reg.AL);
+      if (this.Use32BitFastPath) {
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Shl(Reg.EAX, 16);
+        asm.Mov(Reg.AX, Reg.DX);
+      }
+      asm.Cld();
+      asm.Mov(Reg.CX, Reg.BX);
+      if (this.Use32BitFastPath) {
+        asm.Shr(Reg.CX, 2);
+        asm.Rep();
+        asm.Stosd();
+        asm.Test(Reg.BX, (Imm)2);
+        asm.Jz(noWordTail);
+        asm.Stosw();
+        asm.MarkLabel(noWordTail);
+      } else {
+        asm.Shr(Reg.CX, 1);
+        asm.Rep();
+        asm.Stosw();
+      }
+      asm.Test(Reg.BX, (Imm)1);
+      asm.Jz(noByteTail);
+      asm.Stosb();
+      asm.MarkLabel(noByteTail);
+      asm.Pop(Reg.ES);
+    }
     asm.MarkLabel(fillDone);
 
     // the row above, then the row below
