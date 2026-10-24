@@ -205,6 +205,49 @@ public sealed class PixelRuntimeInliningTests {
   }
 
   [Test]
+  public void Select_GivenAnUnmarkedA000hStore_ThenDoesNotSilentlyWidenDeviceWrites() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      PSET (10,5),1
+      PSET (11,5),2
+      PSET (12,5),3
+      PSET (13,5),4
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true,
+      recoverIntegerArithmetic: true,
+      targetCost: new TargetCost(CpuTier.I80386, CostObjective.Balanced));
+    var main = module!.FindFunction("main")!;
+    var pixel = main.AllInstructions.OfType<IrStore>().Single(store =>
+      store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }
+      && store.Value is IrConstantInt { Value: 0x04030201 });
+    var block = pixel.Parent!;
+    // Simulate a source-level AT/POKE store with identical segment, width and
+    // immediate value, but without the optimizer's explicit packing proof.
+    block.InsertBefore(new IrStore(pixel.Value, pixel.Pointer), pixel);
+    pixel.EraseFromParent();
+
+    var machine = InstructionSelector.TrySelect(main, out var decline,
+      new SelectionTarget(Optimize: true, CpuLevel: 386));
+    Assert.That(machine, Is.Not.Null, decline);
+    Assert.Multiple(() => {
+      Assert.That(machine!.AllInstructions.Any(instruction =>
+        instruction.Opcode == MOpcode.Mov
+        && instruction.Operands is [
+          MOperand.Memory { Size: MRegSize.Dword },
+          MOperand.Immediate { Value: 0x04030201 }
+        ]), Is.False, "raw A000h addresses must not imply a wide write");
+      Assert.That(machine!.AllInstructions.Count(instruction =>
+        instruction.Opcode == MOpcode.Mov
+        && instruction.Operands is [
+          MOperand.Memory { Size: MRegSize.Word },
+          MOperand.Immediate { Value: 0x0201 or 0x0403 }
+        ]), Is.EqualTo(2));
+    });
+  }
+
+  [Test]
   public void Select_GivenFourFusedPixelsOn8086_ThenEmitsTwoWordWrites() {
     var module = IrLowering.TryLowerModule(Bind("""
       SCREEN 13
