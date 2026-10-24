@@ -166,6 +166,13 @@ public static class IrMiddleEndPipeline {
       int packedVectorBytes = 0) {
     ArgumentNullException.ThrowIfNull(module);
 
+    // A complete block of compiler-owned MOV-immediate stores contains no
+    // hidden flag or register dependencies. Promote it before SSA formation
+    // so the existing DSE/SCCP/const-propagation passes can consume it.
+    // Mixed or unrecognized inline ASM stays opaque for the whole function.
+    if (optimize)
+      InlineAsmPureStorePromotion.Run(module);
+
     Func<IrPassManager> pipeline = optimize
       ? () => Standard(optimizeForSpeed,
           arithmeticCostModel: arithmeticCostModel,
