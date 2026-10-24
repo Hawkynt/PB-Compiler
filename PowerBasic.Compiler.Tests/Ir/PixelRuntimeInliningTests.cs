@@ -205,9 +205,17 @@ public sealed class PixelRuntimeInliningTests {
     Assert.That(module, Is.Not.Null, reason);
     IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true,
       targetCost: new TargetCost(CpuTier.I80386, CostObjective.Balanced));
-    Assert.That(module!.FindFunction("main")!.AllInstructions.OfType<IrStore>().Count(store =>
-      store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }),
-      Is.EqualTo(2));
+    var instructions = module!.FindFunction("main")!.AllInstructions.ToArray();
+    var stores = instructions.OfType<IrStore>().Where(store =>
+      store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }).ToArray();
+    Assert.Multiple(() => {
+      Assert.That(stores, Has.Length.EqualTo(1), "only the first pixel has a proven packed mode");
+      Assert.That(stores[0].Value.Type.Bits, Is.EqualTo(8), "the observed write must not be widened");
+      Assert.That(instructions.OfType<IrCall>().Any(call =>
+        call.Callee is IrFunction { Name: "rt_pset" }), Is.True,
+        "POINT invalidates mode knowledge, so the second PSET retains the safe runtime path");
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
   }
 
   [TestCase(false)]
