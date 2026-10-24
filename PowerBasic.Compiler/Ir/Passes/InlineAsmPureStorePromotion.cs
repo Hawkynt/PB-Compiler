@@ -36,7 +36,7 @@ public static class InlineAsmPureStorePromotion {
       // beyond direct local loads/stores or the proven ASM blocks invalidates
       // the proof that dead/intermediate stores are unobservable.
       var addresses = plans.SelectMany(plan => plan.Stores)
-        .Select(store => store.Address).Distinct(ReferenceEqualityComparer.Instance);
+        .Select(store => store.Address).Distinct();
       if (addresses.Any(address => address.Users.Any(user =>
             user is not (IrLoad or IrStore or IrInlineAsm))))
         continue;
