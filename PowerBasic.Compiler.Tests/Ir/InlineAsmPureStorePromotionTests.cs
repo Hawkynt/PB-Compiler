@@ -91,7 +91,7 @@ public sealed class InlineAsmPureStorePromotionTests {
 
     Assert.Multiple(() => {
       Assert.That(main.HasInlineAsm, Is.True);
-      Assert.That(main.AllInstructions.OfType<IrInlineAsm>(), Has.Exactly(1).Items);
+      Assert.That(main.AllInstructions.OfType<IrInlineAsm>().Count(), Is.EqualTo(1));
     });
   }
 
