@@ -2174,6 +2174,20 @@ public sealed partial class InstructionSelector {
     if (store.Value.Type.IsFloat)
       return this.Decline($"floating point: {store.Value.Type} through the scalar path");
     if (IsWide(store.Value.Type)) {
+      // A packed video dword is one target-specific hardware write. BALANCED
+      // and SIZE avoid resident 32-bit registers, but a 386 immediate store
+      // does not require one: do not split four fused pixels into two writes.
+      if (this._target is { Optimize: true, Cpu386OrLater: true }
+          && store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }
+          && store.Value is IrConstantInt packed) {
+        if (this.PointerMemory(store.Pointer, MRegSize.Dword) is not { } target)
+          return false;
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov,
+          [target, new MOperand.Immediate(unchecked((uint)packed.Value))],
+          new MInstrEffect(WrittenRegs: [], ReadRegs: [], ReadsFlags: false,
+            WritesFlags: false, ReadsMemory: false, WritesMemory: true)));
+        return true;
+      }
       if (this.TryNativeDwordOperand(store.Value, out var native)) {
         if (this.PointerMemory(store.Pointer, MRegSize.Dword) is not { } cell)
           return false;
