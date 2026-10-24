@@ -178,7 +178,8 @@ public static class IrMiddleEndPipeline {
     pipeline().RunOnModule(module);
     if (optimize)
       new IrPassManager().InEarlyModulePhase(IrMiddleEndPhase.ArithmeticSimplification)
-        .AddEarlyModuleConservative("pixel-runtime-inline", PixelRuntimeInlining.Run).RunOnModule(module);
+        .AddEarlyModuleConservative("pixel-runtime-inline", PixelRuntimeInlining.Run)
+        .AddEarlyModuleConservative("poke-mode13-inline", PokeRuntimeInlining.Run).RunOnModule(module);
     CompleteSsaBoundary(module);
     pipeline().RunOnModule(module);
 
@@ -233,8 +234,13 @@ public static class IrMiddleEndPipeline {
       PrivateCallingConvention.Run(module);
     // Final layout follows every literal-producing fold. Earlier string transforms deliberately
     // operate on whole literal globals; consumers now receive ordinary pointer/length slices.
-    if (optimize)
+    if (optimize) {
       LiteralPooling.Run(module);
+      // Keep the hardware write as a non-discardable runtime call throughout
+      // ordinary IR optimization. Only immediately before native selection do
+      // we form the segmented byte store, preserving its original observation.
+      PixelRuntimeStoreLowering.Run(module, targetCost);
+    }
   }
 
   /// <summary>

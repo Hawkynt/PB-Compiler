@@ -44,8 +44,11 @@ public sealed class PixelRuntimeInliningTests {
     var calls = module!.Functions.Where(function => function.Name == "main")
       .SelectMany(function => function.AllInstructions).OfType<IrCall>().ToArray();
     Assert.Multiple(() => {
-      Assert.That(calls.Count(call => call.Callee is IrFunction { Name: "rt_pset_mode13_offset" }),
-        Is.EqualTo(writes));
+      Assert.That(calls.Any(call => call.Callee is IrFunction { Name: "rt_pset_mode13_offset" }),
+        Is.False, "the final lowering must remove the opaque pixel helper call");
+      Assert.That(module.FindFunction("main")!.AllInstructions.OfType<IrStore>().Count(store =>
+        store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }),
+        Is.EqualTo(writes), "each proven packed pixel must become exactly one segmented store");
       Assert.That(calls.Any(call => call.Callee is IrFunction { Name: "rt_pset_mode13" }), Is.False,
         "the ordinary inliner must expose the runtime body to loop optimization");
       Assert.That(IrVerifier.Verify(module), Is.Empty);
@@ -143,6 +146,140 @@ public sealed class PixelRuntimeInliningTests {
     Assert.That(image.AsSpan(0, 2).SequenceEqual("MZ"u8), Is.EqualTo(!com));
     Assert.That(Cpu8086.Run(image).FileBytes("PIXELS.TXT"),
       Is.EqualTo(System.Text.Encoding.ASCII.GetBytes(" 7  7  9  9 \r\n")));
+  }
+
+  [TestCase(0, 16)]
+  [TestCase(2, 32)]
+  public void Optimize_GivenAdjacentConstantPixels_ThenPacksByteWritesForTheTarget(
+      int cpuTier, int expectedWidth) {
+    const string source = """
+      SCREEN 13
+      PSET (10,5), 1
+      PSET (11,5), 2
+      PSET (12,5), 3
+      PSET (13,5), 4
+      END
+      """;
+    var module = IrLowering.TryLowerModule(Bind(source), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true,
+      targetCost: new TargetCost((CpuTier)cpuTier, CostObjective.Balanced));
+    var videoStores = module!.FindFunction("main")!.AllInstructions.OfType<IrStore>()
+      .Where(store => store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } })
+      .ToArray();
+    Assert.Multiple(() => {
+      Assert.That(videoStores.Select(store => store.Value.Type.Bits),
+        Is.EqualTo(expectedWidth == 32 ? new[] { 32 } : new[] { 16, 16 }));
+      Assert.That(videoStores.All(store => store.Value is IrConstantInt), Is.True);
+      Assert.That(videoStores[0].Value is IrConstantInt value && value.Value ==
+        (expectedWidth == 32 ? 0x04030201L : 0x0201L), Is.True);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Optimize_GivenPixelsAcrossARowBoundary_ThenKeepsSeparateByteStores() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      PSET (319,0),1
+      PSET (0,1),2
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true,
+      targetCost: new TargetCost(CpuTier.I80386, CostObjective.Balanced));
+    Assert.That(module!.FindFunction("main")!.AllInstructions.OfType<IrStore>().Count(store =>
+      store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }),
+      Is.EqualTo(2));
+  }
+
+  [Test]
+  public void Optimize_GivenAnObservablePointReadBetweenPixels_ThenDoesNotFuseWrites() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      PSET (10,5),1
+      PRINT POINT(10,5)
+      PSET (11,5),2
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true,
+      targetCost: new TargetCost(CpuTier.I80386, CostObjective.Balanced));
+    var instructions = module!.FindFunction("main")!.AllInstructions.ToArray();
+    var stores = instructions.OfType<IrStore>().Where(store =>
+      store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }).ToArray();
+    Assert.Multiple(() => {
+      Assert.That(stores, Has.Length.EqualTo(1), "only the first pixel has a proven packed mode");
+      Assert.That(stores[0].Value.Type.Bits, Is.EqualTo(8), "the observed write must not be widened");
+      Assert.That(instructions.OfType<IrCall>().Any(call =>
+        call.Callee is IrFunction { Name: "rt_pset" }), Is.True,
+        "POINT invalidates mode knowledge, so the second PSET retains the safe runtime path");
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Optimize_GivenAProvenDefSeg_ThenPokeAndPsetShareThePackedWordWriter() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      DEF SEG = &HA000
+      POKE 32160,1
+      PSET (161,100),2
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true,
+      targetCost: new TargetCost(CpuTier.I8086, CostObjective.Balanced));
+    var main = module!.FindFunction("main")!;
+    var videoStores = main.AllInstructions.OfType<IrStore>()
+      .Where(store => store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } })
+      .ToArray();
+    Assert.Multiple(() => {
+      Assert.That(main.AllInstructions.OfType<IrCall>().Any(call =>
+        call.Callee is IrFunction { Name: "rt_poke" }), Is.False);
+      Assert.That(videoStores.Length, Is.EqualTo(1));
+      Assert.That(videoStores[0].Value is IrConstantInt pixel && pixel.Value == 0x0201L,
+        Is.True);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [TestCase("&HB800", 32160)]
+  [TestCase("&HA000", -536)]
+  public void Optimize_GivenUncertifiedPoke_ThenPreservesRawRuntimeCall(
+      string segment, int offset) {
+    var module = IrLowering.TryLowerModule(Bind($"""
+      SCREEN 13
+      DEF SEG = {segment}
+      POKE {offset},1
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true);
+    var main = module!.FindFunction("main")!;
+    Assert.Multiple(() => {
+      Assert.That(main.AllInstructions.OfType<IrCall>().Any(call =>
+        call.Callee is IrFunction { Name: "rt_poke" }), Is.True);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenProvenPokeAndPset_ThenPreservesPointReadback(bool optimize) {
+    const string source = """
+      SCREEN 13
+      DEF SEG = &HA000
+      POKE 32160,1
+      PSET (161,100),2
+      PRINT POINT(160,100);POINT(161,100)
+      END
+      """;
+    var generator = new CodeGenerator(Bind(source)) { Optimize = optimize, Container = DosContainer.Exe };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendDeclines, Is.Empty);
+    Assert.That(Cpu8086.Run(image).Output, Does.Contain("1  2"));
   }
 
   [TestCase(false)]
