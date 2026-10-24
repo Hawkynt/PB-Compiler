@@ -158,6 +158,13 @@ public sealed partial class Cpu8086 {
   /// </summary>
   public int OperandSizePrefixes { get; private set; }
 
+  /// <summary>
+  /// Number of instruction-dispatch iterations executed by this emulator, not
+  /// hardware cycles (REP counts as one dispatch regardless of its byte count).
+  /// Useful for deterministic advisory code-shape comparisons.
+  /// </summary>
+  public long ExecutedInstructions { get; private set; }
+
   public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000, bool exactFloatingPoint = false) {
     var cpu = new Cpu8086(exactFloatingPoint);
     cpu._executables["T.EXE"] = exe;                    // the test harness runs each image under this DOS name
@@ -271,10 +278,13 @@ public sealed partial class Cpu8086 {
 
   private void Execute(int maxSteps) {
     for (var step = 0; step < maxSteps; ++step) {
-      if (this._halted)
+      if (this._halted) {
+        this.ExecutedInstructions += step;
         return;
+      }
       this.Step();
     }
+    this.ExecutedInstructions += maxSteps;
     throw new Cpu8086Exception($"ran {maxSteps} instructions without terminating (runaway program?)");
   }
 
