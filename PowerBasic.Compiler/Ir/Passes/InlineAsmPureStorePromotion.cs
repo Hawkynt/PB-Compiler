@@ -31,6 +31,16 @@ public static class InlineAsmPureStorePromotion {
       if (plans.Count != blocks.Length)
         continue;
 
+      // Private frame storage is not enough when the program exposes its
+      // address through VARPTR, passes it BYREF or derives an alias. A use
+      // beyond direct local loads/stores or the proven ASM blocks invalidates
+      // the proof that dead/intermediate stores are unobservable.
+      var addresses = plans.SelectMany(plan => plan.Stores)
+        .Select(store => store.Address).Distinct(ReferenceEqualityComparer.Instance);
+      if (addresses.Any(address => address.Users.Any(user =>
+            user is not (IrLoad or IrStore or IrInlineAsm))))
+        continue;
+
       foreach (var (block, stores) in plans) {
         foreach (var (address, type, value) in stores)
           block.Parent!.InsertBefore(new IrStore(
