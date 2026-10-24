@@ -37,8 +37,12 @@ public static class InlineAsmPureStorePromotion {
       // the proof that dead/intermediate stores are unobservable.
       var addresses = plans.SelectMany(plan => plan.Stores)
         .Select(store => store.Address).Distinct();
-      if (addresses.Any(address => address.Users.Any(user =>
-            user is not (IrLoad or IrStore or IrInlineAsm))))
+      if (addresses.Any(address => address.Users.Any(user => user switch {
+            IrLoad load => !ReferenceEquals(load.Pointer, address),
+            IrStore store => !ReferenceEquals(store.Pointer, address),
+            IrInlineAsm asm => !blocks.Contains(asm),
+            _ => true,
+          })))
         continue;
 
       foreach (var (block, stores) in plans) {
