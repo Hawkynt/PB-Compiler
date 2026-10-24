@@ -119,6 +119,31 @@ public sealed class InlineAsmPureStorePromotionTests {
     });
   }
 
+  [Test]
+  [Category("Performance")]
+  public void Performance_GivenRepeatedAsmStores_ThenTheOptimizedImageIsSmaller() {
+    const int writes = 80;
+    var source = "DIM n AS INTEGER\n"
+      + string.Concat(Enumerable.Range(0, writes).Select(i => $"! MOV n, {i}\n"))
+      + "PRINT n\nEND\n";
+    var model = Bind(source);
+
+    byte[] Compile(bool optimize) {
+      var generator = new CodeGenerator(model) { Optimize = optimize };
+      var image = generator.EmitExecutable();
+      Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+      Assert.That(generator.BackendDeclines, Is.Empty);
+      return image;
+    }
+
+    var faithful = Compile(optimize: false);
+    var optimized = Compile(optimize: true);
+    Assert.That(Cpu8086.Run(optimized).Output, Is.EqualTo(Cpu8086.Run(faithful).Output));
+    TestContext.Out.WriteLine(
+      $"{writes} inline ASM word stores: faithful image {faithful.Length} bytes; optimized {optimized.Length} bytes");
+    Assert.That(optimized.Length, Is.LessThan(faithful.Length));
+  }
+
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenAsmStoreAndBasicRead_ThenTheOptimizedAndFaithfulResultsAgree(
