@@ -833,6 +833,7 @@ public sealed partial class DosRuntime {
     var rowLoop = asm.DefineLabel();
     var colLoop = asm.DefineLabel();
     var rowDone = asm.DefineLabel();
+    var packedRows = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var yOrdered = asm.DefineLabel();
     var xOrdered = asm.DefineLabel();
 
@@ -860,6 +861,21 @@ public sealed partial class DosRuntime {
     asm.MarkLabel(yOrdered);
     asm.Mov(Mem.Word(asm.Lbl("rt_gby1")), Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_gby2")), Reg.BX);
+
+    // A packed VGA span is a known byte-addressed framebuffer operation, not a generic POKE.
+    // Retain the pixel-by-pixel path for other modes and for any off-screen rectangle:
+    // the existing runtime semantics (including out-of-range behavior) then remain unchanged.
+    if (packedRows is not null) {
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx1")), (Imm)0);
+      asm.Jl(rowLoop);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx2")), (Imm)319);
+      asm.Jg(rowLoop);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby1")), (Imm)0);
+      asm.Jl(rowLoop);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)199);
+      asm.Jg(rowLoop);
+      EmitPackedModeBranch(asm, packedRows);
+    }
 
     var nextRow = asm.DefineLabel();
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gby1")));   // SI = current row
@@ -893,5 +909,63 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
+
+    if (packedRows is not null) {
+      // Full rows are contiguous on SCREEN 13. Set ES and calculate the first
+      // address once, then advance by the scanline stride after each fill.
+      var packedLoop = asm.DefineLabel();
+      var noWordTail = asm.DefineLabel();
+      var noByteTail = asm.DefineLabel();
+      asm.MarkLabel(packedRows);
+      asm.Push(Reg.ES);
+      asm.Push(Reg.DI);
+      asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gby1")));
+      asm.Mov(Reg.AX, Reg.SI);
+      asm.Mov(Reg.CX, 320);
+      asm.Mul(Reg.CX);
+      asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_gbx1")));
+      asm.Mov(Reg.DI, Reg.AX);
+      asm.Mov(Reg.AX, 0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gbx2")));
+      asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_gbx1")));
+      asm.Inc(Reg.BX); // Inclusive width: 1..320, so CX cannot wrap.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcolor")));
+      asm.Mov(Reg.AH, Reg.AL);
+      if (this.Use32BitFastPath) {
+        // Expand the repeated colour from AX into both halves of EAX.
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Shl(Reg.EAX, 16);
+        asm.Mov(Reg.AX, Reg.DX);
+      }
+      asm.Cld();
+      asm.MarkLabel(packedLoop);
+      asm.Mov(Reg.CX, Reg.BX);
+      if (this.Use32BitFastPath) {
+        asm.Shr(Reg.CX, 2);
+        asm.Rep();
+        asm.Stosd();
+        asm.Test(Reg.BX, (Imm)2);
+        asm.Jz(noWordTail);
+        asm.Stosw();
+        asm.MarkLabel(noWordTail);
+      } else {
+        asm.Shr(Reg.CX, 1);
+        asm.Rep();
+        asm.Stosw();
+      }
+      asm.Test(Reg.BX, (Imm)1);
+      asm.Jz(noByteTail);
+      asm.Stosb();
+      asm.MarkLabel(noByteTail);
+      asm.Add(Reg.DI, 320);
+      asm.Sub(Reg.DI, Reg.BX);
+      asm.Inc(Reg.SI);
+      asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_gby2")));
+      asm.Jle(packedLoop);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.ES);
+      asm.Jmp(rowDone); // One shared final graphics-cursor update.
+    }
   }
 }
