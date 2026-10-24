@@ -238,6 +238,9 @@ public static class IrMiddleEndPipeline {
       // Keep the hardware write as a non-discardable runtime call throughout
       // ordinary IR optimization. Only immediately before native selection do
       // we form the segmented byte store, preserving its original observation.
+      // POINT reads are also device observations: lower them only at the
+      // final native boundary, not while GVN/DSE still run.
+      PixelRuntimeReadLowering.Run(module);
       PixelRuntimeStoreLowering.Run(module);
     }
   }
