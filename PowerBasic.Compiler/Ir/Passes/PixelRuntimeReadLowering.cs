@@ -11,9 +11,10 @@ public static class PixelRuntimeReadLowering {
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
     var changed = 0;
-    foreach (var function in module.Functions.Where(function => !function.IsDeclaration)) {
-      var modes = new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes);
-      var calls = function.AllInstructions.OfType<IrCall>()
+    foreach (var function in module.Functions.Where(function => !function.IsDeclaration))
+      changed += new IrFunctionPassPipeline().Add("pixel-mode13-read", (fn, analyses) => {
+        var modes = analyses.Get(IrAnalyses.ScreenModes);
+        var calls = fn.AllInstructions.OfType<IrCall>()
         .Where(call => call.Callee is IrFunction { IsDeclaration: true, Name: "rt_point" }
           && call.Convention == IrCallConvention.Basic
           && call.Type == IrType.I32
@@ -32,9 +33,9 @@ public static class PixelRuntimeReadLowering {
         var result = block.InsertBefore(new IrCast(IrCastOp.ZExt, color, IrType.I32), call);
         call.ReplaceAllUsesWith(result);
         call.EraseFromParent();
-        ++changed;
       }
-    }
+      return calls.Length == 0 ? IrPassResult.Unchanged : IrPassResult.Changed(calls.Length);
+    }).Run(function);
     return changed;
   }
 }
