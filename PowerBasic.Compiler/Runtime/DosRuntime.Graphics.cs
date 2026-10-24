@@ -834,6 +834,7 @@ public sealed partial class DosRuntime {
     var colLoop = asm.DefineLabel();
     var rowDone = asm.DefineLabel();
     var packedRows = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var slowRows = asm.DefineLabel();
     var yOrdered = asm.DefineLabel();
     var xOrdered = asm.DefineLabel();
 
@@ -867,16 +868,17 @@ public sealed partial class DosRuntime {
     // the existing runtime semantics (including out-of-range behavior) then remain unchanged.
     if (packedRows is not null) {
       asm.Cmp(Mem.Word(asm.Lbl("rt_gbx1")), (Imm)0);
-      asm.Jl(rowLoop);
+      asm.Jl(slowRows);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gbx2")), (Imm)319);
-      asm.Jg(rowLoop);
+      asm.Jg(slowRows);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gby1")), (Imm)0);
-      asm.Jl(rowLoop);
+      asm.Jl(slowRows);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)199);
-      asm.Jg(rowLoop);
+      asm.Jg(slowRows);
       EmitPackedModeBranch(asm, packedRows);
     }
 
+    asm.MarkLabel(slowRows);
     var nextRow = asm.DefineLabel();
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gby1")));   // SI = current row
     asm.MarkLabel(rowLoop);
