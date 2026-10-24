@@ -238,7 +238,7 @@ public static class IrMiddleEndPipeline {
       // Keep the hardware write as a non-discardable runtime call throughout
       // ordinary IR optimization. Only immediately before native selection do
       // we form the segmented byte store, preserving its original observation.
-      PixelRuntimeStoreLowering.Run(module);
+      PixelRuntimeStoreLowering.Run(module, targetCost);
     }
   }
 
