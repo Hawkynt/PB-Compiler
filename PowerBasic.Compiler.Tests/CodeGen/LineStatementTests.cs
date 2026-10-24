@@ -179,4 +179,43 @@ public sealed class LineStatementTests {
       PRINT POINT(13,13); POINT(15,13); POINT(13,12)
       """, cpu), Is.EqualTo("6  6  0"));
 
+
+  [TestCase("$CPU 8086", 1)]
+  [TestCase("$CPU 8086", 2)]
+  [TestCase("$CPU 8086", 3)]
+  [TestCase("$CPU 8086", 4)]
+  [TestCase("$CPU 8086", 5)]
+  [TestCase("$CPU 80386", 1)]
+  [TestCase("$CPU 80386", 2)]
+  [TestCase("$CPU 80386", 3)]
+  [TestCase("$CPU 80386", 4)]
+  [TestCase("$CPU 80386", 5)]
+  public void Line_GivenAnInclusiveSolidHorizontalSpan_ThenPreservesPixelsAndEdges(
+      string cpu, int width) {
+    var end = 10 + width - 1;
+    Assert.That(Run($"""
+      LINE (10,99)-({end},99),12,,&HFFFF
+      PRINT POINT(9,99);POINT(10,99);POINT({end},99);POINT({end + 1},99)
+      """, cpu), Is.EqualTo("0  12  12  0"));
+  }
+
+  [TestCase("$CPU 8086")]
+  [TestCase("$CPU 80386")]
+  public void Line_GivenAReversedFullWidthHorizontalSpan_ThenKeepsTheLastPoint(string cpu) =>
+    Assert.That(Run("""
+      LINE (319,199)-(0,199),10
+      LINE -(0,197),6
+      PRINT POINT(319,199);POINT(0,199);POINT(0,198);POINT(0,197);POINT(1,198)
+      """, cpu), Is.EqualTo("10  6  6  6  0"));
+
+  [TestCase("$CPU 8086")]
+  [TestCase("$CPU 80386")]
+  public void Line_GivenAPatternedHorizontalSpan_ThenDoesNotFillClearedPixels(string cpu) {
+    var result = Run("""
+      LINE (0,30)-(7,30),6,,&HAAAA
+      PRINT POINT(0,30);POINT(1,30);POINT(2,30);POINT(3,30)
+      """, cpu);
+    Assert.That(result, Is.EqualTo("6  0  6  0").Or.EqualTo("0  6  0"));
+  }
+
 }
