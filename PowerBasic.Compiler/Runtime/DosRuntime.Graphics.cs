@@ -686,6 +686,8 @@ public sealed partial class DosRuntime {
     var done = asm.DefineLabel();
     var xPositive = asm.DefineLabel();
     var yPositive = asm.DefineLabel();
+    var fastHorizontal = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var slowHorizontal = asm.DefineLabel();
 
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
@@ -693,6 +695,30 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DX);
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
+
+    if (fastHorizontal is not null) {
+      // Solid-styled lines rotate FFFFh back to FFFFh at every pixel; a
+      // patterned line must use Bresenham to preserve mask phase and skips.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gstyle")), (Imm)0xFFFF);
+      asm.Jne(slowHorizontal);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+      asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
+      asm.Jne(slowHorizontal);
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Reg.AX, (Imm)199);
+      asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)319);
+      asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)319);
+      asm.Jg(slowHorizontal);
+      EmitPackedModeBranch(asm, fastHorizontal);
+    }
+    asm.MarkLabel(slowHorizontal);
 
     // dx = |x2-x1|, sx = sign; the same for y. SI and DI carry the two step directions.
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx2")));
@@ -779,6 +805,63 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
+
+    if (fastHorizontal is not null) {
+      var xOrdered = asm.DefineLabel();
+      var noWordTail = asm.DefineLabel();
+      var noByteTail = asm.DefineLabel();
+      asm.MarkLabel(fastHorizontal);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gx2")));
+      asm.Cmp(Reg.AX, Reg.BX);
+      asm.Jle(xOrdered);
+      asm.Xchg(Reg.AX, Reg.BX);
+      asm.MarkLabel(xOrdered);
+      asm.Mov(Reg.SI, Reg.AX);
+      asm.Sub(Reg.BX, Reg.AX);
+      asm.Inc(Reg.BX); // Inclusive span length, 1..320.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+      asm.Mov(Reg.CX, 320);
+      asm.Mul(Reg.CX);
+      asm.Add(Reg.AX, Reg.SI);
+      asm.Mov(Reg.DI, Reg.AX);
+      asm.Mov(Reg.AX, 0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcolor")));
+      asm.Mov(Reg.AH, Reg.AL);
+      if (this.Use32BitFastPath) {
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Shl(Reg.EAX, 16);
+        asm.Mov(Reg.AX, Reg.DX);
+      }
+      asm.Cld();
+      asm.Mov(Reg.CX, Reg.BX);
+      if (this.Use32BitFastPath) {
+        asm.Shr(Reg.CX, 2);
+        asm.Rep();
+        asm.Stosd();
+        asm.Test(Reg.BX, (Imm)2);
+        asm.Jz(noWordTail);
+        asm.Stosw();
+        asm.MarkLabel(noWordTail);
+      } else {
+        asm.Shr(Reg.CX, 1);
+        asm.Rep();
+        asm.Stosw();
+      }
+      asm.Test(Reg.BX, (Imm)1);
+      asm.Jz(noByteTail);
+      asm.Stosb();
+      asm.MarkLabel(noByteTail);
+      // The classic Bresenham walk advances the graphics cursor to x2/y2.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx2")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gx1")), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
+      asm.Pop(Reg.ES);
+      asm.Jmp(done);
+    }
   }
 
   /// <summary>
