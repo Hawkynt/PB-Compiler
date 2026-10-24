@@ -99,6 +99,26 @@ public sealed class InlineAsmPureStorePromotionTests {
     });
   }
 
+  [Test]
+  public void Optimize_GivenAnAddressExposedThroughVarptr_ThenDoesNotAssumePrivateStorage() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      DIM n AS INTEGER
+      PRINT VARPTR(n)
+      ! MOV n, 42
+      PRINT n
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true,
+      recoverIntegerArithmetic: true);
+    var main = module!.FindFunction("main")!;
+    Assert.Multiple(() => {
+      Assert.That(main.HasInlineAsm, Is.True, "VARPTR exposes a potential alias");
+      Assert.That(main.AllInstructions.OfType<IrInlineAsm>().Count(), Is.EqualTo(1));
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenAsmStoreAndBasicRead_ThenTheOptimizedAndFaithfulResultsAgree(
