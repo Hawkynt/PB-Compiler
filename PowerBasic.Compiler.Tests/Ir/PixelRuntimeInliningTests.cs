@@ -148,6 +148,68 @@ public sealed class PixelRuntimeInliningTests {
       Is.EqualTo(System.Text.Encoding.ASCII.GetBytes(" 7  7  9  9 \r\n")));
   }
 
+  [TestCase(0, 16)]
+  [TestCase(2, 32)]
+  public void Optimize_GivenAdjacentConstantPixels_ThenPacksByteWritesForTheTarget(
+      int cpuTier, int expectedWidth) {
+    const string source = """
+      SCREEN 13
+      PSET (10,5), 1
+      PSET (11,5), 2
+      PSET (12,5), 3
+      PSET (13,5), 4
+      END
+      """;
+    var module = IrLowering.TryLowerModule(Bind(source), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true,
+      targetCost: new TargetCost((CpuTier)cpuTier, CostObjective.Balanced));
+    var videoStores = module!.FindFunction("main")!.AllInstructions.OfType<IrStore>()
+      .Where(store => store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } })
+      .ToArray();
+    Assert.Multiple(() => {
+      Assert.That(videoStores.Select(store => store.Value.Type.Bits),
+        Is.EqualTo(expectedWidth == 32 ? new[] { 32 } : new[] { 16, 16 }));
+      Assert.That(videoStores.All(store => store.Value is IrConstantInt), Is.True);
+      Assert.That(videoStores[0].Value is IrConstantInt value && value.Value ==
+        (expectedWidth == 32 ? 0x04030201L : 0x0201L), Is.True);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Optimize_GivenPixelsAcrossARowBoundary_ThenKeepsSeparateByteStores() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      PSET (319,0),1
+      PSET (0,1),2
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true,
+      targetCost: new TargetCost(CpuTier.I80386, CostObjective.Balanced));
+    Assert.That(module!.FindFunction("main")!.AllInstructions.OfType<IrStore>().Count(store =>
+      store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }),
+      Is.EqualTo(2));
+  }
+
+  [Test]
+  public void Optimize_GivenAnObservablePointReadBetweenPixels_ThenDoesNotFuseWrites() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      PSET (10,5),1
+      PRINT POINT(10,5)
+      PSET (11,5),2
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true,
+      targetCost: new TargetCost(CpuTier.I80386, CostObjective.Balanced));
+    Assert.That(module!.FindFunction("main")!.AllInstructions.OfType<IrStore>().Count(store =>
+      store.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }),
+      Is.EqualTo(2));
+  }
+
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenPackedPixelLoops_ThenMatchesTheGenericRuntime(bool com) {
