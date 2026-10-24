@@ -4,7 +4,7 @@ namespace PowerBasic.Compiler.Ir.Analysis;
 public sealed class IrScreenModeAnalysis {
   private readonly Dictionary<IrInstruction, long> _modes = [];
 
-  internal IrScreenModeAnalysis(IrFunction function) {
+  internal IrScreenModeAnalysis(IrFunction function, IrDefaultSegmentAnalysis segments) {
     if (function.Entry is null || function.HasErrorHandler || function.HasInlineAsm)
       return;
     var outputs = new Dictionary<IrBasicBlock, long?>();
@@ -14,7 +14,7 @@ public sealed class IrScreenModeAnalysis {
       var incoming = Incoming(function, block, outputs);
       var mode = incoming;
       foreach (var instruction in block.Instructions)
-        mode = Transfer(instruction, mode);
+        mode = Transfer(instruction, mode, segments.Before(instruction));
       if (outputs.TryGetValue(block, out var previous) && previous == mode)
         continue;
       outputs[block] = mode;
@@ -48,7 +48,7 @@ public sealed class IrScreenModeAnalysis {
     return predecessors.All(predecessor => outputs[predecessor] == first) ? first : null;
   }
 
-  private static long? Transfer(IrInstruction instruction, long? mode) {
+  private static long? Transfer(IrInstruction instruction, long? mode, ushort? segment) {
     if (instruction is IrCall call) {
       if (call.Callee is not IrFunction { IsDeclaration: true } callee)
         return null;
@@ -57,6 +57,9 @@ public sealed class IrScreenModeAnalysis {
           && type == IrType.I16 ? value.Value : null;
       // These native pixel routines neither switch modes nor program VGA addressing registers.
       if (callee.Name is "rt_pset" or "rt_point" or "rt_pset_mode13_offset")
+        return mode;
+      // A proven A000h packed framebuffer POKE cannot reprogram the VGA mode.
+      if (IrDefaultSegmentAnalysis.IsPackedVgaPoke(call, segment))
         return mode;
       return IrEffects.ForInstruction(call).IsEffectFree ? mode : null;
     }
@@ -71,5 +74,5 @@ public sealed class IrScreenModeAnalysis {
 
   private static bool IsProgramStorage(IrValue pointer) => pointer is IrAlloca
     || pointer is IrGlobalVariable global && (!global.Name.StartsWith("rt_", StringComparison.Ordinal)
-      || global.Name is "rt_gx1" or "rt_gy1");
+      || global.Name is "rt_gx1" or "rt_gy1" or "rt_defseg");
 }
