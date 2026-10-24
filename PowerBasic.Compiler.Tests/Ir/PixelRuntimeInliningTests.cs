@@ -1,3 +1,4 @@
+using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.CodeGen;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Analysis;
@@ -175,6 +176,32 @@ public sealed class PixelRuntimeInliningTests {
         (expectedWidth == 32 ? 0x04030201L : 0x0201L), Is.True);
       Assert.That(IrVerifier.Verify(module), Is.Empty);
     });
+  }
+
+  [Test]
+  public void Select_GivenFourFusedPixelsOnBalanced386_ThenEmitsOneDwordWrite() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      PSET (10,5),1
+      PSET (11,5),2
+      PSET (12,5),3
+      PSET (13,5),4
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true,
+      recoverIntegerArithmetic: true,
+      targetCost: new TargetCost(CpuTier.I80386, CostObjective.Balanced));
+
+    var machine = InstructionSelector.TrySelect(module!.FindFunction("main")!,
+      out var decline, new SelectionTarget(Optimize: true, CpuLevel: 386));
+    Assert.That(machine, Is.Not.Null, decline);
+    Assert.That(machine!.AllInstructions.Count(instruction =>
+      instruction.Opcode == MOpcode.Mov
+      && instruction.Operands is [
+        MOperand.Memory { Size: MRegSize.Dword },
+        MOperand.Immediate { Value: 0x04030201 }
+      ]), Is.EqualTo(1), "the four proven framebuffer bytes must stay one 386 MOV");
   }
 
   [Test]
