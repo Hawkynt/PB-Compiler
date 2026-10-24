@@ -148,6 +148,59 @@ public sealed class PixelRuntimeInliningTests {
       Is.EqualTo(System.Text.Encoding.ASCII.GetBytes(" 7  7  9  9 \r\n")));
   }
 
+  [Test]
+  public void Optimize_GivenAProvenScreenMode_ThenPointBecomesASegmentedByteRead() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      PSET (160,100),15
+      PRINT POINT(160,100)
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true);
+    var main = module!.FindFunction("main")!;
+    Assert.Multiple(() => {
+      Assert.That(main.AllInstructions.OfType<IrCall>().Any(call =>
+        call.Callee is IrFunction { Name: "rt_point" }), Is.False);
+      Assert.That(main.AllInstructions.OfType<IrLoad>().Any(load =>
+        load.Type.Bits == 8
+        && load.Pointer is IrFarPtr { Segment: IrConstantInt { Value: -24576 } }), Is.True);
+      Assert.That(main.AllInstructions.OfType<IrCast>().Any(cast =>
+        cast.Op == IrCastOp.ZExt && cast.Value.Type.Bits == 8 && cast.Type == IrType.I32), Is.True);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Optimize_GivenNoProvenMode_ThenPointRetainsItsRuntimeCall() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 12
+      PRINT POINT(160,100)
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true);
+    Assert.That(module!.FindFunction("main")!.AllInstructions.OfType<IrCall>().Any(call =>
+      call.Callee is IrFunction { Name: "rt_point" }), Is.True);
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenMode13PixelReadback_ThenReturnsOriginalColor(bool com) {
+    const string source = """
+      SCREEN 13
+      PSET (160,100),15
+      PSET (319,199),7
+      PRINT POINT(160,100);POINT(319,199);POINT(0,0)
+      END
+      """;
+    var generator = new CodeGenerator(Bind(source)) { Optimize = true, Container = DosContainer.Exe };
+    var image = com ? generator.EmitCom() : generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendDeclines, Is.Empty);
+    Assert.That(Cpu8086.Run(image).Output, Does.Contain("15  7  0"));
+  }
+
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenPackedPixelLoops_ThenMatchesTheGenericRuntime(bool com) {
