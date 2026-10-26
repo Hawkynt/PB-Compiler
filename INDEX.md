@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-26 09:24 UTC by index_codebase.py.
+Generated 2026-10-26 15:12 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1109 files, 9003 symbols.
+1110 files, 9006 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -4122,6 +4122,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - enum `PairAvailability` — The four possible answers in the explicit PB 3.5/PDS 7.1 statement audit. — PowerBasic.Compiler.Tests/Syntax/StatementSurface.cs:507
 - method `Add` — PowerBasic.Compiler.Tests/Syntax/StatementSurface.cs:848
 - method `NumberPhysicalLines` — PowerBasic.Compiler.Tests/Syntax/StatementSurface.cs:887
+
+### StatementSurfaceBackendTests.cs  `C#, 70 lines`
+- namespace `PowerBasic.Compiler.Tests.Syntax` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceBackendTests.cs:5
+- class `StatementSurfaceBackendTests` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceBackendTests.cs:7
+- method `foreach(var emitCom in new[] { false, true })` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceBackendTests.cs:13
 
 ### StatementSurfaceCensusTests.cs  `C#, 173 lines`
 - namespace `PowerBasic.Compiler.Tests.Syntax` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceCensusTests.cs:5
@@ -11281,16 +11286,16 @@ with unrelated edits, so treat them as anchors, not gospel.
 - function `run()` — scripts/roundtrip-check.sh:17
 - function `check()` — scripts/roundtrip-check.sh:20
 
-### run-diff-tests.sh  `Shell, 373 lines`
+### run-diff-tests.sh  `Shell, 376 lines`
 > =============================================================================
-- function `run_dosbox` — scripts/run-diff-tests.sh:87
-- function `winpath` — scripts/run-diff-tests.sh:106
-- function `u16_at` — scripts/run-diff-tests.sh:119
-- function `u8_at()` — scripts/run-diff-tests.sh:121
-- function `exe_blocker()` — Why one staged oracle executable cannot run, or nothing when it can. Two cases — scripts/run-diff-tests.sh:131
-- function `conf_exes()` — Oracle executables a command template names, resolved from the D: mount. — scripts/run-diff-tests.sh:164
-- function `battery_blocker()` — Why a whole battery cannot run here, or nothing when it can. — scripts/run-diff-tests.sh:174
-- function `run_battery` — scripts/run-diff-tests.sh:200
+- function `run_dosbox` — scripts/run-diff-tests.sh:90
+- function `winpath` — scripts/run-diff-tests.sh:109
+- function `u16_at` — scripts/run-diff-tests.sh:122
+- function `u8_at()` — scripts/run-diff-tests.sh:124
+- function `exe_blocker()` — Why one staged oracle executable cannot run, or nothing when it can. Two cases — scripts/run-diff-tests.sh:134
+- function `conf_exes()` — Oracle executables a command template names, resolved from the D: mount. — scripts/run-diff-tests.sh:167
+- function `battery_blocker()` — Why a whole battery cannot run here, or nothing when it can. — scripts/run-diff-tests.sh:177
+- function `run_battery` — scripts/run-diff-tests.sh:203
 
 ### run-dos-tests.ps1  `PowerShell, 135 lines`
 > =============================================================================

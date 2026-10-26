@@ -403,7 +403,10 @@ and the C and LLVM emitters, so all three get the same optimizer.
 `MandatoryRoutingTests` compiles every differential-corpus source under its own
 dialect (root files use `pb35`) in both optimizer modes. A front-end rejection,
 backend decline, or missing executable fails that gate; the separate per-dialect
-battery checks accepted statement forms across all 19 dialects.
+battery checks front-end acceptance. `StatementSurfaceBackendTests` also compiles
+every accepted catalog form across all 19 dialects, both optimizer modes and both
+DOS containers, requiring verified Low IR, IR-owned emitted bodies and no unexpected
+routing declines. These finite catalogs do not prove every runtime behavior.
 
 Every pass has its own reference page in
 [docs/optimizations/](docs/optimizations/README.md): what it recognizes, the

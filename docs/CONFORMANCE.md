@@ -9,10 +9,19 @@ parameter combinations, invalid structures, and cross-dialect negative cases.
 | Lane | Material | Contract |
 |---|---|---|
 | Statement surface | `StatementSurface` and `StatementSurfaceCensusTests` | Every isolated statement/parameter form is accepted exactly in the dialects that provide it. Rejection must be a lexer, parser, preprocessor, or binder diagnostic—not an internal exception. |
+| Statement backend surface | `StatementSurfaceBackendTests` | Every accepted catalog form reaches verified Low IR and explicit COM/MZ emission across every declared dialect and both optimizer modes, without unexpected routing declines or emitted bodies lacking IR definitions. |
 | Structurally invalid source | `InvalidSyntaxSurfaceTests` | Syntax belonging to no dialect is rejected cleanly under every advertised dialect. |
 | Compiler execution | ordinary codegen/IR/DOSBox tests | The mandatory multi-stage IR/x86-16 path produces an executable with the expected behavior, without direct-emitter fallback. |
 | Genuine syntax oracle | `StatementSurfaceOracleMaterialTests` and `scripts/run-syntax-oracle-tests.sh` | Vintage DOS compilers independently accept or reject each generated source file. Disagreements are written to `build/conformance/syntax/oracle-results.tsv`. |
 | Genuine runtime oracle | `tests/diff/<dialect>` and `scripts/run-diff-tests.sh` | The generated executable and original compiler/interpreter produce identical observable output. |
+
+The backend-surface gate renders each source using its dialect's physical-line rules, including
+numeric labels for BASICA/GW-BASIC. It checks the requested artifact signature, the actual retained
+Low IR module and its verifier, and the IR definition behind every tracked emitted body. Bodiless
+external link declarations are not fallback bodies. A retained main body must actually be emitted;
+an empty emitted-body list cannot satisfy that check. The catalog must list every declared dialect.
+This is compilation coverage of the catalog, not execution coverage of every feature combination,
+intrinsic overload, calling convention or runtime boundary; those still need focused oracle tests.
 
 The syntax-oracle runner deliberately skips BASICA, GW-BASIC, and QBasic. They have no compile step,
 and interpreted BASIC can defer syntax checking until a statement executes; treating “the
