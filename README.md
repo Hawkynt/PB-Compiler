@@ -81,9 +81,9 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
 - Proven DOS `SCREEN 13` pixel calls use an inlineable IR address calculation, exposing row strides
   to ordinary loop strength reduction; unknown modes retain the generic runtime call
-- Supported `DRAW` text exposed by IR string folding expands into cursor updates and line calls;
-  `B`/`N` survive colour changes and combine correctly; dynamic/mixed strings and stateful macro
-  commands still require a runtime interpreter
+- DOS `DRAW` uses a typed-IR parser and shared scale/angle/colour/cursor operations; known complete
+  text and safe leading spans of mixed strings inline after string folding. Arbitrary fragment
+  boundaries stay interpreted; planar batching and full historic graphics fidelity remain open
 - Default QuickBASIC 1–3 uses MBF32/MBF64 storage, including numeric string codecs, near static arrays,
   BYREF calls, input/DATA, local function results and floating FOR counters; precision rules remain
   distinct from GW/BASICA, and captured original-compiler files test the observable bytes

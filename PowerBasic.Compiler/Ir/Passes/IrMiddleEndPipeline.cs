@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Runtime;
 
 namespace PowerBasic.Compiler.Ir.Passes;
 
@@ -177,6 +178,8 @@ public static class IrMiddleEndPipeline {
       : () => Legalize(recoverIntegerArithmetic);
 
     pipeline().RunOnModule(module);
+    new IrPassManager().InEarlyModulePhase(IrMiddleEndPhase.Legalization)
+      .AddEarlyModuleConservative("draw-runtime", DrawRuntime.Define).RunOnModule(module);
     if (optimize)
       new IrPassManager().InEarlyModulePhase(IrMiddleEndPhase.ArithmeticSimplification)
         .AddEarlyModuleConservative("pixel-runtime-inline", PixelRuntimeInlining.Run).RunOnModule(module);

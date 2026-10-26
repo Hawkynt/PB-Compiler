@@ -1822,15 +1822,8 @@ public sealed partial class IrLowering {
         this._b.Call(IrType.Void, this.RuntimeFn("rt_arc", IrType.Void));
         break;
       }
-      // Literal commands retain their faithful expansion without requiring optimization. Computed
-      // text stays a consuming call so the middle end can specialize text its string folds prove.
-      case CommandStmt { Keyword: "DRAW", Arguments: [StringLiteralExpr picture] }: {
-        if (!Semantics.MacroStringValidator.TryParseDraw(picture.Value, out var steps, out var declined))
-          throw new IrLoweringException(declined ?? "DRAW string");
-        IrDrawExpansion.Emit(this._module ?? throw new IrLoweringException("DRAW requires whole-module lowering"),
-          this._b, steps);
-        break;
-      }
+      // Both literal and computed DRAW operands are owned strings. Runtime interpretation and static
+      // specialization share the same command state, rather than assuming that literals start fresh.
       case CommandStmt { Keyword: "DRAW", Arguments: [{ } picture] }: {
         this._b.Call(IrType.Void, this.RuntimeFn("rt_draw", IrType.Void, IrType.Ptr), this.LowerStringExpr(picture));
         break;

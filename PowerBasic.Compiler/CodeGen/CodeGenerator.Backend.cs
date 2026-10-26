@@ -919,6 +919,9 @@ public sealed partial class CodeGenerator {
   /// what seeds the pb36 runtime trimmer - so a section only the routed function calls is kept.
   /// </summary>
   private Asm.Label? CalleeLabel(string name) {
+    // A module-owned IR definition is not an assembly-runtime declaration, regardless of its prefix.
+    if (this.GeneratedCalleeLabel(name) is { } generated)
+      return generated;
     // ...but only when the runtime really has it. Asm.Lbl MINTS a label for any name, so a wrong or
     // stale RuntimeAbi row used to hand back a perfectly good Label that nothing would ever bind, and
     // the failure surfaced as "referenced but never bound" at LINK time - after every routing
@@ -939,8 +942,6 @@ public sealed partial class CodeGenerator {
     }
     if (this.IsBackendSemanticMerge(name))
       return this._asm.Lbl(name);
-    if (this.GeneratedCalleeLabel(name) is { } generated)
-      return generated;
     var proc = model.ProcedureList.FirstOrDefault(p =>
       Ir.IrLowering.IrNameOf(p).Equals(name, System.StringComparison.OrdinalIgnoreCase) && this.BackendProcs().ContainsKey(p));
     // ...or an EXTERNAL procedure, which has no body here to route and needs none: ProcLabelOf gives
@@ -972,14 +973,15 @@ public sealed partial class CodeGenerator {
   /// more.
   /// </para>
   /// </summary>
-  private static string? UndefinedRuntimeCallee(Backend.X86MachineFunction machine)
+  private string? UndefinedRuntimeCallee(Backend.X86MachineFunction machine)
     => machine.AllInstructions
       .SelectMany(instruction => instruction.Operands)
       .OfType<Backend.MOperand.LabelRef>()
       .Select(label => label.Name)
       .Where(name => name.StartsWith("rt_", System.StringComparison.Ordinal))
       .Distinct(System.StringComparer.OrdinalIgnoreCase)
-      .FirstOrDefault(name => !RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name));
+      .FirstOrDefault(name => this._backendModule?.FindFunction(name) is not { IsDeclaration: false }
+        && !RuntimeTrimmer.Instance.ProviderOf.ContainsKey(name));
 
   /// <summary>
   /// Every routine <see cref="Backend.RuntimeAbi"/> claims the DOS runtime provides and it does not.

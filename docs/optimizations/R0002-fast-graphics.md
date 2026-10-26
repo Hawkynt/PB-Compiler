@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Packed pixels and supported literal/IR-proven DRAW commands; ⬜ planar batching and dynamic DRAW |
+| **Status** | ✅ Packed pixels, IR DRAW parser and safe leading-span inlining; ⬜ planar batching and general DRAW partial evaluation |
 | **Stage** | IR specialization and runtime |
-| **Source** | `Ir/Passes/PixelRuntimeInlining.cs`, `Ir/Passes/DrawStringSpecialization.cs`, `Runtime/DosRuntime.Pixels.cs`, `Runtime/DosRuntime.Graphics.cs` |
-| **Gate** | Mode proof for packed pixel inlining; complete supported text for DRAW specialization |
-| **Verified by** | `PixelRuntimeInliningTests`, `PixelModeFallbackTests`, `DrawStatementTests`, `ProvenDrawTests` |
+| **Source** | `Ir/Passes/PixelRuntimeInlining.cs`, `Ir/Passes/DrawStringSpecialization.cs`, `Runtime/DrawRuntime*.cs`, `Runtime/DosRuntime.Pixels.cs` |
+| **Gate** | Proven packed mode; complete DRAW text or a delimiter-terminated leading movement sequence |
+| **Verified by** | `PixelRuntimeInliningTests`, `PixelModeFallbackTests`, `DrawStatementTests`, `ProvenDrawTests`, `DrawMixedStringTests`, `DrawRuntimeErrorTests` |
 | **Related** | [R0001](R0001-fast-text-output.md), [O0004](O0004-strength-reduction.md), [O0064](O0064-lea-fusion.md) |
 
 ## What it is
@@ -20,8 +20,8 @@ avoids that mode query and exposes the offset calculation to the ordinary loop o
 The address arithmetic itself is the interesting part: `y * 320 + x` is exactly
 the expression [O0003](O0003-common-subexpression-elimination.md) caches and
 [O0004](O0004-strength-reduction.md) can reduce to shifts or an induction recurrence.
-Supported `DRAW` commands exposed by string folding become ordinary cursor updates and line calls,
-not an emitter-local macro expansion.
+Supported `DRAW` commands exposed by string folding call shared typed-IR movement operations,
+not an emitter-local macro expansion. Dynamic text uses an IR interpreter with the same state.
 
 ## Sample
 
@@ -72,7 +72,8 @@ Line/box routines already call the mode-aware pixel primitive; circle and flood-
 still has mode-specific limits. Fast horizontal/vertical/45-degree lines, byte spans and planar
 EGA/VGA batches remain work, including their hardware-state, clipping and cursor contracts.
 
-Mixed static/dynamic `DRAW` text needs a runtime interpreter before partial inlining can safely
-hand off parser, angle, scale, colour and cursor state. Source concatenation boundaries are not
-command boundaries: `"R" + n$` cannot be expanded independently. See
+Mixed text can inline a known leading movement sequence ending at `;`, then resume interpretation
+at the following byte. The joined allocation remains live until interpretation ends or fails;
+mode-check errors release it before raising. Arbitrary interior/suffix spans remain interpreted.
+Source concatenation boundaries are not command boundaries: `"R" + n$` cannot be expanded independently. See
 [IR-proven DRAW text](../X86-BACKEND.md#ir-proven-draw-text) for the implemented slice and exclusions.

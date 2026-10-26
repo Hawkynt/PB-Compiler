@@ -384,6 +384,18 @@ public sealed partial class DosRuntime {
     var overflow = asm.DefineLabel();
 
     this.Paint = asm.MarkLabel("rt_paint");
+    var status = asm.Lbl("rt_paint_status");
+    var returned = asm.DefineLabel();
+    asm.Call(status);
+    asm.Cmp(Reg.AX, (Imm)0);
+    asm.Je(returned);
+    asm.Call(this.Raise);
+    asm.MarkLabel(returned);
+    asm.Ret();
+
+    // A DRAW parser owns a string while painting. Return a status so it can release that string
+    // (and unwind nested X commands) before raising; ordinary PAINT keeps its raising wrapper.
+    asm.MarkLabel(status);
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
     asm.Push(Reg.CX);
@@ -398,6 +410,7 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.BP);
     asm.Mov(Reg.BP, Reg.SP);
     asm.Sub(Reg.SP, (Imm)(_paintSpans * 4));
+    asm.Mov(Mem.Word(Reg.BP, 12), (Imm)0); // Saved AX becomes the status result.
 
     // seed the stack with the point PAINT was given
     asm.Mov(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
@@ -510,8 +523,7 @@ public sealed partial class DosRuntime {
     asm.Jmp(neighbourRow);
 
     asm.MarkLabel(overflow);
-    asm.Mov(Reg.AX, (Imm)7);            // "Out of memory", as QuickBASIC answers a fill it cannot hold
-    asm.Call(this.Raise);
+    asm.Mov(Mem.Word(Reg.BP, 12), (Imm)7); // Out of memory; restore the stack before returning.
 
     asm.MarkLabel(done);
     asm.Mov(Reg.SP, Reg.BP);

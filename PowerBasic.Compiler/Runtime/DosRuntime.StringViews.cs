@@ -23,10 +23,30 @@ public sealed partial class DosRuntime {
   /// allocation - is what makes compaction harmless while the stable handle remains live.
   /// </summary>
   private void EmitStringViewProcedures(Assembler asm) {
+    this.EmitBorrowedCharacter(asm);
     this.EmitStrLenBorrow(asm);
     this.EmitStrViewCompare(asm);
     this.EmitStrViewCompareEq(asm);
     this.EmitStrPrintView(asm);
+  }
+
+  /// <summary>AX=borrowed handle, CX=zero-based checked index -&gt; AX=byte, without allocation/release.</summary>
+  private void EmitBorrowedCharacter(Assembler asm) {
+    asm.MarkLabel("rt_str_char_at_borrow");
+    asm.Push(Reg.BX);
+    asm.Push(Reg.SI);
+    asm.Push(Reg.ES);
+    asm.Mov(Reg.BX, Reg.AX);
+    asm.Shl(Reg.BX, 2);
+    asm.Mov(Reg.SI, this.Descriptor(Reg.BX));
+    asm.Add(Reg.SI, Reg.CX);
+    asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_strseg")));
+    asm.Xor(Reg.AX, Reg.AX);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Seg(Reg.ES));
+    asm.Pop(Reg.ES);
+    asm.Pop(Reg.SI);
+    asm.Pop(Reg.BX);
+    asm.Ret();
   }
 
   /// <summary>AX=handle -&gt; AX=length; unlike rt_len, does not consume the handle.</summary>

@@ -21,10 +21,9 @@ public sealed class DrawStringSpecializationTests {
   }
 
   [TestCase("C9 R5", 1)]
-  [TestCase("C9 NR5 BR2 D3", 2)]
+  [TestCase("C9 NR5 BR2 D3", 3)]
   [TestCase("", 0)]
-  [TestCase("R32767", 1)]
-  [TestCase("L32767", 1)]
+  [TestCase("C9;NR5;BR2;D3;", 3)]
   public void Run_GivenOwnedProvenCommands_ThenExpandsAndConsumesOnlyTheirProducer(string picture, int lines) {
     var (module, main, draw, text) = Build(picture);
     Assert.That(IrVerifier.Verify(module), Is.Empty);
@@ -33,7 +32,7 @@ public sealed class DrawStringSpecializationTests {
       Assert.That(draw.Parent, Is.Null);
       Assert.That(text.Parent, Is.Null);
       Assert.That(text.Users, Is.Empty);
-      Assert.That(main.AllInstructions.OfType<IrCall>().Count(call => call.Callee.Name == "rt_line"),
+      Assert.That(main.AllInstructions.OfType<IrCall>().Count(call => call.Callee.Name == "rt_draw_move"),
         Is.EqualTo(lines));
       Assert.That(IrVerifier.Verify(module), Is.Empty);
       Assert.That(DrawStringSpecialization.Run(module), Is.Zero);
@@ -46,6 +45,8 @@ public sealed class DrawStringSpecializationTests {
   [TestCase("R9999999999999999999999999")]
   [TestCase("R5\u00ff")]
   [TestCase("R32768")]
+  [TestCase("R32767")]
+  [TestCase("L32767")]
   [TestCase("L32768")]
   [TestCase("R65536")]
   [TestCase("U65536")]
@@ -69,6 +70,9 @@ public sealed class DrawStringSpecializationTests {
   [TestCase("cell")]
   [TestCase("line")]
   [TestCase("line-foreign")]
+  [TestCase("move-type")]
+  [TestCase("begin-foreign")]
+  [TestCase("cell-count")]
   public void Run_GivenUnprovedOwnershipAbiOrState_ThenLeavesTheCallIntact(string boundary) {
     var (module, main, draw, text) = Build("C9 R5");
     switch (boundary) {
@@ -90,6 +94,11 @@ public sealed class DrawStringSpecializationTests {
       case "line-foreign": module.AddFunction(new IrFunction("rt_line", IrType.Void) {
           Convention = IrCallConvention.Cdecl,
         }); break;
+      case "move-type": module.AddFunction(new IrFunction("rt_draw_move", IrType.I16)); break;
+      case "begin-foreign": module.AddFunction(new IrFunction("rt_draw_begin", IrType.Void) {
+          Convention = IrCallConvention.Cdecl,
+        }); break;
+      case "cell-count": module.AddGlobal(new IrGlobalVariable("rt_draw_color", IrType.I16) { Count = 2 }); break;
     }
     Assert.That(IrVerifier.Verify(module), Is.Empty);
     Assert.That(DrawStringSpecialization.Run(module), Is.Zero);
@@ -108,7 +117,43 @@ public sealed class DrawStringSpecializationTests {
     var instructions = main.AllInstructions.ToArray();
     Assert.That(draw.Parent, Is.Null);
     Assert.That(Array.IndexOf(instructions, before), Is.LessThan(Array.FindIndex(instructions,
-      instruction => instruction is IrCall { Callee.Name: "rt_line" })));
+      instruction => instruction is IrCall { Callee.Name: "rt_draw_move" })));
     Assert.That(IrVerifier.Verify(module), Is.Empty);
+  }
+
+  [TestCase("C9 R5;", true)]
+  [TestCase("N C9 R5; ", true)]
+  [TestCase("C9 R5", false)]
+  [TestCase("C9 R5 ", false)]
+  [TestCase("B C9;", false)]
+  [TestCase("R5;B;", false)]
+  [TestCase("R10000;", false)]
+  public void Run_GivenMixedText_ThenOnlyInlinesACompleteLeadingCommandSequence(string prefix, bool canExpand) {
+    var (module, main, draw, text) = Build(prefix);
+    var dynamicText = module.AddFunction(new IrFunction("dynamic_text", IrType.Ptr));
+    var concat = module.AddFunction(new IrFunction("rt_str_concat", IrType.Ptr,
+      [new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1)]));
+    var block = draw.Parent!;
+    var dynamicCall = block.InsertBefore(new IrCall(IrType.Ptr, dynamicText, []), draw);
+    var joined = block.InsertBefore(new IrCall(IrType.Ptr, concat, [text, dynamicCall]), draw);
+    draw.SetOperand(1, joined);
+    Assert.That(IrVerifier.Verify(module), Is.Empty);
+    Assert.That(DrawStringSpecialization.Run(module), Is.EqualTo(canExpand ? 1 : 0));
+    if (canExpand) {
+      Assert.That(draw.Parent, Is.Null);
+      var remaining = main.AllInstructions.OfType<IrCall>().Single(call => call.Callee.Name == "rt_draw_resume");
+      Assert.That(remaining.GetOperand(1), Is.SameAs(joined));
+      Assert.That(((IrConstantInt)remaining.GetOperand(2)).Value, Is.EqualTo(prefix.Length));
+      var moves = main.AllInstructions.OfType<IrCall>().Where(call => call.Callee.Name == "rt_draw_move").ToArray();
+      Assert.That(moves, Has.Length.EqualTo(1));
+      var check = main.AllInstructions.OfType<IrCall>().Single(call => call.Callee.Name == "rt_draw_begin_owned");
+      Assert.That(check.GetOperand(1), Is.SameAs(joined), "release the joined text before a mode error");
+      Assert.That(Array.IndexOf(block.Instructions.ToArray(), dynamicCall),
+        Is.LessThan(Array.IndexOf(block.Instructions.ToArray(), moves[0])), "evaluate text before drawing");
+    } else {
+      Assert.That(draw.Parent, Is.Not.Null);
+    }
+    Assert.That(IrVerifier.Verify(module), Is.Empty);
+    Assert.That(DrawStringSpecialization.Run(module), Is.Zero);
   }
 }

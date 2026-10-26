@@ -1315,13 +1315,22 @@ clipping, viewport/page semantics and complete error behavior remain open.
 
 ### IR-proven DRAW text
 
-Literal `DRAW` movements retain their faithful IR expansion without optimization. Computed text now
-lowers to a consuming `rt_draw` call, allowing `StringConstantFold` to expose concatenated or case-mapped
-literal bytes. The registered `DrawStringSpecialization` pass expands supported, proven complete text
-using the same cursor/colour/line IR as literal lowering. It removes the sole owned literal producer,
-preserves surrounding evaluation order, and refuses shared handles, foreign ABIs, conflicting runtime
-symbols, error-handler/assembly functions and unsupported or malformed macro commands. Commands whose
-coordinates/deltas cannot be represented with both signs in a word are left unresolved, not truncated.
+All DOS `DRAW` operands lower to a consuming `rt_draw` call. `DrawRuntime.Define` supplies ordinary
+typed-IR definitions before the native SSA boundary, so the same middle-end and backend process the
+interpreter, its numeric scanner and the shared movement operations. The only new assembly primitives
+read a borrowed string byte and query the BIOS graphics mode. Module-owned `rt_` definitions resolve
+to their generated labels; unresolved assembly-runtime declarations still require actual providers.
+
+After string folding, `DrawStringSpecialization` expands supported complete text to shared operations
+and removes its sole owned literal producer. For mixed text such as `"C9 R5;" + tail$`, a complete
+leading movement sequence ending at `;` can inline, then `rt_draw_resume` interprets the joined handle
+after that prefix. Expression evaluation and concatenation still occur before drawing; this does not
+yet eliminate their allocation. The owned-prefix mode check releases the handle before raising an
+error, including when a caller handles the error and resumes repeatedly.
+
+`"R5" + tail$` stays interpreted because the tail can extend the number. A trailing B/N prefix also
+prevents splitting. Arbitrary interior/suffix spans are not specialized. Shared handles, foreign ABIs,
+conflicting storage/entries and error-handler/assembly functions keep their original calls.
 
 `ProvenDrawTests` checks concatenation and case folding in explicit COM/MZ containers. Its eight-byte
 `DRAW.TXT` capture for `"C9 " + UCASE$("r5")` matches genuine QuickBASIC 4.50 under DOSBox Staging 0.83;
@@ -1329,13 +1338,25 @@ compiler/library fingerprints are retained beside the regression.
 
 `DrawMacroStateTests` retains a separate genuine capture for `B`/`N` before a colour change.
 Both prefixes survive until the next movement, and combining them neither draws nor moves.
-Literal lowering and IR-proven text share this behavior. Word-sized movement scaling, numeric
-tokenization across spaces and stateful angle/scale commands still require oracle-driven correction.
+The parser implements movement, M, B/N, C, S, A/TA, P and binary X references with persistent state.
+Numeric scanning skips spaces inside counts and retains QB45's terminator-dependent range check:
+the fifth digit at EOF can bypass a bound that the same number before another command must obey.
+TA accepts -360 through 360 and rejects out-of-range angles before changing state.
+Explicit scale uses a WORD product followed by signed division by four, truncating toward zero;
+startup unity is a separate fast path. Large or unsupported static text stays on this parser rather
+than silently losing its errors. Parser and nested-X errors return a status and free owned strings
+before the public wrapper raises. PAINT similarly returns a status to permit that cleanup.
 
-This is not yet partial evaluation of mixed static/dynamic strings: unresolved `rt_draw` calls still
-decline explicitly on DOS. Runtime interpretation, angle/scale state, token boundaries crossing string
-fragments, and handoff between interpreted and inlined commands remain prerequisites. No command span
-may be split merely because its source expression contains a concatenation.
+`DrawMixedStringTests` and `DrawMacroNumericStateTests` retain genuine QB45 pixel/error files, checked
+with optimization on/off and explicit COM/MZ containers. The mixed fixture also matches native
+DOSBox execution in all four configurations. The compatible FreeBASIC reference and license are
+recorded in `Runtime/THIRD-PARTY-NOTICE.FreeBASIC-DRAW.txt`; QB45-specific rules come from oracle runs.
+
+This is not complete historical DRAW fidelity: arbitrary-angle rounding, clipping/viewports/pages,
+foreground-colour interaction, flood-fill limits and recursive-X resource limits need broader oracle
+coverage. Binary references currently handle INTEGER/SINGLE numbers and string handles; DOUBLE/LONG
+and MBF reference semantics are not implemented, and source `VARPTR$` lowering remains separate work.
+Planar batching and specialized horizontal/vertical/diagonal drawing kernels are still pending.
 
 ### Mode-aware pixel fallback
 

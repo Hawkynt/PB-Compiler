@@ -1,0 +1,42 @@
+The persistent DRAW state, command dispatch and rotation decomposition in
+DrawRuntime*.cs were informed by FreeBASIC's libgfx2 DRAW implementation:
+https://github.com/freebasic/fbc/blob/5714d10adb21ba0d5d65d7d497ac32f509bb95ff/src/gfxlib2/gfx_draw.c
+License source:
+https://github.com/freebasic/fbc/blob/5714d10adb21ba0d5d65d7d497ac32f509bb95ff/src/gfxlib2/license.txt
+
+The implementation is expressed as this compiler's typed IR, not vendored C.
+QuickBASIC-specific scanning, WORD arithmetic, error handling, pixel aspect
+and reference protocols are derived from genuine QuickBASIC 4.50 executions;
+FreeBASIC's numeric rules and reference encoding are not compatible substitutes.
+No Microsoft compiler or runtime code is included. Oracle fingerprints and
+captured expected bytes are retained in the DRAW regression tests.
+
+This adaptation is distributed under LGPL-3.0-or-later (see ../../LICENSE),
+with the upstream linking exception below retained.
+
+libgfx2 - FreeBASIC's alternative gfx library
+Copyright (C) 2005 Angelo Mottola (a.mottola@libero.it)
+
+This library is free software; you can redistribute it and/or
+modify it under the terms of the GNU Lesser General Public
+License as published by the Free Software Foundation; either
+version 2.1 of the License, or (at your option) any later version.
+This library is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public
+License along with this library; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+As a special exception, the copyright holders of this library give
+you permission to link this library with independent modules to
+produce an executable, regardless of the license terms of these
+independent modules, and to copy and distribute the resulting
+executable under terms of your choice, provided that you also meet,
+for each linked independent module, the terms and conditions of the
+license of that module. An independent module is a module which is
+not derived from or based on this library. If you modify this library,
+you may extend this exception to your version of the library, but
+you are not obligated to do so. If you do not wish to do so, delete
+this exception statement from your version.
