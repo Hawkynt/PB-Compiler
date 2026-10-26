@@ -60,7 +60,7 @@ This PRD covers the larger program of work. The accompanying code changes implem
 - [x] Compute first byte address, set `ES`, repeat color pattern and width once; fill each row using 8086 `REP STOSW` and optional `STOSB`, or 386 `REP STOSD` plus `STOSW`/`STOSB` tails.
 - [x] Keep previous fallback for every other case, with one shared final graphics-cursor update.
 - [x] Add regression tests across widths 1–5, reversed full-width bottom-edge rectangles, cursor continuation, and 8086/386.
-- [ ] Run `dotnet build PB-Compiler.slnx -c Release`, `dotnet test PowerBasic.Compiler.Tests -c Release --filter TestCategory!=Performance`, and DOSBox checks on CI.
+- [x] Verify the existing Linux/Windows GitHub Actions build, core-test, DOS and PB35/PDS oracle matrix (PR #317: 4/4 successful).
 - [ ] Confirm generated 8086 image contains no 386-only instructions and compare selected span code shape against the baseline.
 - [ ] Benchmark optimized vs faithful selection with matched CPU profiles.
 
@@ -92,6 +92,32 @@ This PRD covers the larger program of work. The accompanying code changes implem
 - [ ] Run SCCP/GVN, specialization, bounded inlining, range checks, LICM, DSE and final DCE in the existing fixed-point framework.
 - [ ] Prune leftover runtime sections through `RuntimeTrimmer`; measure code-size deltas.
 - [ ] Add comparative tests for hosted backends and dialect-specific semantics.
+
+### M6 — Inline-ASM effects and cross-language optimization (separate PRs)
+
+- [x] Promote a complete function's verified, flag-neutral `MOV <private 16-bit local>, <constant>` assembly statements to ordinary SSA stores (PR #325).
+- [x] Reject partial ASM rewrites; block optimization when registers, flags, arbitrary hardware memory, `VARPTR`, BYREF aliases or other opaque effects could be observed.
+- [ ] Extend the shared effect model with per-instruction register input/output, EFLAGS, segment state, I/O, interrupt/memory clobbers and source labels; preserve the existing opaque fallback.
+- [ ] Recognize explicitly certified `A000h` byte writes and REP fill spans from structured inline ASM; only then consider fusing them with `PSET`, `POKE`, `LINE` or `PAINT`.
+- [ ] Add physical DOS target measurements and interoperability regression cases across code generation and CPU tiers.
+
+### Staged implementation and evidence
+
+The project is deliberately split into reviewable PRs; a passing CI run is not evidence that the entire PRD is complete.
+
+| PR | Scope | Validation |
+|---|---|---|
+| [#317](https://github.com/Hawkynt/PB-Compiler/pull/317) | This PRD and `LINE BF` scanline writer | GitHub Actions 4/4 passed |
+| [#318](https://github.com/Hawkynt/PB-Compiler/pull/318) | Last opaque `PSET` write to segmented IR store | GitHub Actions 4/4 passed |
+| [#319](https://github.com/Hawkynt/PB-Compiler/pull/319) | Consecutive constant-color pixel packing, certified width-aware machine stores | GitHub Actions 4/4 passed |
+| [#320](https://github.com/Hawkynt/PB-Compiler/pull/320) | Certified `DEF SEG`/Mode 13h `POKE` fusion | Updated integration validation pending |
+| [#321](https://github.com/Hawkynt/PB-Compiler/pull/321) | In-bounds solid horizontal `LINE` fills | GitHub Actions 4/4 passed |
+| [#322](https://github.com/Hawkynt/PB-Compiler/pull/322) | Deterministic advisory emulator dispatch counts and benchmark protocol | GitHub Actions 4/4 passed |
+| [#323](https://github.com/Hawkynt/PB-Compiler/pull/323) | In-bounds `PAINT` scanline fills | GitHub Actions 4/4 passed |
+| [#324](https://github.com/Hawkynt/PB-Compiler/pull/324) | Segmented `POINT` readback | GitHub Actions 4/4 passed |
+| [#325](https://github.com/Hawkynt/PB-Compiler/pull/325) | Proven inline-ASM private stores and advisory code-size evaluation | GitHub Actions 4/4 passed |
+
+All code stages are independent or explicitly stacked; no benchmark is interpreted as a physical 8086/386 cycle measurement.
 
 ## Acceptance criteria
 
