@@ -185,9 +185,7 @@ public static class MachineScheduler {
     // assigned the pinned register and overwrite a prepared runtime argument or implicit result.
     if (a.Clobbers.Count > 0 || b.Clobbers.Count > 0)
       return true;
-    // The x87 stack is a resource no ordinary effect descriptor names. O0349's generated FLD ST(i)
-    // duplicate deliberately reuses InlineAsm because the emitter already has the exact instruction;
-    // recognize that canonical no-name form here so it participates in the same pseudo dependency.
+    // The x87 stack is a resource no ordinary register effect descriptor names.
     if (UsesX87(a) && UsesX87(b))
       return true;
     // register RAW / WAR / WAW

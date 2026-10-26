@@ -1,5 +1,3 @@
-using PowerBasic.Compiler.Asm;
-
 namespace PowerBasic.Compiler.Backend;
 
 /// <summary>
@@ -33,10 +31,6 @@ namespace PowerBasic.Compiler.Backend;
 public static class X87StackOptimizer {
 
   private const int _X87_DEPTH = 8;
-
-  private static readonly AsmRegisterEffect _NO_REGISTER_EFFECT = new(
-    new HashSet<Reg>(), new HashSet<Reg>(), new HashSet<Reg>(),
-    ReadsFlags: false, WritesFlags: false, IsOpaque: false);
 
   private readonly record struct X87Effect(int Required, int Delta);
 
@@ -235,11 +229,8 @@ public static class X87StackOptimizer {
     return true;
   }
 
-  private static MInstr DuplicateResident(int transientDepth) {
-    var text = $"FLD ST({transientDepth})";
-    return new MInstr(MOpcode.InlineAsm,
-      [new MOperand.InlineAsmText(text, [], _NO_REGISTER_EFFECT)], MInstrEffect.None);
-  }
+  private static MInstr DuplicateResident(int transientDepth)
+    => new(MOpcode.FldSt, [new MOperand.Immediate(transientDepth)], MInstrEffect.None);
 
   private static void Apply(ResidencyPlan plan) {
     foreach (var block in plan.Blocks) {
@@ -438,6 +429,8 @@ public static class X87StackOptimizer {
     MOpcode.Fld or MOpcode.Fild
       or MOpcode.Fld1 or MOpcode.Fldln2 or MOpcode.Fldlg2 or MOpcode.Fldl2e or MOpcode.Fldl2t
       => new(0, +1),
+    MOpcode.FldSt when instruction.Operands is [MOperand.Immediate { Value: >= 0 and < _X87_DEPTH } index]
+      => new((int)index.Value + 1, +1),
     MOpcode.Fstp when instruction.Operands is [MOperand.StackSlot { Size: MRegSize.Tbyte }]
       => new(1, -1),
     MOpcode.Faddp or MOpcode.Fsubp or MOpcode.Fmulp or MOpcode.Fdivp

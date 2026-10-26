@@ -113,11 +113,11 @@ public sealed class DrawStatementTests {
       Is.EqualTo("9  0"));
 
   [Test]
-  public void Draw_GivenAPaintCommand_ThenFillsWithoutChangingItsDrawingColour() =>
+  public void Draw_GivenAPaintCommand_ThenKeepsTheFillColourForLaterMovements() =>
     Assert.That(Run("""
       LINE (5,5)-(15,15),4,B
       PSET (10,10),0
       DRAW "C3 P15,4 BR10 R2"
       PRINT POINT(10,10);POINT(6,6);POINT(5,5);POINT(21,10)
-      """), Is.EqualTo("15  15  4  3"));
+      """), Is.EqualTo("15  15  4  15"));
 }

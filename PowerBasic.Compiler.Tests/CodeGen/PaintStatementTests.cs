@@ -20,11 +20,11 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 [TestFixture]
 public sealed class PaintStatementTests {
 
-  private static string Run(string body) {
-    var source = "SCREEN 13\n" + body + "\nEND\n";
+  private static string Run(string body, string cpu = "", bool optimize = true) {
+    var source = (cpu.Length == 0 ? "" : cpu + "\n") + "SCREEN 13\n" + body + "\nEND\n";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
-    var cg = new CodeGenerator(model) { Optimize = true };
+    var cg = new CodeGenerator(model) { Optimize = optimize };
     var image = cg.EmitExecutable();
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     return Cpu8086.Run(image).Output.Trim().Replace("\r\n", "|");
@@ -105,4 +105,38 @@ public sealed class PaintStatementTests {
       PAINT (10, 10), 15, 4
       PRINT POINT(10, 10); POINT(11, 10)
       """), Is.EqualTo("15  0"));
+
+  [TestCase("$CPU 8086", 1)]
+  [TestCase("$CPU 8086", 2)]
+  [TestCase("$CPU 8086", 3)]
+  [TestCase("$CPU 8086", 4)]
+  [TestCase("$CPU 8086", 5)]
+  [TestCase("$CPU 80386", 1)]
+  [TestCase("$CPU 80386", 2)]
+  [TestCase("$CPU 80386", 3)]
+  [TestCase("$CPU 80386", 4)]
+  [TestCase("$CPU 80386", 5)]
+  public void Paint_GivenAnOddOrEvenWidthRun_ThenPreservesBordersAndPixels(string cpu, int width) {
+    var outerRight = 11 + width;
+    var innerRight = 10 + width;
+    var body = $"""
+      LINE (10,10)-({outerRight},12),4,B
+      PAINT (11,11),15,4
+      PRINT POINT(11,11);POINT({innerRight},11);POINT({outerRight},11);POINT(10,11);POINT(11,10)
+      """;
+    Assert.That(Run(body, cpu), Is.EqualTo("15  15  4  4  4"));
+    Assert.That(Run(body, cpu), Is.EqualTo(Run(body, cpu, optimize: false)));
+  }
+
+  [TestCase("$CPU 8086")]
+  [TestCase("$CPU 80386")]
+  public void Paint_GivenA318PixelRun_ThenFillsTheRowWithoutCrossingTheBorder(string cpu) {
+    const string body = """
+      LINE (0,190)-(319,192),4,B
+      PAINT (1,191),9,4
+      PRINT POINT(0,191);POINT(1,191);POINT(318,191);POINT(319,191);POINT(318,190)
+      """;
+    Assert.That(Run(body, cpu), Is.EqualTo("4  9  9  4  4"));
+  }
+
 }

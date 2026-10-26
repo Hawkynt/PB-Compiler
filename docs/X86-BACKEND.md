@@ -1356,7 +1356,33 @@ This is not complete historical DRAW fidelity: arbitrary-angle rounding, clippin
 foreground-colour interaction, flood-fill limits and recursive-X resource limits need broader oracle
 coverage. Binary references currently handle INTEGER/SINGLE numbers and string handles; DOUBLE/LONG
 and MBF reference semantics are not implemented, and source `VARPTR$` lowering remains separate work.
-Planar batching and specialized horizontal/vertical/diagonal drawing kernels are still pending.
+Planar batching and further vertical/diagonal drawing kernels are still pending.
+
+### Integrated packed graphics and ASM stores
+
+The native path now combines direct Mode 13 pixel reads/writes, certified adjacent PSET/POKE packing,
+solid horizontal LINE spans, filled rectangle rows, and PAINT's discovered scanlines. Runtime spans
+query the actual mode and validate bounds; 8086 uses word fills and 386+ may use dwords with tails.
+The same LINE/PAINT runtime entries serve interpreted and specialized DRAW commands.
+
+The late pixel packer requires its explicit compiler-created proof on each input store. An ordinary
+far store at A000h is not a packed-mode proof and cannot acquire a widened hardware write just from
+its address. Late POINT loads carry `ReadsMemory | PerformsIo | Volatile`, preserving unused device
+observations through the packer's final DCE. No general scalar optimizer runs after these transforms.
+
+`InlineAsmPureStorePromotion` requires every source ASM block in a function to be a recognized,
+flag/register-neutral MOV-immediate to private source-owned word storage. Escaped addresses, shared
+storage, unknown instructions and error handlers retain the original opaque function boundary.
+
+The x87 stack optimizer emits a typed `FldSt` machine operation for register duplicates. It must not
+spell compiler-generated operations as source inline ASM: doing so re-enters source ISA policy and
+can activate a different floating engine halfway through emission. Native and explicit software x87
+duplicates now use the same assembler sink as their neighboring operations.
+
+`GraphicsRuntimeIntegrationTests` compares combined pixel/POKE/span/DRAW output with captured QB45
+bytes across 8086/386, optimization on/off and COM/MZ. `GraphicsSpanCodeShapeTests` checks the selected
+repeat width; `PixelRuntimeProofTests` protects the proof and device-read boundaries. Dispatch-count
+comparisons are advisory Performance tests, not claims about physical CPU cycles.
 
 ### Mode-aware pixel fallback
 

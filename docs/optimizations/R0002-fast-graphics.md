@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Packed pixels, IR DRAW parser and safe leading-span inlining; ⬜ planar batching and general DRAW partial evaluation |
+| **Status** | ✅ Packed pixel reads/writes/fusion, horizontal/rectangle/PAINT spans and IR DRAW; ⬜ planar batching and general DRAW partial evaluation |
 | **Stage** | IR specialization and runtime |
 | **Source** | `Ir/Passes/PixelRuntimeInlining.cs`, `Ir/Passes/DrawStringSpecialization.cs`, `Runtime/DrawRuntime*.cs`, `Runtime/DosRuntime.Pixels.cs` |
 | **Gate** | Proven packed mode; complete DRAW text or a delimiter-terminated leading movement sequence |
@@ -16,6 +16,14 @@ so a pixel is a single byte store at `y * 320 + x`. `PSET`, `PRESET` and `POINT`
 use direct segment accesses for that layout. Generic calls first query the active BIOS mode;
 non-packed layouts use BIOS pixel services. When the IR proves mode 13, its inlineable pixel body
 avoids that mode query and exposes the offset calculation to the ordinary loop optimizers.
+Final native lowering forms direct far loads/stores. Only compiler-certified packed stores may
+fuse; the numeric address A000h alone is not proof. POINT loads carry a non-discardable device
+effect so the packer's final pure-instruction cleanup cannot erase an unused observation.
+
+In-bounds solid horizontal lines, filled rectangles and discovered PAINT scanlines compute their
+span addresses once, using REP STOSW on 8086 or CPU-gated REP STOSD with word/byte tails on 386+.
+Other modes, patterned lines and out-of-range geometry retain their existing paths. Graphics
+cursor updates and ES restoration are shared with or matched to those paths.
 
 The address arithmetic itself is the interesting part: `y * 320 + x` is exactly
 the expression [O0003](O0003-common-subexpression-elimination.md) caches and
@@ -68,9 +76,8 @@ clipping, pages, viewports or complete graphics error semantics.
 
 ## What is still planned
 
-Line/box routines already call the mode-aware pixel primitive; circle and flood-fill coverage
-still has mode-specific limits. Fast horizontal/vertical/45-degree lines, byte spans and planar
-EGA/VGA batches remain work, including their hardware-state, clipping and cursor contracts.
+Circle and flood-fill coverage still has mode-specific limits. Fast vertical/45-degree lines and
+planar EGA/VGA batches remain work, including hardware-state, clipping and cursor contracts.
 
 Mixed text can inline a known leading movement sequence ending at `;`, then resume interpretation
 at the following byte. The joined allocation remains live until interpretation ends or fails;

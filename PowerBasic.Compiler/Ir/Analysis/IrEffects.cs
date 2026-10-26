@@ -246,6 +246,8 @@ public static class IrEffects {
       IrBinary or IrFNeg or IrCmp or IrCast or IrGep or IrFarPtr or IrPhi or IrSelect
         => _pureDeterministic,
       IrAlloca => _pureUnique,
+      IrLoad { IsDeviceRead: true } => new(IrEffectKind.ReadsMemory | IrEffectKind.PerformsIo
+        | IrEffectKind.Volatile, Deterministic: false),
       IrLoad => _read,
       IrStore => _write,
       IrInlineAsm => IrEffectSummary.UnknownExternal,

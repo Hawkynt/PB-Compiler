@@ -57,6 +57,17 @@ public sealed class X87StackOptimizerTests {
   }
 
   [Test]
+  public void Retention_GivenGeneratedRegisterDuplicates_ThenDoesNotReenterSourceAsmPolicy() {
+    var temporary = Temp(0);
+    var (function, block) = OneBlock(
+      Load(Data("a")), Store(temporary),
+      Load(temporary), Store(Temp(1)), Load(temporary), Store(Temp(2)));
+    Assert.That(X87StackOptimizer.Run(function), Is.EqualTo(1));
+    Assert.That(block.Instructions.Any(instruction => instruction.Opcode == MOpcode.InlineAsm), Is.False,
+      "compiler-generated x87 operations must use the same native/software stack as neighboring machine instructions");
+  }
+
+  [Test]
   public void Retention_GivenTemporaryHasSeveralReaders_ThenValueStaysResidentAndReadersDuplicateIt() {
     var temporary = Temp(0);
     var first = Temp(1);
@@ -69,11 +80,11 @@ public sealed class X87StackOptimizerTests {
     Assert.That(X87StackOptimizer.Run(function), Is.EqualTo(1));
 
     var duplicates = block.Instructions
-      .Where(instruction => instruction.Opcode == MOpcode.InlineAsm)
-      .Select(instruction => ((MOperand.InlineAsmText)instruction.Operands[0]).Text)
+      .Where(instruction => instruction.Opcode == MOpcode.FldSt)
+      .Select(instruction => ((MOperand.Immediate)instruction.Operands[0]).Value)
       .ToList();
     Assert.Multiple(() => {
-      Assert.That(duplicates, Is.EqualTo(new[] { "FLD ST(0)", "FLD ST(0)" }));
+      Assert.That(duplicates, Is.EqualTo(new long[] { 0, 0 }));
       Assert.That(block.Instructions.Any(instruction => IsStoreOf(instruction, temporary)), Is.False);
       Assert.That(block.Instructions.Any(instruction => IsLoadOf(instruction, temporary)), Is.False);
       Assert.That(block.Instructions[^1].Opcode, Is.EqualTo(MOpcode.FstpSt0),
@@ -94,10 +105,10 @@ public sealed class X87StackOptimizerTests {
     Assert.That(X87StackOptimizer.Run(function), Is.EqualTo(1));
 
     var duplicates = block.Instructions
-      .Where(instruction => instruction.Opcode == MOpcode.InlineAsm)
-      .Select(instruction => ((MOperand.InlineAsmText)instruction.Operands[0]).Text)
+      .Where(instruction => instruction.Opcode == MOpcode.FldSt)
+      .Select(instruction => ((MOperand.Immediate)instruction.Operands[0]).Value)
       .ToList();
-    Assert.That(duplicates, Is.EqualTo(new[] { "FLD ST(1)", "FLD ST(0)" }));
+    Assert.That(duplicates, Is.EqualTo(new long[] { 1, 0 }));
   }
 
   [Test]
@@ -120,8 +131,8 @@ public sealed class X87StackOptimizerTests {
     Assert.Multiple(() => {
       Assert.That(preheader.Instructions.Any(instruction => IsStoreOf(instruction, value)), Is.False);
       Assert.That(loop.Instructions.Any(instruction => IsLoadOf(instruction, value)), Is.False);
-      Assert.That(loop.Instructions.Any(instruction => instruction is { Opcode: MOpcode.InlineAsm,
-        Operands: [MOperand.InlineAsmText { Text: "FLD ST(0)" }] }), Is.True);
+      Assert.That(loop.Instructions.Any(instruction => instruction is { Opcode: MOpcode.FldSt,
+        Operands: [MOperand.Immediate { Value: 0 }] }), Is.True);
       Assert.That(exit.Instructions.Select(instruction => instruction.Opcode),
         Is.EqualTo(new[] { MOpcode.FstpSt0, MOpcode.Ret }));
     });
@@ -300,9 +311,9 @@ public sealed class X87StackOptimizerTests {
 
     var x87 = block.Instructions
       .Where(instruction => instruction.Opcode is MOpcode.Fld or MOpcode.Fstp or MOpcode.FstpSt0
-        or MOpcode.InlineAsm)
-      .Select(instruction => instruction.Opcode == MOpcode.InlineAsm
-        ? ((MOperand.InlineAsmText)instruction.Operands[0]).Text
+        or MOpcode.FldSt)
+      .Select(instruction => instruction.Opcode == MOpcode.FldSt
+        ? $"FLD ST({((MOperand.Immediate)instruction.Operands[0]).Value})"
         : instruction.Opcode.ToString())
       .ToList();
     Assert.That(x87, Is.EqualTo(new[] { "Fld", "FLD ST(0)", "Fstp", "FLD ST(0)", "Fstp", "FstpSt0" }));

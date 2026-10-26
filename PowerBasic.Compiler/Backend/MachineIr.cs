@@ -330,6 +330,8 @@ public enum MOpcode {
   // The transcendental family: each is a bare x87 instruction the direct emitter also writes inline.
   // They take no operand for the same reason FSQRT does not - the stack is where the answer goes.
   Fsin, Fcos, Fptan, Fpatan, Fyl2x, Fxch, FstpSt0,
+  /// <summary>Duplicate ST(i), with the stack index as an immediate; follows the assembler's selected x87 engine.</summary>
+  FldSt,
   Fld1, Fldln2, Fldlg2, Fldl2e, Fldl2t,
 
   /// <summary>A block of inline assembly, assembled verbatim at emission (see <see cref="MOperand.InlineAsmText"/>).</summary>
@@ -365,7 +367,7 @@ public static class MOpcodes {
     or MOpcode.Fcompp or MOpcode.FstswAx
     or MOpcode.Fsqrt or MOpcode.Fabs or MOpcode.Fchs
     or MOpcode.Fsin or MOpcode.Fcos or MOpcode.Fptan or MOpcode.Fpatan or MOpcode.Fyl2x
-    or MOpcode.Fxch or MOpcode.FstpSt0
+    or MOpcode.Fxch or MOpcode.FstpSt0 or MOpcode.FldSt
     or MOpcode.Fld1 or MOpcode.Fldln2 or MOpcode.Fldlg2 or MOpcode.Fldl2e or MOpcode.Fldl2t;
 }
 

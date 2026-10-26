@@ -105,11 +105,10 @@ public static partial class DrawRuntime {
       w.If(w.Cmp(IrCmpPred.Ne, this.Next(context), w.Ix(',')), () => context.Error.Set(w.Ix(5)));
       var border = this.Number(context, required: true);
       this.WhenValid(context, () => {
-        var kept = this.Load(w, "rt_gcolor");
         this.Store(w, "rt_gcolor", color);
+        this.Store(w, "rt_draw_color", w.B.Add(w.B.ZExt(w.B.Trunc(color, IrType.I8), IrType.I16), w.Ix(1)));
         this.Store(w, "rt_gpbord", border);
         context.Error.Set(this.Call(w, "rt_paint_status", IrType.I16));
-        this.Store(w, "rt_gcolor", kept);
       });
     }
 

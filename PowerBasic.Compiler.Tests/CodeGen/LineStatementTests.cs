@@ -18,8 +18,8 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 [TestFixture]
 public sealed class LineStatementTests {
 
-  private static string Run(string body) {
-    var source = "SCREEN 13\n" + body + "\nEND\n";
+  private static string Run(string body, string cpu = "") {
+    var source = (cpu.Length == 0 ? "" : cpu + "\n") + "SCREEN 13\n" + body + "\nEND\n";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = true };
@@ -142,4 +142,81 @@ public sealed class LineStatementTests {
       LINE -(44, 40), 9
       PRINT POINT(42, 40); POINT(2, 0)
       """), Is.EqualTo("9  0"), "the segment runs from 40 to 44, not from the origin");
+
+  [TestCase("$CPU 8086", 1)]
+  [TestCase("$CPU 8086", 2)]
+  [TestCase("$CPU 8086", 3)]
+  [TestCase("$CPU 8086", 4)]
+  [TestCase("$CPU 8086", 5)]
+  [TestCase("$CPU 80386", 1)]
+  [TestCase("$CPU 80386", 2)]
+  [TestCase("$CPU 80386", 3)]
+  [TestCase("$CPU 80386", 4)]
+  [TestCase("$CPU 80386", 5)]
+  public void Line_GivenAFullColorBoxWithOddOrEvenSpan_ThenFillsOnlyTheInclusiveWidth(
+      string cpu, int width) {
+    var end = 10 + width - 1;
+    Assert.That(Run($"""
+      LINE (10,8)-({end},9),13,BF
+      PRINT POINT(9,8); POINT(10,8); POINT({end},9); POINT({end + 1},9)
+      """, cpu), Is.EqualTo("0  13  13  0"));
+  }
+
+  [TestCase("$CPU 8086")]
+  [TestCase("$CPU 80386")]
+  public void Line_GivenAReversedFullWidthRectangleAtTheBottom_ThenFillsBothRows(string cpu) =>
+    Assert.That(Run("""
+      LINE (319,199)-(0,198),11,BF
+      PRINT POINT(0,198); POINT(319,198); POINT(160,199); POINT(0,197)
+      """, cpu), Is.EqualTo("11  11  11  0"));
+
+  [TestCase("$CPU 8086")]
+  [TestCase("$CPU 80386")]
+  public void Line_GivenFilledBoxFollowedByRelativeLine_ThenPreservesGraphicsCursor(string cpu) =>
+    Assert.That(Run("""
+      LINE (10,12)-(12,13),8,BF
+      LINE -(15,13),6
+      PRINT POINT(13,13); POINT(15,13); POINT(13,12)
+      """, cpu), Is.EqualTo("6  6  0"));
+
+
+  [TestCase("$CPU 8086", 1)]
+  [TestCase("$CPU 8086", 2)]
+  [TestCase("$CPU 8086", 3)]
+  [TestCase("$CPU 8086", 4)]
+  [TestCase("$CPU 8086", 5)]
+  [TestCase("$CPU 80386", 1)]
+  [TestCase("$CPU 80386", 2)]
+  [TestCase("$CPU 80386", 3)]
+  [TestCase("$CPU 80386", 4)]
+  [TestCase("$CPU 80386", 5)]
+  public void Line_GivenAnInclusiveSolidHorizontalSpan_ThenPreservesPixelsAndEdges(
+      string cpu, int width) {
+    var end = 10 + width - 1;
+    Assert.That(Run($"""
+      LINE (10,99)-({end},99),12,,&HFFFF
+      PRINT POINT(9,99);POINT(10,99);POINT({end},99);POINT({end + 1},99)
+      """, cpu), Is.EqualTo("0  12  12  0"));
+  }
+
+  [TestCase("$CPU 8086")]
+  [TestCase("$CPU 80386")]
+  public void Line_GivenAReversedFullWidthHorizontalSpan_ThenKeepsTheLastPoint(string cpu) =>
+    Assert.That(Run("""
+      LINE (319,199)-(0,199),10
+      LINE -(0,197),6
+      PRINT POINT(319,199);POINT(0,199);POINT(0,198);POINT(0,197);POINT(1,198)
+      """, cpu), Is.EqualTo("10  6  6  6  0"));
+
+  [TestCase("$CPU 8086")]
+  [TestCase("$CPU 80386")]
+  public void Line_GivenAPatternedHorizontalSpan_ThenDoesNotFillClearedPixels(string cpu) {
+    var result = Run("""
+      LINE (0,30)-(7,30),6,,&HAAAA
+      PRINT POINT(0,30);POINT(1,30);POINT(2,30);POINT(3,30)
+      """, cpu);
+    // Genuine QB45's first four pixels are 6,0,6,0; a shortened observation is not equivalent.
+    Assert.That(result, Is.EqualTo("6  0  6  0"));
+  }
+
 }

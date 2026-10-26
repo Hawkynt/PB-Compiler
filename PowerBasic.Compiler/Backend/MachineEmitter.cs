@@ -551,6 +551,7 @@ public sealed class MachineEmitter {
       case MOpcode.Ret: asm.Ret(); break;
       // x87: one memory operand, or none for the arithmetic that consumes the loaded pair
       case MOpcode.Fld: asm.Fld(this.Mem(ops[0])); break;
+      case MOpcode.FldSt: asm.Fld(new St(checked((int)((MOperand.Immediate)ops[0]).Value))); break;
       case MOpcode.Fstp: asm.Fstp(this.Mem(ops[0])); break;
       case MOpcode.Fild: asm.Fild(this.Mem(ops[0])); break;
       case MOpcode.Fistp: asm.Fistp(this.Mem(ops[0])); break;
