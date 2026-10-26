@@ -33,6 +33,9 @@
 # qb45 "failures" are not ours: they are LOG and EXP results a digit off in the
 # EMULATOR's x87, and they pass on staging. Vanilla is ~4x faster and still fine
 # for a quick check - just do not read its 8 failures as a fidelity gap.
+# CI uses headless DOSBox-X for full-precision comparisons and makes this lane
+# required. MBFABS also proves the distinction through raw MBF64 bytes: classic
+# DOSBox loses the same low bits in direct and BASIC-round-trip executables.
 #
 # Staging needs an X server (see scripts/lib/dosbox.sh); DOSBOX_EXE is still all a
 # caller sets. Those 2 remaining skips were pds70 and pds71, and BOTH NOW RUN: the

@@ -10,7 +10,7 @@ parameter combinations, invalid structures, and cross-dialect negative cases.
 |---|---|---|
 | Statement surface | `StatementSurface` and `StatementSurfaceCensusTests` | Every isolated statement/parameter form is accepted exactly in the dialects that provide it. Rejection must be a lexer, parser, preprocessor, or binder diagnostic—not an internal exception. |
 | Structurally invalid source | `InvalidSyntaxSurfaceTests` | Syntax belonging to no dialect is rejected cleanly under every advertised dialect. |
-| Compiler execution | ordinary codegen/IR/DOSBox tests | Both the direct and routed x86-16 paths produce an executable with the expected behavior. |
+| Compiler execution | ordinary codegen/IR/DOSBox tests | The mandatory multi-stage IR/x86-16 path produces an executable with the expected behavior, without direct-emitter fallback. |
 | Genuine syntax oracle | `StatementSurfaceOracleMaterialTests` and `scripts/run-syntax-oracle-tests.sh` | Vintage DOS compilers independently accept or reject each generated source file. Disagreements are written to `build/conformance/syntax/oracle-results.tsv`. |
 | Genuine runtime oracle | `tests/diff/<dialect>` and `scripts/run-diff-tests.sh` | The generated executable and original compiler/interpreter produce identical observable output. |
 
@@ -32,6 +32,19 @@ MAX_CASES=25 DIALECTS=qb45 scripts/run-syntax-oracle-tests.sh
 
 The encrypted vintage toolchains are unlocked with `PB_TOOLCHAIN_KEY`, exactly as for the runtime
 differential harness. Missing toolchains are recorded as skips rather than guessed results.
+
+## Runtime-oracle precision
+
+CI runs the differential battery with headless DOSBox-X; a disagreement fails the required Linux
+job. The ordinary core tests retain classic DOSBox for speed. To select the same oracle emulator
+locally, run `DOSBOX_EXE="$(command -v dosbox-x)" bash scripts/run-diff-tests.sh`.
+
+Emulator precision is part of the measurement. DOSBox 0.74's double-based FPU loses bits from
+MBF64 cells and large QUAD values, and changes some QB transcendental results. On 2026-10-26,
+fresh GW-BASIC 3.23 captures of `tests/diff/gw/MBFABS.BAS` agreed between classic DOSBox and Staging;
+all eight compiled direct/round-trip, plain/optimized COM/EXE images matched the capture under
+Staging but lost DOUBLE bits under classic DOSBox. Linux DOSBox-X preserved those bits with the
+runtime harness's `core=auto` profile. Output comparisons are not relaxed to hide this difference.
 
 
 ## Per-dialect batteries

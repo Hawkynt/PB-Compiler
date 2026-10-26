@@ -996,6 +996,8 @@ dotnet test
 
 The oracle harness additionally needs DOSBox: it runs this compiler's output and the original
 compiler's output side by side and diffs what the programs actually do.
+CI uses headless DOSBox-X for these comparisons and treats disagreements as failures. Classic
+DOSBox 0.74 narrows x87 intermediates to IEEE double and cannot verify MBF64/QUAD low bits.
 
 ## 🤝 Contributing
 

@@ -159,12 +159,16 @@ jobs:
       # genuine oracle compilers, comparing RESULT.TXT byte for byte. The oracle
       # toolchains ride in the repo as AES-encrypted tarballs (tools/*-toolchain.tar.enc);
       # the PB_TOOLCHAIN_KEY secret unlocks them. Skips cleanly without the secret.
+      # DOSBox 0.74's double-based FPU loses MBF64/QUAD low bits and changes QB
+      # transcendental results. DOSBox-X preserves the x87 precision headlessly;
+      # keep classic DOSBox for the faster ordinary core tier above.
       - name: Differential oracle battery
         if: matrix.os == 'ubuntu-latest'
-        continue-on-error: true                   # advisory: emulator quirks must not block merges
         env:
           PB_TOOLCHAIN_KEY: ${{ secrets.PB_TOOLCHAIN_KEY }}
-        run: bash scripts/run-diff-tests.sh
+        run: |
+          oracleEmulator="$(command -v dosbox-x)"
+          DOSBOX_EXE="$oracleEmulator" bash scripts/run-diff-tests.sh
 
       # Performance tier - advisory by definition (STANDARD.md: wall-clock
       # assertions never block a merge). TestCategory, not Category: the latter
