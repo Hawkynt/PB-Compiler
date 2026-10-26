@@ -360,6 +360,26 @@ public sealed class PixelRuntimeInliningTests {
     });
   }
 
+  [Test]
+  public void Optimize_GivenPortActivityAfterDefSeg_ThenRetainsConservativePoke() {
+    var module = IrLowering.TryLowerModule(Bind("""
+      SCREEN 13
+      DEF SEG = &HA000
+      OUT &H3C4,4
+      POKE 32160,1
+      END
+      """), out var reason);
+    Assert.That(module, Is.Not.Null, reason);
+    IrMiddleEndPipeline.RunNativeModule(module!, optimize: true, recoverIntegerArithmetic: true);
+    var main = module!.FindFunction("main")!;
+    Assert.Multiple(() => {
+      Assert.That(main.AllInstructions.OfType<IrCall>().Any(call =>
+        call.Callee is IrFunction { Name: "rt_poke" }), Is.True,
+        "VGA register changes invalidate the packed framebuffer proof");
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
   [TestCase(false)]
   [TestCase(true)]
   public void Execute_GivenProvenPokeAndPset_ThenPreservesPointReadback(bool optimize) {
