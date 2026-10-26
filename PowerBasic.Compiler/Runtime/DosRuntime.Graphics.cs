@@ -376,6 +376,7 @@ public sealed partial class DosRuntime {
     var scanRightDone = asm.DefineLabel();
     var fillRun = asm.DefineLabel();
     var fillDone = asm.DefineLabel();
+    var packedFill = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var neighbourRow = asm.DefineLabel();
     var scanRow = asm.DefineLabel();
     var scanRowDone = asm.DefineLabel();
@@ -384,6 +385,18 @@ public sealed partial class DosRuntime {
     var overflow = asm.DefineLabel();
 
     this.Paint = asm.MarkLabel("rt_paint");
+    var status = asm.Lbl("rt_paint_status");
+    var returned = asm.DefineLabel();
+    asm.Call(status);
+    asm.Cmp(Reg.AX, (Imm)0);
+    asm.Je(returned);
+    asm.Call(this.Raise);
+    asm.MarkLabel(returned);
+    asm.Ret();
+
+    // A DRAW parser owns a string while painting. Return a status so it can release that string
+    // (and unwind nested X commands) before raising; ordinary PAINT keeps its raising wrapper.
+    asm.MarkLabel(status);
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
     asm.Push(Reg.CX);
@@ -398,6 +411,7 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.BP);
     asm.Mov(Reg.BP, Reg.SP);
     asm.Sub(Reg.SP, (Imm)(_paintSpans * 4));
+    asm.Mov(Mem.Word(Reg.BP, 12), (Imm)0); // Saved AX becomes the status result.
 
     // seed the stack with the point PAINT was given
     asm.Mov(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
@@ -447,6 +461,19 @@ public sealed partial class DosRuntime {
 
     // fill the run before scanning the neighbours, so their fillable tests see it as done
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_px1")));
+    if (packedFill is not null) {
+      // The scanline search normally proves this region is on-screen. Check
+      // again here because a batchable A000h store must never wrap 64 KiB.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_px1")), (Imm)0);
+      asm.Jl(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_px2")), (Imm)319);
+      asm.Jg(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)0);
+      asm.Jl(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)199);
+      asm.Jg(fillRun);
+      EmitPackedModeBranch(asm, packedFill);
+    }
     asm.MarkLabel(fillRun);
     asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_px2")));
     asm.Jg(fillDone);
@@ -456,6 +483,50 @@ public sealed partial class DosRuntime {
     asm.Call(this.Pset);
     asm.Inc(Reg.SI);
     asm.Jmp(fillRun);
+
+    if (packedFill is not null) {
+      var noWordTail = asm.DefineLabel();
+      var noByteTail = asm.DefineLabel();
+      asm.MarkLabel(packedFill);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_py")));
+      asm.Mov(Reg.CX, 320);
+      asm.Mul(Reg.CX);
+      asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_px1")));
+      asm.Mov(Reg.DI, Reg.AX);
+      asm.Mov(Reg.AX, 0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_px2")));
+      asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_px1")));
+      asm.Inc(Reg.BX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcolor")));
+      asm.Mov(Reg.AH, Reg.AL);
+      if (this.Use32BitFastPath) {
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Shl(Reg.EAX, 16);
+        asm.Mov(Reg.AX, Reg.DX);
+      }
+      asm.Cld();
+      asm.Mov(Reg.CX, Reg.BX);
+      if (this.Use32BitFastPath) {
+        asm.Shr(Reg.CX, 2);
+        asm.Rep();
+        asm.Stosd();
+        asm.Test(Reg.BX, (Imm)2);
+        asm.Jz(noWordTail);
+        asm.Stosw();
+        asm.MarkLabel(noWordTail);
+      } else {
+        asm.Shr(Reg.CX, 1);
+        asm.Rep();
+        asm.Stosw();
+      }
+      asm.Test(Reg.BX, (Imm)1);
+      asm.Jz(noByteTail);
+      asm.Stosb();
+      asm.MarkLabel(noByteTail);
+      asm.Pop(Reg.ES);
+    }
     asm.MarkLabel(fillDone);
 
     // the row above, then the row below
@@ -510,8 +581,7 @@ public sealed partial class DosRuntime {
     asm.Jmp(neighbourRow);
 
     asm.MarkLabel(overflow);
-    asm.Mov(Reg.AX, (Imm)7);            // "Out of memory", as QuickBASIC answers a fill it cannot hold
-    asm.Call(this.Raise);
+    asm.Mov(Mem.Word(Reg.BP, 12), (Imm)7); // Out of memory; restore the stack before returning.
 
     asm.MarkLabel(done);
     asm.Mov(Reg.SP, Reg.BP);
@@ -686,6 +756,8 @@ public sealed partial class DosRuntime {
     var done = asm.DefineLabel();
     var xPositive = asm.DefineLabel();
     var yPositive = asm.DefineLabel();
+    var fastHorizontal = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var slowHorizontal = asm.DefineLabel();
 
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
@@ -693,6 +765,30 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DX);
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
+
+    if (fastHorizontal is not null) {
+      // Solid-styled lines rotate FFFFh back to FFFFh at every pixel; a
+      // patterned line must use Bresenham to preserve mask phase and skips.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gstyle")), (Imm)0xFFFF);
+      asm.Jne(slowHorizontal);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+      asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
+      asm.Jne(slowHorizontal);
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Reg.AX, (Imm)199);
+      asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)319);
+      asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)319);
+      asm.Jg(slowHorizontal);
+      EmitPackedModeBranch(asm, fastHorizontal);
+    }
+    asm.MarkLabel(slowHorizontal);
 
     // dx = |x2-x1|, sx = sign; the same for y. SI and DI carry the two step directions.
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx2")));
@@ -779,6 +875,63 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
+
+    if (fastHorizontal is not null) {
+      var xOrdered = asm.DefineLabel();
+      var noWordTail = asm.DefineLabel();
+      var noByteTail = asm.DefineLabel();
+      asm.MarkLabel(fastHorizontal);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gx2")));
+      asm.Cmp(Reg.AX, Reg.BX);
+      asm.Jle(xOrdered);
+      asm.Xchg(Reg.AX, Reg.BX);
+      asm.MarkLabel(xOrdered);
+      asm.Mov(Reg.SI, Reg.AX);
+      asm.Sub(Reg.BX, Reg.AX);
+      asm.Inc(Reg.BX); // Inclusive span length, 1..320.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+      asm.Mov(Reg.CX, 320);
+      asm.Mul(Reg.CX);
+      asm.Add(Reg.AX, Reg.SI);
+      asm.Mov(Reg.DI, Reg.AX);
+      asm.Mov(Reg.AX, 0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcolor")));
+      asm.Mov(Reg.AH, Reg.AL);
+      if (this.Use32BitFastPath) {
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Shl(Reg.EAX, 16);
+        asm.Mov(Reg.AX, Reg.DX);
+      }
+      asm.Cld();
+      asm.Mov(Reg.CX, Reg.BX);
+      if (this.Use32BitFastPath) {
+        asm.Shr(Reg.CX, 2);
+        asm.Rep();
+        asm.Stosd();
+        asm.Test(Reg.BX, (Imm)2);
+        asm.Jz(noWordTail);
+        asm.Stosw();
+        asm.MarkLabel(noWordTail);
+      } else {
+        asm.Shr(Reg.CX, 1);
+        asm.Rep();
+        asm.Stosw();
+      }
+      asm.Test(Reg.BX, (Imm)1);
+      asm.Jz(noByteTail);
+      asm.Stosb();
+      asm.MarkLabel(noByteTail);
+      // The classic Bresenham walk advances the graphics cursor to x2/y2.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx2")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gx1")), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
+      asm.Pop(Reg.ES);
+      asm.Jmp(done);
+    }
   }
 
   /// <summary>
@@ -833,6 +986,8 @@ public sealed partial class DosRuntime {
     var rowLoop = asm.DefineLabel();
     var colLoop = asm.DefineLabel();
     var rowDone = asm.DefineLabel();
+    var packedRows = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var slowRows = asm.DefineLabel();
     var yOrdered = asm.DefineLabel();
     var xOrdered = asm.DefineLabel();
 
@@ -861,6 +1016,22 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Word(asm.Lbl("rt_gby1")), Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_gby2")), Reg.BX);
 
+    // A packed VGA span is a known byte-addressed framebuffer operation, not a generic POKE.
+    // Retain the pixel-by-pixel path for other modes and for any off-screen rectangle:
+    // the existing runtime semantics (including out-of-range behavior) then remain unchanged.
+    if (packedRows is not null) {
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx1")), (Imm)0);
+      asm.Jl(slowRows);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx2")), (Imm)319);
+      asm.Jg(slowRows);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby1")), (Imm)0);
+      asm.Jl(slowRows);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)199);
+      asm.Jg(slowRows);
+      EmitPackedModeBranch(asm, packedRows);
+    }
+
+    asm.MarkLabel(slowRows);
     var nextRow = asm.DefineLabel();
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gby1")));   // SI = current row
     asm.MarkLabel(rowLoop);
@@ -893,5 +1064,63 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
+
+    if (packedRows is not null) {
+      // Full rows are contiguous on SCREEN 13. Set ES and calculate the first
+      // address once, then advance by the scanline stride after each fill.
+      var packedLoop = asm.DefineLabel();
+      var noWordTail = asm.DefineLabel();
+      var noByteTail = asm.DefineLabel();
+      asm.MarkLabel(packedRows);
+      asm.Push(Reg.ES);
+      asm.Push(Reg.DI);
+      asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gby1")));
+      asm.Mov(Reg.AX, Reg.SI);
+      asm.Mov(Reg.CX, 320);
+      asm.Mul(Reg.CX);
+      asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_gbx1")));
+      asm.Mov(Reg.DI, Reg.AX);
+      asm.Mov(Reg.AX, 0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gbx2")));
+      asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_gbx1")));
+      asm.Inc(Reg.BX); // Inclusive width: 1..320, so CX cannot wrap.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcolor")));
+      asm.Mov(Reg.AH, Reg.AL);
+      if (this.Use32BitFastPath) {
+        // Expand the repeated colour from AX into both halves of EAX.
+        asm.Mov(Reg.DX, Reg.AX);
+        asm.Shl(Reg.EAX, 16);
+        asm.Mov(Reg.AX, Reg.DX);
+      }
+      asm.Cld();
+      asm.MarkLabel(packedLoop);
+      asm.Mov(Reg.CX, Reg.BX);
+      if (this.Use32BitFastPath) {
+        asm.Shr(Reg.CX, 2);
+        asm.Rep();
+        asm.Stosd();
+        asm.Test(Reg.BX, (Imm)2);
+        asm.Jz(noWordTail);
+        asm.Stosw();
+        asm.MarkLabel(noWordTail);
+      } else {
+        asm.Shr(Reg.CX, 1);
+        asm.Rep();
+        asm.Stosw();
+      }
+      asm.Test(Reg.BX, (Imm)1);
+      asm.Jz(noByteTail);
+      asm.Stosb();
+      asm.MarkLabel(noByteTail);
+      asm.Add(Reg.DI, 320);
+      asm.Sub(Reg.DI, Reg.BX);
+      asm.Inc(Reg.SI);
+      asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_gby2")));
+      asm.Jle(packedLoop);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.ES);
+      asm.Jmp(rowDone); // One shared final graphics-cursor update.
+    }
   }
 }

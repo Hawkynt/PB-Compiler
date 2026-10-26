@@ -1822,55 +1822,10 @@ public sealed partial class IrLowering {
         this._b.Call(IrType.Void, this.RuntimeFn("rt_arc", IrType.Void));
         break;
       }
-      // ENVIRON "NAME=VALUE". One string, one call - and the string is CONSUMED, which is why this is
-      // the same shape as KILL below rather than something that has to free anything afterwards.
-      // DRAW "..." with a CONSTANT string, expanded into the moves it denotes. DRAW is a macro
-      // language and the obvious way to run one is an interpreter in the runtime - it does not need
-      // one when the string is written down, because every delta is knowable while compiling and each
-      // step is a few stores against the graphics cursor. A computed string still declines, as does
-      // one using A, S, TA, P or X: those carry state from one step to the next, and the whole point
-      // of doing it here is that the answer is knowable.
-      case CommandStmt { Keyword: "DRAW", Arguments: [StringLiteralExpr picture] }: {
-        if (!Semantics.MacroStringValidator.TryParseDraw(picture.Value, out var steps, out var declined))
-          throw new IrLoweringException(declined ?? "DRAW string");
-        var x1 = this.RuntimeCell("rt_gx1", IrType.I16);
-        var y1 = this.RuntimeCell("rt_gy1", IrType.I16);
-        var x2 = this.RuntimeCell("rt_gx2", IrType.I16);
-        var y2 = this.RuntimeCell("rt_gy2", IrType.I16);
-        this._b.Store(new IrConstantInt(IrType.I16, unchecked((short)0xFFFF)),
-          this.RuntimeCell("rt_gstyle", IrType.I16));      // solid; DRAW has no style mask
-        foreach (var step in steps) {
-          if (step.Kind == Semantics.DrawStepKind.Colour) {
-            this._b.Store(new IrConstantInt(IrType.I16, step.X), this.RuntimeCell("rt_gcolor", IrType.I16));
-            continue;
-          }
-          // where this step ends: a delta from the current point, or the point itself
-          if (step.Kind == Semantics.DrawStepKind.Relative) {
-            IrValue Stepped(IrGlobalVariable from, int delta) {
-              var start = this._b.Load(IrType.I16, from);
-              return delta == 0 ? start : this._b.Add(start, new IrConstantInt(IrType.I16, delta));
-            }
-            this._b.Store(Stepped(x1, step.X), x2);
-            this._b.Store(Stepped(y1, step.Y), y2);
-          } else {
-            this._b.Store(new IrConstantInt(IrType.I16, step.X), x2);
-            this._b.Store(new IrConstantInt(IrType.I16, step.Y), y2);
-          }
-          // B moves without drawing: the endpoint simply becomes the current point
-          if (step.Blank) {
-            this._b.Store(this._b.Load(IrType.I16, x2), x1);
-            this._b.Store(this._b.Load(IrType.I16, y2), y1);
-            continue;
-          }
-          // N draws and comes back, so the point it started from is kept over the call that moves it
-          var keptX = step.NoUpdate ? this._b.Load(IrType.I16, x1) : null;
-          var keptY = step.NoUpdate ? this._b.Load(IrType.I16, y1) : null;
-          this._b.Call(IrType.Void, this.RuntimeFn("rt_line", IrType.Void));
-          if (keptX is not null && keptY is not null) {
-            this._b.Store(keptX, x1);
-            this._b.Store(keptY, y1);
-          }
-        }
+      // Both literal and computed DRAW operands are owned strings. Runtime interpretation and static
+      // specialization share the same command state, rather than assuming that literals start fresh.
+      case CommandStmt { Keyword: "DRAW", Arguments: [{ } picture] }: {
+        this._b.Call(IrType.Void, this.RuntimeFn("rt_draw", IrType.Void, IrType.Ptr), this.LowerStringExpr(picture));
         break;
       }
       // GET (x1,y1)-(x2,y2), a%() captures a rectangle of the screen into an array; PUT (x,y), a%()

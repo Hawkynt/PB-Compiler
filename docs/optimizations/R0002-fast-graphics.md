@@ -2,23 +2,34 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented for mode-13h pixels (`PSET`/`PRESET`/`POINT`); `LINE`/`CIRCLE`/`PAINT`/`DRAW` codegen is ⬜ planned |
-| **Stage** | Runtime |
-| **Source** | `Runtime/DosRuntime.Misc.cs` — `rt_pset`/`rt_point` (direct `A000` writes), reached as runtime calls from `IrLowering`; LINE, CIRCLE and PAINT in `Runtime/DosRuntime.Graphics.cs` |
-| **Gate** | `SCREEN 13` |
-| **Verified by** | `LineStatementTests` |
+| **Status** | ✅ Packed pixel reads/writes/fusion, horizontal/rectangle/PAINT spans and IR DRAW; ⬜ planar batching and general DRAW partial evaluation |
+| **Stage** | IR specialization and runtime |
+| **Source** | `Ir/Passes/PixelRuntimeInlining.cs`, `Ir/Passes/DrawStringSpecialization.cs`, `Runtime/DrawRuntime*.cs`, `Runtime/DosRuntime.Pixels.cs` |
+| **Gate** | Proven packed mode; complete DRAW text or a delimiter-terminated leading movement sequence |
+| **Verified by** | `PixelRuntimeInliningTests`, `PixelModeFallbackTests`, `DrawStatementTests`, `ProvenDrawTests`, `DrawMixedStringTests`, `DrawRuntimeErrorTests` |
 | **Related** | [R0001](R0001-fast-text-output.md), [O0004](O0004-strength-reduction.md), [O0064](O0064-lea-fusion.md) |
 
 ## What it is
 
 In `SCREEN 13` the frame buffer is a flat 320 × 200 byte array at `A000:0000`,
 so a pixel is a single byte store at `y * 320 + x`. `PSET`, `PRESET` and `POINT`
-are emitted as **direct** segment accesses — there is no BIOS per-pixel path at
-all, so "fast graphics" holds by construction rather than by measurement.
+use direct segment accesses for that layout. Generic calls first query the active BIOS mode;
+non-packed layouts use BIOS pixel services. When the IR proves mode 13, its inlineable pixel body
+avoids that mode query and exposes the offset calculation to the ordinary loop optimizers.
+Final native lowering forms direct far loads/stores. Only compiler-certified packed stores may
+fuse; the numeric address A000h alone is not proof. POINT loads carry a non-discardable device
+effect so the packer's final pure-instruction cleanup cannot erase an unused observation.
+
+In-bounds solid horizontal lines, filled rectangles and discovered PAINT scanlines compute their
+span addresses once, using REP STOSW on 8086 or CPU-gated REP STOSD with word/byte tails on 386+.
+Other modes, patterned lines and out-of-range geometry retain their existing paths. Graphics
+cursor updates and ES restoration are shared with or matched to those paths.
 
 The address arithmetic itself is the interesting part: `y * 320 + x` is exactly
 the expression [O0003](O0003-common-subexpression-elimination.md) caches and
-[O0004](O0004-strength-reduction.md) reduces to shifts.
+[O0004](O0004-strength-reduction.md) can reduce to shifts or an induction recurrence.
+Supported `DRAW` commands exposed by string folding call shared typed-IR movement operations,
+not an emitter-local macro expansion. Dynamic text uses an IR interpreter with the same state.
 
 ## Sample
 
@@ -35,13 +46,18 @@ NEXT
 ## Emitted
 
 ```asm
-    push    0A000h
-    pop     es
-    mov     ax, [y]
-    ...                      ; y*320 via shifts (O0004), cached across the row (O0003)
-    add     ax, [x]
+    ; packed pixel primitive: AX=offset computed by IR, DL=colour
+    push    es
+    push    di
+    push    bx
     mov     di, ax
-    mov     es:[di], al      ; the whole pixel write
+    mov     bx, 0A000h
+    mov     es, bx
+    mov     es:[di], dl
+    pop     bx
+    pop     di
+    pop     es
+    ret
 ```
 
 ## Equivalent BASIC
@@ -53,22 +69,18 @@ POKE y% * 320& + x%, c%
 
 ## Why it is safe
 
-Mode 13h's linear layout is architectural, so the address computation is exact;
-`POINT` reads back through the same expression, which is what the pixel-readback
-test asserts.
+Mode 13h's linear address formula is used only with a proven mode or the runtime's mode dispatch.
+Unknown calls, assembly and raw memory invalidate the mode proof. Pixel readback and explicit
+COM/MZ execution are checked against captured genuine QuickBASIC files. This does not prove
+clipping, pages, viewports or complete graphics error semantics.
 
 ## What is still planned
 
-`LINE`, `PRESET` spans, `CIRCLE`, `PAINT` and `DRAW` are parsed and bound but
-codegen answers `not yet generated: LineStmt`. Two oracle-verified notes for
-whoever implements them:
+Circle and flood-fill coverage still has mode-specific limits. Fast vertical/45-degree lines and
+planar EGA/VGA batches remain work, including hardware-state, clipping and cursor contracts.
 
-- the parser rejects the relative form `LINE (x,y)-STEP(dx,dy), c, BF`, which
-  PBC 3.50 accepts (it compiles PB-VGAEditor's `SPRITE.SUB`);
-- `STEP`'s base differs by position — the cursor for a first/only point, the
-  first point for a `LINE`'s endpoint — so it belongs in `ParsePoint` as a flag
-  on the point, not as a statement-level switch.
-
-Then the fast forms follow: spans as `REP STOSB` (`STOSD` under 386),
-run-sliced Bresenham lines, and planar EGA/VGA writes batched per plane (map
-mask set once per span, not per pixel).
+Mixed text can inline a known leading movement sequence ending at `;`, then resume interpretation
+at the following byte. The joined allocation remains live until interpretation ends or fails;
+mode-check errors release it before raising. Arbitrary interior/suffix spans remain interpreted.
+Source concatenation boundaries are not command boundaries: `"R" + n$` cannot be expanded independently. See
+[IR-proven DRAW text](../X86-BACKEND.md#ir-proven-draw-text) for the implemented slice and exclusions.

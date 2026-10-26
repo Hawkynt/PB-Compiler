@@ -373,6 +373,7 @@ public sealed partial class DosRuntime {
 
   /// <summary>Mode-aware pixel primitives with direct packed access for mode 13h and a BIOS fallback.</summary>
   private void EmitPixelProcedures(Assembler asm) {
+    EmitGraphicsMode(asm);
     this.EmitSetPixel(asm);
     EmitPackedPixelWriter(asm);
     this.EmitReadPixel(asm);

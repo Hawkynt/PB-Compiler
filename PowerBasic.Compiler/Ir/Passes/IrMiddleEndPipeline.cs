@@ -1,4 +1,5 @@
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Runtime;
 
 namespace PowerBasic.Compiler.Ir.Passes;
 
@@ -132,6 +133,7 @@ public static class IrMiddleEndPipeline {
     .AddModuleConservativeWhen(includeModulePasses, "lutelim", LookupTableElimination.Run)
     .AddModuleConservativeWhen(includeModulePasses, "const-data-merge", ConstantDataMerging.Run)
     .AddModuleConservativeWhen(includeModulePasses, "strfold", StringConstantFold.Run)
+    .AddModuleConservativeWhen(includeModulePasses, "draw-string-specialization", DrawStringSpecialization.Run)
     .AddModuleConservativeWhen(includeModulePasses, "strchain", StringConcatChain.Run)
     .AddModuleConservativeWhen(includeModulePasses, "strappend", StringAppendInPlace.Run)
     .AddModuleConservativeWhen(includeModulePasses, "strcapacity", StringCapacityHoisting.Run)
@@ -166,6 +168,13 @@ public static class IrMiddleEndPipeline {
       int packedVectorBytes = 0) {
     ArgumentNullException.ThrowIfNull(module);
 
+    // A complete block of compiler-owned MOV-immediate stores contains no
+    // hidden flag or register dependencies. Promote it before SSA formation
+    // so the existing DSE/SCCP/const-propagation passes can consume it.
+    // Mixed or unrecognized inline ASM stays opaque for the whole function.
+    if (optimize)
+      InlineAsmPureStorePromotion.Run(module);
+
     Func<IrPassManager> pipeline = optimize
       ? () => Standard(optimizeForSpeed,
           arithmeticCostModel: arithmeticCostModel,
@@ -176,9 +185,12 @@ public static class IrMiddleEndPipeline {
       : () => Legalize(recoverIntegerArithmetic);
 
     pipeline().RunOnModule(module);
+    new IrPassManager().InEarlyModulePhase(IrMiddleEndPhase.Legalization)
+      .AddEarlyModuleConservative("draw-runtime", DrawRuntime.Define).RunOnModule(module);
     if (optimize)
       new IrPassManager().InEarlyModulePhase(IrMiddleEndPhase.ArithmeticSimplification)
-        .AddEarlyModuleConservative("pixel-runtime-inline", PixelRuntimeInlining.Run).RunOnModule(module);
+        .AddEarlyModuleConservative("pixel-runtime-inline", PixelRuntimeInlining.Run)
+        .AddEarlyModuleConservative("poke-mode13-inline", PokeRuntimeInlining.Run).RunOnModule(module);
     CompleteSsaBoundary(module);
     pipeline().RunOnModule(module);
 
@@ -233,8 +245,16 @@ public static class IrMiddleEndPipeline {
       PrivateCallingConvention.Run(module);
     // Final layout follows every literal-producing fold. Earlier string transforms deliberately
     // operate on whole literal globals; consumers now receive ordinary pointer/length slices.
-    if (optimize)
+    if (optimize) {
       LiteralPooling.Run(module);
+      // Keep the hardware write as a non-discardable runtime call throughout
+      // ordinary IR optimization. Only immediately before native selection do
+      // we form the segmented byte store, preserving its original observation.
+      // POINT reads are also device observations: lower them only at the
+      // final native boundary, not while GVN/DSE still run.
+      PixelRuntimeReadLowering.Run(module);
+      PixelRuntimeStoreLowering.Run(module, targetCost);
+    }
   }
 
   /// <summary>

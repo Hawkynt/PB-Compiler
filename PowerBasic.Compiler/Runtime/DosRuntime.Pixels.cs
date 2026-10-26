@@ -3,6 +3,16 @@ using PowerBasic.Compiler.Asm;
 namespace PowerBasic.Compiler.Runtime;
 
 public sealed partial class DosRuntime {
+  private static void EmitGraphicsMode(Assembler asm) {
+    asm.MarkLabel("rt_graphics_mode");
+    asm.Push(Reg.BX);
+    asm.Mov(Reg.AH, (Imm)0x0F);
+    asm.Int(0x10);
+    asm.Xor(Reg.AH, Reg.AH);
+    asm.Pop(Reg.BX);
+    asm.Ret();
+  }
+
   private static void EmitPackedModeBranch(Assembler asm, Label packed) {
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);

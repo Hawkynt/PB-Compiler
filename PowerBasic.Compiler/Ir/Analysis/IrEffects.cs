@@ -129,7 +129,7 @@ public static class IrEffects {
 
     var modeled = name switch {
       // Stable-handle query introduced by O0297: reads the descriptor without consuming it.
-      "rt_str_len_borrow" => _deterministicRead,
+      "rt_str_len_borrow" or "rt_str_char_at_borrow" => _deterministicRead,
 
       // DOS LEN consumes its owned handle; DUP creates the owned copy lowering feeds it.
       "rt_str_len" => _consumeString,
@@ -246,6 +246,8 @@ public static class IrEffects {
       IrBinary or IrFNeg or IrCmp or IrCast or IrGep or IrFarPtr or IrPhi or IrSelect
         => _pureDeterministic,
       IrAlloca => _pureUnique,
+      IrLoad { IsDeviceRead: true } => new(IrEffectKind.ReadsMemory | IrEffectKind.PerformsIo
+        | IrEffectKind.Volatile, Deterministic: false),
       IrLoad => _read,
       IrStore => _write,
       IrInlineAsm => IrEffectSummary.UnknownExternal,

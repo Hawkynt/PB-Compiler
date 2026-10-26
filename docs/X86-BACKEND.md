@@ -1313,6 +1313,77 @@ This is a packed mode-13 slice, not general graphics conformance. Other modes
 keep the mode-aware `rt_pset` fallback described below. Direct planar specialization,
 clipping, viewport/page semantics and complete error behavior remain open.
 
+### IR-proven DRAW text
+
+All DOS `DRAW` operands lower to a consuming `rt_draw` call. `DrawRuntime.Define` supplies ordinary
+typed-IR definitions before the native SSA boundary, so the same middle-end and backend process the
+interpreter, its numeric scanner and the shared movement operations. The only new assembly primitives
+read a borrowed string byte and query the BIOS graphics mode. Module-owned `rt_` definitions resolve
+to their generated labels; unresolved assembly-runtime declarations still require actual providers.
+
+After string folding, `DrawStringSpecialization` expands supported complete text to shared operations
+and removes its sole owned literal producer. For mixed text such as `"C9 R5;" + tail$`, a complete
+leading movement sequence ending at `;` can inline, then `rt_draw_resume` interprets the joined handle
+after that prefix. Expression evaluation and concatenation still occur before drawing; this does not
+yet eliminate their allocation. The owned-prefix mode check releases the handle before raising an
+error, including when a caller handles the error and resumes repeatedly.
+
+`"R5" + tail$` stays interpreted because the tail can extend the number. A trailing B/N prefix also
+prevents splitting. Arbitrary interior/suffix spans are not specialized. Shared handles, foreign ABIs,
+conflicting storage/entries and error-handler/assembly functions keep their original calls.
+
+`ProvenDrawTests` checks concatenation and case folding in explicit COM/MZ containers. Its eight-byte
+`DRAW.TXT` capture for `"C9 " + UCASE$("r5")` matches genuine QuickBASIC 4.50 under DOSBox Staging 0.83;
+compiler/library fingerprints are retained beside the regression.
+
+`DrawMacroStateTests` retains a separate genuine capture for `B`/`N` before a colour change.
+Both prefixes survive until the next movement, and combining them neither draws nor moves.
+The parser implements movement, M, B/N, C, S, A/TA, P and binary X references with persistent state.
+Numeric scanning skips spaces inside counts and retains QB45's terminator-dependent range check:
+the fifth digit at EOF can bypass a bound that the same number before another command must obey.
+TA accepts -360 through 360 and rejects out-of-range angles before changing state.
+Explicit scale uses a WORD product followed by signed division by four, truncating toward zero;
+startup unity is a separate fast path. Large or unsupported static text stays on this parser rather
+than silently losing its errors. Parser and nested-X errors return a status and free owned strings
+before the public wrapper raises. PAINT similarly returns a status to permit that cleanup.
+
+`DrawMixedStringTests` and `DrawMacroNumericStateTests` retain genuine QB45 pixel/error files, checked
+with optimization on/off and explicit COM/MZ containers. The mixed fixture also matches native
+DOSBox execution in all four configurations. The compatible FreeBASIC reference and license are
+recorded in `Runtime/THIRD-PARTY-NOTICE.FreeBASIC-DRAW.txt`; QB45-specific rules come from oracle runs.
+
+This is not complete historical DRAW fidelity: arbitrary-angle rounding, clipping/viewports/pages,
+foreground-colour interaction, flood-fill limits and recursive-X resource limits need broader oracle
+coverage. Binary references currently handle INTEGER/SINGLE numbers and string handles; DOUBLE/LONG
+and MBF reference semantics are not implemented, and source `VARPTR$` lowering remains separate work.
+Planar batching and further vertical/diagonal drawing kernels are still pending.
+
+### Integrated packed graphics and ASM stores
+
+The native path now combines direct Mode 13 pixel reads/writes, certified adjacent PSET/POKE packing,
+solid horizontal LINE spans, filled rectangle rows, and PAINT's discovered scanlines. Runtime spans
+query the actual mode and validate bounds; 8086 uses word fills and 386+ may use dwords with tails.
+The same LINE/PAINT runtime entries serve interpreted and specialized DRAW commands.
+
+The late pixel packer requires its explicit compiler-created proof on each input store. An ordinary
+far store at A000h is not a packed-mode proof and cannot acquire a widened hardware write just from
+its address. Late POINT loads carry `ReadsMemory | PerformsIo | Volatile`, preserving unused device
+observations through the packer's final DCE. No general scalar optimizer runs after these transforms.
+
+`InlineAsmPureStorePromotion` requires every source ASM block in a function to be a recognized,
+flag/register-neutral MOV-immediate to private source-owned word storage. Escaped addresses, shared
+storage, unknown instructions and error handlers retain the original opaque function boundary.
+
+The x87 stack optimizer emits a typed `FldSt` machine operation for register duplicates. It must not
+spell compiler-generated operations as source inline ASM: doing so re-enters source ISA policy and
+can activate a different floating engine halfway through emission. Native and explicit software x87
+duplicates now use the same assembler sink as their neighboring operations.
+
+`GraphicsRuntimeIntegrationTests` compares combined pixel/POKE/span/DRAW output with captured QB45
+bytes across 8086/386, optimization on/off and COM/MZ. `GraphicsSpanCodeShapeTests` checks the selected
+repeat width; `PixelRuntimeProofTests` protects the proof and device-read boundaries. Dispatch-count
+comparisons are advisory Performance tests, not claims about physical CPU cycles.
+
 ### Mode-aware pixel fallback
 
 `rt_pset` and `rt_point` query the active BIOS mode before selecting their packed

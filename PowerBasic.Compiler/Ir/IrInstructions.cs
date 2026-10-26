@@ -131,6 +131,9 @@ public enum ClosureEnvRole { None, Offset, Segment }
 public sealed class IrLoad : IrInstruction {
   public IrLoad(IrType resultType, IrValue pointer) : base(resultType) => this.AddOperand(pointer);
   public IrValue Pointer => this.GetOperand(0);
+
+  /// <summary>Native-only device observation created after general optimization, never inferred from an address.</summary>
+  internal bool IsDeviceRead { get; set; }
 }
 
 /// <summary>Stores a value through a pointer: <c>store value, ptr</c> (yields void).</summary>
@@ -142,6 +145,15 @@ public sealed class IrStore : IrInstruction {
 
   public IrValue Value => this.GetOperand(0);
   public IrValue Pointer => this.GetOperand(1);
+
+  /// <summary>
+  /// Native-lowering-only proof that this store was constructed by the
+  /// certified Mode 13h pixel lowering or contiguous-pixel packer. Ordinary far pointers,
+  /// POKE and AT arrays never imply this marker just from their address.
+  /// It is emitted only after optimization and is not serialized as a
+  /// persistent, target-independent property.
+  /// </summary>
+  internal bool IsPackedMode13Write { get; set; }
 }
 
 /// <summary>

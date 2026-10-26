@@ -8,10 +8,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// <summary>
 /// <c>DRAW</c> with a written-down string, checked by reading the pixels back with <c>POINT</c>.
 ///
-/// DRAW is a macro language and the obvious way to run one is an interpreter in the runtime. It does
-/// not need one when the picture is a literal: every delta is known while compiling, and each step
-/// becomes a few instructions against the runtime's "last point referenced" - the same cell LINE
-/// reads when its start point is omitted, so the turtle is already there.
+/// Known commands and the runtime parser share movement operations and persistent DRAW state.
 ///
 /// The prefixes are what these tests are mostly about. B moves without drawing and N draws without
 /// moving, and both are easy to get backwards in a way that looks right on a closed shape: a square
@@ -103,27 +100,24 @@ public sealed class DrawStatementTests {
       PRINT POINT(13, 50); POINT(20, 50)
       """), Is.EqualTo("7  7"), "the relative move draws to x=16, then the absolute one carries on to x=30");
 
-  /// <summary>
-  /// The commands that carry state are declined rather than approximated, and the diagnostic says
-  /// which. Quietly ignoring a scale would draw the right shape at the wrong size.
-  /// </summary>
-  [TestCase("S4 R10")]
-  [TestCase("A1 R10")]
-  [TestCase("TA90 R10")]
-  [TestCase("X a$")]
-  public void Draw_GivenACommandThatCarriesState_ThenItIsDeclinedRatherThanIgnored(string picture) {
-    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize($"SCREEN 13\nDRAW \"{picture}\"\nEND\n", "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    var cg = new CodeGenerator(model);
-    cg.EmitExecutable();
-    Assert.That(cg.Errors, Is.Not.Empty);
-  }
+  [TestCase("S4 R10", 50, 40)]
+  [TestCase("A1 R6", 40, 35)]
+  [TestCase("TA90 R6", 40, 35)]
+  [TestCase("TA-90 R6", 40, 45)]
+  public void Draw_GivenScaleOrRotation_ThenExecutesItInsteadOfIgnoringIt(string picture, int x, int y) =>
+    Assert.That(Run($"PSET (40,40),0\nDRAW \"C9 {picture}\"\nPRINT POINT({x},{y})"), Is.EqualTo("9"));
 
-  /// <summary>A computed string still declines - there is no picture to read at compile time.</summary>
   [Test]
-  public void Draw_GivenAComputedString_ThenItStillDeclines() {
-    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize("DIM p AS STRING\np = \"R5\"\nDRAW p\nEND\n", "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36), Dialect.Pb36);
-    var cg = new CodeGenerator(model);
-    cg.EmitExecutable();
-    Assert.That(cg.Errors.Select(e => e.Message), Has.Some.Contains("DRAW"));
-  }
+  public void Draw_GivenAComputedString_ThenParsesItAtRuntime() =>
+    Assert.That(Run("READ p$\nDATA \"C9 R5\"\nPSET (10,10),0\nDRAW p$\nPRINT POINT(15,10);POINT(16,10)"),
+      Is.EqualTo("9  0"));
+
+  [Test]
+  public void Draw_GivenAPaintCommand_ThenKeepsTheFillColourForLaterMovements() =>
+    Assert.That(Run("""
+      LINE (5,5)-(15,15),4,B
+      PSET (10,10),0
+      DRAW "C3 P15,4 BR10 R2"
+      PRINT POINT(10,10);POINT(6,6);POINT(5,5);POINT(21,10)
+      """), Is.EqualTo("15  15  4  15"));
 }

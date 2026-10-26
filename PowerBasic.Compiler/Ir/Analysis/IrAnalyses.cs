@@ -3,9 +3,14 @@ namespace PowerBasic.Compiler.Ir.Analysis;
 /// <summary>Shared identities for function analyses used across optimization passes.</summary>
 public static class IrAnalyses {
 
+  /// <summary>Proven DOS DEF SEG settings at instruction boundaries.</summary>
+  public static IrAnalysisKey<IrDefaultSegmentAnalysis> DefaultSegments { get; } =
+    new("default-segments", static (function, _) => new IrDefaultSegmentAnalysis(function));
+
   /// <summary>Proven DOS screen modes at instruction boundaries.</summary>
   public static IrAnalysisKey<IrScreenModeAnalysis> ScreenModes { get; } =
-    new("screen-modes", static (function, _) => new IrScreenModeAnalysis(function));
+    new("screen-modes", static (function, analyses) =>
+      new IrScreenModeAnalysis(function, analyses.Get(DefaultSegments)));
 
   /// <summary>CFG dominators and dominance frontiers.</summary>
   public static IrAnalysisKey<IrDominators?> Dominators { get; } =

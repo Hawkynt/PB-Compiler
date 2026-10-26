@@ -480,6 +480,9 @@ internal static class RuntimeAbi {
     // O0297's descriptor query is the same word result without consuming the stable handle.
     ["rt_str_len_borrow"] = new("rt_len_borrow", [new(ArgKind.Word, Reg.AX)], _callerSaved,
       Result: Reg.AX, Answer: ResultKind.WidenedWord),
+    ["rt_str_char_at_borrow"] = new("rt_str_char_at_borrow",
+      [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.CX)], _callerSaved, Result: Reg.AX),
+    ["rt_graphics_mode"] = new("rt_graphics_mode", [], _callerSaved, Result: Reg.AX),
 
     // "Val: AX=handle -> ST0 (consumes)". The only runtime entry so far that answers on the x87 stack
     ["rt_str_val"] = new("rt_val", [new(ArgKind.Word, Reg.AX)], _callerSaved,
@@ -788,6 +791,7 @@ internal static class RuntimeAbi {
     // PAINT floods from the point in rt_gx1/rt_gy1 with rt_gcolor up to rt_gpbord, so it takes its
     // arguments the way LINE does and for the same reason - the point IS the graphics cursor.
     ["rt_paint"] = new("rt_paint", [], _callerSaved),
+    ["rt_paint_status"] = new("rt_paint_status", [], _callerSaved, Result: Reg.AX),
     // PCOPY from, to -> AX = source page, DX = destination page
     ["rt_pcopy"] = new("rt_pcopy",
       [new(ArgKind.Word, Reg.AX), new(ArgKind.Word, Reg.DX)], _callerSaved),

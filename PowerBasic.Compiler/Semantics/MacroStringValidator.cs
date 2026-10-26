@@ -25,14 +25,12 @@ public static class MacroStringValidator {
   /// <summary>
   /// Reduces a DRAW string to the steps it denotes, or explains why it cannot.
   ///
-  /// This is the same walk as <see cref="ValidateDraw"/> and deliberately not folded into it: one
-  /// answers "is this well formed", which every constant string is asked, and the other answers
-  /// "what does it draw", which is only asked when the answer is going to be emitted.
+  /// Unlike <see cref="ValidateDraw"/>, this only recognizes a subset that can be specialized.
   ///
   /// The commands that carry state across steps - A and TA rotate the axes, S scales every delta -
   /// are declined rather than approximated, as is P (a flood fill mid-picture) and X (which runs a
-  /// string that is not this one). Declining returns false with a reason; the caller reports it and
-  /// emits nothing, which is what the statement did for every string before this.
+  /// string that is not this one). Returning false leaves the original runtime call intact; it
+  /// does not reject the source or erase commands completed before a runtime error.
   /// </summary>
   public static bool TryParseDraw(string picture, out List<DrawStep> steps, out string? declined) {
     steps = [];
@@ -58,6 +56,7 @@ public static class MacroStringValidator {
       ++at;
 
       switch (c) {
+        case ';': continue;
         case 'U' or 'D' or 'L' or 'R' or 'E' or 'F' or 'G' or 'H': {
           var start = at;
           ReadNumber(picture, ref at);
@@ -97,7 +96,7 @@ public static class MacroStringValidator {
           var start = at;
           ReadNumber(picture, ref at);
           steps.Add(new(DrawStepKind.Colour, int.Parse(picture[start..at]), 0, false, false));
-          break;
+          continue; // B/N attach to the next movement, not to a colour change.
         }
 
         default:
@@ -181,6 +180,7 @@ public static class MacroStringValidator {
       ++at;
 
       switch (c) {
+        case ';': break;
         case 'U' or 'D' or 'L' or 'R' or 'E' or 'F' or 'G' or 'H':
           ReadNumber(picture, ref at);                    // absent means one step
           break;

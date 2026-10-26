@@ -80,7 +80,14 @@ real optimization pipeline and a lean backend — that existing programs opt int
   or multiplication; captured QuickBASIC output and raw-byte tests cover optimized and plain builds
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
 - Proven DOS `SCREEN 13` pixel calls use an inlineable IR address calculation, exposing row strides
-  to ordinary loop strength reduction; unknown modes retain the generic runtime call
+  to ordinary loop strength reduction and late direct framebuffer loads/stores. Certified adjacent
+  pixels and in-bounds horizontal/rectangle/PAINT spans use CPU-gated word/dword writes; unknown
+  layouts and unproved raw memory retain their original paths
+- DOS `DRAW` uses a typed-IR parser and shared scale/angle/colour/cursor operations; known complete
+  text and safe leading spans of mixed strings inline after string folding. Arbitrary fragment
+  boundaries stay interpreted; planar batching and full historic graphics fidelity remain open
+- Whole-function, private MOV-immediate inline ASM can become ordinary SSA stores after an explicit
+  no-escape proof; unrecognized instructions and register/flag dependencies remain opaque
 - Default QuickBASIC 1–3 uses MBF32/MBF64 storage, including numeric string codecs, near static arrays,
   BYREF calls, input/DATA, local function results and floating FOR counters; precision rules remain
   distinct from GW/BASICA, and captured original-compiler files test the observable bytes
