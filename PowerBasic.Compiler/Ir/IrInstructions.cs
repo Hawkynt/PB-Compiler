@@ -142,6 +142,15 @@ public sealed class IrStore : IrInstruction {
 
   public IrValue Value => this.GetOperand(0);
   public IrValue Pointer => this.GetOperand(1);
+
+  /// <summary>
+  /// Native-lowering-only proof that this store was constructed by the
+  /// certified Mode 13h contiguous-pixel packer. Ordinary far pointers,
+  /// POKE and AT arrays never imply this marker just from their address.
+  /// It is emitted only after optimization and is not serialized as a
+  /// persistent, target-independent property.
+  /// </summary>
+  internal bool IsPackedMode13Write { get; set; }
 }
 
 /// <summary>
