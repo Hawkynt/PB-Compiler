@@ -1057,10 +1057,14 @@ public sealed partial class Assembler {
     this.EmitByte((byte)(0xC8 + register.Index()));
   }
 
+  internal int CodeAlignmentPaddingBytes { get; private set; }
+
   /// <summary>Pads with NOPs (0x90) to the next <paramref name="alignment"/>-byte boundary - safe to fall through or jump over.</summary>
   public void AlignCode(int alignment) {
+    var start = this.Position;
     while (this.Position % alignment != 0)
       this.EmitByte(0x90);
+    this.CodeAlignmentPaddingBytes += this.Position - start;
   }
 
   #endregion

@@ -21,6 +21,7 @@ public sealed partial class CodeGenerator {
   // signals separate so an artifact-level shortcut cannot satisfy the production-path gate.
   private readonly HashSet<string> _backendEmittedNames = new(StringComparer.OrdinalIgnoreCase);
   internal IReadOnlyCollection<string> BackendEmittedNamesForTesting => this._backendEmittedNames;
+  internal int CodeAlignmentPaddingForTesting => this._asm.CodeAlignmentPaddingBytes;
 
   // the routed frame of a SOURCE procedure whose IR signature an interprocedural pass rewrote. It is
   // the same IR-derived layout a generated definition gets, kept here because the declaration the

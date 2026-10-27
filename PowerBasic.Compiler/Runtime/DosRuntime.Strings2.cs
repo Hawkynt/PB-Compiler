@@ -1239,6 +1239,10 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Word(asm.Lbl("rt_execpb"), 8), Reg.DS);
     asm.Mov(Mem.Word(asm.Lbl("rt_execpb"), 10), Imm.OffsetOf(asm.Lbl("rt_fcb")));
     asm.Mov(Mem.Word(asm.Lbl("rt_execpb"), 12), Reg.DS);
+    // Snapshot the caller's actual policy, including explicit inline-DOS changes.
+    // These two words remain inside the SP saved around DOS EXEC.
+    this.EmitSaveUmbAllocationForExec(asm);
+    this.EmitSuspendUmbAllocationForExec(asm);
     asm.Mov(Reg.AX, Reg.SS);
     asm.Mov(Mem.Word(asm.Lbl("rt_sssave")), Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_spsave")), Reg.SP);
@@ -1258,6 +1262,8 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.SS, Reg.AX);
     asm.Mov(Reg.SP, Mem.Word(asm.Lbl("rt_spsave")));
     asm.Sti();
+
+    this.EmitResumeUmbAllocationAfterExec(asm);
 
     asm.MarkLabel(fail);
     asm.Pop(Reg.BP);

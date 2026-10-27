@@ -103,6 +103,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
   narrowing them to host `double` before emitting them
 - A `pb36` superset that adds language features while leaving existing programs behaving as they did
 - Runs on any 64-bit host; the output runs on real DOS or in DOSBox
+- DOS `CHAIN`/`SHELL` suspend private high-memory allocation preferences for child execution;
+  `SHELL` restores the caller's actual policy, and runtime cleanup preserves process exit codes
 - The same program also builds for Linux on x86-32 and x64 and for the Commodore 64, and prints
   there what its DOS build prints - arrays, records, files, `DIR$`, `PRINT USING`, error trapping,
   `DEF SEG`/`PEEK`/`POKE` and the rest; how each DOS idiom maps onto a flat machine is in
