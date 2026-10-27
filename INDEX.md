@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-27 06:23 UTC by index_codebase.py.
+Generated 2026-10-27 11:00 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1111 files, 9007 symbols.
+1113 files, 9008 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -11289,16 +11289,16 @@ with unrelated edits, so treat them as anchors, not gospel.
 - function `run()` — scripts/roundtrip-check.sh:17
 - function `check()` — scripts/roundtrip-check.sh:20
 
-### run-diff-tests.sh  `Shell, 376 lines`
+### run-diff-tests.sh  `Shell, 386 lines`
 > =============================================================================
-- function `run_dosbox` — scripts/run-diff-tests.sh:90
-- function `winpath` — scripts/run-diff-tests.sh:109
-- function `u16_at` — scripts/run-diff-tests.sh:122
-- function `u8_at()` — scripts/run-diff-tests.sh:124
-- function `exe_blocker()` — Why one staged oracle executable cannot run, or nothing when it can. Two cases — scripts/run-diff-tests.sh:134
-- function `conf_exes()` — Oracle executables a command template names, resolved from the D: mount. — scripts/run-diff-tests.sh:167
-- function `battery_blocker()` — Why a whole battery cannot run here, or nothing when it can. — scripts/run-diff-tests.sh:177
-- function `run_battery` — scripts/run-diff-tests.sh:203
+- function `run_dosbox` — scripts/run-diff-tests.sh:91
+- function `winpath` — scripts/run-diff-tests.sh:110
+- function `u16_at` — scripts/run-diff-tests.sh:123
+- function `u8_at()` — scripts/run-diff-tests.sh:125
+- function `exe_blocker()` — Why one staged oracle executable cannot run, or nothing when it can. Two cases — scripts/run-diff-tests.sh:135
+- function `conf_exes()` — Oracle executables a command template names, resolved from the D: mount. — scripts/run-diff-tests.sh:168
+- function `battery_blocker()` — Why a whole battery cannot run here, or nothing when it can. — scripts/run-diff-tests.sh:178
+- function `run_battery` — scripts/run-diff-tests.sh:206
 
 ### run-dos-tests.ps1  `PowerShell, 135 lines`
 > =============================================================================
@@ -11326,6 +11326,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 
 ## scripts/lib/
 
+### diff-diagnostics.sh  `Shell, 28 lines`
+> Preserve text evidence before the next differential case reuses its directory.
+- function `diff_capture_failure()` — scripts/lib/diff-diagnostics.sh:3
+
 ### dosbox.sh  `Shell, 147 lines`
 > Locating a DOSBox and starting it in a way that works headless.
 - function `_dosbox_starts_cleanly()` — Whether the emulator RAN A PROGRAM, established by making it write a file. — scripts/lib/dosbox.sh:66
@@ -11338,4 +11342,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - const `TOOLS` — scripts/lib/pds_layout.py:15
 - function `kind(path)` — Whether this executable runs under DOS, decided by its DOS stub. — scripts/lib/pds_layout.py:18
 - function `main(argv)` — scripts/lib/pds_layout.py:53
+
+## scripts/tests/
+
+### diff-diagnostics-test.sh  `Shell, 98 lines`
+- (no top-level symbols found)
 
