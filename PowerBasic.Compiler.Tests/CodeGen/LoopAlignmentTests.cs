@@ -8,12 +8,12 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// pb36 C2 loop-top alignment: under <c>$CPU 80486</c>/<c>80586</c> + <c>$OPTIMIZE SPEED</c> a hot loop
 /// top is NOP-padded to a 16-byte boundary (better instruction fetch / branch-target prefetch). The pad
 /// runs once on fall-through entry and is skipped by the back-edge, so it is output-invariant - verified
-/// here by the presence/absence of the NOP run and confirmed byte-identical by the differential harness.
+/// here through emitter-owned padding counts, not NOP-looking bytes inside operands or data.
 /// </summary>
 [TestFixture]
 public sealed class LoopAlignmentTests {
 
-  private static byte[] Compile(string source) {
+  private static (byte[] Image, int PaddingBytes) Compile(string source) {
     var unit = Parser.Parse(Lexer.Tokenize(source, "T.BAS", Dialect.Pb36), "T.BAS", Dialect.Pb36);
     var model = Binder.Bind(unit, Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, "bind: " + string.Join("; ", model.Errors));
@@ -21,7 +21,7 @@ public sealed class LoopAlignmentTests {
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, "codegen: " + string.Join("; ", generator.Errors));
     Assert.That(generator.BackendRoutedNames, Does.Contain("main"), "the alignment test must exercise routed code");
-    return exe;
+    return (exe, generator.CodeAlignmentPaddingForTesting);
   }
 
   // a CALL in the loop body keeps it off every register-resident / closed-form fast path,
@@ -31,16 +31,12 @@ public sealed class LoopAlignmentTests {
   private const string _LOOP =
     "DECLARE SUB Foo()\nDIM i%\nFOR i% = 1 TO 100\n CALL Foo\nNEXT\nEND\nSUB Foo() NOINLINE\nEND SUB\n";
 
-  private static int MaxNopRun(byte[] image) {
-    int best = 0, run = 0;
-    foreach (var b in image) {
-      run = b == 0x90 ? run + 1 : 0;
-      best = System.Math.Max(best, run);
-    }
-    return best;
+  [Test]
+  public void Compile_GivenNopValuedImmediate_ThenDoesNotCountItAsAlignment() {
+    var image = Compile("! MOV AX, 144\nEND\n");
+    Assert.That(image.Image, Does.Contain((byte)0x90), "the immediate deliberately contains the NOP byte value");
+    Assert.That(image.PaddingBytes, Is.Zero, "operand bytes are not alignment instructions");
   }
-
-  private static int NopCount(byte[] image) => image.Count(b => b == 0x90);
 
   [Test]
   public void Compile_GivenLoopWithCpu586AndSpeed_ThenLoopTopNopPadded() {
@@ -48,8 +44,8 @@ public sealed class LoopAlignmentTests {
     var aligned = Compile("$CPU 80586\n$OPTIMIZE SPEED\n" + _LOOP);
     var noSpeed = Compile("$CPU 80586\n" + _LOOP);
     Assert.Multiple(() => {
-      Assert.That(MaxNopRun(aligned), Is.GreaterThan(0), "the loop top is NOP-padded under 586 + SPEED");
-      Assert.That(NopCount(aligned), Is.GreaterThan(NopCount(noSpeed)), "alignment is a SPEED-gated tradeoff");
+      Assert.That(aligned.PaddingBytes, Is.GreaterThan(0), "the loop top is NOP-padded under 586 + SPEED");
+      Assert.That(aligned.PaddingBytes, Is.GreaterThan(noSpeed.PaddingBytes), "alignment is a SPEED-gated tradeoff");
     });
   }
 
@@ -58,6 +54,9 @@ public sealed class LoopAlignmentTests {
     // alignment is a 486+/586+ cache-line optimization; a 386 target keeps the loop unpadded
     var asm386 = Compile("$CPU 80386\n$OPTIMIZE SPEED\n" + _LOOP);
     var noCpu = Compile("$OPTIMIZE SPEED\n" + _LOOP);
-    Assert.That(NopCount(asm386), Is.EqualTo(NopCount(noCpu)), "no 486/586 -> no alignment pad");
+    Assert.Multiple(() => {
+      Assert.That(asm386.PaddingBytes, Is.Zero, "a 386 target must not request alignment padding");
+      Assert.That(noCpu.PaddingBytes, Is.Zero, "an 8086 target must not request alignment padding");
+    });
   }
 }

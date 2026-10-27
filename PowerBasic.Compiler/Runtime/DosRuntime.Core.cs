@@ -385,18 +385,7 @@ public sealed partial class DosRuntime {
 
   private void EmitExit(Assembler asm) {
     this.Exit = asm.MarkLabel("rt_exit");
-    if (this.EnableUmb) {
-      var noRestore = asm.DefineLabel();
-      asm.Cmp(Mem.Word(asm.Lbl("rt_umb_active")), (Imm)0);
-      asm.Je(noRestore);
-      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_umb_oldstrat")));
-      asm.Mov(Reg.AX, 0x5801);
-      asm.Int(0x21);
-      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_umb_oldlink")));
-      asm.Mov(Reg.AX, 0x5803);
-      asm.Int(0x21);
-      asm.MarkLabel(noRestore);
-    }
+    this.EmitRestoreUmbAllocationState(asm);
     asm.Mov(Reg.AH, 0x4C);
     asm.Int(0x21);
   }

@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-26 09:24 UTC by index_codebase.py.
+Generated 2026-10-27 06:23 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1109 files, 9003 symbols.
+1111 files, 9007 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -1441,6 +1441,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/EnvironFunctionTests.cs:5
 - class `EnvironFunctionTests` — ENVIRON$, which has shipped since it was written and had no test. — PowerBasic.Compiler.Tests/CodeGen/EnvironFunctionTests.cs:22
 
+### ExecAllocationStateTests.cs  `C#, 88 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/ExecAllocationStateTests.cs:4
+- class `ExecAllocationStateTests` — PowerBasic.Compiler.Tests/CodeGen/ExecAllocationStateTests.cs:6
+
 ### ExecutionTests.cs  `C#, 152 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/ExecutionTests.cs:5
 - class `ExecutionTests` — True end-to-end tests: AST -> binder -> code generator -> MZ EXE -> DOSBox. — PowerBasic.Compiler.Tests/CodeGen/ExecutionTests.cs:12
@@ -1673,7 +1677,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/LongSubjectPerfectHashTests.cs:5
 - class `LongSubjectPerfectHashTests` — O0100 over a LONG SELECT subject — the third and last of the dispatch passes that refused — PowerBasic.Compiler.Tests/CodeGen/LongSubjectPerfectHashTests.cs:27
 
-### LoopAlignmentTests.cs  `C#, 64 lines`
+### LoopAlignmentTests.cs  `C#, 63 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/LoopAlignmentTests.cs:4
 - class `LoopAlignmentTests` — pb36 C2 loop-top alignment: under $CPU 80486/80586 + $OPTIMIZE SPEED a hot loop — PowerBasic.Compiler.Tests/CodeGen/LoopAlignmentTests.cs:13
 
@@ -4207,7 +4211,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/Assembler.ImmediateOverloads.cs:1
 - class `Assembler` — Explicit integer overloads keep generated code unambiguous when the literal zero could otherwise — PowerBasic.Compiler/Asm/Assembler.ImmediateOverloads.cs:8
 
-### Assembler.Instructions.cs  `C#, 1135 lines`
+### Assembler.Instructions.cs  `C#, 1139 lines`
 - namespace `PowerBasic.Compiler.Asm` — PowerBasic.Compiler/Asm/Assembler.Instructions.cs:1
 - class `Assembler` — PowerBasic.Compiler/Asm/Assembler.Instructions.cs:2
 
@@ -5999,23 +6003,23 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(@try.Finally != null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.ArtifactSupport.cs:366
 - enum `ValueKind` — Temporary compatibility category for mixed artifact helpers still being reduced. It is not an — PowerBasic.Compiler/CodeGen/CodeGenerator.ArtifactSupport.cs:406
 
-### CodeGenerator.Backend.cs  `C#, 1274 lines`
+### CodeGenerator.Backend.cs  `C#, 1275 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:9
 - class `CodeGenerator` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:11
-- method `if(!X86CallAbi.TryDefinitionStackLayout(irFn, out var rewrittenLayout, …` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:354
-- method `if(!proc.IsExternal && proc.Body is not null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:382
-- method `for(var i = set.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:401
-- method `if(CalleeNames(fnOf(set[i])).FirstOrDefault(name => !routable.Contains(…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:402
-- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:445
-- method `if(this._backendMain is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:781
-- method `if(proc.Body is not { } body || (!ReferencesVariable(body, symbol.Name)…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:794
-- method `if(this._backendProcs.ContainsKey(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:797
-- method `var(arguments, site)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:849
-- method `if(arguments is null || !model.CallBindings.TryGetValue(site, out var c…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:854
-- method `foreach(var argument in arguments)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:856
-- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1040
-- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1048
-- method `if(operand is IrFarEntry { Target.IsDeclaration: false } farEntry)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1200
+- method `if(!X86CallAbi.TryDefinitionStackLayout(irFn, out var rewrittenLayout, …` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:355
+- method `if(!proc.IsExternal && proc.Body is not null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:383
+- method `for(var i = set.Count - 1; i >= 0; --i)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:402
+- method `if(CalleeNames(fnOf(set[i])).FirstOrDefault(name => !routable.Contains(…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:403
+- method `if(this._backendProcs.ContainsKey(proc) && CalleeNames(fn).FirstOrDefau…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:446
+- method `if(this._backendMain is null)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:782
+- method `if(proc.Body is not { } body || (!ReferencesVariable(body, symbol.Name)…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:795
+- method `if(this._backendProcs.ContainsKey(proc))` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:798
+- method `var(arguments, site)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:850
+- method `if(arguments is null || !model.CallBindings.TryGetValue(site, out var c…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:855
+- method `foreach(var argument in arguments)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:857
+- method `foreach(var symbol in procedure.Variables.Values)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1041
+- method `if(symbol.Storage == VariableStorage.Static && IrLowering.StaticGlobalN…` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1049
+- method `if(operand is IrFarEntry { Target.IsDeclaration: false } farEntry)` — PowerBasic.Compiler/CodeGen/CodeGenerator.Backend.cs:1201
 
 ### CodeGenerator.BackendGenerated.cs  `C#, 240 lines`
 - namespace `PowerBasic.Compiler.CodeGen` — PowerBasic.Compiler/CodeGen/CodeGenerator.BackendGenerated.cs:7
@@ -9588,7 +9592,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Capture.cs:2
 - class `DosRuntime` — Print CAPTURE, given labels so the IR path can reach it. — PowerBasic.Compiler/Runtime/DosRuntime.Capture.cs:32
 
-### DosRuntime.Chain.cs  `C#, 248 lines`
+### DosRuntime.Chain.cs  `C#, 249 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Chain.cs:2
 - class `DosRuntime` — CHAIN / RUN support. COMMON variables travel through the temp file — PowerBasic.Compiler/Runtime/DosRuntime.Chain.cs:18
 
@@ -9596,7 +9600,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.ConstantInstr.cs:2
 - class `DosRuntime` — PowerBasic.Compiler/Runtime/DosRuntime.ConstantInstr.cs:4
 
-### DosRuntime.Core.cs  `C#, 453 lines`
+### DosRuntime.Core.cs  `C#, 442 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Core.cs:3
 - class `DosRuntime` — Emits the DOS runtime kernel into the program image. Register conventions — PowerBasic.Compiler/Runtime/DosRuntime.Core.cs:26
 - method `InvalidOperationException($"runtime label {property.Name} was never assigned")` — PowerBasic.Compiler/Runtime/DosRuntime.Core.cs:327
@@ -9609,6 +9613,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 ### DosRuntime.Ems.cs  `C#, 308 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Ems.cs:2
 - class `DosRuntime` — HUGE (DOS 48h conventional memory) and VIRTUAL (EMS, int 67h) array support. — PowerBasic.Compiler/Runtime/DosRuntime.Ems.cs:17
+
+### DosRuntime.ExecutionState.cs  `C#, 89 lines`
+- namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.ExecutionState.cs:2
+- class `DosRuntime` — PowerBasic.Compiler/Runtime/DosRuntime.ExecutionState.cs:4
 
 ### DosRuntime.Extras.cs  `C#, 306 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Extras.cs:2
@@ -9699,7 +9707,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Strings.cs:3
 - class `DosRuntime` — Dynamic string runtime. Representation: a string value is a 2-byte handle, — PowerBasic.Compiler/Runtime/DosRuntime.Strings.cs:48
 
-### DosRuntime.Strings2.cs  `C#, 2267 lines`
+### DosRuntime.Strings2.cs  `C#, 2273 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Strings2.cs:2
 - class `DosRuntime` — String runtime, part 2: character-set scanning (INSTR ANY / VERIFY), — PowerBasic.Compiler/Runtime/DosRuntime.Strings2.cs:19
 
@@ -11281,16 +11289,16 @@ with unrelated edits, so treat them as anchors, not gospel.
 - function `run()` — scripts/roundtrip-check.sh:17
 - function `check()` — scripts/roundtrip-check.sh:20
 
-### run-diff-tests.sh  `Shell, 373 lines`
+### run-diff-tests.sh  `Shell, 376 lines`
 > =============================================================================
-- function `run_dosbox` — scripts/run-diff-tests.sh:87
-- function `winpath` — scripts/run-diff-tests.sh:106
-- function `u16_at` — scripts/run-diff-tests.sh:119
-- function `u8_at()` — scripts/run-diff-tests.sh:121
-- function `exe_blocker()` — Why one staged oracle executable cannot run, or nothing when it can. Two cases — scripts/run-diff-tests.sh:131
-- function `conf_exes()` — Oracle executables a command template names, resolved from the D: mount. — scripts/run-diff-tests.sh:164
-- function `battery_blocker()` — Why a whole battery cannot run here, or nothing when it can. — scripts/run-diff-tests.sh:174
-- function `run_battery` — scripts/run-diff-tests.sh:200
+- function `run_dosbox` — scripts/run-diff-tests.sh:90
+- function `winpath` — scripts/run-diff-tests.sh:109
+- function `u16_at` — scripts/run-diff-tests.sh:122
+- function `u8_at()` — scripts/run-diff-tests.sh:124
+- function `exe_blocker()` — Why one staged oracle executable cannot run, or nothing when it can. Two cases — scripts/run-diff-tests.sh:134
+- function `conf_exes()` — Oracle executables a command template names, resolved from the D: mount. — scripts/run-diff-tests.sh:167
+- function `battery_blocker()` — Why a whole battery cannot run here, or nothing when it can. — scripts/run-diff-tests.sh:177
+- function `run_battery` — scripts/run-diff-tests.sh:203
 
 ### run-dos-tests.ps1  `PowerShell, 135 lines`
 > =============================================================================

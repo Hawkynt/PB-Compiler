@@ -46,6 +46,21 @@ all eight compiled direct/round-trip, plain/optimized COM/EXE images matched the
 Staging but lost DOUBLE bits under classic DOSBox. Linux DOSBox-X preserved those bits with the
 runtime harness's `core=auto` profile. Output comparisons are not relaxed to hide this difference.
 
+## DOS execution-state coverage
+
+`ExecAllocationStateTests` executes COMMON self-handoff with plain/optimized COM and MZ images,
+including the automatic optimized container. It checks the complete `DIFF21.BAS` output and handoff
+consumption. Native child-exit tests require status 37 exactly and preserve the parent's allocation
+policy, including explicit first-fit/best-fit DOS changes made by inline assembly.
+
+On 2026-10-27, fresh DOSBox-X runs isolated an optimized COM failure to the runtime's startup
+high-first preference: changing only that operand restored both CHAIN passes. The runtime now
+suspends that private preference around EXEC, snapshots/restores the actual caller state around
+SHELL, and preserves AX while restoring DOS state on exit. Five fresh direct/automatic COM/MZ
+profiles and ten PB35/PB36 round-trip profiles then produced identical complete output;
+unoptimized image bytes were unchanged.
+This does not change container selection or complete failed-EXEC error mapping and constrained-memory
+placement coverage, which remain separate runtime work.
 
 ## Per-dialect batteries
 
