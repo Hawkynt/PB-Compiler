@@ -55,6 +55,18 @@ all eight compiled direct/round-trip, plain/optimized COM/EXE images matched the
 Staging but lost DOUBLE bits under classic DOSBox. Linux DOSBox-X preserved those bits with the
 runtime harness's `core=auto` profile. Output comparisons are not relaxed to hide this difference.
 
+Missing-output failures preserve the source, available text outputs, emulator log, configuration and
+guest-file names/sizes under a fresh `build/diff-failures/run.*/<dialect>/<case>/<lane>/` directory.
+The next case cannot overwrite this evidence. CI uploads these captures beside its test results;
+oracle executables, libraries, objects and arbitrary guest files are excluded. Logging stays outside
+the mounted guest directory so it cannot change file-enumeration results. Run
+`bash scripts/tests/diff-diagnostics-test.sh` to check failure retention and capture isolation.
+
+The 2026-10-27 CI run passed PB35/PB36's direct and round-trip COMMON handoff checks, all core tests
+and all completed numeric comparisons, but the genuine TB11 IDE timed out on `DIFF02.BAS`.
+Earlier runs timed out on `DIFF03.BAS` or completed both. This intermittent oracle failure remains
+unexplained; diagnostic capture is not a claimed fix, retry policy or relaxed comparison.
+
 ## DOS execution-state coverage
 
 `ExecAllocationStateTests` executes COMMON self-handoff with plain/optimized COM and MZ images,
