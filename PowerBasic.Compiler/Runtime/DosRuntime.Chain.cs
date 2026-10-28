@@ -213,6 +213,7 @@ public sealed partial class DosRuntime {
       asm.Mov(Mem.Word(asm.Lbl("rt_execpb"), 8), Reg.DS);
       asm.Mov(Mem.Word(asm.Lbl("rt_execpb"), 10), Imm.OffsetOf(asm.Lbl("rt_fcb")));
       asm.Mov(Mem.Word(asm.Lbl("rt_execpb"), 12), Reg.DS);
+      this.EmitSuspendUmbAllocationForExec(asm);
       asm.Mov(Reg.AX, Reg.SS);
       asm.Mov(Mem.Word(asm.Lbl("rt_sssave")), Reg.AX);
       asm.Mov(Mem.Word(asm.Lbl("rt_spsave")), Reg.SP);

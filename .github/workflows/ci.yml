@@ -139,6 +139,10 @@ jobs:
                       message = ' '.join(m.text.split())[:600]
                   print(f"::error::FAILED {r.get('testName')}: {message}")
 
+      - name: Verify differential diagnostic isolation
+        if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/tests/diff-diagnostics-test.sh
+
       # REQUIRED, DOSBox-free: every corpus program (pb35 + pb36 + all dialect
       # batteries) is emit-basic'd back to pb35 source and recompiled under the
       # pb35 dialect - proving the back-emitter always produces compile-clean,
@@ -159,12 +163,16 @@ jobs:
       # genuine oracle compilers, comparing RESULT.TXT byte for byte. The oracle
       # toolchains ride in the repo as AES-encrypted tarballs (tools/*-toolchain.tar.enc);
       # the PB_TOOLCHAIN_KEY secret unlocks them. Skips cleanly without the secret.
+      # DOSBox 0.74's double-based FPU loses MBF64/QUAD low bits and changes QB
+      # transcendental results. DOSBox-X preserves the x87 precision headlessly;
+      # keep classic DOSBox for the faster ordinary core tier above.
       - name: Differential oracle battery
         if: matrix.os == 'ubuntu-latest'
-        continue-on-error: true                   # advisory: emulator quirks must not block merges
         env:
           PB_TOOLCHAIN_KEY: ${{ secrets.PB_TOOLCHAIN_KEY }}
-        run: bash scripts/run-diff-tests.sh
+        run: |
+          oracleEmulator="$(command -v dosbox-x)"
+          DOSBOX_EXE="$oracleEmulator" bash scripts/run-diff-tests.sh
 
       # Performance tier - advisory by definition (STANDARD.md: wall-clock
       # assertions never block a merge). TestCategory, not Category: the latter
@@ -183,7 +191,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.os }}
-          path: '**/TestResults/*.trx'
+          path: |
+            **/TestResults/*.trx
+            build/diff-failures/**
           if-no-files-found: ignore
 
   # A text lint over README.md against the house convention — no build, no toolchain — so it

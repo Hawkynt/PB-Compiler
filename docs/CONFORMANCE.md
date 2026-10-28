@@ -10,7 +10,7 @@ parameter combinations, invalid structures, and cross-dialect negative cases.
 |---|---|---|
 | Statement surface | `StatementSurface` and `StatementSurfaceCensusTests` | Every isolated statement/parameter form is accepted exactly in the dialects that provide it. Rejection must be a lexer, parser, preprocessor, or binder diagnostic—not an internal exception. |
 | Structurally invalid source | `InvalidSyntaxSurfaceTests` | Syntax belonging to no dialect is rejected cleanly under every advertised dialect. |
-| Compiler execution | ordinary codegen/IR/DOSBox tests | Both the direct and routed x86-16 paths produce an executable with the expected behavior. |
+| Compiler execution | ordinary codegen/IR/DOSBox tests | The mandatory multi-stage IR/x86-16 path produces an executable with the expected behavior, without direct-emitter fallback. |
 | Genuine syntax oracle | `StatementSurfaceOracleMaterialTests` and `scripts/run-syntax-oracle-tests.sh` | Vintage DOS compilers independently accept or reject each generated source file. Disagreements are written to `build/conformance/syntax/oracle-results.tsv`. |
 | Genuine runtime oracle | `tests/diff/<dialect>` and `scripts/run-diff-tests.sh` | The generated executable and original compiler/interpreter produce identical observable output. |
 
@@ -33,6 +33,46 @@ MAX_CASES=25 DIALECTS=qb45 scripts/run-syntax-oracle-tests.sh
 The encrypted vintage toolchains are unlocked with `PB_TOOLCHAIN_KEY`, exactly as for the runtime
 differential harness. Missing toolchains are recorded as skips rather than guessed results.
 
+## Runtime-oracle precision
+
+CI runs the differential battery with headless DOSBox-X; a disagreement fails the required Linux
+job. The ordinary core tests retain classic DOSBox for speed. To select the same oracle emulator
+locally, run `DOSBOX_EXE="$(command -v dosbox-x)" bash scripts/run-diff-tests.sh`.
+
+Emulator precision is part of the measurement. DOSBox 0.74's double-based FPU loses bits from
+MBF64 cells and large QUAD values, and changes some QB transcendental results. On 2026-10-26,
+fresh GW-BASIC 3.23 captures of `tests/diff/gw/MBFABS.BAS` agreed between classic DOSBox and Staging;
+all eight compiled direct/round-trip, plain/optimized COM/EXE images matched the capture under
+Staging but lost DOUBLE bits under classic DOSBox. Linux DOSBox-X preserved those bits with the
+runtime harness's `core=auto` profile. Output comparisons are not relaxed to hide this difference.
+
+Missing-output failures preserve the source, available text outputs, emulator log, configuration and
+guest-file names/sizes under a fresh `build/diff-failures/run.*/<dialect>/<case>/<lane>/` directory.
+The next case cannot overwrite this evidence. CI uploads these captures beside its test results;
+oracle executables, libraries, objects and arbitrary guest files are excluded. Logging stays outside
+the mounted guest directory so it cannot change file-enumeration results. Run
+`bash scripts/tests/diff-diagnostics-test.sh` to check failure retention and capture isolation.
+
+The 2026-10-27 CI run passed PB35/PB36's direct and round-trip COMMON handoff checks, all core tests
+and all completed numeric comparisons, but the genuine TB11 IDE timed out on `DIFF02.BAS`.
+Earlier runs timed out on `DIFF03.BAS` or completed both. This intermittent oracle failure remains
+unexplained; diagnostic capture is not a claimed fix, retry policy or relaxed comparison.
+
+## DOS execution-state coverage
+
+`ExecAllocationStateTests` executes COMMON self-handoff with plain/optimized COM and MZ images,
+including the automatic optimized container. It checks the complete `DIFF21.BAS` output and handoff
+consumption. Native child-exit tests require status 37 exactly and preserve the parent's allocation
+policy, including explicit first-fit/best-fit DOS changes made by inline assembly.
+
+On 2026-10-27, fresh DOSBox-X runs isolated an optimized COM failure to the runtime's startup
+high-first preference: changing only that operand restored both CHAIN passes. The runtime now
+suspends that private preference around EXEC, snapshots/restores the actual caller state around
+SHELL, and preserves AX while restoring DOS state on exit. Five fresh direct/automatic COM/MZ
+profiles and ten PB35/PB36 round-trip profiles then produced identical complete output;
+unoptimized image bytes were unchanged.
+This does not change container selection or complete failed-EXEC error mapping and constrained-memory
+placement coverage, which remain separate runtime work.
 
 ## Per-dialect batteries
 

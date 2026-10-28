@@ -103,6 +103,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
   narrowing them to host `double` before emitting them
 - A `pb36` superset that adds language features while leaving existing programs behaving as they did
 - Runs on any 64-bit host; the output runs on real DOS or in DOSBox
+- DOS `CHAIN`/`SHELL` suspend private high-memory allocation preferences for child execution;
+  `SHELL` restores the caller's actual policy, and runtime cleanup preserves process exit codes
 - The same program also builds for Linux on x86-32 and x64 and for the Commodore 64, and prints
   there what its DOS build prints - arrays, records, files, `DIR$`, `PRINT USING`, error trapping,
   `DEF SEG`/`PEEK`/`POKE` and the rest; how each DOS idiom maps onto a flat machine is in
@@ -996,6 +998,10 @@ dotnet test
 
 The oracle harness additionally needs DOSBox: it runs this compiler's output and the original
 compiler's output side by side and diffs what the programs actually do.
+CI uses headless DOSBox-X for these comparisons and treats disagreements as failures. Classic
+DOSBox 0.74 narrows x87 intermediates to IEEE double and cannot verify MBF64/QUAD low bits.
+Missing-output failures retain per-case text diagnostics in `build/diff-failures/` and CI artifacts;
+proprietary executables and libraries are not copied into those captures.
 
 ## 🤝 Contributing
 

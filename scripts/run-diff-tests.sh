@@ -33,6 +33,9 @@
 # qb45 "failures" are not ours: they are LOG and EXP results a digit off in the
 # EMULATOR's x87, and they pass on staging. Vanilla is ~4x faster and still fine
 # for a quick check - just do not read its 8 failures as a fidelity gap.
+# CI uses headless DOSBox-X for full-precision comparisons and makes this lane
+# required. MBFABS also proves the distinction through raw MBF64 bytes: classic
+# DOSBox loses the same low bits in direct and BASIC-round-trip executables.
 #
 # Staging needs an X server (see scripts/lib/dosbox.sh); DOSBOX_EXE is still all a
 # caller sets. Those 2 remaining skips were pds70 and pds71, and BOTH NOW RUN: the
@@ -48,6 +51,7 @@ cd "$(dirname "$0")/.."
 
 # shellcheck source=scripts/lib/dosbox.sh
 . "$(dirname "$0")/lib/dosbox.sh"
+. "$(dirname "$0")/lib/diff-diagnostics.sh"
 
 DOSBOX="${DOSBOX_EXE:-}"
 if [ -z "$DOSBOX" ]; then
@@ -90,7 +94,7 @@ run_dosbox() { # $1 = conf file, $2 = sentinel dir
   local conf
   conf=$(dosbox_conf_path "$1")
   # shellcheck disable=SC2086  # DOSBOX_PREFIX is a command prefix and must split
-  setsid $DOSBOX_PREFIX "$DOSBOX" -conf "$conf" >/dev/null 2>&1 &
+  setsid $DOSBOX_PREFIX "$DOSBOX" -conf "$conf" > "${1}.log" 2>&1 &
   local pid=$!
   for _ in $(seq 1 "${DOSBOX_TICKS:-600}"); do
     { [ -f "$2/DONE.TXT" ] || ! kill -0 "$pid" 2>/dev/null; } && break
@@ -197,6 +201,8 @@ battery_blocker() { # $1 = tests/diff/<dialect>, $2 = oracle dir
 }
 
 fail=0
+mkdir -p build/diff-failures
+diagnosticsRoot=$(mktemp -d "$PWD/build/diff-failures/run.XXXXXX")
 
 run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. = test files
   local oracle="$1" dialect="$2"
@@ -255,6 +261,8 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
     } > "build/diff/$label/real.conf"
     if ! run_dosbox "build/diff/$label/real.conf" "build/diff/$label/real" || [ ! -f "build/diff/$label/real/RESULT.TXT" ]; then
       echo "FAIL  $label/$name (real PBC produced no RESULT.TXT)"
+      diff_capture_failure "$diagnosticsRoot/$label/$name/oracle" \
+        "build/diff/$label/real" "build/diff/$label/real.conf"
       [ -f "build/diff/$label/real/PBCOUT.TXT" ] && tail -5 "build/diff/$label/real/PBCOUT.TXT" | sed 's/^/      /'
       fail=1; continue
     fi
@@ -281,7 +289,10 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
       echo "exit"
     } > "build/diff/$label/ours.conf"
     if ! run_dosbox "build/diff/$label/ours.conf" "build/diff/$label/ours" || [ ! -f "build/diff/$label/ours/RESULT.TXT" ]; then
-      echo "FAIL  $label/$name (our EXE produced no RESULT.TXT)"; fail=1; continue
+      echo "FAIL  $label/$name (our EXE produced no RESULT.TXT)"
+      diff_capture_failure "$diagnosticsRoot/$label/$name/direct" \
+        "build/diff/$label/ours" "build/diff/$label/ours.conf"
+      fail=1; continue
     fi
 
     # --- compare -------------------------------------------------------------
@@ -313,7 +324,9 @@ run_battery() { # $1 = oracle dir, $2 = dialect flag ("" = default pb35), $3.. =
         echo "FAIL  $label/$name (round-trip pb35 recompile)"; sed 's/^/      /' "$od/rtcomp.txt"; fail=1; continue
       fi
       if ! run_dosbox "build/diff/$label/ours.conf" "$od" || [ ! -f "$od/RESULT.TXT" ]; then
-        echo "FAIL  $label/$name (round-trip EXE produced no RESULT.TXT)"; fail=1; continue
+        echo "FAIL  $label/$name (round-trip EXE produced no RESULT.TXT)"
+        diff_capture_failure "$diagnosticsRoot/$label/$name/roundtrip" "$od" "build/diff/$label/ours.conf"
+        fail=1; continue
       fi
       if diff -q <(tr -d '\r' < "build/diff/$label/real/RESULT.TXT") <(tr -d '\r' < "$od/RESULT.TXT") >/dev/null; then
         echo "PASS  $label/$name (round-trip pb35 identical to genuine $label)"
