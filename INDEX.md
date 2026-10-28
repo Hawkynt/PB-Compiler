@@ -1,6 +1,6 @@
 # Codebase Index
 
-Generated 2026-10-28 05:35 UTC by index_codebase.py.
+Generated 2026-10-28 06:22 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
@@ -4127,7 +4127,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Add` — PowerBasic.Compiler.Tests/Syntax/StatementSurface.cs:848
 - method `NumberPhysicalLines` — PowerBasic.Compiler.Tests/Syntax/StatementSurface.cs:887
 
-### StatementSurfaceBackendTests.cs  `C#, 73 lines`
+### StatementSurfaceBackendTests.cs  `C#, 79 lines`
 - namespace `PowerBasic.Compiler.Tests.Syntax` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceBackendTests.cs:5
 - class `StatementSurfaceBackendTests` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceBackendTests.cs:7
 - method `foreach(var emitCom in new[] { false, true })` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceBackendTests.cs:13

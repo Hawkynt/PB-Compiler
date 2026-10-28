@@ -1004,7 +1004,8 @@ compiler's output side by side and diffs what the programs actually do.
 CI uses headless DOSBox-X for these comparisons and treats disagreements as failures. Classic
 DOSBox 0.74 narrows x87 intermediates to IEEE double and cannot verify MBF64/QUAD low bits.
 Core tests and oracle comparisons run in parallel; the required Linux status accepts only success
-from both groups, including the complete Windows/Linux core matrix.
+from both. The corpus-wide statement-backend matrix runs in both required core jobs, not the fast
+smoke tier; its lightweight catalog-completeness check still runs in smoke.
 Missing-output failures retain per-case text diagnostics in `build/diff-failures/` and CI artifacts;
 proprietary executables and libraries are not copied into those captures.
 

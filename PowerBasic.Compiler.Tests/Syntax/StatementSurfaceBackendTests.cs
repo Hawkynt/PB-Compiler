@@ -52,10 +52,16 @@ public sealed class StatementSurfaceBackendTests {
   }
 
   [Test]
-  public void Catalog_GivenDeclaredDialects_ThenIncludesEveryCompilerDialect() =>
+  public void Catalog_GivenDeclaredDialects_ThenIncludesEveryCompilerDialect() {
     Assert.That(StatementSurface.AllDialects, Is.EquivalentTo(Enum.GetValues<Dialect>()));
+    var matrix = typeof(StatementSurfaceBackendTests).GetMethod(
+      nameof(Compile_GivenEveryAcceptedStatementForm_ThenEmitsOnlyVerifiedLowIrBodies));
+    Assert.That(matrix!.GetCustomAttributes(false).OfType<CategoryAttribute>().Select(category => category.Name),
+      Does.Contain("Slow"), "the corpus-wide matrix belongs in the full gate, not the fast smoke tier");
+  }
 
   [TestCaseSource(nameof(GetConfigurations))]
+  [Category("Slow")]
   public void Compile_GivenEveryAcceptedStatementForm_ThenEmitsOnlyVerifiedLowIrBodies(
       Dialect dialect, bool optimize, bool emitCom) {
     var forms = StatementSurface.All.Where(form => StatementSurface.ShouldAccept(form, dialect)).ToArray();

@@ -22,6 +22,9 @@ external link declarations are not fallback bodies. A retained main body must ac
 an empty emitted-body list cannot satisfy that check. The catalog must list every declared dialect.
 This is compilation coverage of the catalog, not execution coverage of every feature combination,
 intrinsic overload, calling convention or runtime boundary; those still need focused oracle tests.
+The 76 corpus-wide backend configurations carry `Slow` metadata: the fast smoke tier excludes them,
+while both required core jobs include them. The cheap catalog-completeness test remains in smoke and
+guards that classification. No core filter, assertion or workflow timeout is relaxed.
 
 The syntax-oracle runner deliberately skips BASICA, GW-BASIC, and QBasic. They have no compile step,
 and interpreted BASIC can defer syntax checking until a statement executes; treating “the
