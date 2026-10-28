@@ -64,7 +64,7 @@ jobs:
           if-no-files-found: error
 
   test:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.os == 'ubuntu-latest' && 'Linux core' || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -143,6 +143,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: bash scripts/tests/diff-diagnostics-test.sh
 
+      - name: Verify required-result gate
+        if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/tests/ci-result-gate-test.sh
+
       # REQUIRED, DOSBox-free: every corpus program (pb35 + pb36 + all dialect
       # batteries) is emit-basic'd back to pb35 source and recompiled under the
       # pb35 dialect - proving the back-emitter always produces compile-clean,
@@ -158,21 +162,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true                   # advisory: emulator quirks must not block merges
         run: bash scripts/run-dos-tests.sh
-
-      # Differential battery: compile each tests/diff/*.BAS with both pbc and the
-      # genuine oracle compilers, comparing RESULT.TXT byte for byte. The oracle
-      # toolchains ride in the repo as AES-encrypted tarballs (tools/*-toolchain.tar.enc);
-      # the PB_TOOLCHAIN_KEY secret unlocks them. Skips cleanly without the secret.
-      # DOSBox 0.74's double-based FPU loses MBF64/QUAD low bits and changes QB
-      # transcendental results. DOSBox-X preserves the x87 precision headlessly;
-      # keep classic DOSBox for the faster ordinary core tier above.
-      - name: Differential oracle battery
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          PB_TOOLCHAIN_KEY: ${{ secrets.PB_TOOLCHAIN_KEY }}
-        run: |
-          oracleEmulator="$(command -v dosbox-x)"
-          DOSBOX_EXE="$oracleEmulator" bash scripts/run-diff-tests.sh
 
       # Performance tier - advisory by definition (STANDARD.md: wall-clock
       # assertions never block a merge). TestCategory, not Category: the latter
@@ -191,10 +180,62 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.os }}
-          path: |
-            **/TestResults/*.trx
-            build/diff-failures/**
+          path: '**/TestResults/*.trx'
           if-no-files-found: ignore
+
+  # Independent execution prevents package installation, the full compiler
+  # matrix and the vintage batteries from sharing a single 90-minute budget.
+  oracle:
+    name: DOS runtime oracle
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install precise DOSBox
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dosbox-x
+          echo "SDL_VIDEODRIVER=dummy" >> "$GITHUB_ENV"
+
+      # Keep the complete comparison command and its secret scope unchanged.
+      # Classic DOSBox cannot verify MBF64/QUAD low bits or QB transcendentals.
+      - name: Differential oracle battery
+        env:
+          PB_TOOLCHAIN_KEY: ${{ secrets.PB_TOOLCHAIN_KEY }}
+        run: |
+          oracleEmulator="$(command -v dosbox-x)"
+          DOSBOX_EXE="$oracleEmulator" bash scripts/run-diff-tests.sh
+
+      - name: Upload differential diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: differential-oracle-diagnostics
+          path: build/diff-failures/**
+          if-no-files-found: ignore
+
+  # Preserve the protected check name. A skipped or cancelled dependency must
+  # never satisfy it; always() lets the guard report failure rather than skip.
+  linux-required:
+    name: ubuntu-latest
+    needs: [test, oracle]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require complete core and oracle success
+        env:
+          CORE_RESULT: ${{ needs.test.result }}
+          ORACLE_RESULT: ${{ needs.oracle.result }}
+        run: bash scripts/require-ci-success.sh "$CORE_RESULT" "$ORACLE_RESULT"
 
   # A text lint over README.md against the house convention — no build, no toolchain — so it
   # runs beside the rest rather than inside it and cannot mask them.

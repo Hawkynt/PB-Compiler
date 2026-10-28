@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-27 11:14 UTC by index_codebase.py.
+Generated 2026-10-28 05:35 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1114 files, 9011 symbols.
+1116 files, 9012 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -11289,6 +11289,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 > =============================================================================
 - function `warn_wrong_build()` — Warn about executables that cannot serve as a DOS oracle. This is where pds70 and — scripts/pack-toolchains.sh:44
 
+### require-ci-success.sh  `Shell, 19 lines`
+- (no top-level symbols found)
+
 ### roundtrip-check.sh  `Shell, 59 lines`
 > Host-side round-trip gate (no DOSBox): for every program, emit-basic under its
 - function `run()` — scripts/roundtrip-check.sh:17
@@ -11349,6 +11352,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - function `main(argv)` — scripts/lib/pds_layout.py:53
 
 ## scripts/tests/
+
+### ci-result-gate-test.sh  `Shell, 35 lines`
+- function `expectStatus` — scripts/tests/ci-result-gate-test.sh:7
 
 ### diff-diagnostics-test.sh  `Shell, 98 lines`
 - (no top-level symbols found)

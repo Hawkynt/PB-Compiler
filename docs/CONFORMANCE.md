@@ -44,9 +44,18 @@ differential harness. Missing toolchains are recorded as skips rather than guess
 
 ## Runtime-oracle precision
 
-CI runs the differential battery with headless DOSBox-X; a disagreement fails the required Linux
-job. The ordinary core tests retain classic DOSBox for speed. To select the same oracle emulator
+CI runs the differential battery with headless DOSBox-X in an independent job. The protected
+`ubuntu-latest` status requires both that job and the complete Windows/Linux core matrix to succeed;
+failure, cancellation, skipping or a missing result cannot satisfy it. Both execution jobs retain
+their existing 90-minute limits. The ordinary core tests retain classic DOSBox for speed.
+To select the same oracle emulator
 locally, run `DOSBOX_EXE="$(command -v dosbox-x)" bash scripts/run-diff-tests.sh`.
+
+Keeping the lanes parallel avoids sharing one budget between dependency installation, the full
+compiler matrix and the vintage batteries. The previous combined job reached its 90-minute limit
+after a 23-minute installation and 32-minute core run, interrupting otherwise passing comparisons.
+`bash scripts/tests/ci-result-gate-test.sh` checks every pair of job outcomes and malformed inputs;
+the aggregate runs even after a dependency fails so it reports failure rather than a skipped check.
 
 Emulator precision is part of the measurement. DOSBox 0.74's double-based FPU loses bits from
 MBF64 cells and large QUAD values, and changes some QB transcendental results. On 2026-10-26,
