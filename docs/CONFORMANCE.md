@@ -74,10 +74,16 @@ oracle executables, libraries, objects and arbitrary guest files are excluded. L
 the mounted guest directory so it cannot change file-enumeration results. Run
 `bash scripts/tests/diff-diagnostics-test.sh` to check failure retention and capture isolation.
 
-The 2026-10-27 CI run passed PB35/PB36's direct and round-trip COMMON handoff checks, all core tests
-and all completed numeric comparisons, but the genuine TB11 IDE timed out on `DIFF02.BAS`.
-Earlier runs timed out on `DIFF03.BAS` or completed both. This intermittent oracle failure remains
-unexplained; diagnostic capture is not a claimed fix, retry policy or relaxed comparison.
+CI runs on 2026-10-27/28 intermittently timed out in the original PB21/TB11 IDEs before producing an
+executable. A local TB11 diagnostic frame from an unsuccessful run showed the filename dialog.
+Both original tools accept `T.BAS` directly as an argument, so their drivers now avoid timed filename
+entry. On 2026-10-29, original TB 1.1 and PB 2.10f compiled the captured failing inputs through this
+path; complete outputs were byte-identical to successful legacy-driver captures. The initial wait,
+remaining key pacing, deadlines and comparisons are unchanged. `OracleIdeInputTests` guards the
+autoload contract. This removes the observed dialog dependency, not every possible AUTOTYPE race;
+the underlying missing/mistimed-key cause remains unproven and missing outputs still fail the gate.
+The 2026-10-29 runtime run also captured a TB11 stall with `T.EXE` already present: returning from
+the IDE to execute it remains a separate automation risk, not an output disagreement or a skip.
 
 ## DOS execution-state coverage
 
