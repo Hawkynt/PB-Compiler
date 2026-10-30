@@ -87,6 +87,20 @@ the IDE to execute it remains a separate automation risk, not an output disagree
 
 ## DOS execution-state coverage
 
+`ScreenModeReentryTests` checks same-mode pixel/text retention and clearing after real mode changes
+in plain/optimized COM and MZ images for PB36, QB45 and GW-BASIC. It exercises every graphics mode
+currently mapped by the runtime (the CGA modes for GW), plus text memory read with `PEEK`.
+`SCREENRE.BAS` adds genuine PB35/PB36, QB45 and GW differential cases. On 2026-10-28, complete QB 4.50
+and GW-BASIC 3.23 captures under DOSBox-X 2024.03.01 preserved both pixels and text on reentry and
+cleared pixels after mode changes; the native QB compile reported zero severe errors.
+[Borland's Turbo BASIC Owner's Handbook (1987)](https://www.dosdays.co.uk/media/programming/turbo_basic/Borland_Turbo_BASIC_Owners_Handbook_1987.pdf),
+p. 333, also specifies that selecting the current mode does nothing. The runtime reads the BIOS mode rather than
+assuming cached software state. Optional SCREEN arguments, unsupported-mode error behavior,
+graphics cursor resets and complete VIEW/WINDOW semantics remain separate work.
+The CPU test model also covers mode 04h BIOS pixel reads/writes, colour masking and XOR, checked
+against DOSBox, and rejects out-of-range coordinates. This is BIOS-service coverage, not a complete
+CGA framebuffer model; the genuine DOSBox and vintage-oracle lanes remain independent.
+
 `ExecAllocationStateTests` executes COMMON self-handoff with plain/optimized COM and MZ images,
 including the automatic optimized container. It checks the complete `DIFF21.BAS` output and handoff
 consumption. Native child-exit tests require status 37 exactly and preserve the parent's allocation

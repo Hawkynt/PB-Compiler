@@ -96,6 +96,8 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - IR console-state coalescing removes unobserved repeated `CLS`, identical constant `SCREEN` requests,
   and covered, proven-valid `LOCATE`
   calls while preserving observers, invalid coordinates, and potentially failing mode changes
+- DOS same-mode `SCREEN` requests preserve pixels and text even without optimization; actual mode
+  changes still clear video memory, with native QuickBASIC/GW-BASIC differential coverage
 - `ABS(EXT)` preserves the full x87 significand and exponent, including signed zero and subnormal values;
   GW/BASICA `ABS` also retains MBF range and precision for stored values, literals and expressions;
   `SGN` compares decoded MBF values as floating-point operands rather than rejecting their storage type
