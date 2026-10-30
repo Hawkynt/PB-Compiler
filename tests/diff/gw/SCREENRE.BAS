@@ -1,0 +1,18 @@
+10 REM Same-mode SCREEN preserves video memory; actual mode changes still clear it.
+20 OPEN "RESULT.TXT" FOR OUTPUT AS #1
+30 SCREEN 1
+40 PSET (10,20),1
+50 PRINT #1,"before";POINT(10,20)
+60 SCREEN 1
+70 PRINT #1,"same";POINT(10,20)
+80 SCREEN 0
+90 SCREEN 1
+100 PRINT #1,"changed";POINT(10,20)
+110 SCREEN 0
+120 DEF SEG = &HB800
+130 POKE 0,90
+140 PRINT #1,"text-before";PEEK(0)
+150 SCREEN 0
+160 PRINT #1,"text-same";PEEK(0)
+170 CLOSE #1
+180 SYSTEM

@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-30 07:11 UTC by index_codebase.py.
+Generated 2026-10-30 07:41 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1118 files, 9016 symbols.
+1120 files, 9022 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -308,7 +308,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `Show(string text, int from, int at)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:209
 - method `OneLine(string text, int limit)` — PowerBasic.Compiler.Tests/Backend/BackendCorpusDifferentialTests.cs:221
 
-### BackendCoverageTests.cs  `C#, 1049 lines`
+### BackendCoverageTests.cs  `C#, 1055 lines`
 - namespace `PowerBasic.Compiler.Tests.Backend` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:9
 - class `BackendCoverageTests` — How much of the real corpus the in-house x86-16 back end can actually compile, and - for — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:44
 - record `Census` — PowerBasic.Compiler.Tests/Backend/BackendCoverageTests.cs:83
@@ -2202,6 +2202,12 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `SCREEN` — PowerBasic.Compiler.Tests/CodeGen/ScreenFunctionTests.cs:94
 - method `SCREEN` — PowerBasic.Compiler.Tests/CodeGen/ScreenFunctionTests.cs:107
 
+### ScreenModeReentryTests.cs  `C#, 62 lines`
+- namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/ScreenModeReentryTests.cs:5
+- class `ScreenModeReentryTests` — PowerBasic.Compiler.Tests/CodeGen/ScreenModeReentryTests.cs:7
+- method `foreach(var isCom in new[] { false, true })` — PowerBasic.Compiler.Tests/CodeGen/ScreenModeReentryTests.cs:14
+- method `TestCaseData(dialect, isOptimized, isCom)` — PowerBasic.Compiler.Tests/CodeGen/ScreenModeReentryTests.cs:15
+
 ### SearchAlgorithmSelectionTests.cs  `C#, 78 lines`
 - namespace `PowerBasic.Compiler.Tests.CodeGen` — PowerBasic.Compiler.Tests/CodeGen/SearchAlgorithmSelectionTests.cs:4
 - class `SearchAlgorithmSelectionTests` — PowerBasic.Compiler.Tests/CodeGen/SearchAlgorithmSelectionTests.cs:6
@@ -2546,11 +2552,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `InvalidOperationException($"BRK at ${at:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu6502.cs:448
 - method `InvalidOperationException($"undocumented opcode ${opcode:X2} at ${at:X4}")` — PowerBasic.Compiler.Tests/Exec/Cpu6502.cs:450
 
-### Cpu8086.Video.cs  `C#, 33 lines`
+### Cpu8086.Video.cs  `C#, 35 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:1
 - class `Cpu8086` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:2
 - method `Cpu8086Exception($"BIOS pixel service in unmodelled mode {this._videoMode:X2}h")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:11
-- method `Cpu8086Exception("out-of-range BIOS pixel access is not modelled")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:14
+- method `Cpu8086Exception("out-of-range BIOS pixel access is not modelled")` — PowerBasic.Compiler.Tests/Exec/Cpu8086.Video.cs:15
 
 ### Cpu8086.X87Software.cs  `C#, 81 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086.X87Software.cs:4
@@ -2651,6 +2657,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `for(var column = 0; column < _SCREEN_COLUMNS; ++column)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2403
 - method `while(this._cursorColumn % 8 != 0)` — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2435
 - class `Cpu8086Exception` — Something the interpreter will not guess at: an unimplemented opcode, an unhandled DOS call, a runa… — PowerBasic.Compiler.Tests/Exec/Cpu8086.cs:2505
+
+### Cpu8086CgaPixelTests.cs  `C#, 48 lines`
+- namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086CgaPixelTests.cs:3
+- class `Cpu8086CgaPixelTests` — PowerBasic.Compiler.Tests/Exec/Cpu8086CgaPixelTests.cs:5
 
 ### Cpu8086X87PrecisionTests.cs  `C#, 99 lines`
 - namespace `PowerBasic.Compiler.Tests.Exec` — PowerBasic.Compiler.Tests/Exec/Cpu8086X87PrecisionTests.cs:3
@@ -9673,10 +9683,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Memory.cs:2
 - class `DosRuntime` — Raw memory operations shared by UDTs, arrays, and fixed-width storage. — PowerBasic.Compiler/Runtime/DosRuntime.Memory.cs:6
 
-### DosRuntime.Misc.cs  `C#, 686 lines`
+### DosRuntime.Misc.cs  `C#, 702 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:2
 - class `DosRuntime` — Console, keyboard, timing and conversion helpers. Conventions: — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:17
-- method `Map(int pb, int bios)` — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:389
+- method `Map(int pb, int bios)` — PowerBasic.Compiler/Runtime/DosRuntime.Misc.cs:391
 
 ### DosRuntime.Packed.cs  `C#, 143 lines`
 - namespace `PowerBasic.Compiler.Runtime` — PowerBasic.Compiler/Runtime/DosRuntime.Packed.cs:2

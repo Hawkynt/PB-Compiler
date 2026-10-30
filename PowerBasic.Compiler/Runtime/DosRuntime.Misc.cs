@@ -386,16 +386,19 @@ public sealed partial class DosRuntime {
     {
       // AX = PB SCREEN number -> BIOS video mode (QB-compatible mapping)
       var set = asm.DefineLabel();
+      var mapped = asm.DefineLabel();
+      var done = asm.DefineLabel();
       void Map(int pb, int bios) {
         var next = asm.DefineLabel();
         asm.Cmp(Reg.AX, pb);
         asm.Jne(next);
         asm.Mov(Reg.AX, bios);
-        asm.Jmp(set);
+        asm.Jmp(mapped);
         asm.MarkLabel(next);
       }
       asm.Push(Reg.AX);
       asm.Push(Reg.BX);
+      asm.Push(Reg.DX);
       Map(0, 0x03);
       Map(1, 0x04);
       Map(2, 0x06);
@@ -405,9 +408,22 @@ public sealed partial class DosRuntime {
       Map(11, 0x11);
       Map(12, 0x12);
       Map(13, 0x13);
+      asm.Jmp(set); // Keep the existing forwarding behavior for unmapped requests.
+      asm.MarkLabel(mapped);
+      // A same-mode SCREEN is a no-op, not a BIOS reset that erases video memory.
+      // Read hardware state rather than caching it: inline assembly can change modes too.
+      asm.Mov(Reg.DL, Reg.AL);
+      asm.Mov(Reg.AH, (Imm)0x0F);
+      asm.Int(0x10);
+      asm.And(Reg.AL, (Imm)0x7F);
+      asm.Cmp(Reg.AL, Reg.DL);
+      asm.Je(done);
+      asm.Mov(Reg.AL, Reg.DL);
       asm.MarkLabel(set);
       asm.Xor(Reg.AH, Reg.AH);
       asm.Int(0x10);
+      asm.MarkLabel(done);
+      asm.Pop(Reg.DX);
       asm.Pop(Reg.BX);
       asm.Pop(Reg.AX);
       asm.Ret();
