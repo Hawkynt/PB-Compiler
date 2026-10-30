@@ -1006,6 +1006,8 @@ DOSBox 0.74 narrows x87 intermediates to IEEE double and cannot verify MBF64/QUA
 Core tests and oracle comparisons run in parallel; the required Linux status accepts only success
 from both. The corpus-wide statement-backend matrix runs in both required core jobs, not the fast
 smoke tier; its lightweight catalog-completeness check still runs in smoke.
+Far-byte widening regressions compare text-page character/attribute reads with a genuine QuickBASIC
+4.50 capture in plain/optimized COM and MZ images, under both the CPU model and DOSBox.
 PB21/TB11 oracle drivers pass the source filename directly to the original IDE, avoiding timed
 filename-dialog input while retaining the same output comparisons and failure deadlines.
 Missing-output failures retain per-case text diagnostics in `build/diff-failures/` and CI artifacts;

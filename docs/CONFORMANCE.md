@@ -101,6 +101,18 @@ unoptimized image bytes were unchanged.
 This does not change container selection or complete failed-EXEC error mapping and constrained-memory
 placement coverage, which remain separate runtime work.
 
+## Far-byte widening
+
+`FarByteWideningTests` checks unsigned character/attribute loads at 127, 128 and 255, plus a zero
+attribute, in plain/optimized COM and MZ images. Complete file output matches a genuine QuickBASIC
+4.50 capture compiled with `BC /O` and linked against `BCOM45.LIB`; both the CPU model and DOSBox
+execute each image. The four configurations failed before the selector correction.
+
+Far-address setup can rematerialize the segment through AX. Byte zero-extension must load AL before
+clearing AH, or a segment such as B800h contaminates the widened word. Existing near-byte, signed-byte
+and LONG regressions remain in place. This does not implement QuickBASIC's separate normalization of
+a zero text character to a space, or change SCREEN coordinate/mode semantics.
+
 ## Per-dialect batteries
 
 `tests/dialects/` holds one battery per dialect plus a generated index. Each battery states twelve

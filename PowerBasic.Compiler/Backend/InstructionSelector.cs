@@ -2950,10 +2950,12 @@ public sealed partial class InstructionSelector {
         var ax = new MOperand.Register(MReg.Physical_(Reg.AX, MRegSize.Word));
         var ah = new MOperand.Register(MReg.Physical_(Reg.AH, MRegSize.Byte));
         var al = new MOperand.Register(MReg.Physical_(Reg.AL, MRegSize.Byte));
+        // Load first: the spiller may rematerialize a far-memory segment through AX.
+        // Clearing AH before that load would retain the segment's high byte in the widened value.
+        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [al, source], MovEffect(al, source)));
         this._current.Instructions.Add(new MInstr(MOpcode.Xor, [ah, ah],
           new MInstrEffect(WrittenRegs: [0], ReadRegs: [0, 1], ReadsFlags: false, WritesFlags: true,
             ReadsMemory: false, WritesMemory: false)));
-        this._current.Instructions.Add(new MInstr(MOpcode.Mov, [al, source], MovEffect(al, source)));
         if (IsWide(to)) {
           var (low, high) = this.FreshPair(cast);
           var zero = new MOperand.Immediate(0);
