@@ -1,19 +1,23 @@
 # Codebase Index
 
-Generated 2026-10-27 11:00 UTC by index_codebase.py.
+Generated 2026-10-29 06:42 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1113 files, 9008 symbols.
+1117 files, 9014 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
 ### CiIntegrityTests.cs  `C#, 70 lines`
 - namespace `PowerBasic.Compiler.Tests` — PowerBasic.Compiler.Tests/CiIntegrityTests.cs:2
 - class `CiIntegrityTests` — Coverage is easy to lose by accident and hard to notice afterwards. — PowerBasic.Compiler.Tests/CiIntegrityTests.cs:14
+
+### OracleIdeInputTests.cs  `C#, 22 lines`
+- namespace `PowerBasic.Compiler.Tests` — PowerBasic.Compiler.Tests/OracleIdeInputTests.cs:1
+- class `OracleIdeInputTests` — PowerBasic.Compiler.Tests/OracleIdeInputTests.cs:2
 
 ## PowerBasic.Compiler.Tests/Asm/
 
@@ -4126,6 +4130,11 @@ with unrelated edits, so treat them as anchors, not gospel.
 - enum `PairAvailability` — The four possible answers in the explicit PB 3.5/PDS 7.1 statement audit. — PowerBasic.Compiler.Tests/Syntax/StatementSurface.cs:507
 - method `Add` — PowerBasic.Compiler.Tests/Syntax/StatementSurface.cs:848
 - method `NumberPhysicalLines` — PowerBasic.Compiler.Tests/Syntax/StatementSurface.cs:887
+
+### StatementSurfaceBackendTests.cs  `C#, 79 lines`
+- namespace `PowerBasic.Compiler.Tests.Syntax` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceBackendTests.cs:5
+- class `StatementSurfaceBackendTests` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceBackendTests.cs:7
+- method `foreach(var emitCom in new[] { false, true })` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceBackendTests.cs:13
 
 ### StatementSurfaceCensusTests.cs  `C#, 173 lines`
 - namespace `PowerBasic.Compiler.Tests.Syntax` — PowerBasic.Compiler.Tests/Syntax/StatementSurfaceCensusTests.cs:5
@@ -11284,6 +11293,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 > =============================================================================
 - function `warn_wrong_build()` — Warn about executables that cannot serve as a DOS oracle. This is where pds70 and — scripts/pack-toolchains.sh:44
 
+### require-ci-success.sh  `Shell, 19 lines`
+- (no top-level symbols found)
+
 ### roundtrip-check.sh  `Shell, 59 lines`
 > Host-side round-trip gate (no DOSBox): for every program, emit-basic under its
 - function `run()` — scripts/roundtrip-check.sh:17
@@ -11344,6 +11356,9 @@ with unrelated edits, so treat them as anchors, not gospel.
 - function `main(argv)` — scripts/lib/pds_layout.py:53
 
 ## scripts/tests/
+
+### ci-result-gate-test.sh  `Shell, 35 lines`
+- function `expectStatus` — scripts/tests/ci-result-gate-test.sh:7
 
 ### diff-diagnostics-test.sh  `Shell, 98 lines`
 - (no top-level symbols found)

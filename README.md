@@ -405,7 +405,10 @@ and the C and LLVM emitters, so all three get the same optimizer.
 `MandatoryRoutingTests` compiles every differential-corpus source under its own
 dialect (root files use `pb35`) in both optimizer modes. A front-end rejection,
 backend decline, or missing executable fails that gate; the separate per-dialect
-battery checks accepted statement forms across all 19 dialects.
+battery checks front-end acceptance. `StatementSurfaceBackendTests` also compiles
+every accepted catalog form across all 19 dialects, both optimizer modes and both
+DOS containers, requiring verified Low IR, IR-owned emitted bodies and no unexpected
+routing declines. These finite catalogs do not prove every runtime behavior.
 
 Every pass has its own reference page in
 [docs/optimizations/](docs/optimizations/README.md): what it recognizes, the
@@ -1000,6 +1003,11 @@ The oracle harness additionally needs DOSBox: it runs this compiler's output and
 compiler's output side by side and diffs what the programs actually do.
 CI uses headless DOSBox-X for these comparisons and treats disagreements as failures. Classic
 DOSBox 0.74 narrows x87 intermediates to IEEE double and cannot verify MBF64/QUAD low bits.
+Core tests and oracle comparisons run in parallel; the required Linux status accepts only success
+from both. The corpus-wide statement-backend matrix runs in both required core jobs, not the fast
+smoke tier; its lightweight catalog-completeness check still runs in smoke.
+PB21/TB11 oracle drivers pass the source filename directly to the original IDE, avoiding timed
+filename-dialog input while retaining the same output comparisons and failure deadlines.
 Missing-output failures retain per-case text diagnostics in `build/diff-failures/` and CI artifacts;
 proprietary executables and libraries are not copied into those captures.
 

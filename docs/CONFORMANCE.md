@@ -9,10 +9,22 @@ parameter combinations, invalid structures, and cross-dialect negative cases.
 | Lane | Material | Contract |
 |---|---|---|
 | Statement surface | `StatementSurface` and `StatementSurfaceCensusTests` | Every isolated statement/parameter form is accepted exactly in the dialects that provide it. Rejection must be a lexer, parser, preprocessor, or binder diagnostic—not an internal exception. |
+| Statement backend surface | `StatementSurfaceBackendTests` | Every accepted catalog form reaches verified Low IR and explicit COM/MZ emission across every declared dialect and both optimizer modes, without unexpected routing declines or emitted bodies lacking IR definitions. |
 | Structurally invalid source | `InvalidSyntaxSurfaceTests` | Syntax belonging to no dialect is rejected cleanly under every advertised dialect. |
 | Compiler execution | ordinary codegen/IR/DOSBox tests | The mandatory multi-stage IR/x86-16 path produces an executable with the expected behavior, without direct-emitter fallback. |
 | Genuine syntax oracle | `StatementSurfaceOracleMaterialTests` and `scripts/run-syntax-oracle-tests.sh` | Vintage DOS compilers independently accept or reject each generated source file. Disagreements are written to `build/conformance/syntax/oracle-results.tsv`. |
 | Genuine runtime oracle | `tests/diff/<dialect>` and `scripts/run-diff-tests.sh` | The generated executable and original compiler/interpreter produce identical observable output. |
+
+The backend-surface gate renders each source using its dialect's physical-line rules, including
+numeric labels for BASICA/GW-BASIC. It checks the requested artifact signature, the actual retained
+Low IR module and its verifier, and the IR definition behind every tracked emitted body. Bodiless
+external link declarations are not fallback bodies. A retained main body must actually be emitted;
+an empty emitted-body list cannot satisfy that check. The catalog must list every declared dialect.
+This is compilation coverage of the catalog, not execution coverage of every feature combination,
+intrinsic overload, calling convention or runtime boundary; those still need focused oracle tests.
+The 76 corpus-wide backend configurations carry `Slow` metadata: the fast smoke tier excludes them,
+while both required core jobs include them. The cheap catalog-completeness test remains in smoke and
+guards that classification. No core filter, assertion or workflow timeout is relaxed.
 
 The syntax-oracle runner deliberately skips BASICA, GW-BASIC, and QBasic. They have no compile step,
 and interpreted BASIC can defer syntax checking until a statement executes; treating “the
@@ -35,9 +47,18 @@ differential harness. Missing toolchains are recorded as skips rather than guess
 
 ## Runtime-oracle precision
 
-CI runs the differential battery with headless DOSBox-X; a disagreement fails the required Linux
-job. The ordinary core tests retain classic DOSBox for speed. To select the same oracle emulator
+CI runs the differential battery with headless DOSBox-X in an independent job. The protected
+`ubuntu-latest` status requires both that job and the complete Windows/Linux core matrix to succeed;
+failure, cancellation, skipping or a missing result cannot satisfy it. Both execution jobs retain
+their existing 90-minute limits. The ordinary core tests retain classic DOSBox for speed.
+To select the same oracle emulator
 locally, run `DOSBOX_EXE="$(command -v dosbox-x)" bash scripts/run-diff-tests.sh`.
+
+Keeping the lanes parallel avoids sharing one budget between dependency installation, the full
+compiler matrix and the vintage batteries. The previous combined job reached its 90-minute limit
+after a 23-minute installation and 32-minute core run, interrupting otherwise passing comparisons.
+`bash scripts/tests/ci-result-gate-test.sh` checks every pair of job outcomes and malformed inputs;
+the aggregate runs even after a dependency fails so it reports failure rather than a skipped check.
 
 Emulator precision is part of the measurement. DOSBox 0.74's double-based FPU loses bits from
 MBF64 cells and large QUAD values, and changes some QB transcendental results. On 2026-10-26,
@@ -53,10 +74,16 @@ oracle executables, libraries, objects and arbitrary guest files are excluded. L
 the mounted guest directory so it cannot change file-enumeration results. Run
 `bash scripts/tests/diff-diagnostics-test.sh` to check failure retention and capture isolation.
 
-The 2026-10-27 CI run passed PB35/PB36's direct and round-trip COMMON handoff checks, all core tests
-and all completed numeric comparisons, but the genuine TB11 IDE timed out on `DIFF02.BAS`.
-Earlier runs timed out on `DIFF03.BAS` or completed both. This intermittent oracle failure remains
-unexplained; diagnostic capture is not a claimed fix, retry policy or relaxed comparison.
+CI runs on 2026-10-27/28 intermittently timed out in the original PB21/TB11 IDEs before producing an
+executable. A local TB11 diagnostic frame from an unsuccessful run showed the filename dialog.
+Both original tools accept `T.BAS` directly as an argument, so their drivers now avoid timed filename
+entry. On 2026-10-29, original TB 1.1 and PB 2.10f compiled the captured failing inputs through this
+path; complete outputs were byte-identical to successful legacy-driver captures. The initial wait,
+remaining key pacing, deadlines and comparisons are unchanged. `OracleIdeInputTests` guards the
+autoload contract. This removes the observed dialog dependency, not every possible AUTOTYPE race;
+the underlying missing/mistimed-key cause remains unproven and missing outputs still fail the gate.
+The 2026-10-29 runtime run also captured a TB11 stall with `T.EXE` already present: returning from
+the IDE to execute it remains a separate automation risk, not an output disagreement or a skip.
 
 ## DOS execution-state coverage
 
