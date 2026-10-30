@@ -1,19 +1,23 @@
 # Codebase Index
 
-Generated 2026-10-28 06:55 UTC by index_codebase.py.
+Generated 2026-10-30 06:57 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1118 files, 9018 symbols.
+1119 files, 9020 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
 ### CiIntegrityTests.cs  `C#, 70 lines`
 - namespace `PowerBasic.Compiler.Tests` — PowerBasic.Compiler.Tests/CiIntegrityTests.cs:2
 - class `CiIntegrityTests` — Coverage is easy to lose by accident and hard to notice afterwards. — PowerBasic.Compiler.Tests/CiIntegrityTests.cs:14
+
+### OracleIdeInputTests.cs  `C#, 22 lines`
+- namespace `PowerBasic.Compiler.Tests` — PowerBasic.Compiler.Tests/OracleIdeInputTests.cs:1
+- class `OracleIdeInputTests` — PowerBasic.Compiler.Tests/OracleIdeInputTests.cs:2
 
 ## PowerBasic.Compiler.Tests/Asm/
 
