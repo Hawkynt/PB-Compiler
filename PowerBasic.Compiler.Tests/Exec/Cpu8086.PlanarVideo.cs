@@ -14,6 +14,12 @@ public sealed partial class Cpu8086 {
   private byte _vgaGcIndex;
   private byte _vgaSeqIndex;
 
+  /// <summary>Host CPU byte reads entering the planar VGA aperture in the current video mode.</summary>
+  public long PlanarHostReads { get; private set; }
+
+  /// <summary>Host CPU byte writes entering the planar VGA aperture in the current video mode.</summary>
+  public long PlanarHostWrites { get; private set; }
+
   private void ResetPlanarVideo() {
     foreach (var plane in this._vgaPlanes)
       Array.Clear(plane);
@@ -26,6 +32,8 @@ public sealed partial class Cpu8086 {
     this._vgaSeq[4] = 0x06; // Extended memory, odd/even disabled, chain four off.
     this._vgaGcIndex = 0;
     this._vgaSeqIndex = 0;
+    this.PlanarHostReads = 0;
+    this.PlanarHostWrites = 0;
   }
 
   private bool IsPlanarAddress(int address)
@@ -33,6 +41,7 @@ public sealed partial class Cpu8086 {
        && (address & (_MEMORY - 1)) is >= 0xA0000 and < 0xB0000;
 
   private byte PlanarRead(int address) {
+    ++this.PlanarHostReads;
     var offset = (address & (_MEMORY - 1)) - 0xA0000;
     for (var plane = 0; plane < 4; ++plane)
       this._vgaLatches[plane] = this._vgaPlanes[plane][offset];
@@ -52,6 +61,7 @@ public sealed partial class Cpu8086 {
   }
 
   private void PlanarWrite(int address, byte value) {
+    ++this.PlanarHostWrites;
     var offset = (address & (_MEMORY - 1)) - 0xA0000;
     var mode = this._vgaGc[5] & 3;
     var rotate = this._vgaGc[3] & 7;
