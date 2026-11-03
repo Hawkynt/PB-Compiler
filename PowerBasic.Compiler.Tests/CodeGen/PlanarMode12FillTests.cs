@@ -49,7 +49,6 @@ public sealed class PlanarMode12FillTests {
     });
   }
 
-  [TestCase("LINE (2,3)-(10,3),4,BF\nLINE (11,3)-(13,3),5,BF", "4  4  5  5")]
   [Test]
   public void Execute_GivenFullScreenPlanarFill_ThenAllScreenCornersAreCovered() {
     // Executing more than 300K individual BIOS pixel interrupts in the test
@@ -62,6 +61,7 @@ public sealed class PlanarMode12FillTests {
     Assert.That(optimized.Output.Trim(), Does.Contain("2  2  2  2"));
   }
 
+  [TestCase("LINE (2,3)-(10,3),4,BF\nLINE (11,3)-(13,3),5,BF", "4  4  5  5")]
   [TestCase("LINE (31,3)-(8,1),9,BF", "9  9  9  9")]
   [TestCase("LINE (0,0)-(0,0),0,BF", "0  0  0  0")]
   public void Execute_GivenSeveralPlanarRects_ThenMatchesReference(
