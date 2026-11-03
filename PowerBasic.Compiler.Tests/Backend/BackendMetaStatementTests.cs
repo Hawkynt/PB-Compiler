@@ -97,6 +97,28 @@ public sealed class BackendMetaStatementTests {
     }
   }
 
+  [TestCase("$OPTION VRAMPACK OFF", false)]
+  [TestCase("$OPTION VRAMPACK ON", true)]
+  [TestCase("'$OPTION VRAMPACK OFF", false)]
+  public void Bind_GivenVideoStoreOption_ThenPreprocessorPreservesIndependentPolicy(
+      string directive, bool expected) {
+    var model = Bind($"""
+      {directive}
+      SCREEN 13
+      PRINT 2+3
+      END
+      """);
+    Assert.That(model.PackVideoStores, Is.EqualTo(expected));
+    var generator = new CodeGenerator(model) { Optimize = true };
+    var image = generator.EmitExecutable();
+    Assert.Multiple(() => {
+      Assert.That(generator.Errors, Is.Empty);
+      Assert.That(generator.BackendDeclines, Is.Empty);
+      Assert.That(Cpu8086.Run(image).Output, Does.Contain("5"),
+        "the VRAM switch must not disable normal compilation or optimization");
+    });
+  }
+
   [TestCaseSource(nameof(_programs))]
   public void Compile_GivenAMetastatementProgram_WhenRoutingIsEnabled_ThenTheModuleBodyRoutesAndPrintsTheExpectedOutput(Program program) {
     foreach (var optimize in new[] { true, false }) {

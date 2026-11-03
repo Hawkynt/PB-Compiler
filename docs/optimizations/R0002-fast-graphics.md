@@ -5,7 +5,7 @@
 | **Status** | ✅ Packed pixel reads/writes/fusion, horizontal/rectangle/PAINT spans and IR DRAW; ⬜ planar batching and general DRAW partial evaluation |
 | **Stage** | IR specialization and runtime |
 | **Source** | `Ir/Passes/PixelRuntimeInlining.cs`, `Ir/Passes/DrawStringSpecialization.cs`, `Runtime/DrawRuntime*.cs`, `Runtime/DosRuntime.Pixels.cs` |
-| **Gate** | Proven packed mode; complete DRAW text or a delimiter-terminated leading movement sequence |
+| **Gate** | Proven packed mode; `$OPTION VRAMPACK ON\|OFF` independently controls only pixel-store batching (pb36); complete DRAW text or a delimiter-terminated leading movement sequence |
 | **Verified by** | `PixelRuntimeInliningTests`, `PixelModeFallbackTests`, `DrawStatementTests`, `ProvenDrawTests`, `DrawMixedStringTests`, `DrawRuntimeErrorTests` |
 | **Related** | [R0001](R0001-fast-text-output.md), [O0004](O0004-strength-reduction.md), [O0064](O0064-lea-fusion.md) |
 
@@ -73,6 +73,37 @@ Mode 13h's linear address formula is used only with a proven mode or the runtime
 Unknown calls, assembly and raw memory invalidate the mode proof. Pixel readback and explicit
 COM/MZ execution are checked against captured genuine QuickBASIC files. This does not prove
 clipping, pages, viewports or complete graphics error semantics.
+
+## Independently disabling VRAM store packing
+
+In the `pb36` dialect, `$OPTION VRAMPACK OFF` disables only the
+late native **width-changing** coalescing of already-certified Mode 13h
+pixel byte stores:
+
+```basic
+$CPU 80386
+$OPTION VRAMPACK OFF
+SCREEN 13
+PSET (10,5),1
+PSET (11,5),2
+PSET (12,5),3
+PSET (13,5),4
+```
+
+Four individual framebuffer byte writes remain, and direct `PSET`/`POINT`
+specialization, generic RAM store packing, all unrelated SSA optimizations,
+CPU selection, and pre-existing runtime `REP STOS` scanline fast paths are
+unchanged. `$OPTION VRAMPACK ON` restores the default; when directives
+repeat, the last one applies to the compilation unit. Both directives
+require `pb36`: neither is claimed to be accepted by original PBC 3.50.
+
+**The hardware aperture is not a sufficient legality proof.** Physical
+`A0000h-BFFFFh` can be a VGA memory window, but the selected subrange,
+chain-4/odd-even/planar addressing, latches, write mode, and segment:offset
+aliasing determine the effect of accesses. Treat arbitrary `DIM ... AT`,
+`POKE`, and raw ASM writes as independent observable operations unless
+the relevant framebuffer semantics have been proven. In particular,
+`segment=0xA000` alone is not a video-store packing certificate.
 
 ## What is still planned
 
