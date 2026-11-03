@@ -64,6 +64,40 @@ public sealed class PlanarMode12FillTests {
   }
 
   [Test]
+  public void Execute_GivenMaskedPlanarFill_ThenRetainsExistingNeighborColors() {
+    const string body = """
+      LINE (0,12)-(31,12),9,BF
+      LINE (3,12)-(18,12),5,BF
+      PRINT POINT(0,12);POINT(2,12);POINT(3,12);POINT(18,12);POINT(19,12);POINT(31,12)
+      """;
+    var optimized = Execute(body, true);
+    var faithful = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(faithful.Output));
+      Assert.That(optimized.Output.Trim(), Does.Contain("9  9  5  5  9  9"));
+    });
+  }
+
+  [Test]
+  public void Execute_GivenPreconfiguredVgaRegisters_ThenRestoresExactIndexedState() {
+    const string body = """
+      OUT &H3CE, 3: OUT &H3CF, 4
+      OUT &H3CE, 8: OUT &H3CF, &H3C
+      OUT &H3C4, 2: OUT &H3C5, 5
+      LINE (3,12)-(18,13),5,BF
+      OUT &H3CE, 3: PRINT INP(&H3CF);
+      OUT &H3CE, 8: PRINT INP(&H3CF);
+      OUT &H3C4, 2: PRINT INP(&H3C5)
+      """;
+    var optimized = Execute(body, true);
+    var faithful = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(faithful.Output));
+      Assert.That(optimized.Output.Trim(), Does.Contain("4  60  5"));
+    });
+  }
+
+  [Test]
   [Category("Performance")]
   public void Measure_GivenPlanarRectangle_WhenOptimized_ThenRemovesPerPixelBiosDispatch() {
     const string body = """
