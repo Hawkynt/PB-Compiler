@@ -74,7 +74,7 @@ public static class PrivateByteStorePacking {
           continue;
 
         var start = selected[0].Offset;
-        var pointer = start == 0
+        IrValue pointer = start == 0
           ? root
           : block.InsertBefore(new IrGep(root, new IrConstantInt(IrType.I32, start)), initial);
         var type = selected.Count == 4 ? IrType.U32 : IrType.U16;
