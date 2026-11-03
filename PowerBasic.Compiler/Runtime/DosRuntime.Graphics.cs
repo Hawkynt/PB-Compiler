@@ -653,10 +653,22 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(plot);
       asm.Cmp(Reg.AX, (Imm)0);
       asm.Jl(clipped);
-      asm.Cmp(Reg.AX, 320);
-      asm.Jge(clipped);
       asm.Cmp(Reg.BX, (Imm)0);
       asm.Jl(clipped);
+      if (this.EnableTargetOptimizations) {
+        var biosPixel = asm.DefineLabel();
+        asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)0);
+        asm.Je(biosPixel);
+        asm.Cmp(Reg.AX, 640);
+        asm.Jge(clipped);
+        asm.Cmp(Reg.BX, 480);
+        asm.Jge(clipped);
+        asm.Call(asm.Lbl("rt_planar_raster_plot"));
+        asm.Ret();
+        asm.MarkLabel(biosPixel);
+      }
+      asm.Cmp(Reg.AX, 320);
+      asm.Jge(clipped);
       asm.Cmp(Reg.BX, 200);
       asm.Jge(clipped);
       asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
@@ -676,6 +688,20 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DX);
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
+
+    if (this.EnableTargetOptimizations) {
+      var start = asm.DefineLabel();
+      var planar = asm.DefineLabel();
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)0);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(start);
+      EmitPlanarModeBranch(asm, planar);
+      asm.Jmp(start);
+      asm.MarkLabel(planar);
+      EmitPlanarRasterBegin(asm);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)1);
+      asm.MarkLabel(start);
+    }
 
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gr")));     // SI = x, starts at the radius
     asm.Xor(Reg.DI, Reg.DI);                          // DI = y, starts at zero
@@ -733,6 +759,14 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
     asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
 
+    if (this.EnableTargetOptimizations) {
+      var noPlanarEnd = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)0);
+      asm.Je(noPlanarEnd);
+      EmitPlanarRasterEnd(asm);
+      asm.MarkLabel(noPlanarEnd);
+    }
+
     asm.Pop(Reg.DI);
     asm.Pop(Reg.SI);
     asm.Pop(Reg.DX);
@@ -740,6 +774,11 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
+
+    if (this.EnableTargetOptimizations) {
+      asm.MarkLabel("rt_planar_circle_active");
+      asm.Db(0);
+    }
   }
 
   /// <summary>
