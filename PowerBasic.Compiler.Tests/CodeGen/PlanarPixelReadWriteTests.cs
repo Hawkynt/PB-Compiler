@@ -33,7 +33,7 @@ public sealed class PlanarPixelReadWriteTests {
   public void Execute_GivenAllSixteenColors_ThenMaskedPsetAndPointAgreeWithBios(
       string cpu, int x, int y) {
     var lines = string.Join("\n", Enumerable.Range(0, 16).Select(color =>
-      $"PSET ({x},{y}),{color}\nPRINT POINT({x},{y});POINT({x == 639 ? x - 1 : x + 1},{y})"));
+      $"PSET ({x},{y}),{color}\nPRINT POINT({x},{y});POINT({(x == 639 ? x - 1 : x + 1)},{y})"));
     var optimized = Execute(lines, true, cpu);
     var reference = Execute(lines, false, cpu);
     Assert.Multiple(() => {
