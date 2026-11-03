@@ -757,6 +757,7 @@ public sealed partial class DosRuntime {
     var xPositive = asm.DefineLabel();
     var yPositive = asm.DefineLabel();
     var fastHorizontal = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var fastPlanarPattern = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var slowHorizontal = asm.DefineLabel();
 
     asm.Push(Reg.AX);
@@ -787,6 +788,29 @@ public sealed partial class DosRuntime {
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)319);
       asm.Jg(slowHorizontal);
       EmitPackedModeBranch(asm, fastHorizontal);
+    }
+    if (fastPlanarPattern is not null) {
+      // Unlike the Mode 13h solid-word path, Mode 12h can batch patterned
+      // horizontal lines as one masked write per eight-pixel VGA byte.
+      // Retain the exact step order for style rotation and reverse strokes.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+      asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
+      asm.Jne(slowHorizontal);
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Reg.AX, (Imm)479);
+      asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)639);
+      asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)639);
+      asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(slowHorizontal);
+      EmitPlanarModeBranch(asm, fastPlanarPattern);
     }
     asm.MarkLabel(slowHorizontal);
 
@@ -932,6 +956,8 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.ES);
       asm.Jmp(done);
     }
+    if (fastPlanarPattern is not null)
+      this.EmitPlanarPatternedLine(asm, fastPlanarPattern, done);
   }
 
   /// <summary>
