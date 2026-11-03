@@ -80,11 +80,62 @@ vectorizing styled `LINE` means repeating the same 8-bit sequence
 independently on each byte: the modulo-16 phase and non-horizontal step
 order are part of its semantics.
 
+## Shared ordered-mask raster for diagonals, curves and DRAW
+
+A follow-up on the same PR adds the common `rt_planar_raster_plot` /
+`rt_planar_raster_flush` contract for non-horizontal primitives. Each raster
+point arrives in its **existing** order, with the same algorithmic decision
+variable, style phase and X/Y coordinates as before. The accumulator keeps
+at most one pending VGA byte:
+
+1. Compute `byteOffset = 80*y + (x >> 3)` and `bit = 80h >> (x & 7)`.
+2. If this is the same byte as the pending one, OR the bit into its mask.
+3. On an address change, **read the old destination byte to populate VGA
+   latches**, then apply one Write Mode 3 masked-color store before collecting
+   the next byte.
+4. At primitive exit, flush the final byte and restore the previously saved
+   GC mode, bit mask, data rotate, set/reset, sequencer map mask, and selector
+   indices.
+
+This gives horizontal runs substantial byte fusion. Vertical and diagonal
+lines usually touch another byte every step, so their main gain is eliminating
+per-pixel BIOS mode queries and VGA register switches, not magically merging
+nonadjacent VRAM stores. Bit-level operations from different bytes are never
+reordered. All fast paths are guarded by the actual runtime screen mode, normal
+non-XOR colors, and proven in-bounds output. Other screen states fall back to
+the original runtime.
+
+- **LINE / B / DRAW**: the existing Bresenham loop and `rt_gstyle` rotate are
+  shared. For Mode 12, all in-bounds directions use the ordered-mask writer;
+  horizontal lines continue to use their dedicated simpler byte-mask writer.
+  `DRAW` reuses `rt_line` for its strokes rather than inventing a separate
+  rasterizer; string parsing, scale/angle state and cursor rules are preserved.
+- **CIRCLE**: eight mirror points feed that same ordered-mask stream. Each
+  point is clipped to the real 640×480 Mode 12 screen; the earlier 320×200
+  clipping error has also been fixed in the nonoptimized fallback.
+- **Elliptical arcs / CIRCLE aspect**: a conservative subset uses the cache
+  after checking radius and a whole-shape bounding box, with finite positive
+  aspect strictly below 1.0. Unproved arcs and aspect ratios retain the
+  original x87 and `PSET` path. This is intentionally not a claim to have
+  optimized every ellipse.
+- **Mode 13h**: horizontal styled strokes use a direct precomputed
+  `A000:y*320+x` writer, advancing in the original drawing direction.
+  Other in-bounds lines retain Bresenham geometry and style rotation but
+  write selected pixels directly to the packed framebuffer with one mode
+  check and ES selection per primitive. No blind word/dword widening of
+  partially masked output is applied.
+
+Further possible improvements: keep multiple pending bytes for circles
+without changing the visit order, hoist the row stride for vertical runs,
+specialize constant style words at compile time and compare mode-13
+word/dword read-modify-write masks against byte stores on 8086/286/386.
+None may cross `POINT`, `GET`, `PAINT`, port accesses or unknown calls.
+
 ## Implementation order
 
 - [x] **P0 — Test oracle:** Provide four actual mode-12 planes in `Cpu8086`; model indexed VGA GC/SQ registers, map masks, write modes, bit masks and read latches; make BIOS pixel services share the same planes as direct `ES:A000` accesses. Add cross-boundary and port restoration tests.
 - [x] **P1 — Solid rectangles:** Guard by active BIOS mode 12h, in-bounds 640×480 rectangle and ordinary color 0–15; configure write mode 2 once, use `REP STOSB` for full eight-pixel bytes and latch-preserving masks for edges. Preserve existing cursor semantics and fall back for unknown geometry/colors/modes.
-- [~] **P2 — Patterned LINE/B/diagonal/CIRCLE/ellipse/DRAW:** The first implementation handles an in-bounds **horizontal** Mode 12h `LINE` with arbitrary 16-bit `style` by accumulating each selected pixel's bit into its destination VGA byte, then issuing a single masked Write Mode 3 transaction per affected byte. It rotates `rt_gstyle` at **every raster position**, including positions skipped by the style, and respects reversed endpoints. `LINE ...,B,style` inherits this kernel only for its horizontal edges; vertical/diagonal edges still use the faithful existing Bresenham/BIOS path. Remaining work: general Bresenham-to-byte-mask rendering, style continuation across contours, full mode/page/port-state proof, CPU-specific scheduling, and `DRAW`/ellipse paths.
+- [~] **P2 — Patterned LINE/B/diagonal/CIRCLE/ellipse/DRAW:** In-bounds Mode 12h horizontal lines use the direct Write Mode 3 byte-mask kernel; vertical and diagonal Bresenham lines, `LINE ...,B,style` and `DRAW` strokes now use the ordered-byte accumulator. CIRCLE's eight symmetric mirror points use that same shared accumulator. A conservative in-bounds subset of elliptical arcs/aspects also participates. Unproved shapes, out-of-bounds and special colors preserve fallback. Remaining work: arbitrary-aspect ellipse specialization, multi-byte buffering where order permits, stricter VGA port-state contracts, and CPU-specific speed experiments.
 - [ ] **P3 — PAINT:** Batch filled contiguous runs by full bytes; preserve flood-fill topology, border color, 128-span stack behavior, returns/traps, and transparent/adjacent colors.
 - [ ] **P4 — PSET/POINT:** Specialized planar pixel access with one selected masked RMW or one plane-comparison read; hoist register setup across proven sequences rather than performing per-pixel port switches.
 - [ ] **P5 — GET/PUT:** Correct QB-compatible sprite headers and width-per-plane layout, transparent/overlap semantics, and all COPY/PRESET/AND/OR/XOR verbs. Use mode 1 or per-plane blits only when hardware state and alignment allow them.
