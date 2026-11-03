@@ -266,7 +266,8 @@ public sealed partial class CodeGenerator {
       minimumIntegerStorageBits: narrowestStorageBits,
       recoverIntegerArithmetic: true,
       targetCost: this.Cost,
-      packedVectorBytes: this._rt.Target.PackedIntegerWidthBytes);
+      packedVectorBytes: this._rt.Target.PackedIntegerWidthBytes,
+      packVideoStores: model.PackVideoStores);
 
     // The production DOS path used to call the per-function machine helpers directly here. Those
     // helpers deliberately support focused tests and therefore cannot verify a module boundary; the
