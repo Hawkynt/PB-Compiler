@@ -103,10 +103,11 @@ public sealed partial class Cpu8086 {
   private void PortWrite(ushort port, byte value) {
     this._portWrites.Add((port, value));
     this._ports[port] = value;
+    this.HandleVgaPortWrite(port, value);
   }
 
   /// <summary>A port reads back what was last written to it, and 0 when nothing was.</summary>
-  private byte PortRead(ushort port) => this._ports.GetValueOrDefault(port);
+  private byte PortRead(ushort port) => this.ReadVgaPort(port) ?? this._ports.GetValueOrDefault(port);
 
   /// <summary>
   /// Everything the program wrote to DOS handle 4, PRN - what LPRINT prints.
@@ -316,8 +317,15 @@ public sealed partial class Cpu8086 {
   // ---- memory ---------------------------------------------------------------------------------
 
   private static int Linear(ushort segment, ushort offset) => (segment * 16 + offset) & (_MEMORY - 1);
-  private byte ReadByte(int at) => this._memory[at & (_MEMORY - 1)];
-  private void WriteByte(int at, byte value) => this._memory[at & (_MEMORY - 1)] = value;
+  private byte ReadByte(int at) => this.IsPlanarAddress(at)
+    ? this.PlanarRead(at)
+    : this._memory[at & (_MEMORY - 1)];
+  private void WriteByte(int at, byte value) {
+    if (this.IsPlanarAddress(at))
+      this.PlanarWrite(at, value);
+    else
+      this._memory[at & (_MEMORY - 1)] = value;
+  }
   private ushort ReadWord(int at) => (ushort)(this.ReadByte(at) | (this.ReadByte(at + 1) << 8));
 
   private void WriteWord(int at, ushort value) {
@@ -2319,6 +2327,8 @@ public sealed partial class Cpu8086 {
         this._videoMode = this.Reg8(_AX);
         this._memory[0x449] = this._videoMode;
         this._biosPixels?.Clear();
+        if (this._videoMode == 0x12)
+          this.ResetPlanarVideo();
         if (this._videoMode == 0x13)
           Array.Clear(this._memory, 0xA0000, 320 * 200);
         else
