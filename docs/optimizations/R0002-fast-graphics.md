@@ -26,6 +26,16 @@ Mode 12h solid filled rectangles now have a separate, guarded four-plane VGA pat
 broadcasts one 4-bit color to all planes, full eight-pixel groups use REP STOSB, and masked
 edge bytes explicitly preload the VGA latches before writing. GC/SQ port indices and modified
 registers are restored. It is not a generic A000h wide-write transformation.
+
+For Mode 12h horizontal `LINE` with a 16-bit style, the optimized path also
+accumulates **selected pixel positions** into an eight-bit mask for each VGA
+byte, then emits one Write Mode 3 masked color write per affected byte. VGA
+configuration is hoisted to the start of the line, while `rt_gstyle` still
+rotates once per visited position (including skipped ones), in the correct
+forward/reverse direction. The result preserves gaps and existing background
+colors; a final graphics cursor update and restored VGA register/index state
+match the original pixel routine. The existing generic Bresenham path still
+handles vertical/diagonal/styled edges not yet lowered to byte masks.
 Other modes, patterned lines and out-of-range geometry retain their existing paths. Graphics
 cursor updates and ES restoration are shared with or matched to those paths.
 
