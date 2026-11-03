@@ -22,6 +22,7 @@ public sealed partial class DosRuntime {
     var nextPlane = asm.DefineLabel();
     var nextRow = asm.DefineLabel();
     var done = asm.DefineLabel();
+    var fastAligned = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
 
     asm.MarkLabel(entry);
     asm.Push(Reg.AX);
@@ -66,6 +67,29 @@ public sealed partial class DosRuntime {
     asm.Inc(Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_gph")), Reg.AX);
     asm.Stosw();
+
+    if (fastAligned is not null) {
+      var slow = asm.DefineLabel();
+      // Complete 8-pixel bytes can be transferred directly from each
+      // hardware plane to the already packed QuickBASIC destination row.
+      // No masked edge/bit-shift combination is required.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx1")), (Imm)0);
+      asm.Jl(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx2")), (Imm)639);
+      asm.Jg(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby1")), (Imm)0);
+      asm.Jl(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)479);
+      asm.Jg(slow);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gbx1")));
+      asm.And(Reg.AX, (Imm)7);
+      asm.Jnz(slow);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gpw")));
+      asm.And(Reg.AX, (Imm)7);
+      asm.Jnz(slow);
+      EmitCertifiedPlanarBranch(asm, fastAligned);
+      asm.MarkLabel(slow);
+    }
 
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gby1")));
     asm.MarkLabel(row);
@@ -130,6 +154,75 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
+
+    if (fastAligned is not null) {
+      var fastRow = asm.DefineLabel();
+      var fastPlane = asm.DefineLabel();
+      var fastByte = asm.DefineLabel();
+
+      asm.MarkLabel(fastAligned);
+      asm.Push(Reg.BP);
+      asm.Mov(Reg.BP, Reg.SP);
+      asm.Sub(Reg.SP, (Imm)6); // SS locals: row base, rows remaining, byte width.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gph")));
+      asm.Mov(Mem.Word(Reg.BP, -4), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pg_stride")));
+      asm.Mov(Mem.Word(Reg.BP, -6), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gby1")));
+      asm.Mov(Reg.BX, 80);
+      asm.Mul(Reg.BX);
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gbx1")));
+      asm.Shr(Reg.BX, 3);
+      asm.Add(Reg.AX, Reg.BX);
+      asm.Mov(Mem.Word(Reg.BP, -2), Reg.AX);
+
+      // In 8086 real mode, use DS=A000 for planar reads and ES=the BASIC
+      // array for STOSB. Every runtime global is consumed before changing
+      // DS; BP-based locals reside in SS and remain accessible throughout.
+      asm.Push(Reg.DS);
+      asm.Mov(Reg.DX, 0x3CE);
+      asm.In(Reg.AL, Reg.DX);
+      asm.Push(Reg.AX);
+      SaveAndSet(asm, 0x3CE, 5, -5); // Read mode 0, preserve write mode.
+      SaveAndSet(asm, 0x3CE, 4, 0);  // First read map.
+      asm.Mov(Reg.AX, 0xA000);
+      asm.Mov(Reg.DS, Reg.AX);
+      asm.Mov(Reg.DX, 0x3CE);
+      asm.Mov(Reg.AL, (Imm)4);
+      asm.Out(Reg.DX, Reg.AL);
+      asm.Inc(Reg.DX);
+
+      asm.MarkLabel(fastRow);
+      asm.Xor(Reg.BX, Reg.BX); // Plane index.
+      asm.MarkLabel(fastPlane);
+      asm.Mov(Reg.AL, Reg.BL);
+      asm.Out(Reg.DX, Reg.AL);
+      asm.Mov(Reg.SI, Mem.Word(Reg.BP, -2));
+      asm.Mov(Reg.CX, Mem.Word(Reg.BP, -6));
+      asm.MarkLabel(fastByte);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.SI));
+      asm.Stosb();
+      asm.Inc(Reg.SI);
+      asm.Dec(Reg.CX);
+      asm.Jnz(fastByte);
+      asm.Inc(Reg.BX);
+      asm.Cmp(Reg.BX, (Imm)4);
+      asm.Jl(fastPlane);
+      asm.Add(Mem.Word(Reg.BP, -2), (Imm)80);
+      asm.Dec(Mem.Word(Reg.BP, -4));
+      asm.Jnz(fastRow);
+
+      Restore(asm, 0x3CE, 4);
+      Restore(asm, 0x3CE, 5);
+      asm.Pop(Reg.BX);
+      asm.Mov(Reg.DX, 0x3CE);
+      asm.Mov(Reg.AL, Reg.BL);
+      asm.Out(Reg.DX, Reg.AL);
+      asm.Pop(Reg.DS);
+      asm.Mov(Reg.SP, Reg.BP);
+      asm.Pop(Reg.BP);
+      asm.Jmp(done);
+    }
 
     foreach (var name in new[] { "rt_pg_stride", "rt_pg_plane", "rt_pg_block", "rt_pg_bit" }) {
       asm.MarkLabel(name);
