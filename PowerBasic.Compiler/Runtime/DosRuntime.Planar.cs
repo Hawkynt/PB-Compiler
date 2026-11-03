@@ -169,6 +169,143 @@ public sealed partial class DosRuntime {
     asm.Db(0);
   }
 
+  /// <summary>
+  /// SCREEN 12 horizontal LINE with an arbitrary 16-bit style. Accumulate
+  /// up to eight selected pixels in a VGA byte, then flush one masked Write
+  /// Mode 3 transaction. The source's style rotates once PER POSITION, in
+  /// drawing direction, including positions at which no pixel is written.
+  /// </summary>
+  private void EmitPlanarPatternedLine(Assembler asm, Label planar, Label finish) {
+    var loop = asm.DefineLabel();
+    var sameByte = asm.DefineLabel();
+    var advanced = asm.DefineLabel();
+    var done = asm.DefineLabel();
+    var positiveStep = asm.DefineLabel();
+    var finishMask = asm.DefineLabel();
+    var noMask = asm.DefineLabel();
+
+    var rowBase = asm.Lbl("rt_planar_line_rowbase");
+    var step = asm.Lbl("rt_planar_line_step");
+    var mask = asm.Lbl("rt_planar_line_mask");
+
+    asm.MarkLabel(planar);
+    asm.Push(Reg.ES);
+
+    // Register indices and values are saved; drawing never assumes the
+    // caller's VGA controller was in the BIOS default configuration.
+    asm.Mov(Reg.DX, 0x3CE);
+    asm.In(Reg.AL, Reg.DX);
+    asm.Push(Reg.AX);
+    asm.Mov(Reg.DX, 0x3C4);
+    asm.In(Reg.AL, Reg.DX);
+    asm.Push(Reg.AX);
+    SaveAndSet(asm, 0x3CE, 5, -2); // Write Mode 3; preserve read mode.
+    SaveAndSet(asm, 0x3CE, 3, 0);  // No rotation; replace rather than logical-op.
+    SaveAndSet(asm, 0x3CE, 8, 255);
+    SaveAndSet(asm, 0x3CE, 0, -3); // Color from rt_gcolor via Set/Reset.
+    SaveAndSet(asm, 0x3C4, 2, 15); // All four planes.
+
+    // One y*80 computation, and keep ES:A000 and the byte pointer live.
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+    asm.Mov(Reg.CX, 80);
+    asm.Mul(Reg.CX);
+    asm.Mov(Mem.Word(rowBase), Reg.AX);
+    asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gx1")));
+    asm.Mov(Reg.DI, Reg.SI);
+    asm.Mov(Reg.CL, (Imm)3);
+    asm.Shr(Reg.DI, Reg.CL);
+    asm.Add(Reg.DI, Reg.AX);
+    asm.Mov(Reg.AX, 0xA000);
+    asm.Mov(Reg.ES, Reg.AX);
+    asm.Mov(Mem.Byte(mask), (Imm)0);
+
+    asm.Mov(Mem.Word(step), (Imm)1);
+    asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_gx2")));
+    asm.Jle(positiveStep);
+    asm.Mov(Mem.Word(step), (Imm)0xFFFF);
+    asm.MarkLabel(positiveStep);
+
+    asm.MarkLabel(loop);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gstyle")));
+    asm.Rol(Reg.AX, 1);
+    asm.Mov(Mem.Word(asm.Lbl("rt_gstyle")), Reg.AX);
+    asm.Test(Reg.AX, (Imm)1);
+    asm.Jz(advanced);
+
+    // A selected pixel contributes to its eight-pixel byte. The result
+    // is accumulated in CPU memory, NOT written through VGA yet.
+    asm.Mov(Reg.BX, Reg.SI);
+    asm.Mov(Reg.CL, (Imm)3);
+    asm.Shr(Reg.BX, Reg.CL);
+    asm.Add(Reg.BX, Mem.Word(rowBase));
+    asm.Cmp(Reg.BX, Reg.DI);
+    asm.Je(sameByte);
+
+    // Before advancing from an old byte, issue at most one masked write.
+    // A read of the same destination fills all four VGA latches so the
+    // untouched neighbors retain their original four-plane colors.
+    asm.Cmp(Mem.Byte(mask), (Imm)0);
+    asm.Je(noMask);
+    asm.Mov(Reg.AH, Mem.Byte(Reg.DI).Seg(Reg.ES));
+    asm.Mov(Reg.AL, Mem.Byte(mask));
+    asm.Mov(Mem.Byte(Reg.DI).Seg(Reg.ES), Reg.AL);
+    asm.MarkLabel(noMask);
+    asm.Mov(Reg.DI, Reg.BX);
+    asm.Mov(Mem.Byte(mask), (Imm)0);
+
+    asm.MarkLabel(sameByte);
+    asm.Mov(Reg.AL, (Imm)0x80);
+    asm.Mov(Reg.CX, Reg.SI);
+    asm.And(Reg.CX, (Imm)7);
+    asm.Shr(Reg.AL, Reg.CL);
+    asm.Or(Mem.Byte(mask), Reg.AL);
+
+    asm.MarkLabel(advanced);
+    asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_gx2")));
+    asm.Je(done);
+    asm.Add(Reg.SI, Mem.Word(step));
+    asm.Jmp(loop);
+
+    asm.MarkLabel(done);
+    asm.Cmp(Mem.Byte(mask), (Imm)0);
+    asm.Je(finishMask);
+    asm.Mov(Reg.AH, Mem.Byte(Reg.DI).Seg(Reg.ES));
+    asm.Mov(Reg.AL, Mem.Byte(mask));
+    asm.Mov(Mem.Byte(Reg.DI).Seg(Reg.ES), Reg.AL);
+    asm.MarkLabel(finishMask);
+
+    Restore(asm, 0x3C4, 2);
+    Restore(asm, 0x3CE, 0);
+    Restore(asm, 0x3CE, 8);
+    Restore(asm, 0x3CE, 3);
+    Restore(asm, 0x3CE, 5);
+
+    asm.Pop(Reg.BX); // Original SQ index.
+    asm.Mov(Reg.DX, 0x3C4);
+    asm.Mov(Reg.AL, Reg.BL);
+    asm.Out(Reg.DX, Reg.AL);
+    asm.Pop(Reg.BX); // Original GC index.
+    asm.Mov(Reg.DX, 0x3CE);
+    asm.Mov(Reg.AL, Reg.BL);
+    asm.Out(Reg.DX, Reg.AL);
+
+    // The original Bresenham primitive leaves the last point at the end,
+    // even when the style mask suppresses every pixel.
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx2")));
+    asm.Mov(Mem.Word(asm.Lbl("rt_gx1")), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
+    asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
+    asm.Pop(Reg.ES);
+    asm.Jmp(finish);
+
+    asm.MarkLabel("rt_planar_line_rowbase");
+    asm.Dw(0);
+    asm.MarkLabel("rt_planar_line_step");
+    asm.Dw(0);
+    asm.MarkLabel("rt_planar_line_mask");
+    asm.Db(0);
+  }
+
   private static void SaveAndSet(Assembler asm, int port, int index, int value) {
     asm.Mov(Reg.DX, port);
     asm.Mov(Reg.AL, (Imm)index);
@@ -176,10 +313,12 @@ public sealed partial class DosRuntime {
     asm.Inc(Reg.DX);
     asm.In(Reg.AL, Reg.DX);
     asm.Push(Reg.AX);
-    if (value < 0) {
+    if (value is -1 or -2) {
       asm.And(Reg.AL, (Imm)0xFC);
-      asm.Or(Reg.AL, (Imm)2);
-    } else
+      asm.Or(Reg.AL, (Imm)(value == -2 ? 3 : 2));
+    } else if (value == -3)
+      asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_gcolor")));
+    else
       asm.Mov(Reg.AL, (Imm)value);
     asm.Out(Reg.DX, Reg.AL);
   }
