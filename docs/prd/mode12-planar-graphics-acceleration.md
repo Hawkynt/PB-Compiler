@@ -43,11 +43,48 @@ For other primitives, select the memory schedule according to **data representat
 
 **Selection / performance acceptance**: for each candidate count (a) VGA indexed-port writes, (b) bytes and width of VRAM transactions, (c) frame-buffer reads and latch reloads, (d) total CPU instructions per supported tier, (e) temporary mask memory/pretranspose cost, (f) physical display-bus throughput where hardware evidence exists. Reject an alternative that loses to Write Mode 2 in uniform fills or requires unbounded intermediates. Add emulated pixel readback and independent DOS VGA oracle vectors before enabling it.
 
+## Styled LINE mask semantics
+
+The `LINE (x1,y1)-(x2,y2),color,,style` operation interprets `style`
+as a 16-bit **phase-rotated stroke pattern**, not a stationary repeating
+bitmap anchored at screen coordinate zero. For the existing runtime, bit 15
+is consumed at the current raster position; `ROL style,1` happens even if
+the pixel is omitted; the first visited point uses the incoming bit 15.
+Traversing a line in the reverse direction traverses the style in reverse
+*screen-coordinate* order. The final value of `rt_gstyle`, cursor position,
+and every skipped pixel are observable via following drawing commands.
+
+**Horizontal Mode 12h initial kernel**: while iterating in exactly the
+original traversal order, accumulate selected positions into an 8-bit mask
+indexed by `80*y + (x >> 3)`, with bit `7 - (x & 7)`. On a byte boundary
+(or at the endpoint) flush the previous mask once using VGA Write Mode 3:
+`Set/Reset = color`, `Bit Mask = FFh`, CPU byte = accumulated mask.
+Read the destination VRAM byte first to load VGA latches. Empty masks
+produce **no write**, which is essential to preserving existing background
+colors and device I/O observability. Program Set/Reset, sequencer Map Mask,
+rotation and write mode **once per line**, saving/restoring every changed
+index selector and data register, rather than switching per pixel.
+
+For a styled `LINE ...,B,style`, each of the four edges inherits the
+same style phase via the existing `rt_gstyle` state. Do not reset the pattern
+between edges, omit repeated corners, normalize the start/end order or
+reorder the four edges unless tests prove all resulting observations match.
+`LINE ...,BF` still ignores the style and remains a solid fill.
+
+**Next**: generalize the pixel-selection stream into byte masks for
+diagonal/vertical Bresenham runs and for circle/ellipse point sequences
+without changing their pixel visiting order. Choose Write Mode 3 for
+constant-color masks, Write Mode 2 for full-color uniform spans and
+plane-major writes when the source is already planar. Never assume that
+vectorizing styled `LINE` means repeating the same 8-bit sequence
+independently on each byte: the modulo-16 phase and non-horizontal step
+order are part of its semantics.
+
 ## Implementation order
 
 - [x] **P0 — Test oracle:** Provide four actual mode-12 planes in `Cpu8086`; model indexed VGA GC/SQ registers, map masks, write modes, bit masks and read latches; make BIOS pixel services share the same planes as direct `ES:A000` accesses. Add cross-boundary and port restoration tests.
 - [x] **P1 — Solid rectangles:** Guard by active BIOS mode 12h, in-bounds 640×480 rectangle and ordinary color 0–15; configure write mode 2 once, use `REP STOSB` for full eight-pixel bytes and latch-preserving masks for edges. Preserve existing cursor semantics and fall back for unknown geometry/colors/modes.
-- [ ] **P2 — Horizontal LINE/B/diagonal/CIRCLE/ellipse/DRAW:** Share a graphics-scoped register state contract, batch horizontal spans, cache only unmodified GC/SQ selectors, and retain style-mask rotation and PB cursor behavior. Use known/must mode and port-write invalidation from IR; prefer static state proving to blind runtime assumptions.
+- [~] **P2 — Patterned LINE/B/diagonal/CIRCLE/ellipse/DRAW:** The first implementation handles an in-bounds **horizontal** Mode 12h `LINE` with arbitrary 16-bit `style` by accumulating each selected pixel's bit into its destination VGA byte, then issuing a single masked Write Mode 3 transaction per affected byte. It rotates `rt_gstyle` at **every raster position**, including positions skipped by the style, and respects reversed endpoints. `LINE ...,B,style` inherits this kernel only for its horizontal edges; vertical/diagonal edges still use the faithful existing Bresenham/BIOS path. Remaining work: general Bresenham-to-byte-mask rendering, style continuation across contours, full mode/page/port-state proof, CPU-specific scheduling, and `DRAW`/ellipse paths.
 - [ ] **P3 — PAINT:** Batch filled contiguous runs by full bytes; preserve flood-fill topology, border color, 128-span stack behavior, returns/traps, and transparent/adjacent colors.
 - [ ] **P4 — PSET/POINT:** Specialized planar pixel access with one selected masked RMW or one plane-comparison read; hoist register setup across proven sequences rather than performing per-pixel port switches.
 - [ ] **P5 — GET/PUT:** Correct QB-compatible sprite headers and width-per-plane layout, transparent/overlap semantics, and all COPY/PRESET/AND/OR/XOR verbs. Use mode 1 or per-plane blits only when hardware state and alignment allow them.
