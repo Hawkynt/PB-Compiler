@@ -142,6 +142,8 @@ public sealed partial class DosRuntime {
     this.EmitLineFill(asm);
     this.EmitCircle(asm);
     this.EmitArc(asm);
+    if (this.EnableTargetOptimizations)
+      EmitPlanarRasterHelpers(asm);
   }
 
   /// <summary>GET: the rectangle between the two points captured into an array.</summary>
