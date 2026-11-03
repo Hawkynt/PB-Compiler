@@ -72,6 +72,16 @@ public sealed partial class DosRuntime {
       asm.Jl(begin);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gr")), (Imm)230);
       asm.Jg(begin);
+      // Reject invalid centers before adding a radius, so signed 16-bit
+      // coordinate arithmetic cannot wrap into an apparently valid bound.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcx")), (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcx")), (Imm)639);
+      asm.Jg(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcy")), (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcy")), (Imm)479);
+      asm.Jg(begin);
       // IEEE-754 DOUBLE high word: positive finite aspect < 1.
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gaspect"), 6));
       asm.Cmp(Reg.AX, (Imm)0);
