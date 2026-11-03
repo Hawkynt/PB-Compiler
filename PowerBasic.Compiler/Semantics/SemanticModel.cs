@@ -77,6 +77,22 @@ public sealed class SemanticModel {
     && meta.Arguments is [{ } option, ..]
     && option.Text.Equals("ASCII", StringComparison.OrdinalIgnoreCase));
 
+  /// <summary>
+  /// PB36 $OPTION VRAMPACK ON|OFF: only controls widening of certified VGA
+  /// pixel stores. Generic optimization and RAM packing remain independent.
+  /// The last directive in the compilation unit wins.
+  /// </summary>
+  public bool PackVideoStores {
+    get {
+      var option = this.MetaStatements.LastOrDefault(meta =>
+        meta.Command.Equals("OPTION", StringComparison.OrdinalIgnoreCase)
+        && meta.Arguments is [{ } name, { } state]
+        && name.Text.Equals("VRAMPACK", StringComparison.OrdinalIgnoreCase));
+      return option is null
+        || !option.Arguments[1].Text.Equals("OFF", StringComparison.OrdinalIgnoreCase);
+    }
+  }
+
   /// <summary>pb36 nullable types (<c>T?</c>): maps a synthesized nullable UDT's name to its underlying value type. A UDT in this set carries a <c>Value</c> field and a <c>HasValue</c> presence flag.</summary>
   public Dictionary<string, PbType> NullableUnderlying { get; } = new(StringComparer.OrdinalIgnoreCase);
 
