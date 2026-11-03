@@ -95,12 +95,12 @@ public sealed class PrivateByteStorePackingTests {
   [TestCase(true)]
   public void Execute_GivenOutOfOrderPb35ByteArrayWrites_ThenPreservesAllValues(bool optimize) {
     const string source = """
-      DIM data(0 TO 3) AS BYTE
-      data(2) = 3
-      data(0) = 1
-      data(3) = 4
-      data(1) = 2
-      PRINT data(0); data(1); data(2); data(3)
+      DIM payload(0 TO 3) AS BYTE
+      payload(2) = 3
+      payload(0) = 1
+      payload(3) = 4
+      payload(1) = 2
+      PRINT payload(0); payload(1); payload(2); payload(3)
       END
       """;
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "ARRAY.BAS", Dialect.Pb35),
