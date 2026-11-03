@@ -13,13 +13,13 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// </summary>
 [TestFixture]
 public sealed class PlanarSchedulingComparisonTests {
-  private static Cpu8086 Run(string render) {
+  private static Cpu8086 Run(string render, string probe = "PRINT POINT(0,0);POINT(3,0);POINT(7,0);POINT(8,0)") {
     var source = $"""
       SCREEN 12
       FOR x% = 0 TO 7 : PSET (x%,0),6 : NEXT
       DEF SEG = &HA000
       {render}
-      PRINT POINT(0,0);POINT(3,0);POINT(7,0);POINT(8,0)
+      {probe}
       END
       """;
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "PLANE.BAS", Dialect.Pb36),
@@ -30,6 +30,37 @@ public sealed class PlanarSchedulingComparisonTests {
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     Assert.That(generator.BackendDeclines, Is.Empty);
     return Cpu8086.Run(exe);
+  }
+
+  [Test]
+  public void Execute_GivenEightDifferentColors_ThenFourPlaneByteMasksMatchBiosPixels() {
+    // Eight differently colored pixels are four independent *bytes* when
+    // represented plane-major: no GC index switch is needed per pixel.
+    // Leftmost pixel occupies bit 7, hence masks 55, 33, 0F, 00.
+    const string byPlane = """
+      OUT &H3CE, 5: OUT &H3CF, 0
+      OUT &H3CE, 1: OUT &H3CF, 0
+      OUT &H3CE, 3: OUT &H3CF, 0
+      OUT &H3CE, 8: OUT &H3CF, 255
+      OUT &H3C4, 2: OUT &H3C5, 1: POKE 0, &H55
+      OUT &H3C4, 2: OUT &H3C5, 2: POKE 0, &H33
+      OUT &H3C4, 2: OUT &H3C5, 4: POKE 0, &H0F
+      OUT &H3C4, 2: OUT &H3C5, 8: POKE 0, 0
+      """;
+    const string byPixel = """
+      FOR x% = 0 TO 7: PSET (x%,0),x%: NEXT
+      """;
+    const string probes = """
+      PRINT POINT(0,0);POINT(1,0);POINT(2,0);POINT(3,0);POINT(4,0);POINT(5,0);POINT(6,0);POINT(7,0)
+      """;
+    var batched = Run(byPlane, probes);
+    var baseline = Run(byPixel, probes);
+    Assert.Multiple(() => {
+      Assert.That(batched.Output, Is.EqualTo(baseline.Output));
+      Assert.That(batched.Output.Trim(), Does.Contain("0  1  2  3  4  5  6  7"));
+      Assert.That(batched.PortWrites.Count(e => e.Port is 0x3C4 or 0x3C5), Is.EqualTo(8),
+        "one plane selection per eight-pixel stripe, rather than per individual pixel");
+    });
   }
 
   [TestCase(0)]
