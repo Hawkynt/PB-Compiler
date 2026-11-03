@@ -761,6 +761,7 @@ public sealed partial class DosRuntime {
     var fastHorizontal = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var fastPackedPattern = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var fastPlanarPattern = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarPatternGuard = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var planarGeneral = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var planarGeneralGuard = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var bresenhamStart = asm.DefineLabel();
@@ -780,19 +781,19 @@ public sealed partial class DosRuntime {
       // patterned line must use Bresenham to preserve mask phase and skips.
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
       asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
-      asm.Jne(slowHorizontal);
+      asm.Jne(planarPatternGuard!);
       asm.Cmp(Reg.AX, (Imm)0);
-      asm.Jl(slowHorizontal);
+      asm.Jl(planarPatternGuard!);
       asm.Cmp(Reg.AX, (Imm)199);
-      asm.Jg(slowHorizontal);
+      asm.Jg(planarPatternGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
-      asm.Jl(slowHorizontal);
+      asm.Jl(planarPatternGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)319);
-      asm.Jg(slowHorizontal);
+      asm.Jg(planarPatternGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)0);
-      asm.Jl(slowHorizontal);
+      asm.Jl(planarPatternGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)319);
-      asm.Jg(slowHorizontal);
+      asm.Jg(planarPatternGuard!);
       var packedStyle = asm.DefineLabel();
       var packedChecked = asm.DefineLabel();
       asm.Cmp(Mem.Word(asm.Lbl("rt_gstyle")), (Imm)0xFFFF);
@@ -803,6 +804,8 @@ public sealed partial class DosRuntime {
       EmitPackedModeBranch(asm, fastPackedPattern!);
       asm.MarkLabel(packedChecked);
     }
+    if (planarPatternGuard is not null)
+      asm.MarkLabel(planarPatternGuard);
     if (fastPlanarPattern is not null) {
       // Unlike the Mode 13h solid-word path, Mode 12h can batch patterned
       // horizontal lines as one masked write per eight-pixel VGA byte.
