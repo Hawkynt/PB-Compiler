@@ -122,6 +122,16 @@ The project is deliberately split into reviewable PRs; a passing CI run is not e
 
 All code stages are independent or explicitly stacked; no benchmark is interpreted as a physical 8086/386 cycle measurement.
 
+### M7 — Private arrays, fixed strings and pinned-memory write scheduling
+
+See [the detailed pinned-buffer PRD](private-and-pinned-buffer-store-packing.md) and [PR #332](https://github.com/Hawkynt/PB-Compiler/pull/332).
+
+- [x] Reorder and widen constant byte stores to non-escaping byte arrays/fixed buffers when all intermediate memory accesses are proven disjoint. Respect CPU widths and byte order.
+- [x] Preserve the original order for unknown aliases, mid-sequence reads of moved bytes, calls, inline ASM, and arbitrary `DIM DYNAMIC ... AT segment` memory.
+- [ ] Establish per-region provenance for pinned ordinary RAM versus hardware-mapped/unknown locations, including real-mode segment aliases and all string ownership rules.
+- [ ] Extend proven-pinned fusion to runtime string storage and arrays without violating dynamic-string reallocation, NUL terminators or observable device access.
+- [ ] Benchmark instruction count, binary size and hardware cycles per CPU generation, with explicit regression tests.
+
 ## Acceptance criteria
 
 - M1 is accepted only when CPU-specific compiled images execute correctly for tested boundaries and widths; the generic path still works for unknown modes and out-of-range coordinates.
