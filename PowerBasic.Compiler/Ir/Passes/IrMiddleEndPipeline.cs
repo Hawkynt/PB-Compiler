@@ -165,7 +165,8 @@ public static class IrMiddleEndPipeline {
       bool recoverIntegerArithmetic = false,
       TargetCost? targetCost = null,
       IIrCallCostModel? callCostModel = null,
-      int packedVectorBytes = 0) {
+      int packedVectorBytes = 0,
+      bool packVideoStores = true) {
     ArgumentNullException.ThrowIfNull(module);
 
     // A complete block of compiler-owned MOV-immediate stores contains no
@@ -253,7 +254,7 @@ public static class IrMiddleEndPipeline {
       // POINT reads are also device observations: lower them only at the
       // final native boundary, not while GVN/DSE still run.
       PixelRuntimeReadLowering.Run(module);
-      PixelRuntimeStoreLowering.Run(module, targetCost);
+      PixelRuntimeStoreLowering.Run(module, targetCost, packVideoStores);
     }
   }
 
