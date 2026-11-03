@@ -88,6 +88,19 @@ public sealed partial class DosRuntime {
       asm.Jl(begin);
       asm.Cmp(Reg.AX, (Imm)0x3FF0);
       asm.Jge(begin);
+      // For bounded trigonometric arguments, x87 FSIN/FCOS must return
+      // values in [-1,1]. Exclude negative/NaN/huge angle encodings:
+      // outside their range the x87 may leave the operand unchanged.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gastart"), 6));
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Reg.AX, (Imm)0x4020); // 8.0
+      asm.Jae(begin);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gaend"), 6));
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Reg.AX, (Imm)0x4020);
+      asm.Jae(begin);
       asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gr")));
       asm.Add(Reg.BX, 2);
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcx")));
