@@ -474,6 +474,8 @@ public sealed partial class DosRuntime {
     var fillRun = asm.DefineLabel();
     var fillDone = asm.DefineLabel();
     var packedFill = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarFill = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarCheck = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var neighbourRow = asm.DefineLabel();
     var scanRow = asm.DefineLabel();
     var scanRowDone = asm.DefineLabel();
@@ -509,6 +511,18 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.BP, Reg.SP);
     asm.Sub(Reg.SP, (Imm)(_paintSpans * 4));
     asm.Mov(Mem.Word(Reg.BP, 12), (Imm)0); // Saved AX becomes the status result.
+    // Flood-fill bounds must match the actual BIOS mode, even in unoptimized
+    // builds; the original 320x200 limit incorrectly clipped SCREEN 12.
+    asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)0);
+    {
+      var mode12 = asm.DefineLabel();
+      var modeReady = asm.DefineLabel();
+      EmitPlanarModeBranch(asm, mode12);
+      asm.Jmp(modeReady);
+      asm.MarkLabel(mode12);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)1);
+      asm.MarkLabel(modeReady);
+    }
 
     // seed the stack with the point PAINT was given
     asm.Mov(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
@@ -562,14 +576,31 @@ public sealed partial class DosRuntime {
       // The scanline search normally proves this region is on-screen. Check
       // again here because a batchable A000h store must never wrap 64 KiB.
       asm.Cmp(Mem.Word(asm.Lbl("rt_px1")), (Imm)0);
-      asm.Jl(fillRun);
+      asm.Jl(planarCheck!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_px2")), (Imm)319);
+      asm.Jg(planarCheck!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)0);
+      asm.Jl(planarCheck!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)199);
+      asm.Jg(planarCheck!);
+      EmitPackedModeBranch(asm, packedFill);
+    }
+    if (planarCheck is not null)
+      asm.MarkLabel(planarCheck);
+    if (planarFill is not null) {
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)1);
+      asm.Jne(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_px1")), (Imm)0);
+      asm.Jl(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_px2")), (Imm)639);
       asm.Jg(fillRun);
       asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)0);
       asm.Jl(fillRun);
-      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)199);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)479);
       asm.Jg(fillRun);
-      EmitPackedModeBranch(asm, packedFill);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(fillRun);
+      asm.Jmp(planarFill);
     }
     asm.MarkLabel(fillRun);
     asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_px2")));
@@ -623,6 +654,30 @@ public sealed partial class DosRuntime {
       asm.Stosb();
       asm.MarkLabel(noByteTail);
       asm.Pop(Reg.ES);
+    }
+    if (planarFill is not null) {
+      asm.MarkLabel(planarFill);
+      // Reuse the already certified 640x480 Mode-12 rectangle kernel for a
+      // one-row run. Keep PAINT's seed/cursor state unchanged so following
+      // neighbour reads and any subsequent LINE use the exact same points.
+      asm.Push(Reg.DI);
+      foreach (var cell in new[] { "rt_gx1", "rt_gx2", "rt_gy1", "rt_gy2" }) {
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl(cell)));
+        asm.Push(Reg.AX);
+      }
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_px1")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gx1")), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_px2")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gx2")), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_py")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_gy2")), Reg.AX);
+      asm.Call(this.LineFill);
+      foreach (var cell in new[] { "rt_gy2", "rt_gy1", "rt_gx2", "rt_gx1" }) {
+        asm.Pop(Reg.AX);
+        asm.Mov(Mem.Word(asm.Lbl(cell)), Reg.AX);
+      }
+      asm.Pop(Reg.DI);
     }
     asm.MarkLabel(fillDone);
 
@@ -700,12 +755,25 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DX);
     asm.Cmp(Reg.AX, (Imm)0);
     asm.Jl(notFillable);
-    asm.Cmp(Reg.AX, (Imm)320);
-    asm.Jge(notFillable);
     asm.Cmp(Reg.BX, (Imm)0);
     asm.Jl(notFillable);
-    asm.Cmp(Reg.BX, (Imm)200);
-    asm.Jge(notFillable);
+    {
+      var mode12 = asm.DefineLabel();
+      var inBounds = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)1);
+      asm.Je(mode12);
+      asm.Cmp(Reg.AX, (Imm)320);
+      asm.Jge(notFillable);
+      asm.Cmp(Reg.BX, (Imm)200);
+      asm.Jge(notFillable);
+      asm.Jmp(inBounds);
+      asm.MarkLabel(mode12);
+      asm.Cmp(Reg.AX, (Imm)640);
+      asm.Jge(notFillable);
+      asm.Cmp(Reg.BX, (Imm)480);
+      asm.Jge(notFillable);
+      asm.MarkLabel(inBounds);
+    }
     asm.Call(this.Point);               // AL = colour, AH cleared
     asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gpbord")));
     asm.Je(notFillable);
@@ -723,6 +791,8 @@ public sealed partial class DosRuntime {
 
     // The seed stack and the fill's scratch, placed here rather than in the common data block so the
     // runtime trimmer drops all of it with the graphics section when a program draws nothing.
+    asm.MarkLabel("rt_paint_mode12");
+    asm.Db(0);
     foreach (var cell in new[] { "rt_gpbord", "rt_psp", "rt_px1", "rt_px2", "rt_py", "rt_pny", "rt_pside" }) {
       asm.MarkLabel(cell);
       asm.Dw(0);
