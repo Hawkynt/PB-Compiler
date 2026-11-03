@@ -84,7 +84,9 @@ This PRD covers the larger program of work. The accompanying code changes implem
 ### M4 — Store fusion and renderer recognition (separate PRs)
 
 - [ ] Canonicalize direct `PSET`, eligible `POKE`, horizontal `LINE`, contiguous `PAINT` runs and statically parsed `DRAW` sequences to a shared graphics operation while preserving cursor/style/side effects.
-- [ ] Pack adjacent constant colors little-endian into word/dword stores only within a certified batchable region, with no observer/barrier between writes.
+- [x] Pack adjacent constant colors little-endian into word/dword stores only within the certified packed Mode 13h region, with no observer/barrier between writes.
+- [x] Allow PB36 `$OPTION VRAMPACK ON|OFF` to toggle only late native video-store packetization, leaving unrelated RAM packing, direct pixel lowering and other optimization passes unchanged.
+- [ ] Extend hardware-verified video batching to further VGA mappings and modes using explicit segment:offset and video-register state. The address window `A0000h-BFFFFh` by itself is not enough.
 - [ ] Transform constant-color span runs into fills, clipped or peeled as required; select 8086 words, 386 dwords and byte/word remainders based on cost/ISA.
 - [ ] Improve rectangle and sprite row lowering; preserve GET/PUT action semantics (COPY, XOR, PRESET, etc.) and screen page behavior.
 - [ ] Ensure DSE removes dead **RAM** writes, never an observable framebuffer/device write without an explicit semantics proof.
