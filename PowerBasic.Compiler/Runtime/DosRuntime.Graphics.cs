@@ -757,6 +757,7 @@ public sealed partial class DosRuntime {
     var xPositive = asm.DefineLabel();
     var yPositive = asm.DefineLabel();
     var fastHorizontal = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var fastPackedPattern = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var fastPlanarPattern = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var slowHorizontal = asm.DefineLabel();
 
@@ -770,8 +771,6 @@ public sealed partial class DosRuntime {
     if (fastHorizontal is not null) {
       // Solid-styled lines rotate FFFFh back to FFFFh at every pixel; a
       // patterned line must use Bresenham to preserve mask phase and skips.
-      asm.Cmp(Mem.Word(asm.Lbl("rt_gstyle")), (Imm)0xFFFF);
-      asm.Jne(slowHorizontal);
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
       asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
       asm.Jne(slowHorizontal);
@@ -787,7 +786,15 @@ public sealed partial class DosRuntime {
       asm.Jl(slowHorizontal);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)319);
       asm.Jg(slowHorizontal);
+      var packedStyle = asm.DefineLabel();
+      var packedChecked = asm.DefineLabel();
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gstyle")), (Imm)0xFFFF);
+      asm.Jne(packedStyle);
       EmitPackedModeBranch(asm, fastHorizontal);
+      asm.Jmp(packedChecked);
+      asm.MarkLabel(packedStyle);
+      EmitPackedModeBranch(asm, fastPackedPattern!);
+      asm.MarkLabel(packedChecked);
     }
     if (fastPlanarPattern is not null) {
       // Unlike the Mode 13h solid-word path, Mode 12h can batch patterned
@@ -958,6 +965,8 @@ public sealed partial class DosRuntime {
     }
     if (fastPlanarPattern is not null)
       this.EmitPlanarPatternedLine(asm, fastPlanarPattern, done);
+    if (fastPackedPattern is not null)
+      EmitMode13StyledHorizontalLine(asm, fastPackedPattern, done);
   }
 
   /// <summary>
