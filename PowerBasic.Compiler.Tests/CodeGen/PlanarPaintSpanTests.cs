@@ -22,7 +22,7 @@ public sealed class PlanarPaintSpanTests {
 
   [TestCase("$CPU 8086", 0, 15)]
   [TestCase("$CPU 8086", 5, 14)]
-  [TestCase("$CPU 8086", 7, 7)]
+  [TestCase("$CPU 8086", 7, 9)]
   [TestCase("$CPU 80386", 5, 14)]
   public void Execute_GivenPlanarBorder_ThenScanlineFillMatchesReferenceAndPreservesBorder(
       string cpu, int left, int right) {
