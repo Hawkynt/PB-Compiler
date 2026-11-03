@@ -81,11 +81,16 @@ real optimization pipeline and a lean backend — that existing programs opt int
 - An SSA-based optimization pipeline available in every dialect via `--optimize`
 - Proven DOS `SCREEN 13` pixel calls use an inlineable IR address calculation, exposing row strides
   to ordinary loop strength reduction and late direct framebuffer loads/stores. Certified adjacent
-  pixels and in-bounds horizontal/rectangle/PAINT spans use CPU-gated word/dword writes; unknown
-  layouts and unproved raw memory retain their original paths
+  pixels and in-bounds horizontal/rectangle/PAINT spans use CPU-gated word/dword writes; styled
+  horizontal/diagonal/vertical lines also avoid per-pixel BIOS mode checks. Unknown layouts and
+  unproved raw memory retain their original paths
+- DOS `SCREEN 12` uses four-plane VGA register batching for bounded solid rectangles and
+  patterned lines, sharing an ordered byte-mask rasterizer with circles, bounded elliptical arcs
+  and `DRAW` strokes. The normal graphics path remains for unproved modes, bounds and colors
 - DOS `DRAW` uses a typed-IR parser and shared scale/angle/colour/cursor operations; known complete
   text and safe leading spans of mixed strings inline after string folding. Arbitrary fragment
-  boundaries stay interpreted; planar batching and full historic graphics fidelity remain open
+  boundaries stay interpreted; general planar `GET/PUT`, `PAINT` and historical graphics fidelity
+  remain open
 - Whole-function, private MOV-immediate inline ASM can become ordinary SSA stores after an explicit
   no-escape proof; unrecognized instructions and register/flag dependencies remain opaque
 - Default QuickBASIC 1–3 uses MBF32/MBF64 storage, including numeric string codecs, near static arrays,
@@ -940,7 +945,7 @@ next free number rather than displacing anything.
 | | # | Pass | What it does |
 |---|---|---|---|
 | ✅ | [R0001](docs/optimizations/R0001-fast-text-output.md) | Fast text output | `$OPTION VIDEO` writes printable runs straight to B800h text memory with one BIOS cursor resync. |
-| ✅ | [R0002](docs/optimizations/R0002-fast-graphics.md) | Fast graphics primitives | SCREEN 13 `PSET`/`PRESET`/`POINT` are direct `A000:y*320+x` accesses — no BIOS per-pixel path. |
+| ✅ | [R0002](docs/optimizations/R0002-fast-graphics.md) | Fast graphics primitives | SCREEN 13 direct pixels and styled lines; SCREEN 12 planar filled rectangles, style-mask lines, circles and bounded ellipses use batched VGA byte masks. |
 | ✅ | [R0003](docs/optimizations/R0003-string-engine.md) | String engine | DWORD-wide string and block moves under `$CPU 80386`; in-place append paths in the heap. |
 | ✅ | [R0004](docs/optimizations/R0004-asm-intrinsics.md) | Inline-asm intrinsics | `BSWAP`, `CMOVcc` and the MMX/SSE2/AVX/AVX-512 integer-SIMD sets are available to `!` statements. |
 
