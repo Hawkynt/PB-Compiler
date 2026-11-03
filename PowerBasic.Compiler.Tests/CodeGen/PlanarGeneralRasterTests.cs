@@ -81,6 +81,33 @@ public sealed class PlanarGeneralRasterTests {
   }
 
   [Test]
+  public void Execute_GivenCirclePastTheMode13Viewport_ThenUsesTheFullMode12Dimensions() {
+    const string body = """
+      CIRCLE (340,240),20,9
+      PRINT POINT(360,240);POINT(320,240);POINT(340,260);POINT(340,220);
+      PRINT POINT(340,240);POINT(319,240)
+      """;
+    var accelerated = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(accelerated.Output, Is.EqualTo(reference.Output));
+      Assert.That(accelerated.Output.Trim(), Does.Contain("9  9  9  9"));
+    });
+  }
+
+  [Test]
+  public void Execute_GivenFarRightPlanarDiagonal_ThenRespectsThe640PixelBoundary() {
+    const string body = """
+      LINE (610,260)-(639,289),14,,&HAAAA
+      PRINT POINT(610,260);POINT(611,261);POINT(638,288);POINT(639,289);
+      PRINT POINT(609,259);POINT(610,259)
+      """;
+    var accelerated = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.That(accelerated.Output, Is.EqualTo(reference.Output));
+  }
+
+  [Test]
   public void Execute_GivenMode12DrawCommands_ThenItUsesTheSameRasterAsLine() {
     const string body = """
       PSET (40,40),0
