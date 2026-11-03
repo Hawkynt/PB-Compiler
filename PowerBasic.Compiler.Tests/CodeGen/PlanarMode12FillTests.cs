@@ -24,7 +24,7 @@ public sealed class PlanarMode12FillTests {
   }
 
   [TestCase("", 0, 0, 639, 0, 15)]
-  [TestCase("", 0, 0, 639, 479, 2)]
+  [TestCase("", 0, 0, 63, 47, 2)]
   [TestCase("", 3, 4, 17, 8, 5)]
   [TestCase("", 7, 10, 7, 11, 12)]
   [TestCase("", 8, 7, 15, 7, 1)]
@@ -50,6 +50,18 @@ public sealed class PlanarMode12FillTests {
   }
 
   [TestCase("LINE (2,3)-(10,3),4,BF\nLINE (11,3)-(13,3),5,BF", "4  4  5  5")]
+  [Test]
+  public void Execute_GivenFullScreenPlanarFill_ThenAllScreenCornersAreCovered() {
+    // Executing more than 300K individual BIOS pixel interrupts in the test
+    // interpreter is costly. Smaller fixtures above compare both paths.
+    const string body = """
+      LINE (0,0)-(639,479),2,BF
+      PRINT POINT(0,0);POINT(639,0);POINT(0,479);POINT(639,479)
+      """;
+    var optimized = Execute(body, true);
+    Assert.That(optimized.Output.Trim(), Does.Contain("2  2  2  2"));
+  }
+
   [TestCase("LINE (31,3)-(8,1),9,BF", "9  9  9  9")]
   [TestCase("LINE (0,0)-(0,0),0,BF", "0  0  0  0")]
   public void Execute_GivenSeveralPlanarRects_ThenMatchesReference(
