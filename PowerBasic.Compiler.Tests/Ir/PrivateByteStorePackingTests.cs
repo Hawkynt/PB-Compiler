@@ -147,6 +147,24 @@ public sealed class PrivateByteStorePackingTests {
   }
 
   [Test]
+  public void Pack_GivenPartiallyOverlappingIntermediateWord_ThenDoesNotChangeStoreOrder() {
+    var (fn, builder, buffer) = Create();
+    Write(builder, buffer, 0, 1);
+    builder.Store(new IrConstantInt(IrType.I16, 0xABCD),
+      builder.Gep(buffer, new IrConstantInt(IrType.I32, 0)));
+    Write(builder, buffer, 1, 2);
+    builder.Ret();
+
+    Assert.Multiple(() => {
+      Assert.That(PrivateByteStorePacking.Run(fn,
+        new TargetCost(CpuTier.I80386, CostObjective.Balanced)), Is.Zero);
+      Assert.That(Writes(fn).Select(store => store.Value.Type.Bits),
+        Is.EqualTo(new[] { 8, 16, 8 }));
+      Assert.That(IrVerifier.Verify(fn), Is.Empty);
+    });
+  }
+
+  [Test]
   public void Pack_GivenCallOrEscapedBuffer_ThenLeavesStoresSeparate() {
     var (fn, builder, buffer) = Create();
     var opaque = new IrFunction("opaque", IrType.Void, [new IrArgument(IrType.Ptr, 0)]);
