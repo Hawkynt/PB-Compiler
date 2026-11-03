@@ -94,16 +94,20 @@ clipping, pages, viewports or complete graphics error semantics.
 
 ## Planar follow-up scope
 
-The new Mode 12h rectangle path eliminates the BIOS pixel call per filled pixel but does not
-yet accelerate `PSET`, `POINT`, styled/diagonal `LINE`, `CIRCLE`, aspect-ratio arcs and
-ellipses, `PAINT`, `GET/PUT` actions, or graphics glyph output. In particular, `PRINT`
-currently follows its DOS output contract, not a Mode 12h font renderer. See the
-[staged Mode 12h PRD](../prd/mode12-planar-graphics-acceleration.md).
+The Mode 12h rectangle and byte-mask paths avoid per-pixel BIOS interrupts for in-bounds
+solid fills, horizontal/vertical/diagonal styled `LINE`, `DRAW` line segments, CIRCLE mirror
+points, and a proven subset of aspect-ratio elliptical arcs. Nonoptimized compilations,
+unproved VGA state and unsupported color or clipping cases retain the original runtime.
+`PSET`, `POINT`, `PAINT`, `GET/PUT` and graphics glyph output are not yet broadly
+accelerated. In particular, `PRINT` follows its DOS output contract, not a Mode 12h
+font renderer. See the [staged Mode 12h PRD](../prd/mode12-planar-graphics-acceleration.md).
 
 ## What is still planned
 
-Circle and flood-fill coverage still has mode-specific limits. Fast vertical/45-degree lines and
-planar EGA/VGA batches remain work, including hardware-state, clipping and cursor contracts.
+Further graphics batching still requires stronger VGA hardware-state contracts, optimized
+`PAINT`, generalized sprite blits, screen-mode-specific clipping and cursor behavior, and
+hardware performance validation. Mode 13h styled lines avoid a BIOS query at every pixel,
+but partially masked word/dword writes remain unproven and are not widened blindly.
 
 Mixed text can inline a known leading movement sequence ending at `;`, then resume interpretation
 at the following byte. The joined allocation remains live until interpretation ends or fails;
