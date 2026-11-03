@@ -219,9 +219,14 @@ public static class IrMiddleEndPipeline {
           Dce.Run(function);
       StringStackPromotion.Run(module);
       foreach (var function in module.Functions)
-        if (!function.IsDeclaration)
-          MemoryRoutineSpecialization.Run(function,
-            targetCost ?? new TargetCost(CpuTier.I8086, CostObjective.Balanced));
+        if (!function.IsDeclaration) {
+          var cost = targetCost ?? new TargetCost(CpuTier.I8086, CostObjective.Balanced);
+          MemoryRoutineSpecialization.Run(function, cost);
+          // Perform source-visible byte-store batching after the ordinary
+          // optimizers have established constant values and pointer identities.
+          // This pass only touches non-escaping stack buffers, never DIM AT.
+          PrivateByteStorePacking.Run(function, cost);
+        }
     }
 
     // Kept as a separate final sweep for now: this is the pre-cutover native ordering. Once exact-head
