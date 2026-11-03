@@ -318,6 +318,10 @@ public sealed partial class DosRuntime {
       asm.Or(Reg.AL, (Imm)(value == -2 ? 3 : 2));
     } else if (value == -3)
       asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_gcolor")));
+    else if (value == -4)
+      asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_planar_pset_mask")));
+    else if (value == -5)
+      asm.And(Reg.AL, (Imm)0xF7); // Force read mode 0, retain write mode and other bits.
     else
       asm.Mov(Reg.AL, (Imm)value);
     asm.Out(Reg.DX, Reg.AL);
