@@ -21,6 +21,28 @@ The Mode 12h aperture is byte-addressed as `80*y + floor(x/8)`, but each byte co
 - **Write mode 3:** Set/reset color combined with a CPU byte pattern mask can accelerate font glyphs and patterned fills where the current VGA hardware and provenance contract permit it.
 - Save and restore all VGA registers and index selectors touched by a self-contained operation. Do not move state changes across `OUT`, `INP`, inline ASM, BIOS calls, interrupts or unknown calls. The sequencer Map Mask, GC registers and latches are observable I/O effects; do not pass them through ordinary scalar DSE/GVN.
 
+## Primitive-major versus plane-major raster scheduling
+
+For a single solid-color rectangle, do **not** independently draw four plane passes by default. VGA Write Mode 2 already broadcasts the four color bits across all four planes on one host byte write. Four passes mean four memory traversals and at least four sequencer-mask selections, for no increase in output fidelity.
+
+For other primitives, select the memory schedule according to **data representation and hardware effects**, not source syntax:
+
+| Operation/representation | Preferred scheduling candidate | Reason and proof obligation |
+| --- | --- | --- |
+| Solid rectangle or horizontal solid run | One broadcast pass, Write Mode 2 with all four plane masks enabled | Color is uniform; one CPU byte changes eight pixels across four planes, with latches preloaded on clipped boundary bytes |
+| Monochrome line, circle, ellipse, glyph or repeated color mask | Rasterize a mask per byte, then one-pass Write Mode 3 with Set/Reset and latch-preserving masking | Avoid repeated per-pixel bitmask port writes; determine exact mask before touching video memory; preserve draw ordering when masks overlap |
+| Packed source-memory sprite with 16-color pixels | Pretranspose pixels into four plane byte streams, then issue **four plane-major blits**, each with one Map Mask switch | Four passes can beat per-pixel port switches, especially across large sprites; pretranspose must be paid once or reused |
+| Already planar source-memory sprite | Four plane-major runs without transposition, if no faster all-plane transfer applies | Hoist plane selection outside the inner pixel/byte loop; handle source and destination bytes and clipping |
+| Video-to-video aligned copy | Consider Write Mode 1 and paired source-latch-read/destination-write | All four source planes transfer in one write; do not select four plane passes unless comparison proves a benefit |
+| Multi-color individual points or small irregular geometry | Batch consecutive points by byte/color/plane if the legal dependency graph permits; otherwise use safe per-pixel fallback | Sorting raster writes may reorder writes to overlapping pixels, affect X/Y style or expose intermediate results |
+| PAINT or framebuffer-reading primitive | Compute flood-fill topology / read-dependent region **first**; only then schedule its output mask | A plane-major write during discovery could change the very pixels the algorithm still has to inspect |
+
+**Candidate plane-major backend**: take a *complete primitive* or a proven side-effect-free group of primitives, render geometry into a compact per-plane/row byte-mask representation once, then issue `for plane in 0..3` outer and `for row/byte` inner. Select Map Mask only once per plane, not once per pixel. The effective plane bits for color `c` are `(c >> plane) & 1`; zero bits **must be written as zero** for overwriting fills, not merely skipped. Partial-byte outputs require a destination latch read before every masked write. Preserve any overlaps, per-plane logical action (COPY/XOR/AND/OR/PRESET), graphics style phase, cursor state, and exception/interrupt/BIOS effects. A single pass through hardware write mode 2/3 may dominate this plan; choose by measured cost instead of applying plane-major universally.
+
+**Cross-primitive grouping is a stronger transformation than reordering inside one primitive.** It is allowed only when the compiler can prove the same result *and intermediate read observations* (including POINT, GET, PAINT, PEEK, INP/OUT, inline ASM, calls that may draw/read video, and screen/page/mode changes). For example, moving an entire later rectangle before an earlier POINT is illegal even when their final pixels would match. No whole-program grouping is implied merely by consecutive `LINE` syntax. Consider an explicit VGA state/effect analysis and a bounded raster batch as a future IR lowering stage.
+
+**Selection / performance acceptance**: for each candidate count (a) VGA indexed-port writes, (b) bytes and width of VRAM transactions, (c) frame-buffer reads and latch reloads, (d) total CPU instructions per supported tier, (e) temporary mask memory/pretranspose cost, (f) physical display-bus throughput where hardware evidence exists. Reject an alternative that loses to Write Mode 2 in uniform fills or requires unbounded intermediates. Add emulated pixel readback and independent DOS VGA oracle vectors before enabling it.
+
 ## Implementation order
 
 - [x] **P0 — Test oracle:** Provide four actual mode-12 planes in `Cpu8086`; model indexed VGA GC/SQ registers, map masks, write modes, bit masks and read latches; make BIOS pixel services share the same planes as direct `ES:A000` accesses. Add cross-boundary and port restoration tests.
@@ -30,7 +52,7 @@ The Mode 12h aperture is byte-addressed as `80*y + floor(x/8)`, but each byte co
 - [ ] **P4 — PSET/POINT:** Specialized planar pixel access with one selected masked RMW or one plane-comparison read; hoist register setup across proven sequences rather than performing per-pixel port switches.
 - [ ] **P5 — GET/PUT:** Correct QB-compatible sprite headers and width-per-plane layout, transparent/overlap semantics, and all COPY/PRESET/AND/OR/XOR verbs. Use mode 1 or per-plane blits only when hardware state and alignment allow them.
 - [ ] **P6 — Graphics PRINT:** Add a dedicated planar glyph rasterizer only for the relevant BIOS/text semantics, cursor location, colors, font, page and output handle contract. Keep DOS redirected printing and `$OPTION VIDEO` text-mode routing separate.
-- [ ] **P7 — Batch scheduling:** Introduce an explicit VGA register-state/effect token or region descriptor in native IR. Reorder only when no intervening read, write, call, `OUT`, ASM, device latch or trap can distinguish the order. Coordinate with independent VRAM-packing directive work, without disabling other optimizations.
+- [ ] **P7 — Primitive/plane-major batch scheduling:** Introduce an explicit VGA register-state/effect token or region descriptor in native IR. Reorder only when no intervening read, write, call, `OUT`, ASM, device latch or trap can distinguish the order. Coordinate with independent VRAM-packing directive work, without disabling other optimizations.
 - [ ] **P8 — Interoperability/performance:** Cross-check full graphics differential corpus against reference DOSBox/VGABIOS, QEMU/Bochs where independent, malformed/out-of-bounds cases and physical VGA hardware. Record CPU dispatched instructions, instruction bytes, port I/O count and measured 8086/286/386 timings separately.
 
 ## Tests and acceptance
