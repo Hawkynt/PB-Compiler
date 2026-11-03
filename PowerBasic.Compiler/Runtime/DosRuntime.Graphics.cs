@@ -761,6 +761,9 @@ public sealed partial class DosRuntime {
     var fastHorizontal = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var fastPackedPattern = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var fastPlanarPattern = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarGeneral = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarGeneralGuard = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var bresenhamStart = asm.DefineLabel();
     var slowHorizontal = asm.DefineLabel();
 
     asm.Push(Reg.AX);
@@ -769,6 +772,8 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DX);
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
+    if (planarGeneral is not null)
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_general_active")), (Imm)0);
 
     if (fastHorizontal is not null) {
       // Solid-styled lines rotate FFFFh back to FFFFh at every pixel; a
@@ -804,11 +809,28 @@ public sealed partial class DosRuntime {
       // Retain the exact step order for style rotation and reverse strokes.
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
       asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
-      asm.Jne(slowHorizontal);
+      asm.Jne(planarGeneralGuard!);
       asm.Cmp(Reg.AX, (Imm)0);
-      asm.Jl(slowHorizontal);
+      asm.Jl(planarGeneralGuard!);
       asm.Cmp(Reg.AX, (Imm)479);
-      asm.Jg(slowHorizontal);
+      asm.Jg(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
+      asm.Jl(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)639);
+      asm.Jg(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)0);
+      asm.Jl(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)639);
+      asm.Jg(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(planarGeneralGuard!);
+      EmitPlanarModeBranch(asm, fastPlanarPattern);
+    }
+    if (planarGeneralGuard is not null)
+      asm.MarkLabel(planarGeneralGuard);
+    if (planarGeneral is not null) {
+      // Every Bresenham step stays in-bounds when both endpoints do.
+      // Transparent/XOR-like legacy color encodings keep the BIOS path.
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
       asm.Jl(slowHorizontal);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)639);
@@ -817,11 +839,26 @@ public sealed partial class DosRuntime {
       asm.Jl(slowHorizontal);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)639);
       asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy1")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy1")), (Imm)479);
+      asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy2")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy2")), (Imm)479);
+      asm.Jg(slowHorizontal);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
       asm.Ja(slowHorizontal);
-      EmitPlanarModeBranch(asm, fastPlanarPattern);
+      EmitPlanarModeBranch(asm, planarGeneral);
     }
     asm.MarkLabel(slowHorizontal);
+    asm.Jmp(bresenhamStart);
+    if (planarGeneral is not null) {
+      asm.MarkLabel(planarGeneral);
+      EmitPlanarRasterBegin(asm);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_general_active")), (Imm)1);
+    }
+    asm.MarkLabel(bresenhamStart);
 
     // dx = |x2-x1|, sx = sign; the same for y. SI and DI carry the two step directions.
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx2")));
@@ -863,7 +900,18 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
     asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gy1")));
     asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
-    asm.Call(this.Pset);
+    if (planarGeneral is not null) {
+      var pixelFallback = asm.DefineLabel();
+      var pixelDone = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_general_active")), (Imm)0);
+      asm.Je(pixelFallback);
+      asm.Call(asm.Lbl("rt_planar_raster_plot"));
+      asm.Jmp(pixelDone);
+      asm.MarkLabel(pixelFallback);
+      asm.Call(this.Pset);
+      asm.MarkLabel(pixelDone);
+    } else
+      asm.Call(this.Pset);
     asm.MarkLabel(skipPixel);
 
     // reached the far end?
@@ -901,6 +949,13 @@ public sealed partial class DosRuntime {
     asm.Jmp(loop);
 
     asm.MarkLabel(done);
+    if (planarGeneral is not null) {
+      var noPlanarEnd = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_general_active")), (Imm)0);
+      asm.Je(noPlanarEnd);
+      EmitPlanarRasterEnd(asm);
+      asm.MarkLabel(noPlanarEnd);
+    }
     asm.Pop(Reg.DI);
     asm.Pop(Reg.SI);
     asm.Pop(Reg.DX);
@@ -969,6 +1024,10 @@ public sealed partial class DosRuntime {
       this.EmitPlanarPatternedLine(asm, fastPlanarPattern, done);
     if (fastPackedPattern is not null)
       EmitMode13StyledHorizontalLine(asm, fastPackedPattern, done);
+    if (planarGeneral is not null) {
+      asm.MarkLabel("rt_planar_general_active");
+      asm.Db(0);
+    }
   }
 
   /// <summary>
