@@ -46,13 +46,13 @@ public sealed class PlanarSchedulingComparisonTests {
       OUT &H3CE, 3: OUT &H3CF, 0
       OUT &H3CE, 8: OUT &H3CF, 255
       OUT &H3C4, 2: OUT &H3C5, 1
-      POKE 0, {(color & 1) != 0 switch { true => 255, false => 0 }}
+      POKE 0, {((color & 1) != 0 ? 255 : 0)}
       OUT &H3C4, 2: OUT &H3C5, 2
-      POKE 0, {(color & 2) != 0 switch { true => 255, false => 0 }}
+      POKE 0, {((color & 2) != 0 ? 255 : 0)}
       OUT &H3C4, 2: OUT &H3C5, 4
-      POKE 0, {(color & 4) != 0 switch { true => 255, false => 0 }}
+      POKE 0, {((color & 4) != 0 ? 255 : 0)}
       OUT &H3C4, 2: OUT &H3C5, 8
-      POKE 0, {(color & 8) != 0 switch { true => 255, false => 0 }}
+      POKE 0, {((color & 8) != 0 ? 255 : 0)}
       """;
     var broadcast = $"""
       OUT &H3C4, 2: OUT &H3C5, 15
