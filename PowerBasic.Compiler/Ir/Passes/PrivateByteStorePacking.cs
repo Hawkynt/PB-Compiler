@@ -39,7 +39,7 @@ public static class PrivateByteStorePacking {
 
         var writes = new Dictionary<int, ByteWrite> { [first.Offset] = first };
         var observations = new List<IrInstruction>();
-        var at = block.Instructions.IndexOf(initial);
+        var at = block.Instructions.ToList().IndexOf(initial);
         var visited = 0;
 
         foreach (var instruction in block.Instructions.Skip(at + 1).ToArray()) {
@@ -116,7 +116,8 @@ public static class PrivateByteStorePacking {
           Root: IrAlloca { Allocated: var element, Count: >= 2 } allocation,
           ByteOffset: >= 0 and <= int.MaxValue } location
         || element.Bits != 8 || !element.IsInteger
-        || location.ByteOffset >= allocation.Count || !escape.DoesNotEscape(allocation))
+        || allocation.Count > 65536 || location.ByteOffset >= allocation.Count
+        || !escape.DoesNotEscape(allocation))
       return false;
     root = allocation;
     write = new(store, (int)location.ByteOffset!.Value,
