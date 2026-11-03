@@ -161,6 +161,47 @@ public sealed class PlanarSpriteGetPutTests {
     });
   }
 
+  [TestCase("PSET","11")]
+  [TestCase("PRESET","4")]
+  [TestCase("AND","3")]
+  [TestCase("OR","11")]
+  [TestCase("XOR","8")]
+  public void Execute_GivenAlignedSpriteAndVgaLogicalVerb_ThenUsesExactBitplaneAlgebra(
+      string verb, string expected) {
+    var body = $"""
+      LINE (8,8)-(23,8),11,BF
+      GET (8,8)-(23,8),s%(0)
+      LINE (32,20)-(47,20),3,BF
+      PUT (32,20),s%(0),{verb}
+      PRINT POINT(32,20);POINT(39,20);POINT(47,20)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+      Assert.That(optimized.Output.Trim(), Does.Contain($"{expected}  {expected}  {expected}"));
+    });
+  }
+
+  [Test]
+  [Category("Performance")]
+  public void Measure_GivenAlignedPlanarPut_ThenWritesEightPixelBytesPlaneMajor() {
+    const string body = """
+      s%(0)=32
+      s%(1)=2
+      PUT (16,20),s%(0),PSET
+      PRINT POINT(16,20);POINT(47,21)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+      Assert.That(optimized.ExecutedInstructions, Is.LessThan(reference.ExecutedInstructions));
+      Assert.That(optimized.PortWrites.Count(p => p.Port is 0x3C4 or 0x3C5),
+        Is.LessThan(40), "select each of four map masks once per row, not per sprite pixel");
+    });
+  }
+
   [Test]
   public void Execute_GivenScreen12SpriteBeyondMode13Viewport_ThenRoundTripUses640By480() {
     const string body = """
