@@ -252,6 +252,7 @@ public sealed partial class DosRuntime {
     var combined = asm.DefineLabel();
     var done = asm.DefineLabel();
     var nextRow = asm.DefineLabel();
+    var fastAligned = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
 
     asm.MarkLabel(entry);
     asm.Push(Reg.AX);
@@ -277,6 +278,47 @@ public sealed partial class DosRuntime {
     asm.Add(Reg.DI, (Imm)4);
     asm.Mov(Mem.Word(asm.Lbl("rt_pp_base")), Reg.DI);
     asm.Mov(Mem.Word(asm.Lbl("rt_pp_row")), (Imm)0);
+
+    if (fastAligned is not null) {
+      var slow = asm.DefineLabel();
+      // A direct mode-0 VGA logical operation affects one complete
+      // eight-pixel byte per plane. Skip misaligned, clipped, malformed
+      // and nonstandard hardware states until their masks are proven.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gpw")), (Imm)1);
+      asm.Jl(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gpw")), (Imm)640);
+      asm.Jg(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gph")), (Imm)1);
+      asm.Jl(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gph")), (Imm)480);
+      asm.Jg(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
+      asm.Jl(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)639);
+      asm.Jg(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy1")), (Imm)0);
+      asm.Jl(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy1")), (Imm)479);
+      asm.Jg(slow);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
+      asm.And(Reg.AX, (Imm)7);
+      asm.Jnz(slow);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gpw")));
+      asm.And(Reg.AX, (Imm)7);
+      asm.Jnz(slow);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
+      asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_gpw")));
+      asm.Cmp(Reg.AX, (Imm)640);
+      asm.Jg(slow);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+      asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_gph")));
+      asm.Cmp(Reg.AX, (Imm)480);
+      asm.Jg(slow);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gverb")), (Imm)4);
+      asm.Ja(slow);
+      EmitCertifiedPlanarBranch(asm, fastAligned);
+      asm.MarkLabel(slow);
+    }
 
     asm.MarkLabel(row);
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pp_row")));
@@ -386,6 +428,9 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.AX);
     asm.Ret();
 
+    if (fastAligned is not null)
+      EmitFastAlignedPlanarPut(asm, fastAligned, done);
+
     foreach (var name in new[] {
       "rt_pp_stride", "rt_pp_rowbytes", "rt_pp_base", "rt_pp_row",
       "rt_pp_col", "rt_pp_plane", "rt_pp_offset",
@@ -397,5 +442,148 @@ public sealed partial class DosRuntime {
     asm.Db(0);
     asm.MarkLabel("rt_pp_color");
     asm.Db(0);
+    asm.MarkLabel("rt_pp_logic");
+    asm.Db(0);
+  }
+
+  /// <summary>
+  /// For an aligned, fully visible sprite, VGA write mode 0 can perform
+  /// COPY/PRESET/AND/OR/XOR directly on eight pixels in a selected plane.
+  /// This keeps the QuickBASIC source layout plane-major and hoists one
+  /// sequencer Map Mask change outside each per-plane byte loop.
+  /// </summary>
+  private static void EmitFastAlignedPlanarPut(Assembler asm, Label entry, Label finish) {
+    var chooseAnd = asm.DefineLabel();
+    var chooseOr = asm.DefineLabel();
+    var chooseXor = asm.DefineLabel();
+    var logicReady = asm.DefineLabel();
+    var fastRow = asm.DefineLabel();
+    var fastPlane = asm.DefineLabel();
+    var fastByte = asm.DefineLabel();
+    var notPreset = asm.DefineLabel();
+    var noRead = asm.DefineLabel();
+
+    asm.MarkLabel(entry);
+    asm.Push(Reg.BP);
+    asm.Mov(Reg.BP, Reg.SP);
+    asm.Sub(Reg.SP, (Imm)12);
+    // SS locals: source row, target row, remaining rows, stride,
+    // source bytes per row, action verb.
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pp_base")));
+    asm.Mov(Mem.Word(Reg.BP, -2), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gph")));
+    asm.Mov(Mem.Word(Reg.BP, -6), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pp_stride")));
+    asm.Mov(Mem.Word(Reg.BP, -8), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pp_rowbytes")));
+    asm.Mov(Mem.Word(Reg.BP, -10), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gverb")));
+    asm.Mov(Mem.Word(Reg.BP, -12), Reg.AX);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_pp_logic")), (Imm)0);
+    asm.Cmp(Reg.AX, (Imm)2);
+    asm.Je(chooseAnd);
+    asm.Cmp(Reg.AX, (Imm)3);
+    asm.Je(chooseOr);
+    asm.Cmp(Reg.AX, (Imm)4);
+    asm.Je(chooseXor);
+    asm.Jmp(logicReady);
+    asm.MarkLabel(chooseAnd);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_pp_logic")), (Imm)0x08);
+    asm.Jmp(logicReady);
+    asm.MarkLabel(chooseOr);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_pp_logic")), (Imm)0x10);
+    asm.Jmp(logicReady);
+    asm.MarkLabel(chooseXor);
+    asm.Mov(Mem.Byte(asm.Lbl("rt_pp_logic")), (Imm)0x18);
+    asm.MarkLabel(logicReady);
+
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+    asm.Mov(Reg.BX, 80);
+    asm.Mul(Reg.BX);
+    asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gx1")));
+    asm.Shr(Reg.BX, 3);
+    asm.Add(Reg.AX, Reg.BX);
+    asm.Mov(Mem.Word(Reg.BP, -4), Reg.AX);
+
+    // The array remains in ES; DS temporarily addresses the VGA A000
+    // aperture. All loop locals use SS:BP to avoid globals while DS=A000.
+    asm.Push(Reg.DS);
+    asm.Mov(Reg.DX, 0x3CE);
+    asm.In(Reg.AL, Reg.DX);
+    asm.Push(Reg.AX); // GC index.
+    asm.Mov(Reg.DX, 0x3C4);
+    asm.In(Reg.AL, Reg.DX);
+    asm.Push(Reg.AX); // Sequencer index.
+    SaveAndSet(asm, 0x3CE, 5, -6); // VGA write mode 0.
+    SaveAndSet(asm, 0x3CE, 1, 0);  // Disable Set/Reset; CPU byte is plane data.
+    SaveAndSet(asm, 0x3CE, 3, -7); // Function: replace, AND, OR or XOR.
+    SaveAndSet(asm, 0x3CE, 8, 255);
+    SaveAndSet(asm, 0x3C4, 2, 15);
+    asm.Mov(Reg.AX, 0xA000);
+    asm.Mov(Reg.DS, Reg.AX);
+
+    asm.MarkLabel(fastRow);
+    asm.Xor(Reg.BX, Reg.BX); // Plane number.
+    asm.MarkLabel(fastPlane);
+    asm.Mov(Reg.CX, Reg.BX);
+    asm.Mov(Reg.AL, (Imm)1);
+    asm.Shl(Reg.AL, Reg.CL);
+    asm.Mov(Reg.DX, 0x3C4);
+    asm.Mov(Reg.AH, Reg.AL);
+    asm.Mov(Reg.AL, (Imm)2);
+    asm.Out(Reg.DX, Reg.AL);
+    asm.Inc(Reg.DX);
+    asm.Mov(Reg.AL, Reg.AH);
+    asm.Out(Reg.DX, Reg.AL);
+
+    asm.Mov(Reg.AX, Reg.BX);
+    asm.Mul(Mem.Word(Reg.BP, -8));
+    asm.Mov(Reg.SI, Mem.Word(Reg.BP, -2));
+    asm.Add(Reg.SI, Reg.AX);
+    asm.Mov(Reg.DI, Mem.Word(Reg.BP, -4));
+    asm.Mov(Reg.CX, Mem.Word(Reg.BP, -8));
+
+    asm.MarkLabel(fastByte);
+    asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Seg(Reg.ES));
+    asm.Cmp(Mem.Word(Reg.BP, -12), (Imm)1);
+    asm.Jne(notPreset);
+    asm.Not(Reg.AL);
+    asm.MarkLabel(notPreset);
+    asm.Cmp(Mem.Word(Reg.BP, -12), (Imm)2);
+    asm.Jl(noRead);
+    asm.Mov(Reg.AH, Mem.Byte(Reg.DI)); // Latch target before logical op.
+    asm.MarkLabel(noRead);
+    asm.Mov(Mem.Byte(Reg.DI), Reg.AL);
+    asm.Inc(Reg.SI);
+    asm.Inc(Reg.DI);
+    asm.Dec(Reg.CX);
+    asm.Jnz(fastByte);
+
+    asm.Inc(Reg.BX);
+    asm.Cmp(Reg.BX, (Imm)4);
+    asm.Jl(fastPlane);
+    asm.Mov(Reg.AX, Mem.Word(Reg.BP, -10));
+    asm.Add(Mem.Word(Reg.BP, -2), Reg.AX);
+    asm.Add(Mem.Word(Reg.BP, -4), (Imm)80);
+    asm.Dec(Mem.Word(Reg.BP, -6));
+    asm.Jnz(fastRow);
+
+    Restore(asm, 0x3C4, 2);
+    Restore(asm, 0x3CE, 8);
+    Restore(asm, 0x3CE, 3);
+    Restore(asm, 0x3CE, 1);
+    Restore(asm, 0x3CE, 5);
+    asm.Pop(Reg.BX);
+    asm.Mov(Reg.DX, 0x3C4);
+    asm.Mov(Reg.AL, Reg.BL);
+    asm.Out(Reg.DX, Reg.AL);
+    asm.Pop(Reg.BX);
+    asm.Mov(Reg.DX, 0x3CE);
+    asm.Mov(Reg.AL, Reg.BL);
+    asm.Out(Reg.DX, Reg.AL);
+    asm.Pop(Reg.DS);
+    asm.Mov(Reg.SP, Reg.BP);
+    asm.Pop(Reg.BP);
+    asm.Jmp(finish);
   }
 }
