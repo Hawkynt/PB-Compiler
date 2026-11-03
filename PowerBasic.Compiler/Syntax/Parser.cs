@@ -675,12 +675,26 @@ public sealed partial class Parser {
         return;
       }
     }
+    // Compiler extension, never misrepresented as an original PBC 3.5 switch.
+    // This only gates the certified VGA store-packetizer; scalar/DSE/other
+    // RAM memory optimization still obeys the normal $OPTIMIZE policy.
+    if (arguments is [{ Kind: TokenKind.Identifier } feature, { Kind: TokenKind.Identifier } state]
+        && feature.Text.Equals("VRAMPACK", StringComparison.OrdinalIgnoreCase)) {
+      if (!this._dialect.IsPbAtLeast(Dialect.Pb36))
+        throw new ParserException(
+          $"$OPTION VRAMPACK requires PowerBASIC 3.6 (current dialect: {this._dialect.DisplayName()})",
+          command.Position);
+      if (state.Text.Equals("ON", StringComparison.OrdinalIgnoreCase)
+          || state.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase))
+        return;
+      throw new ParserException("$OPTION VRAMPACK requires ON or OFF", command.Position);
+    }
     if (arguments is [{ Kind: TokenKind.Identifier } cntlBreak, { Kind: TokenKind.Identifier } mode]
         && cntlBreak.Text.Equals("CNTLBREAK", StringComparison.OrdinalIgnoreCase)
         && (mode.Text.Equals("ON", StringComparison.OrdinalIgnoreCase)
           || mode.Text.Equals("OFF", StringComparison.OrdinalIgnoreCase)))
       return;
-    throw new ParserException("$OPTION requires SIGNED, GOSUB, ASCII, VIDEO, or CNTLBREAK ON|OFF", command.Position);
+    throw new ParserException("$OPTION requires SIGNED, GOSUB, ASCII, VIDEO, VRAMPACK ON|OFF, or CNTLBREAK ON|OFF", command.Position);
   }
 
   private static void RequireOneOf(Token command, IReadOnlyList<Token> arguments, params string[] choices) {
