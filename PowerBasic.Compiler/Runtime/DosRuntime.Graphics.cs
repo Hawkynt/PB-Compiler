@@ -54,12 +54,13 @@ public sealed partial class DosRuntime {
     this.Arc = asm.MarkLabel("rt_arc");
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
     asm.Push(Reg.DX);
+    asm.Push(Reg.DI);
 
     if (this.EnableTargetOptimizations) {
       var begin = asm.DefineLabel();
       var planar = asm.DefineLabel();
-      var bypass = asm.DefineLabel();
       asm.Mov(Mem.Byte(asm.Lbl("rt_planar_arc_active")), (Imm)0);
 
       // Conservative, provably in-bounds ellipse/arc subset:
@@ -166,7 +167,9 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(noPlanarEnd);
     }
 
+    asm.Pop(Reg.DI);
     asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
