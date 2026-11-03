@@ -101,9 +101,13 @@ This gives horizontal runs substantial byte fusion. Vertical and diagonal
 lines usually touch another byte every step, so their main gain is eliminating
 per-pixel BIOS mode queries and VGA register switches, not magically merging
 nonadjacent VRAM stores. Bit-level operations from different bytes are never
-reordered. All fast paths are guarded by the actual runtime screen mode, normal
-non-XOR colors, and proven in-bounds output. Other screen states fall back to
-the original runtime.
+reordered. All fast paths are guarded by actual BIOS SCREEN 12, **positive indexed-register
+hardware certification** (GC 06h A000 64K map, SEQ 04h odd/even disabled
+and chain-four off, GC 05h neither odd/even nor packed shift mode), normal
+non-XOR colors and proven in-bounds output. Mere BIOS SCREEN 12 does not
+suffice after a user `OUT` reprograms VGA: if any register fails inspection,
+the runtime restores both port index selectors and uses the original
+BIOS graphics path. Other screen states fall back to the original runtime.
 
 - **LINE / B / DRAW**: the existing Bresenham loop and `rt_gstyle` rotate are
   shared. For Mode 12, all in-bounds directions use the ordered-mask writer;
