@@ -265,7 +265,10 @@ public sealed partial class DosRuntime {
   /// but only if it was not living in ES to begin with.
   /// </summary>
   private void EmitGetPutProcedures(Assembler asm) {
+    var planarGet = asm.DefineLabel();
+    var planarPut = asm.DefineLabel();
     this.GGet = asm.MarkLabel("rt_gget");
+    EmitPlanarModeBranch(asm, planarGet);
     {
       var rowLoop = asm.DefineLabel();
       var colLoop = asm.DefineLabel();
@@ -342,8 +345,10 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.AX);
       asm.Ret();
     }
+    this.EmitPlanarGet(asm, planarGet);
 
     this.GPut = asm.MarkLabel("rt_gput");
+    EmitPlanarModeBranch(asm, planarPut);
     {
       var rowLoop = asm.DefineLabel();
       var colLoop = asm.DefineLabel();
@@ -438,6 +443,7 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.AX);
       asm.Ret();
     }
+    this.EmitPlanarPut(asm, planarPut);
 
     foreach (var cell in new[] { "rt_gbufseg", "rt_gbufofs", "rt_gverb", "rt_gpw", "rt_gph" }) {
       asm.MarkLabel(cell);
