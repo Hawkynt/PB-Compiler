@@ -114,9 +114,11 @@ the original runtime.
   point is clipped to the real 640×480 Mode 12 screen; the earlier 320×200
   clipping error has also been fixed in the nonoptimized fallback.
 - **Elliptical arcs / CIRCLE aspect**: a conservative subset uses the cache
-  after checking radius and a whole-shape bounding box, with finite positive
-  aspect strictly below 1.0. Unproved arcs and aspect ratios retain the
-  original x87 and `PSET` path. This is intentionally not a claim to have
+  after checking radius and a whole-shape bounding box, with finite nonnegative
+  aspect strictly below 1.0 and both angles in [0,8) radians. These constraints
+  keep x87 FSIN/FCOS in their defined trigonometric domain and avoid signed
+  coordinate overflows before any direct VRAM write. Unproved arcs and aspect
+  ratios retain the original x87 and `PSET` path. This is intentionally not a claim to have
   optimized every ellipse.
 - **Mode 13h**: horizontal styled strokes use a direct precomputed
   `A000:y*320+x` writer, advancing in the original drawing direction.
@@ -135,7 +137,7 @@ None may cross `POINT`, `GET`, `PAINT`, port accesses or unknown calls.
 
 - [x] **P0 — Test oracle:** Provide four actual mode-12 planes in `Cpu8086`; model indexed VGA GC/SQ registers, map masks, write modes, bit masks and read latches; make BIOS pixel services share the same planes as direct `ES:A000` accesses. Add cross-boundary and port restoration tests.
 - [x] **P1 — Solid rectangles:** Guard by active BIOS mode 12h, in-bounds 640×480 rectangle and ordinary color 0–15; configure write mode 2 once, use `REP STOSB` for full eight-pixel bytes and latch-preserving masks for edges. Preserve existing cursor semantics and fall back for unknown geometry/colors/modes.
-- [~] **P2 — Patterned LINE/B/diagonal/CIRCLE/ellipse/DRAW:** In-bounds Mode 12h horizontal lines use the direct Write Mode 3 byte-mask kernel; vertical and diagonal Bresenham lines, `LINE ...,B,style` and `DRAW` strokes now use the ordered-byte accumulator. CIRCLE's eight symmetric mirror points use that same shared accumulator. A conservative in-bounds subset of elliptical arcs/aspects also participates. Unproved shapes, out-of-bounds and special colors preserve fallback. Remaining work: arbitrary-aspect ellipse specialization, multi-byte buffering where order permits, stricter VGA port-state contracts, and CPU-specific speed experiments.
+- [~] **P2 — Patterned LINE/B/diagonal/CIRCLE/ellipse/DRAW:** In-bounds Mode 12h horizontal lines use the direct Write Mode 3 byte-mask kernel; vertical and diagonal Bresenham lines, `LINE ...,B,style` and `DRAW` strokes now use the ordered-byte accumulator. CIRCLE's eight symmetric mirror points use that same shared accumulator. A conservative in-bounds subset of elliptical arcs/aspects (radius ≤230, aspect in [0,1), angle in [0,8) radians) also participates. Unproved shapes, out-of-bounds and special colors preserve fallback. Remaining work: arbitrary-aspect ellipse specialization, multi-byte buffering where order permits, stricter VGA port-state contracts, and CPU-specific speed experiments.
 - [ ] **P3 — PAINT:** Batch filled contiguous runs by full bytes; preserve flood-fill topology, border color, 128-span stack behavior, returns/traps, and transparent/adjacent colors.
 - [ ] **P4 — PSET/POINT:** Specialized planar pixel access with one selected masked RMW or one plane-comparison read; hoist register setup across proven sequences rather than performing per-pixel port switches.
 - [ ] **P5 — GET/PUT:** Correct QB-compatible sprite headers and width-per-plane layout, transparent/overlap semantics, and all COPY/PRESET/AND/OR/XOR verbs. Use mode 1 or per-plane blits only when hardware state and alignment allow them.
