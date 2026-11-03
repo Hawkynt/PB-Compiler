@@ -154,6 +154,13 @@ public sealed class IrStore : IrInstruction {
   /// persistent, target-independent property.
   /// </summary>
   internal bool IsPackedMode13Write { get; set; }
+
+  /// <summary>
+  /// Late native proof: bytes of one non-escaping, compiler-owned ordinary
+  /// RAM buffer were combined after complete alias and observation checks.
+  /// Never infer this from an absolute address or a source-level DIM AT.
+  /// </summary>
+  internal bool IsPackedPrivateWrite { get; set; }
 }
 
 /// <summary>
