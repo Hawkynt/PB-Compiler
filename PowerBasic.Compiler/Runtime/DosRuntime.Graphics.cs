@@ -1014,6 +1014,7 @@ public sealed partial class DosRuntime {
     var rowDone = asm.DefineLabel();
     var packedRows = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var planarRows = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarGuard = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var slowRows = asm.DefineLabel();
     var yOrdered = asm.DefineLabel();
     var xOrdered = asm.DefineLabel();
@@ -1048,15 +1049,18 @@ public sealed partial class DosRuntime {
     // the existing runtime semantics (including out-of-range behavior) then remain unchanged.
     if (packedRows is not null) {
       asm.Cmp(Mem.Word(asm.Lbl("rt_gbx1")), (Imm)0);
-      asm.Jl(slowRows);
+      asm.Jl(planarGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gbx2")), (Imm)319);
-      asm.Jg(slowRows);
+      asm.Jg(planarGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gby1")), (Imm)0);
-      asm.Jl(slowRows);
+      asm.Jl(planarGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)199);
-      asm.Jg(slowRows);
+      asm.Jg(planarGuard!);
       EmitPackedModeBranch(asm, packedRows);
     }
+
+    if (planarGuard is not null)
+      asm.MarkLabel(planarGuard);
 
     // Only in-bounds 640x480 solid-color rectangles have a certified planar
     // byte-span layout; all other modes and shapes retain per-pixel fallback.
