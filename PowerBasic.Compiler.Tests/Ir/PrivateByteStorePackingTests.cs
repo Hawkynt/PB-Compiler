@@ -48,6 +48,7 @@ public sealed class PrivateByteStorePackingTests {
     builder.Store(new IrConstantInt(IrType.I8, 99), independent);
     Write(builder, buffer, 2, 3);
     var read = builder.Load(IrType.I8, independent);
+    builder.Store(read, independent); // Keep the disjoint read observably used.
     Write(builder, buffer, 0, 1);
     Write(builder, buffer, 3, 4);
     Write(builder, buffer, 1, 2);
