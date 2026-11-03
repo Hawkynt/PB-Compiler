@@ -987,6 +987,7 @@ public sealed partial class DosRuntime {
     var colLoop = asm.DefineLabel();
     var rowDone = asm.DefineLabel();
     var packedRows = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarRows = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var slowRows = asm.DefineLabel();
     var yOrdered = asm.DefineLabel();
     var xOrdered = asm.DefineLabel();
@@ -1029,6 +1030,22 @@ public sealed partial class DosRuntime {
       asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)199);
       asm.Jg(slowRows);
       EmitPackedModeBranch(asm, packedRows);
+    }
+
+    // Only in-bounds 640x480 solid-color rectangles have a certified planar
+    // byte-span layout; all other modes and shapes retain per-pixel fallback.
+    if (planarRows is not null) {
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx1")), (Imm)0);
+      asm.Jl(slowRows);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx2")), (Imm)639);
+      asm.Jg(slowRows);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby1")), (Imm)0);
+      asm.Jl(slowRows);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)479);
+      asm.Jg(slowRows);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(slowRows);
+      EmitPlanarModeBranch(asm, planarRows);
     }
 
     asm.MarkLabel(slowRows);
@@ -1122,5 +1139,7 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.ES);
       asm.Jmp(rowDone); // One shared final graphics-cursor update.
     }
+    if (planarRows is not null)
+      this.EmitPlanarLineFill(asm, planarRows, rowDone);
   }
 }
