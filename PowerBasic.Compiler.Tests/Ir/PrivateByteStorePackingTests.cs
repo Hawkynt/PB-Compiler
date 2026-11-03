@@ -9,7 +9,7 @@ public sealed class PrivateByteStorePackingTests {
   private static (IrFunction Function, IrBuilder Builder, IrAlloca Buffer) Create(int count = 8) {
     var function = new IrFunction("f", IrType.Void);
     var builder = new IrBuilder(function.CreateBlock("entry"));
-    var buffer = builder.Alloca(IrType.I8, count);
+    var buffer = builder.Block!.Append(new IrAlloca(IrType.I8) { Count = count });
     buffer.IsSourceVariable = true;
     return (function, builder, buffer);
   }
@@ -88,7 +88,7 @@ public sealed class PrivateByteStorePackingTests {
   public void Pack_GivenUnknownIntermediateReadOffset_ThenLeavesWritesSeparate() {
     var fn = new IrFunction("f", IrType.Void, [new IrArgument(IrType.I32, 0)]);
     var builder = new IrBuilder(fn.CreateBlock("entry"));
-    var buffer = builder.Alloca(IrType.I8, 8);
+    var buffer = builder.Block!.Append(new IrAlloca(IrType.I8) { Count = 8 });
     Write(builder, buffer, 0, 1);
     builder.Load(IrType.I8, builder.Gep(buffer, fn.Parameters[0]));
     Write(builder, buffer, 1, 2);
