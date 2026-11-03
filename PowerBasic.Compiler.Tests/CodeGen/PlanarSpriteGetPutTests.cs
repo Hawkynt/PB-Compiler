@@ -127,6 +127,41 @@ public sealed class PlanarSpriteGetPutTests {
   }
 
   [Test]
+  public void Execute_GivenAlignedFourPlaneGet_ThenReadsWholeVgaPlaneBytes() {
+    const string body = """
+      FOR x% = 8 TO 39: PSET (x%,21),x% MOD 16: NEXT
+      GET (8,21)-(39,21),s%(0)
+      PRINT s%(0);s%(1)
+      PUT (56,31),s%(0),PSET
+      FOR x% = 56 TO 87: PRINT POINT(x%,31);: NEXT
+      """;
+    var optimized = Execute(body, true);
+    var baseline = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
+      Assert.That(optimized.Output.Trim(), Does.Contain("32  1"));
+    });
+  }
+
+  [Test]
+  [Category("Performance")]
+  public void Measure_GivenAlignedPlanarGet_ThenHoistsHardwarePlaneSelectionsOutOfPixelLoop() {
+    const string body = """
+      GET (8,21)-(39,22),s%(0)
+      PRINT s%(0);s%(1)
+      """;
+    var optimized = Execute(body, true);
+    var baseline = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
+      Assert.That(optimized.PortWrites.Count(p => p.Port is 0x3CE or 0x3CF),
+        Is.LessThan(100), "one GC read-map selection per plane and scanline, not per pixel");
+      Assert.That(optimized.ExecutedInstructions, Is.LessThan(baseline.ExecutedInstructions),
+        "compare emulator dispatch counts, not VGA bus wait states");
+    });
+  }
+
+  [Test]
   public void Execute_GivenScreen12SpriteBeyondMode13Viewport_ThenRoundTripUses640By480() {
     const string body = """
       LINE (321,205)-(326,207),6,BF
