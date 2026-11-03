@@ -117,7 +117,7 @@ public sealed partial class DosRuntime {
       asm.Add(Reg.AX, Reg.BX);
       asm.Cmp(Reg.AX, (Imm)479);
       asm.Jg(begin);
-      EmitPlanarModeBranch(asm, planar);
+      EmitCertifiedPlanarBranch(asm, planar);
       asm.Jmp(begin);
       asm.MarkLabel(planar);
       EmitPlanarRasterBegin(asm);
@@ -806,9 +806,13 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(mode12);
       asm.Mov(Mem.Byte(asm.Lbl("rt_circle_mode12")), (Imm)1);
       if (this.EnableTargetOptimizations) {
+        var beginPlanar = asm.DefineLabel();
         var skipPlanar = asm.DefineLabel();
         asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
         asm.Ja(skipPlanar);
+        EmitCertifiedPlanarBranch(asm, beginPlanar);
+        asm.Jmp(skipPlanar);
+        asm.MarkLabel(beginPlanar);
         EmitPlanarRasterBegin(asm);
         asm.Mov(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)1);
         asm.MarkLabel(skipPlanar);
@@ -985,7 +989,7 @@ public sealed partial class DosRuntime {
       asm.Jg(planarGeneralGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
       asm.Ja(planarGeneralGuard!);
-      EmitPlanarModeBranch(asm, fastPlanarPattern);
+      EmitCertifiedPlanarBranch(asm, fastPlanarPattern);
     }
     if (planarGeneralGuard is not null)
       asm.MarkLabel(planarGeneralGuard);
@@ -1010,7 +1014,7 @@ public sealed partial class DosRuntime {
       asm.Jg(packedGeneralGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
       asm.Ja(packedGeneralGuard!);
-      EmitPlanarModeBranch(asm, planarGeneral);
+      EmitCertifiedPlanarBranch(asm, planarGeneral);
     }
     if (packedGeneralGuard is not null)
       asm.MarkLabel(packedGeneralGuard);
@@ -1361,7 +1365,7 @@ public sealed partial class DosRuntime {
       asm.Jg(slowRows);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
       asm.Ja(slowRows);
-      EmitPlanarModeBranch(asm, planarRows);
+      EmitCertifiedPlanarBranch(asm, planarRows);
     }
 
     asm.MarkLabel(slowRows);
