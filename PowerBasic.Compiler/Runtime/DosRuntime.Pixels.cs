@@ -130,7 +130,23 @@ public sealed partial class DosRuntime {
   private void EmitSetPixel(Assembler asm) {
     this.Pset = asm.MarkLabel("rt_pset"); // AX=x, BX=y, DL=color; retain the caller's coordinates.
     var packed = asm.DefineLabel();
+    var planar = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var bios = asm.DefineLabel();
     EmitPackedModeBranch(asm, packed);
+    if (planar is not null) {
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(bios);
+      asm.Cmp(Reg.AX, (Imm)639);
+      asm.Jg(bios);
+      asm.Cmp(Reg.BX, (Imm)0);
+      asm.Jl(bios);
+      asm.Cmp(Reg.BX, (Imm)479);
+      asm.Jg(bios);
+      asm.Cmp(Reg.DL, (Imm)15);
+      asm.Ja(bios); // Preserve high-bit XOR and unknown color semantics.
+      EmitCertifiedPlanarBranch(asm, planar);
+    }
+    asm.MarkLabel(bios);
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
     asm.Push(Reg.CX);
@@ -166,12 +182,28 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.DI);
     asm.Pop(Reg.ES);
     asm.Ret();
+    if (planar is not null)
+      EmitPlanarPixelWrite(asm, planar);
   }
 
   private void EmitReadPixel(Assembler asm) {
     this.Point = asm.MarkLabel("rt_point"); // AX=x, BX=y -> DX:AX=color.
     var packed = asm.DefineLabel();
+    var planar = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var bios = asm.DefineLabel();
     EmitPackedModeBranch(asm, packed);
+    if (planar is not null) {
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(bios);
+      asm.Cmp(Reg.AX, (Imm)639);
+      asm.Jg(bios);
+      asm.Cmp(Reg.BX, (Imm)0);
+      asm.Jl(bios);
+      asm.Cmp(Reg.BX, (Imm)479);
+      asm.Jg(bios);
+      EmitCertifiedPlanarBranch(asm, planar);
+    }
+    asm.MarkLabel(bios);
     asm.Push(Reg.BX);
     asm.Push(Reg.CX);
     asm.Mov(Reg.CX, Reg.AX);
@@ -206,5 +238,7 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.DI);
     asm.Pop(Reg.ES);
     asm.Ret();
+    if (planar is not null)
+      EmitPlanarPixelRead(asm, planar);
   }
 }
