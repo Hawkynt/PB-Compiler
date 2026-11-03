@@ -739,6 +739,17 @@ public sealed partial class DosRuntime {
         asm.Ret();
         asm.MarkLabel(biosPixel);
       }
+      var nonPlanarClip = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_circle_mode12")), (Imm)0);
+      asm.Je(nonPlanarClip);
+      asm.Cmp(Reg.AX, 640);
+      asm.Jge(clipped);
+      asm.Cmp(Reg.BX, 480);
+      asm.Jge(clipped);
+      asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
+      asm.Call(this.Pset);
+      asm.Ret();
+      asm.MarkLabel(nonPlanarClip);
       asm.Cmp(Reg.AX, 320);
       asm.Jge(clipped);
       asm.Cmp(Reg.BX, 200);
@@ -761,17 +772,24 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
 
-    if (this.EnableTargetOptimizations) {
+    {
       var start = asm.DefineLabel();
-      var planar = asm.DefineLabel();
-      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)0);
-      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
-      asm.Ja(start);
-      EmitPlanarModeBranch(asm, planar);
+      var mode12 = asm.DefineLabel();
+      asm.Mov(Mem.Byte(asm.Lbl("rt_circle_mode12")), (Imm)0);
+      if (this.EnableTargetOptimizations)
+        asm.Mov(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)0);
+      EmitPlanarModeBranch(asm, mode12);
       asm.Jmp(start);
-      asm.MarkLabel(planar);
-      EmitPlanarRasterBegin(asm);
-      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)1);
+      asm.MarkLabel(mode12);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_circle_mode12")), (Imm)1);
+      if (this.EnableTargetOptimizations) {
+        var skipPlanar = asm.DefineLabel();
+        asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+        asm.Ja(skipPlanar);
+        EmitPlanarRasterBegin(asm);
+        asm.Mov(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)1);
+        asm.MarkLabel(skipPlanar);
+      }
       asm.MarkLabel(start);
     }
 
@@ -847,6 +865,8 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.AX);
     asm.Ret();
 
+    asm.MarkLabel("rt_circle_mode12");
+    asm.Db(0);
     if (this.EnableTargetOptimizations) {
       asm.MarkLabel("rt_planar_circle_active");
       asm.Db(0);
