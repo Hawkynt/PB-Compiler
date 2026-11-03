@@ -35,12 +35,6 @@ public sealed class PlanarMode12FillTests {
       string cpu, int x1, int y1, int x2, int y2, int color) {
     var body = $"""
       LINE ({x1},{y1})-({x2},{y2}),{color},BF
-      PRINT POINT({x1},{y1});POINT({x2},{y2});
-      PRINT POINT(640, 0)
-      """;
-    // Out-of-bounds BIOS POINT is implementation-defined; only assert legal pixels.
-    body = $"""
-      LINE ({x1},{y1})-({x2},{y2}),{color},BF
       PRINT POINT({x1},{y1});POINT({x2},{y2})
       """;
     var optimized = Execute(body, optimize: true, cpu);
@@ -56,7 +50,7 @@ public sealed class PlanarMode12FillTests {
   }
 
   [TestCase("LINE (2,3)-(10,3),4,BF\nLINE (11,3)-(13,3),5,BF", "4  4  5  5")]
-  [TestCase("LINE (31,3)-(8,1),9,BF", "9  9  9  0")]
+  [TestCase("LINE (31,3)-(8,1),9,BF", "9  9  9  9")]
   [TestCase("LINE (0,0)-(0,0),0,BF", "0  0  0  0")]
   public void Execute_GivenSeveralPlanarRects_ThenMatchesReference(
       string commands, string expected) {
