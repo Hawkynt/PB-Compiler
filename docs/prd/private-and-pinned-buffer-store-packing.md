@@ -25,11 +25,11 @@ A group of independent byte stores may be scheduled in address order and packed 
 Example (ordinary private byte array, no intervening observers):
 
 ```basic
-DIM data(0 TO 3) AS BYTE
-data(2) = 3
-data(0) = 1
-data(3) = 4
-data(1) = 2
+DIM payload(0 TO 3) AS BYTE
+payload(2) = 3
+payload(0) = 1
+payload(3) = 4
+payload(1) = 2
 ```
 
 With private storage and in-bounds addresses proven, the four independent writes may be coalesced into the little-endian dword `04030201h` on a 386, or two words on an 8086. The **first implementation** recognizes the equivalent late IR pattern; the BASIC front-end's bounds checks and higher-level operations may still act as barriers.
