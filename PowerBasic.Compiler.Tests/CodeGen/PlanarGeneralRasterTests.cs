@@ -108,6 +108,46 @@ public sealed class PlanarGeneralRasterTests {
   }
 
   [Test]
+  public void Execute_GivenPlanarDiagonal_ThenRestoresCallerVgaRegisters() {
+    const string body = """
+      OUT &H3CE, 0: OUT &H3CF, 7
+      OUT &H3CE, 3: OUT &H3CF, 6
+      OUT &H3CE, 5: OUT &H3CF, 0
+      OUT &H3CE, 8: OUT &H3CF, &H3C
+      OUT &H3C4, 2: OUT &H3C5, 5
+      LINE (10,10)-(42,36),11,,&HAAAA
+      OUT &H3CE, 0: PRINT INP(&H3CF);
+      OUT &H3CE, 3: PRINT INP(&H3CF);
+      OUT &H3CE, 5: PRINT INP(&H3CF);
+      OUT &H3CE, 8: PRINT INP(&H3CF);
+      OUT &H3C4, 2: PRINT INP(&H3C5)
+      """;
+    var accelerated = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(accelerated.Output, Is.EqualTo(reference.Output));
+      Assert.That(accelerated.Output.Trim(), Does.Contain("7  6  0  60  5"));
+    });
+  }
+
+  [Test]
+  public void Execute_GivenXorColorOrUnprovedEllipse_ThenRetainsTheBiosFallback() {
+    const string body = """
+      PSET (25,25),7
+      LINE (25,25)-(30,25),&H83,,&HAAAA
+      CIRCLE (70,70),15,8,,,1.25
+      PRINT POINT(25,25);POINT(26,25);POINT(70,55);POINT(85,70)
+      """;
+    var accelerated = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(accelerated.Output, Is.EqualTo(reference.Output));
+      Assert.That(accelerated.PortWrites.Any(p => p.Port is 0x3CE or 0x3CF),
+        Is.False, "neither unsupported XOR stroke nor large-aspect ellipse should use planar fastpath");
+    });
+  }
+
+  [Test]
   public void Execute_GivenMode12DrawCommands_ThenItUsesTheSameRasterAsLine() {
     const string body = """
       PSET (40,40),0
