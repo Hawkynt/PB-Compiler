@@ -34,8 +34,12 @@ configuration is hoisted to the start of the line, while `rt_gstyle` still
 rotates once per visited position (including skipped ones), in the correct
 forward/reverse direction. The result preserves gaps and existing background
 colors; a final graphics cursor update and restored VGA register/index state
-match the original pixel routine. The existing generic Bresenham path still
-handles vertical/diagonal/styled edges not yet lowered to byte masks.
+match the original pixel routine. The shared ordered-byte accumulator now also handles in-bounds vertical and
+diagonal Mode 12h Bresenham strokes, every edge of a styled box and `DRAW`
+strokes that reuse `rt_line`. `CIRCLE` feeds its ordered mirror points through
+the same planar cache, and bounded positive-aspect elliptical arcs use it after
+a conservative runtime proof. The generic BIOS path remains for unproved
+geometry, atypical colors or device state.
 Other modes, patterned lines and out-of-range geometry retain their existing paths. Graphics
 cursor updates and ES restoration are shared with or matched to those paths.
 
