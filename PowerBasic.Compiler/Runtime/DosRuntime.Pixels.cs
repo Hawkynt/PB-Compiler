@@ -24,6 +24,18 @@ public sealed partial class DosRuntime {
     asm.Je(packed);
   }
 
+  /// <summary>Checks the active BIOS mode while preserving the caller's coordinates.</summary>
+  private static void EmitPlanarModeBranch(Assembler asm, Label planar) {
+    asm.Push(Reg.AX);
+    asm.Push(Reg.BX);
+    asm.Mov(Reg.AH, (Imm)0x0F);
+    asm.Int(0x10);
+    asm.Cmp(Reg.AL, (Imm)0x12);
+    asm.Pop(Reg.BX);
+    asm.Pop(Reg.AX);
+    asm.Je(planar);
+  }
+
   private static void EmitPackedPixelWriter(Assembler asm) {
     // The IR runtime body computes the offset; only the volatile video write stays opaque.
     asm.MarkLabel("rt_pset_mode13_offset");
