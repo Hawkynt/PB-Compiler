@@ -20,8 +20,10 @@ public sealed partial class Cpu8086 {
     Array.Clear(this._vgaLatches);
     Array.Clear(this._vgaGc);
     Array.Clear(this._vgaSeq);
+    this._vgaGc[6] = 0x05; // Graphics, A0000–AFFFF 64K aperture, no odd/even.
     this._vgaGc[8] = 0xFF;
     this._vgaSeq[2] = 0x0F;
+    this._vgaSeq[4] = 0x06; // Extended memory, odd/even disabled, chain four off.
     this._vgaGcIndex = 0;
     this._vgaSeqIndex = 0;
   }
