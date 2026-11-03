@@ -56,6 +56,51 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.BX);
     asm.Push(Reg.DX);
 
+    if (this.EnableTargetOptimizations) {
+      var begin = asm.DefineLabel();
+      var planar = asm.DefineLabel();
+      var bypass = asm.DefineLabel();
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_arc_active")), (Imm)0);
+
+      // Conservative, provably in-bounds ellipse/arc subset:
+      // 0 <= aspect < 1, radius 1..230, and all possible rounded
+      // coordinates at least two pixels inside the Mode 12 viewport.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gr")), (Imm)1);
+      asm.Jl(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gr")), (Imm)230);
+      asm.Jg(begin);
+      // IEEE-754 DOUBLE high word: positive finite aspect < 1.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gaspect"), 6));
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Reg.AX, (Imm)0x3FF0);
+      asm.Jge(begin);
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gr")));
+      asm.Add(Reg.BX, 2);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcx")));
+      asm.Sub(Reg.AX, Reg.BX);
+      asm.Jl(begin);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcx")));
+      asm.Add(Reg.AX, Reg.BX);
+      asm.Cmp(Reg.AX, (Imm)639);
+      asm.Jg(begin);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
+      asm.Sub(Reg.AX, Reg.BX);
+      asm.Jl(begin);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
+      asm.Add(Reg.AX, Reg.BX);
+      asm.Cmp(Reg.AX, (Imm)479);
+      asm.Jg(begin);
+      EmitPlanarModeBranch(asm, planar);
+      asm.Jmp(begin);
+      asm.MarkLabel(planar);
+      EmitPlanarRasterBegin(asm);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_arc_active")), (Imm)1);
+      asm.MarkLabel(begin);
+    }
+
     // step = 1/r, guarding a zero radius so a degenerate circle plots its centre and stops
     asm.Cmp(Mem.Word(asm.Lbl("rt_gr")), (Imm)0);
     asm.Jle(done);
@@ -88,7 +133,18 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gax")));
     asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gay")));
     asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
-    asm.Call(this.Pset);
+    if (this.EnableTargetOptimizations) {
+      var genericPixel = asm.DefineLabel();
+      var pixelDone = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_arc_active")), (Imm)0);
+      asm.Je(genericPixel);
+      asm.Call(asm.Lbl("rt_planar_raster_plot"));
+      asm.Jmp(pixelDone);
+      asm.MarkLabel(genericPixel);
+      asm.Call(this.Pset);
+      asm.MarkLabel(pixelDone);
+    } else
+      asm.Call(this.Pset);
 
     asm.Fadd(Mem.Qword(asm.Lbl("rt_gastep")));
     asm.Jmp(loop);
@@ -102,10 +158,23 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
     asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
 
+    if (this.EnableTargetOptimizations) {
+      var noPlanarEnd = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_arc_active")), (Imm)0);
+      asm.Je(noPlanarEnd);
+      EmitPlanarRasterEnd(asm);
+      asm.MarkLabel(noPlanarEnd);
+    }
+
     asm.Pop(Reg.DX);
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
+
+    if (this.EnableTargetOptimizations) {
+      asm.MarkLabel("rt_planar_arc_active");
+      asm.Db(0);
+    }
 
     foreach (var cell in new[] { "rt_gax", "rt_gay" }) {
       asm.MarkLabel(cell);
