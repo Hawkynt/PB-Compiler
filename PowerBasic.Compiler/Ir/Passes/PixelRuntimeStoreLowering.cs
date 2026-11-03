@@ -9,7 +9,7 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// only when the source contains no intervening observable operation.
 /// </summary>
 public static class PixelRuntimeStoreLowering {
-  public static int Run(IrModule module, TargetCost? cost = null) {
+  public static int Run(IrModule module, TargetCost? cost = null, bool packVideoStores = true) {
     ArgumentNullException.ThrowIfNull(module);
     var changes = 0;
     foreach (var function in module.Functions.Where(function => !function.IsDeclaration)) {
@@ -22,7 +22,10 @@ public static class PixelRuntimeStoreLowering {
         call.EraseFromParent();
         ++changes;
       }
-      changes += PackAdjacentPixels(function, cost?.MemoryScalarBits >= 32 ? 4 : 2);
+      // The opt-out affects only width-changing VRAM batching. Direct
+      // framebuffer byte stores, cursor state and all non-video passes remain.
+      if (packVideoStores)
+        changes += PackAdjacentPixels(function, cost?.MemoryScalarBits >= 32 ? 4 : 2);
       if (changes > 0)
         Dce.Run(function);
     }
