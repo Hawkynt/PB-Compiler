@@ -2326,7 +2326,6 @@ public sealed partial class Cpu8086 {
       case 0x00: {
         this._videoMode = this.Reg8(_AX);
         this._memory[0x449] = this._videoMode;
-        this._biosPixels?.Clear();
         if (this._videoMode == 0x12)
           this.ResetPlanarVideo();
         if (this._videoMode == 0x13)
