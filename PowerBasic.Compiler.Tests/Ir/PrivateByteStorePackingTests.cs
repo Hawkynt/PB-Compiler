@@ -1,4 +1,8 @@
+using PowerBasic.Compiler.Backend;
 using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
 using PowerBasic.Compiler.Ir;
 using PowerBasic.Compiler.Ir.Passes;
 
@@ -65,6 +69,48 @@ public sealed class PrivateByteStorePackingTests {
       Assert.That(read.Parent, Is.Not.Null, "the proven-disjoint observation must remain");
       Assert.That(IrVerifier.Verify(fn), Is.Empty);
     });
+  }
+
+  [Test]
+  public void Select_GivenPackedPrivateArrayOnBalanced386_ThenEmitsOneDwordStore() {
+    var (fn, builder, buffer) = Create();
+    Write(builder, buffer, 3, 4);
+    Write(builder, buffer, 1, 2);
+    Write(builder, buffer, 0, 1);
+    Write(builder, buffer, 2, 3);
+    builder.Ret();
+    Assert.That(PrivateByteStorePacking.Run(fn,
+      new TargetCost(CpuTier.I80386, CostObjective.Balanced)), Is.EqualTo(1));
+    var machine = InstructionSelector.TrySelect(fn, out var decline,
+      new SelectionTarget(Optimize: true, CpuLevel: 386));
+    Assert.That(machine, Is.Not.Null, decline);
+    Assert.That(machine!.AllInstructions.Count(instr => instr.Opcode == MOpcode.Mov
+      && instr.Operands is [
+        MOperand.Memory { Size: MRegSize.Dword },
+        MOperand.Immediate { Value: 0x04030201 }
+      ]), Is.EqualTo(1), "the 386 selector must preserve the optimized packet width");
+  }
+
+  [TestCase(false)]
+  [TestCase(true)]
+  public void Execute_GivenOutOfOrderPb35ByteArrayWrites_ThenPreservesAllValues(bool optimize) {
+    const string source = """
+      DIM data(0 TO 3) AS BYTE
+      data(2) = 3
+      data(0) = 1
+      data(3) = 4
+      data(1) = 2
+      PRINT data(0); data(1); data(2); data(3)
+      END
+      """;
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "ARRAY.BAS", Dialect.Pb35),
+      "ARRAY.BAS", Dialect.Pb35), Dialect.Pb35);
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    var compiler = new CodeGenerator(model) { Optimize = optimize };
+    var image = compiler.EmitExecutable();
+    Assert.That(compiler.Errors, Is.Empty, string.Join("; ", compiler.Errors));
+    Assert.That(compiler.BackendDeclines, Is.Empty);
+    Assert.That(Cpu8086.Run(image).Output, Does.Contain("1  2  3  4"));
   }
 
   [Test]
