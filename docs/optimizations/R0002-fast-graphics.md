@@ -21,7 +21,11 @@ fuse; the numeric address A000h alone is not proof. POINT loads carry a non-disc
 effect so the packer's final pure-instruction cleanup cannot erase an unused observation.
 
 In-bounds solid horizontal lines, filled rectangles and discovered PAINT scanlines compute their
-span addresses once, using REP STOSW on 8086 or CPU-gated REP STOSD with word/byte tails on 386+.
+span addresses once in Mode 13h, using REP STOSW on 8086 or CPU-gated REP STOSD with word/byte tails on 386+.
+Mode 12h solid filled rectangles now have a separate, guarded four-plane VGA path: Write Mode 2
+broadcasts one 4-bit color to all planes, full eight-pixel groups use REP STOSB, and masked
+edge bytes explicitly preload the VGA latches before writing. GC/SQ port indices and modified
+registers are restored. It is not a generic A000h wide-write transformation.
 Other modes, patterned lines and out-of-range geometry retain their existing paths. Graphics
 cursor updates and ES restoration are shared with or matched to those paths.
 
@@ -73,6 +77,14 @@ Mode 13h's linear address formula is used only with a proven mode or the runtime
 Unknown calls, assembly and raw memory invalidate the mode proof. Pixel readback and explicit
 COM/MZ execution are checked against captured genuine QuickBASIC files. This does not prove
 clipping, pages, viewports or complete graphics error semantics.
+
+## Planar follow-up scope
+
+The new Mode 12h rectangle path eliminates the BIOS pixel call per filled pixel but does not
+yet accelerate `PSET`, `POINT`, styled/diagonal `LINE`, `CIRCLE`, aspect-ratio arcs and
+ellipses, `PAINT`, `GET/PUT` actions, or graphics glyph output. In particular, `PRINT`
+currently follows its DOS output contract, not a Mode 12h font renderer. See the
+[staged Mode 12h PRD](../prd/mode12-planar-graphics-acceleration.md).
 
 ## What is still planned
 
