@@ -54,7 +54,8 @@ public sealed class PlanarSpriteGetPutTests {
     var baseline = Execute(body, false);
     Assert.Multiple(() => {
       Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
-      Assert.That(optimized.Output.Trim(), Does.Contain("9  1  85  51  15  -32768"));
+      Assert.That(optimized.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+        .Select(int.Parse), Is.EqualTo(new[] { 9, 1, 85, 51, 15, -32768 }));
     });
   }
 
