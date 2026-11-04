@@ -21,7 +21,7 @@ public sealed class PlanarGraphicsDispatchBenchmarks {
     var cg = new CodeGenerator(model) { Optimize = optimize, Container = DosContainer.Exe };
     var executable = cg.EmitExecutable();
     TestContext.Progress.WriteLine(
-      $"{$"{cpu} SCREEN {mode}"} optimize={optimize}: DOS image bytes={executable.Length}");
+      $"{cpu} SCREEN {mode} optimize={optimize}: DOS image bytes={executable.Length}");
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     Assert.That(cg.BackendDeclines, Is.Empty);
     return Cpu8086.Run(executable);
