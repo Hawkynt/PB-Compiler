@@ -55,11 +55,15 @@ public sealed class PlanarSchedulingComparisonTests {
       """;
     var batched = Run(byPlane, probes);
     var baseline = Run(byPixel, probes);
+    // The common setup initializes eight pixels using now-optimized PSET.
+    // Subtract its register traffic to measure only the four plane switches.
+    var initialization = Run("", probes);
     Assert.Multiple(() => {
       Assert.That(batched.Output, Is.EqualTo(baseline.Output));
       Assert.That(batched.Output.Trim(), Does.Contain("0  1  2  3  4  5  6  7"));
-      Assert.That(batched.PortWrites.Count(e => e.Port is 0x3C4 or 0x3C5), Is.EqualTo(8),
-        "one plane selection per eight-pixel stripe, rather than per individual pixel");
+      Assert.That(batched.PortWrites.Count(e => e.Port is 0x3C4 or 0x3C5)
+        - initialization.PortWrites.Count(e => e.Port is 0x3C4 or 0x3C5), Is.EqualTo(8),
+        "four map-mask selections use two sequencer ports each");
     });
   }
 
