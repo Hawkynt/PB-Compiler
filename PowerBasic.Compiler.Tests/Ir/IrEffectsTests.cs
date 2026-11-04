@@ -253,6 +253,32 @@ public sealed class IrEffectsTests {
   }
 
   [Test]
+  public void ForInstruction_GivenCertifiedVgaWrite_ThenModelsVolatileDeviceBarrier() {
+    var pointer = new IrFarPtr(
+      new IrConstantInt(IrType.I16, unchecked((short)0xA000)),
+      new IrConstantInt(IrType.I16, 100));
+    var ordinary = new IrStore(new IrConstantInt(IrType.U8, 9), pointer);
+    var certified = new IrStore(new IrConstantInt(IrType.U8, 9), pointer) {
+      IsPackedMode13Write = true,
+    };
+
+    var ordinaryEffects = IrEffects.ForInstruction(ordinary);
+    var videoEffects = IrEffects.ForInstruction(certified);
+    Assert.Multiple(() => {
+      Assert.That(ordinaryEffects.Effects, Is.EqualTo(IrEffectKind.WritesMemory),
+        "a bare A000 segment must never imply VGA device semantics");
+      Assert.That(videoEffects.Effects, Is.EqualTo(
+        IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory
+        | IrEffectKind.PerformsIo | IrEffectKind.Volatile));
+      Assert.That(videoEffects.MayReadMemory, Is.True);
+      Assert.That(videoEffects.DefinesMemory, Is.True);
+      Assert.That(videoEffects.CanDiscard, Is.False);
+      Assert.That(videoEffects.CanSpeculate, Is.False);
+      Assert.That(videoEffects.Deterministic, Is.False);
+    });
+  }
+
+  [Test]
   public void ForInstruction_GivenATypeWithNoEffectContract_ThenItFailsClosed() {
     Assert.That(
       () => IrEffects.ForInstruction(new UnclassifiedInstruction()),
