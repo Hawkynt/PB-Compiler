@@ -20,12 +20,15 @@ public sealed class PlanarGraphicsDispatchBenchmarks {
     Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
     var cg = new CodeGenerator(model) { Optimize = optimize, Container = DosContainer.Exe };
     var executable = cg.EmitExecutable();
+    TestContext.Progress.WriteLine(
+      $"{$"{cpu} SCREEN {mode}"} optimize={optimize}: DOS image bytes={executable.Length}");
     Assert.That(cg.Errors, Is.Empty, string.Join("; ", cg.Errors));
     Assert.That(cg.BackendDeclines, Is.Empty);
     return Cpu8086.Run(executable);
   }
 
   [TestCase("12", "$CPU 8086", "LINE (8,20)-(119,23),11,BF\nPRINT POINT(8,20);POINT(119,23)")]
+  [TestCase("12", "$CPU 80286", "LINE (8,20)-(119,23),11,BF\nPRINT POINT(8,20);POINT(119,23)")]
   [TestCase("12", "$CPU 80386", "LINE (8,20)-(119,23),11,BF\nPRINT POINT(8,20);POINT(119,23)")]
   [TestCase("12", "$CPU 8086", "LINE (8,20)-(119,20),11,,&HF0F0\nPRINT POINT(8,20);POINT(119,20)")]
   [TestCase("12", "$CPU 80386", "LINE (8,20)-(119,20),11,,&HF0F0\nPRINT POINT(8,20);POINT(119,20)")]
@@ -33,6 +36,7 @@ public sealed class PlanarGraphicsDispatchBenchmarks {
   [TestCase("12", "$CPU 8086", "CIRCLE (80,80),25,11\nPRINT POINT(105,80);POINT(80,55)")]
   [TestCase("12", "$CPU 8086", "LINE (8,20)-(119,23),11,B\nPAINT (9,21),5,11\nPRINT POINT(9,21);POINT(118,22)")]
   [TestCase("13", "$CPU 8086", "LINE (8,20)-(119,20),11,,&HF0F0\nPRINT POINT(8,20);POINT(119,20)")]
+  [TestCase("13", "$CPU 80286", "LINE (8,20)-(119,79),11,,&HAAAA\nPRINT POINT(8,20);POINT(119,79)")]
   [TestCase("13", "$CPU 80386", "LINE (8,20)-(119,79),11,,&HAAAA\nPRINT POINT(8,20);POINT(119,79)")]
   public void Measure_GivenReferencePrimitive_ThenReportExactVgaTrafficAndCheckPixels(
       string mode, string cpu, string body) {
