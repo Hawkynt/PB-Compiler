@@ -52,7 +52,11 @@ internal static class RuntimeTrimmer {
 
   private static Analysis Analyze() {
     var asm = new Assembler();
-    var rt = new DosRuntime();
+    // Analyze the optimized runtime, which has the *superset* of runtime
+    // section references. Otherwise an optimized-only cross-section CALL
+    // (e.g. PAINT -> rt_linefill for planar scanlines) is invisible to the
+    // default unoptimized probe and leaves a dangling link-time symbol.
+    var rt = new DosRuntime { EnableTargetOptimizations = true };
     var boundaries = new List<(string Name, int Start, int End)>();
 
     var entryStart = asm.Position;
