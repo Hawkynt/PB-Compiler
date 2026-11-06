@@ -458,9 +458,9 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.BX, Reg.AX);
       asm.Mov(Reg.AH, (Imm)0x0F);
       asm.Int(0x10);
-      asm.Cmp(Reg.AL, (Imm)1);
+      asm.Cmp(Reg.AL, (Imm)0x04); // PB SCREEN 1 -> BIOS mode 4: first COLOR field is background.
       asm.Je(done);
-      asm.Cmp(Reg.AL, (Imm)2);
+      asm.Cmp(Reg.AL, (Imm)0x06); // PB SCREEN 2 -> BIOS mode 6: no foreground COLOR field.
       asm.Je(done);
       asm.Cmp(Reg.AL, (Imm)0x11);
       asm.Je(done);

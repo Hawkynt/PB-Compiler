@@ -32,7 +32,7 @@ public sealed class GraphicsForegroundTests {
       LINE (30, 30)-(40, 40), 6, B
       PAINT (35, 35)
       PSET (50, 50), 0
-      DRAW "M+50,+50 R4"
+      DRAW "R4"
       PRINT POINT(1, 1); POINT(6, 4); POINT(23, 20); POINT(35, 35); POINT(54, 50)
       """), Is.EqualTo("6  6  6  6  6"));
 
