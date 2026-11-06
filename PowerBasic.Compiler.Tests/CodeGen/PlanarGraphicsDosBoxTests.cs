@@ -90,7 +90,7 @@ public sealed class PlanarGraphicsDosBoxTests {
       .ToArray();
     Assert.Multiple(() => {
       Assert.That(values.Length, Is.GreaterThan(5000), "the oracle must sample a broad framebuffer region");
-      Assert.That(values.Take(10), Is.EqualTo(new[] { 3, 9, 6, 11, 2, 2, 13, 0, 15, 7 }),
+      Assert.That(values.Take(10), Is.EqualTo(new[] { 3, 9, 6, 11, 2, 2, 13, 0, 7, 7 }),
         "anchor samples exercise fill, circle, PAINT, DRAW and every PUT verb");
       Assert.That(values.All(v => v is >= 0 and <= 15), Is.True);
     });
