@@ -129,7 +129,7 @@ public sealed class FastVideoTests {
     var expected = plain.TryGetValue("R.TXT", out var p) ? DosBoxRunner.Normalize(p) : "<missing>";
     var actual = direct.TryGetValue("R.TXT", out var d) ? DosBoxRunner.Normalize(d) : "<missing>";
 
-    var values = actual.Split([' ', '\\r', '\\n', '\\t'], StringSplitOptions.RemoveEmptyEntries)
+    var values = actual.Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
       .Select(int.Parse)
       .ToArray();
     Assert.Multiple(() => {
