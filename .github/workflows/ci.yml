@@ -19,6 +19,11 @@ concurrency:
 # the 2026-06-16 hard cutover, until we bump each action to a Node-24-native major version.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # Headless DOSBox runs do not need an ALSA device; without this, each
+  # emulator startup emits repeated ALSA errors and enormous oracle logs.
+  # SDL3 accepts the SDL2 spelling as a fallback; do not force both video
+  # driver spellings, whose semantics differ.
+  SDL_AUDIODRIVER: dummy
 
 jobs:
   syntax-oracle:
