@@ -6,9 +6,9 @@ using PowerBasic.Compiler.Tests.Exec;
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
 /// <summary>
-/// QuickBASIC SCREEN 12 GET stores four packed one-bit plane streams per
+/// Microsoft BASIC SCREEN 12 GET stores four packed one-bit plane streams per
 /// scanline, not Mode 13's byte-per-pixel raster. Pixel order is MSB-first;
-/// the header holds width in bits and height in pixels.
+/// the header holds width and height in pixels, and every plane row is word-aligned.
 /// </summary>
 [TestFixture]
 public sealed class PlanarSpriteGetPutTests {
@@ -26,20 +26,20 @@ public sealed class PlanarSpriteGetPutTests {
 
   [TestCase("$CPU 8086")]
   [TestCase("$CPU 80386")]
-  public void Execute_GivenEightFourBitPixels_ThenGetUsesFourPackedPlaneBytes(string cpu) {
+  public void Execute_GivenEightFourBitPixels_ThenGetWordAlignsEveryPlane(string cpu) {
     const string body = """
       FOR x% = 0 TO 7: PSET (x%,5),x%: NEXT
       GET (0,5)-(7,5),s%(0)
-      PRINT s%(0);s%(1);s%(2);s%(3)
+      PRINT s%(0);s%(1);s%(2);s%(3);s%(4);s%(5)
       """;
-    // Plane0: 01010101 = 55h, plane1: 00110011 = 33h;
-    // plane2: 00001111 = 0Fh, plane3: 00000000.
-    // Integer elements are little-endian: 3355h and 000Fh.
+    // Q51412: every color-plane row is padded to an even byte boundary.
+    // Plane data is 55h, 33h, 0Fh, 00h, each followed by a zero pad byte.
     var optimized = Execute(body, true, cpu);
     var baseline = Execute(body, false, cpu);
     Assert.Multiple(() => {
       Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
-      Assert.That(optimized.Output.Trim(), Does.Contain("8  1  13141  15"));
+      Assert.That(optimized.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+        .Select(int.Parse), Is.EqualTo(new[] { 8, 1, 85, 51, 15, 0 }));
     });
   }
 
@@ -56,6 +56,71 @@ public sealed class PlanarSpriteGetPutTests {
       Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
       Assert.That(optimized.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
         .Select(int.Parse), Is.EqualTo(new[] { 9, 1, 85, 51, 15, -32768 }));
+    });
+  }
+
+  [Test]
+  public void Execute_GivenMicrosoftQ51412Screen12Box_ThenGetMatchesPublishedPlaneBytes() {
+    const string body = """
+      LINE (1,1)-(10,3),4,B
+      GET (1,1)-(10,3),s%(0)
+      FOR i% = 0 TO 13: PRINT s%(i%);: NEXT
+      """;
+    var optimized = Execute(body, true);
+    var baseline = Execute(body, false);
+    var expected = new[] {
+      10, 3,
+      0, 0, -16129, 0,
+      0, 0, 16512, 0,
+      0, 0, -16129, 0,
+    };
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
+      Assert.That(optimized.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+        .Select(int.Parse), Is.EqualTo(expected));
+    });
+  }
+
+  [Test]
+  public void Execute_GivenWordAlignedEightPixelSprite_ThenPutIgnoresPlanePadding() {
+    const string body = """
+      s%(0)=8:s%(1)=1
+      s%(2)=-171:s%(3)=-205:s%(4)=-241:s%(5)=-256
+      LINE (16,20)-(31,20),3,BF
+      PUT (16,20),s%(0),PSET
+      FOR x%=16 TO 24: PRINT POINT(x%,20);: NEXT
+      """;
+    var optimized = Execute(body, true);
+    var baseline = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
+      Assert.That(optimized.Output.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+        .Select(int.Parse), Is.EqualTo(new[] { 0, 1, 2, 3, 4, 5, 6, 7, 3 }));
+    });
+  }
+
+  [TestCase("""
+    GET (-1,0)-(0,0),s%(0)
+    """)]
+  [TestCase("""
+    s%(0)=641:s%(1)=1
+    PUT (0,0),s%(0),PSET
+    """)]
+  [TestCase("""
+    s%(0)=8:s%(1)=1
+    PUT (633,0),s%(0),PSET
+    """)]
+  public void Execute_GivenOutOfRangeGetOrPut_ThenRaisesIllegalFunctionCall(string statement) {
+    var body = $"""
+      ON ERROR RESUME NEXT
+      {statement}
+      PRINT ERR
+      """;
+    var optimized = Execute(body, true);
+    var baseline = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
+      Assert.That(optimized.Output.Trim(), Is.EqualTo("5"));
     });
   }
 

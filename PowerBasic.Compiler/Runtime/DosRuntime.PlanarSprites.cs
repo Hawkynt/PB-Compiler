@@ -4,10 +4,10 @@ namespace PowerBasic.Compiler.Runtime;
 
 public sealed partial class DosRuntime {
   /// <summary>
-  /// Mode 12h GET uses the QuickBASIC four-plane image representation:
-  /// [width in bits:word][height:word], then, for each scanline, one
-  /// left-aligned bitstream per plane. A single plane occupies ceil(width/8)
-  /// bytes per scanline, including zeroed unused low bits in the last byte.
+  /// Mode 12h GET uses the Microsoft BASIC four-plane image representation:
+  /// [width in pixels:word][height:word], then, for each scanline, one
+  /// left-aligned bitstream per plane. Each plane row is padded to a 16-bit
+  /// boundary; unused low bits and the optional pad byte are zero.
   /// This behavior applies with or without compiler optimizations.
   /// </summary>
   private void EmitPlanarGet(Assembler asm, Label entry) {
@@ -21,6 +21,8 @@ public sealed partial class DosRuntime {
     var endByte = asm.DefineLabel();
     var nextPlane = asm.DefineLabel();
     var nextRow = asm.DefineLabel();
+    var invalid = asm.DefineLabel();
+    var valid = asm.DefineLabel();
     var done = asm.DefineLabel();
     var fastAligned = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
 
@@ -52,15 +54,35 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Word(asm.Lbl("rt_gby1")), Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_gby2")), Reg.BX);
 
+    // GET never clips. Microsoft BASIC raises Error 5 when the requested
+    // rectangle is not wholly inside the current graphics area.
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gbx1")), (Imm)0);
+    asm.Jl(invalid);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gbx2")), (Imm)639);
+    asm.Jg(invalid);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gby1")), (Imm)0);
+    asm.Jl(invalid);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)479);
+    asm.Jg(invalid);
+    asm.Jmp(valid);
+    asm.MarkLabel(invalid);
+    asm.Mov(Reg.AX, (Imm)5);
+    asm.Call(this.Raise);
+    asm.Jmp(done);
+    asm.MarkLabel(valid);
+
     asm.Mov(Reg.ES, Mem.Word(asm.Lbl("rt_gbufseg")));
     asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_gbufofs")));
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gbx2")));
     asm.Sub(Reg.AX, Mem.Word(asm.Lbl("rt_gbx1")));
     asm.Inc(Reg.AX);
     asm.Mov(Mem.Word(asm.Lbl("rt_gpw")), Reg.AX);
-    asm.Stosw(); // In SCREEN 12 each plane has ONE bit per pixel.
+    asm.Stosw(); // Width is stored in pixels.
     asm.Add(Reg.AX, (Imm)7);
     asm.Shr(Reg.AX, 3);
+    asm.Mov(Mem.Word(asm.Lbl("rt_pg_data_bytes")), Reg.AX);
+    asm.Inc(Reg.AX);
+    asm.And(Reg.AX, (Imm)0xFFFE); // Each plane row is word-aligned.
     asm.Mov(Mem.Word(asm.Lbl("rt_pg_stride")), Reg.AX);
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gby2")));
     asm.Sub(Reg.AX, Mem.Word(asm.Lbl("rt_gby1")));
@@ -159,6 +181,7 @@ public sealed partial class DosRuntime {
       var fastRow = asm.DefineLabel();
       var fastPlane = asm.DefineLabel();
       var fastByte = asm.DefineLabel();
+      var fastPlaneDone = asm.DefineLabel();
 
       asm.MarkLabel(fastAligned);
       asm.Push(Reg.BP);
@@ -166,7 +189,7 @@ public sealed partial class DosRuntime {
       asm.Sub(Reg.SP, (Imm)6); // SS locals: row base, rows remaining, byte width.
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gph")));
       asm.Mov(Mem.Word(Reg.BP, -4), Reg.AX);
-      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pg_stride")));
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pg_data_bytes")));
       asm.Mov(Mem.Word(Reg.BP, -6), Reg.AX);
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gby1")));
       asm.Mov(Reg.BX, 80);
@@ -205,6 +228,11 @@ public sealed partial class DosRuntime {
       asm.Inc(Reg.SI);
       asm.Dec(Reg.CX);
       asm.Jnz(fastByte);
+      asm.Test(Mem.Word(Reg.BP, -6), (Imm)1);
+      asm.Jz(fastPlaneDone);
+      asm.Xor(Reg.AX, Reg.AX);
+      asm.Stosb();
+      asm.MarkLabel(fastPlaneDone);
       asm.Inc(Reg.BX);
       asm.Cmp(Reg.BX, (Imm)4);
       asm.Jl(fastPlane);
@@ -224,7 +252,9 @@ public sealed partial class DosRuntime {
       asm.Jmp(done);
     }
 
-    foreach (var name in new[] { "rt_pg_stride", "rt_pg_plane", "rt_pg_block", "rt_pg_bit" }) {
+    foreach (var name in new[] {
+      "rt_pg_data_bytes", "rt_pg_stride", "rt_pg_plane", "rt_pg_block", "rt_pg_bit",
+    }) {
       asm.MarkLabel(name);
       asm.Dw(0);
     }
@@ -250,6 +280,8 @@ public sealed partial class DosRuntime {
     var doOr = asm.DefineLabel();
     var doXor = asm.DefineLabel();
     var combined = asm.DefineLabel();
+    var invalid = asm.DefineLabel();
+    var valid = asm.DefineLabel();
     var done = asm.DefineLabel();
     var nextRow = asm.DefineLabel();
     var fastAligned = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
@@ -270,6 +302,9 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Word(asm.Lbl("rt_gpw")), Reg.AX);
     asm.Add(Reg.AX, (Imm)7);
     asm.Shr(Reg.AX, 3);
+    asm.Mov(Mem.Word(asm.Lbl("rt_pp_data_bytes")), Reg.AX);
+    asm.Inc(Reg.AX);
+    asm.And(Reg.AX, (Imm)0xFFFE); // Plane rows in GET/PUT buffers are word-aligned.
     asm.Mov(Mem.Word(asm.Lbl("rt_pp_stride")), Reg.AX);
     asm.Shl(Reg.AX, 2);
     asm.Mov(Mem.Word(asm.Lbl("rt_pp_rowbytes")), Reg.AX);
@@ -278,6 +313,35 @@ public sealed partial class DosRuntime {
     asm.Add(Reg.DI, (Imm)4);
     asm.Mov(Mem.Word(asm.Lbl("rt_pp_base")), Reg.DI);
     asm.Mov(Mem.Word(asm.Lbl("rt_pp_row")), (Imm)0);
+
+    // PUT does not clip either. Reject malformed dimensions and any placement
+    // that would make even one source pixel land outside SCREEN 12.
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gpw")), (Imm)0);
+    asm.Je(invalid);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gpw")), (Imm)640);
+    asm.Ja(invalid);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gph")), (Imm)0);
+    asm.Je(invalid);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gph")), (Imm)480);
+    asm.Ja(invalid);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
+    asm.Jl(invalid);
+    asm.Cmp(Mem.Word(asm.Lbl("rt_gy1")), (Imm)0);
+    asm.Jl(invalid);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
+    asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_gpw")));
+    asm.Cmp(Reg.AX, (Imm)640);
+    asm.Ja(invalid);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+    asm.Add(Reg.AX, Mem.Word(asm.Lbl("rt_gph")));
+    asm.Cmp(Reg.AX, (Imm)480);
+    asm.Ja(invalid);
+    asm.Jmp(valid);
+    asm.MarkLabel(invalid);
+    asm.Mov(Reg.AX, (Imm)5);
+    asm.Call(this.Raise);
+    asm.Jmp(done);
+    asm.MarkLabel(valid);
 
     if (fastAligned is not null) {
       var slow = asm.DefineLabel();
@@ -432,7 +496,7 @@ public sealed partial class DosRuntime {
       EmitFastAlignedPlanarPut(asm, fastAligned, done);
 
     foreach (var name in new[] {
-      "rt_pp_stride", "rt_pp_rowbytes", "rt_pp_base", "rt_pp_row",
+      "rt_pp_data_bytes", "rt_pp_stride", "rt_pp_rowbytes", "rt_pp_base", "rt_pp_row",
       "rt_pp_col", "rt_pp_plane", "rt_pp_offset",
     }) {
       asm.MarkLabel(name);
@@ -466,9 +530,9 @@ public sealed partial class DosRuntime {
     asm.MarkLabel(entry);
     asm.Push(Reg.BP);
     asm.Mov(Reg.BP, Reg.SP);
-    asm.Sub(Reg.SP, (Imm)12);
-    // SS locals: source row, target row, remaining rows, stride,
-    // source bytes per row, action verb.
+    asm.Sub(Reg.SP, (Imm)14);
+    // SS locals: source row, target row, remaining rows, padded plane stride,
+    // source bytes per row, action verb, actual plane-data bytes.
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pp_base")));
     asm.Mov(Mem.Word(Reg.BP, -2), Reg.AX);
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gph")));
@@ -477,6 +541,8 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Word(Reg.BP, -8), Reg.AX);
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pp_rowbytes")));
     asm.Mov(Mem.Word(Reg.BP, -10), Reg.AX);
+    asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pp_data_bytes")));
+    asm.Mov(Mem.Word(Reg.BP, -14), Reg.AX);
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gverb")));
     asm.Mov(Mem.Word(Reg.BP, -12), Reg.AX);
     asm.Mov(Mem.Byte(asm.Lbl("rt_pp_logic")), (Imm)0);
@@ -541,7 +607,7 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.SI, Mem.Word(Reg.BP, -2));
     asm.Add(Reg.SI, Reg.AX);
     asm.Mov(Reg.DI, Mem.Word(Reg.BP, -4));
-    asm.Mov(Reg.CX, Mem.Word(Reg.BP, -8));
+    asm.Mov(Reg.CX, Mem.Word(Reg.BP, -14));
 
     asm.MarkLabel(fastByte);
     asm.Mov(Reg.AL, Mem.Byte(Reg.SI).Seg(Reg.ES));
