@@ -44,6 +44,44 @@ public sealed class PlanarVgaRegisterVectorTests {
   }
 
   [Test]
+  public void WriteMode2_GivenPartialBitMask_ThenPreservesUntouchedNeighborPixels() {
+    // The eight original pixels are all color 9 (planes 0 and 3 set).
+    // Bit Mask AAh selects x=0,2,4,6 for replacement with color 6
+    // (planes 1 and 2 set). Each unselected pixel must retain color 9.
+    const string body = """
+      LINE (0,0)-(7,0),9,BF
+      DEF SEG = &HA000
+      OUT &H3CE,3: OUT &H3CF,0
+      OUT &H3CE,8: OUT &H3CF,170
+      OUT &H3CE,5: OUT &H3CF,2
+      OUT &H3C4,2: OUT &H3C5,15
+      z% = PEEK(0)
+      POKE 0,6
+      FOR x% = 0 TO 7: PRINT POINT(x%,0);: NEXT
+      """;
+    foreach (var optimize in new[] { false, true })
+      Assert.That(Execute(body, optimize).Output.Trim(),
+        Does.Contain("6  9  6  9  6  9  6  9"));
+  }
+
+  [Test]
+  public void ReadMode0_GivenPlaneSelection_ThenReadsOnlyTheSelectedPlane() {
+    // Color 4 consists solely of plane 2; all other plane bytes are zero.
+    // Selecting read map 2 must return FFh, then selecting map 0 returns 00h.
+    const string body = """
+      LINE (0,0)-(7,0),4,BF
+      DEF SEG = &HA000
+      OUT &H3CE,5: OUT &H3CF,0
+      OUT &H3CE,4: OUT &H3CF,2
+      PRINT PEEK(0);
+      OUT &H3CE,4: OUT &H3CF,0
+      PRINT PEEK(0)
+      """;
+    foreach (var optimize in new[] { false, true })
+      Assert.That(Execute(body, optimize).Output.Trim(), Does.Contain("255  0"));
+  }
+
+  [Test]
   public void WriteMode3_GivenBitMask_ThenOnlySelectedPixelsReceiveSetResetColor() {
     const string body = """
       LINE (0,0)-(7,0),9,BF
