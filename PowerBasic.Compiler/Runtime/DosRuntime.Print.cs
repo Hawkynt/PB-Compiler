@@ -18,6 +18,19 @@ public sealed partial class DosRuntime {
       var blit = asm.DefineLabel();
       asm.Cmp(Mem.Word(asm.Lbl("rt_curout")), 1);
       asm.Jne(dos);
+      // B800h character/attribute words are valid only in the supported
+      // 80-column color text mode. In SCREEN 12/13, BIOS/DOS must rasterize
+      // the glyphs into graphics memory; writing B800h would print nothing.
+      // Likewise fall back in 40-column and monochrome text modes rather
+      // than assuming an 80-column B800h layout.
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Mov(Reg.AH, (Imm)0x0F);
+      asm.Int(0x10);
+      asm.Cmp(Reg.AL, (Imm)3);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Jne(dos);
       asm.Cmp(Reg.CX, 80);
       asm.Ja(dos);
       asm.Push(Reg.SI);
