@@ -400,6 +400,27 @@ public sealed partial class DosRuntime {
     asm.Dw(0);
     asm.MarkLabel("rt_eresumenext");
     asm.Dw(0);
+    // Current default graphics foreground. Unlike rt_gcolor below this survives individual
+    // primitives; SCREEN resets it and COLOR updates it where the active mode has a foreground.
+    asm.MarkLabel("rt_fgcolor");
+    asm.Dw(15);
+
+    // Graphics PRINT scratch. These cells are transient and private to rt_print_str; keeping them
+    // in DGROUP lets BIOS/font probing restore all caller registers before the certified VGA branch.
+    foreach (var cell in new[] {
+      "rt_gprint_src", "rt_gprint_count", "rt_gprint_cursor", "rt_gprint_height",
+      "rt_gprint_fontofs", "rt_gprint_fontseg", "rt_gprint_dest",
+    }) {
+      asm.MarkLabel(cell);
+      asm.Dw(0);
+    }
+    asm.MarkLabel("rt_gprint_mode");
+    asm.Db(0);
+    asm.MarkLabel("rt_gprint_columns");
+    asm.Db(0);
+    asm.MarkLabel("rt_gprint_page");
+    asm.Db(0);
+
     // LINE parameter block (DosRuntime.Graphics.cs). rt_gx1/rt_gy1 is also PB's "last point
     // referenced", which is what makes LINE -(x, y) mean anything - with no start point the segment
     // begins wherever the previous graphics statement finished.

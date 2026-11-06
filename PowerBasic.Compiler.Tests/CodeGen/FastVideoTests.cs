@@ -108,6 +108,76 @@ public sealed class FastVideoTests {
   }
 
   [Test]
+  public void Execute_GivenScreen12PrintableRun_WhenOptionVideo_ThenPlanarGlyphMatchesBiosFallback() {
+    const string subject = """
+      SCREEN 12
+      LINE (8,16)-(15,31),3,BF
+      COLOR 14
+      LOCATE 2, 2
+      PRINT "A";
+      OPEN "R.TXT" FOR OUTPUT AS #1
+      FOR y% = 16 TO 31
+        FOR x% = 8 TO 15
+          PRINT #1, POINT(x%, y%);
+        NEXT x%
+      NEXT y%
+      CLOSE #1
+      """;
+
+    var plain = DosBoxRunner.RunUnredirectedWithFiles(Compile(subject), ["R.TXT"]);
+    var direct = DosBoxRunner.RunUnredirectedWithFiles(Compile("$OPTION VIDEO\n" + subject), ["R.TXT"]);
+    var expected = plain.TryGetValue("R.TXT", out var p) ? DosBoxRunner.Normalize(p) : "<missing>";
+    var actual = direct.TryGetValue("R.TXT", out var d) ? DosBoxRunner.Normalize(d) : "<missing>";
+
+    var values = actual.Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
+      .Select(int.Parse)
+      .ToArray();
+    Assert.Multiple(() => {
+      Assert.That(actual, Is.EqualTo(expected),
+        "the planar font kernel must be pixel-identical to the BIOS graphics-console fallback");
+      Assert.That(values.All(v => v is 0 or 14), Is.True,
+        "ordinary PRINT is opaque: the pre-existing color 3 inside the character cell must be replaced");
+      Assert.That(values, Does.Contain(14).And.Contain(0),
+        "the cell contains foreground attribute 14 and background attribute 0");
+    });
+  }
+
+  [Test]
+  public void Execute_GivenRedirectedScreen12Stdout_WhenOptionVideo_ThenBytesStillReachDosHandle() {
+    var output = DosBoxRunner.Run(Compile("""
+      $OPTION VIDEO
+      SCREEN 12
+      COLOR 12
+      PRINT "REDIRECTED SCREEN12"
+      """));
+
+    Assert.That(DosBoxRunner.Normalize(output), Does.Contain("REDIRECTED SCREEN12"),
+      "a redirected handle 1 must never be consumed by the VGA glyph renderer");
+  }
+
+  [Test]
+  public void Execute_GivenScreen12LastColumnScroll_WhenOptionVideo_ThenBiosFallbackRetainsPixels() {
+    const string subject = """
+      SCREEN 12
+      COLOR 10
+      LOCATE 30, 80
+      PRINT "XY";
+      OPEN "R.TXT" FOR OUTPUT AS #1
+      FOR y% = 0 TO 15
+        FOR x% = 0 TO 15
+          PRINT #1, POINT(x%, y%);
+        NEXT x%
+      NEXT y%
+      CLOSE #1
+      """;
+    var plain = DosBoxRunner.RunUnredirectedWithFiles(Compile(subject), ["R.TXT"]);
+    var direct = DosBoxRunner.RunUnredirectedWithFiles(Compile("$OPTION VIDEO\n" + subject), ["R.TXT"]);
+    Assert.That(DosBoxRunner.Normalize(direct["R.TXT"]),
+      Is.EqualTo(DosBoxRunner.Normalize(plain["R.TXT"])),
+      "a run that wraps and scrolls must use BIOS teletype, not a direct glyph blit");
+  }
+
+  [Test]
   public void Capture_GivenControlCharsAndLongLines_WhenOptionVideo_ThenDosFallbackKeepsScreenIdentical() {
     // TAB (control char) and a >80-column line take the DOS fallback inside the fast build;
     // the screens must still match the plain build exactly

@@ -49,6 +49,19 @@ public sealed class ConsoleCommandLoweringTests {
   }
 
   [Test]
+  public void Lower_GivenColorForeground_ThenCallsTheModeAwareRuntimeSetter() {
+    var module = Lower("""
+      SCREEN 13
+      COLOR 6
+      PSET (1, 1)
+      """, out var why);
+
+    Assert.That(module, Is.Not.Null, $"lowering declined: {why}");
+    Assert.That(Callees(module!), Does.Contain("rt_color_foreground"),
+      "COLOR is graphics state now; it must not disappear as a no-op");
+  }
+
+  [Test]
   public void Lower_GivenKill_ThenPassesTheFilenameHandle() {
     var module = Lower("""
       KILL "SCRATCH.TXT"

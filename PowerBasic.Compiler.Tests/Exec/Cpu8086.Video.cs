@@ -1,7 +1,6 @@
 namespace PowerBasic.Compiler.Tests.Exec;
 
 public sealed partial class Cpu8086 {
-  private Dictionary<(ushort X, ushort Y), byte>? _biosPixels;
 
   private void BiosPixel() {
     var x = this._r[_CX];
@@ -20,13 +19,12 @@ public sealed partial class Cpu8086 {
         this.SetReg8(_AX, this._memory[address]);
       return;
     }
-    this._biosPixels ??= [];
-    var previous = this._biosPixels.GetValueOrDefault((x, y));
+    var previous = this.PlanarPixel(x, y);
     if (!write) {
       this.SetReg8(_AX, previous);
       return;
     }
     var color = this.Reg8(_AX);
-    this._biosPixels[(x, y)] = (byte)((color & 0x80) != 0 ? previous ^ (color & 15) : color & 15);
+    this.SetPlanarPixel(x, y, (byte)((color & 0x80) != 0 ? previous ^ (color & 15) : color & 15));
   }
 }

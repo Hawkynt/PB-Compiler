@@ -254,6 +254,9 @@ internal static class RuntimeAbi {
     // SCREEN n -> AX = the PB screen number, which the routine maps onto a BIOS video mode. The
     // mapping belongs to the runtime and not to either emitter, so both paths reach the same table.
     ["rt_screen_mode"] = new("rt_screenmode", [new(ArgKind.Word, Reg.AX)], _callerSaved),
+    // COLOR's foreground field is mode-sensitive (SCREEN 1 uses its first field differently), so
+    // lowering calls the runtime rather than blindly storing a global.
+    ["rt_color_foreground"] = new("rt_color_fg", [new(ArgKind.Word, Reg.AX)], _callerSaved),
     // rt_shl32/rt_shr32(value, count) -> DX:AX = the value, CX = the count, answer in DX:AX. The
     // registers ARE the loop's operands, so the routine is the loop and a return.
     ["rt_shl32"] = new("rt_shl32",

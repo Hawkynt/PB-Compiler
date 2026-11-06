@@ -91,6 +91,12 @@ public static class IrEffects {
   private static readonly IrEffectSummary _read = new(IrEffectKind.ReadsMemory, Deterministic: false);
   private static readonly IrEffectSummary _deterministicRead = new(IrEffectKind.ReadsMemory, Deterministic: true);
   private static readonly IrEffectSummary _write = new(IrEffectKind.WritesMemory, Deterministic: false);
+  // Native lowering proves this is a video-device store; unlike ordinary RAM,
+  // it is an observable I/O transaction and a strict memory-ordering barrier.
+  // This does not infer device memory from a segment constant.
+  private static readonly IrEffectSummary _videoDeviceWrite = new(
+    IrEffectKind.ReadsMemory | IrEffectKind.WritesMemory | IrEffectKind.PerformsIo
+    | IrEffectKind.Volatile, Deterministic: false);
   private static readonly IrEffectSummary _writeMayTrap = new(
     IrEffectKind.WritesMemory | IrEffectKind.MayTrap, Deterministic: false);
   private static readonly IrEffectSummary _readWrite = new(
@@ -249,6 +255,7 @@ public static class IrEffects {
       IrLoad { IsDeviceRead: true } => new(IrEffectKind.ReadsMemory | IrEffectKind.PerformsIo
         | IrEffectKind.Volatile, Deterministic: false),
       IrLoad => _read,
+      IrStore { IsPackedMode13Write: true } => _videoDeviceWrite,
       IrStore => _write,
       IrInlineAsm => IrEffectSummary.UnknownExternal,
       IrCall call => ForCall(call),
