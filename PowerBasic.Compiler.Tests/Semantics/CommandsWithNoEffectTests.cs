@@ -6,7 +6,7 @@ namespace PowerBasic.Compiler.Tests.Semantics;
 /// <summary>
 /// The statements this runtime accepts and then does nothing with.
 ///
-/// COLOR, PALETTE, WIDTH, VIEW, WINDOW, KEY and PLAY all parse, bind and emit no code, and the whole
+/// PALETTE, WIDTH, VIEW, WINDOW, KEY and PLAY all parse, bind and emit no code, and the whole
 /// event system - ON KEY/TIMER/COM/PEN/STRIG/PLAY and the KEY ON|OFF|STOP that arms it - is bound,
 /// has its handler label resolved, and is then never dispatched.
 ///
@@ -36,7 +36,6 @@ public sealed class CommandsWithNoEffectTests {
   /// entries nothing else covers would be testing the wrong half of the list.
   /// </summary>
   private static readonly (string Keyword, string Statement)[] _spellings = [
-    ("COLOR", "COLOR 7, 0"),
     ("WIDTH", "WIDTH 80"),
     ("KEY", "KEY 1, \"abc\""),
     ("VIEW", "VIEW (0, 0)-(319, 199)"),

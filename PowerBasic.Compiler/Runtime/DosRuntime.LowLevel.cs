@@ -400,6 +400,11 @@ public sealed partial class DosRuntime {
     asm.Dw(0);
     asm.MarkLabel("rt_eresumenext");
     asm.Dw(0);
+    // Current default graphics foreground. Unlike rt_gcolor below this survives individual
+    // primitives; SCREEN resets it and COLOR updates it where the active mode has a foreground.
+    asm.MarkLabel("rt_fgcolor");
+    asm.Dw(15);
+
     // LINE parameter block (DosRuntime.Graphics.cs). rt_gx1/rt_gy1 is also PB's "last point
     // referenced", which is what makes LINE -(x, y) mean anything - with no start point the segment
     // begins wherever the previous graphics statement finished.

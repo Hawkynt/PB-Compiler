@@ -396,6 +396,7 @@ public sealed partial class DosRuntime {
       }
       asm.Push(Reg.AX);
       asm.Push(Reg.BX);
+      asm.Mov(Reg.BX, Reg.AX);              // keep the PB SCREEN number for its default foreground
       Map(0, 0x03);
       Map(1, 0x04);
       Map(2, 0x06);
@@ -408,6 +409,63 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(set);
       asm.Xor(Reg.AH, Reg.AH);
       asm.Int(0x10);
+
+      // QuickBASIC establishes a mode-specific default foreground whenever SCREEN changes mode.
+      // Keep the VGA modes we accelerate exact; the older CGA/mono values preserve the documented
+      // defaults instead of accidentally inheriting the previous mode's COLOR.
+      var fgReady = asm.DefineLabel();
+      var fgNotText = asm.DefineLabel();
+      var fgNotCga1 = asm.DefineLabel();
+      var fgNotCga2 = asm.DefineLabel();
+      var fgNotMono = asm.DefineLabel();
+      asm.Mov(Reg.AX, 15);
+      asm.Cmp(Reg.BX, 0);
+      asm.Jne(fgNotText);
+      asm.Mov(Reg.AX, 7);
+      asm.Jmp(fgReady);
+      asm.MarkLabel(fgNotText);
+      asm.Cmp(Reg.BX, 1);
+      asm.Jne(fgNotCga1);
+      asm.Mov(Reg.AX, 3);
+      asm.Jmp(fgReady);
+      asm.MarkLabel(fgNotCga1);
+      asm.Cmp(Reg.BX, 2);
+      asm.Jne(fgNotCga2);
+      asm.Mov(Reg.AX, 1);
+      asm.Jmp(fgReady);
+      asm.MarkLabel(fgNotCga2);
+      asm.Cmp(Reg.BX, 11);
+      asm.Jne(fgNotMono);
+      asm.Mov(Reg.AX, 1);
+      asm.MarkLabel(fgNotMono);
+      asm.MarkLabel(fgReady);
+      asm.Mov(Mem.Word(asm.Lbl("rt_fgcolor")), Reg.AX);
+
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
+    asm.MarkLabel("rt_color_fg");
+    {
+      // AX = COLOR's first argument. SCREEN 1 uses that field as BACKGROUND, while 2 and 11
+      // do not define a foreground COLOR at all, so those modes must not corrupt the drawing
+      // foreground used by subsequent primitives. Range/error fidelity stays with the fallback
+      // semantics; this routine only owns the persistent foreground state.
+      var done = asm.DefineLabel();
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Mov(Reg.BX, Reg.AX);
+      asm.Mov(Reg.AH, (Imm)0x0F);
+      asm.Int(0x10);
+      asm.Cmp(Reg.AL, (Imm)1);
+      asm.Je(done);
+      asm.Cmp(Reg.AL, (Imm)2);
+      asm.Je(done);
+      asm.Cmp(Reg.AL, (Imm)0x11);
+      asm.Je(done);
+      asm.Mov(Mem.Word(asm.Lbl("rt_fgcolor")), Reg.BX);
+      asm.MarkLabel(done);
       asm.Pop(Reg.BX);
       asm.Pop(Reg.AX);
       asm.Ret();

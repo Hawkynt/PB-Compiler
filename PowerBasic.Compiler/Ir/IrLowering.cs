@@ -1776,7 +1776,8 @@ public sealed partial class IrLowering {
         this._b.Call(IrType.Void,
           this.RuntimeFn("rt_pset", IrType.Void, IrType.I16, IrType.I16, IrType.I16),
           px, py, pset.Color is { } psetColour ? this.GraphicsWord(psetColour)
-            : new IrConstantInt(IrType.I16, pset.IsPreset ? 0 : 15));   // PRESET erases, PSET defaults to white
+            : pset.IsPreset ? new IrConstantInt(IrType.I16, 0)
+            : this._b.Load(IrType.I16, this.RuntimeCell("rt_fgcolor", IrType.I16)));
         this._b.Store(px, this.RuntimeCell("rt_gx1", IrType.I16));
         this._b.Store(py, this.RuntimeCell("rt_gy1", IrType.I16));
         break;
@@ -1791,7 +1792,8 @@ public sealed partial class IrLowering {
         }
         this._b.Store(this.GraphicsWord(line.To.X), this.RuntimeCell("rt_gx2", IrType.I16));
         this._b.Store(this.GraphicsWord(line.To.Y), this.RuntimeCell("rt_gy2", IrType.I16));
-        this._b.Store(line.Color is { } lineColour ? this.GraphicsWord(lineColour) : new IrConstantInt(IrType.I16, 15),
+        this._b.Store(line.Color is { } lineColour ? this.GraphicsWord(lineColour)
+            : this._b.Load(IrType.I16, this.RuntimeCell("rt_fgcolor", IrType.I16)),
           this.RuntimeCell("rt_gcolor", IrType.I16));
         // the style mask is consulted a bit per pixel, so all-ones is a solid line
         this._b.Store(line.Style is { } lineStyle ? this.GraphicsWord(lineStyle) : new IrConstantInt(IrType.I16, unchecked((short)0xFFFF)),
@@ -1810,7 +1812,8 @@ public sealed partial class IrLowering {
         this._b.Store(this.GraphicsWord(circle.Center.X), this.RuntimeCell("rt_gcx", IrType.I16));
         this._b.Store(this.GraphicsWord(circle.Center.Y), this.RuntimeCell("rt_gcy", IrType.I16));
         this._b.Store(this.GraphicsWord(circle.Radius), this.RuntimeCell("rt_gr", IrType.I16));
-        this._b.Store(circle.Color is { } circleColour ? this.GraphicsWord(circleColour) : new IrConstantInt(IrType.I16, 15),
+        this._b.Store(circle.Color is { } circleColour ? this.GraphicsWord(circleColour)
+            : this._b.Load(IrType.I16, this.RuntimeCell("rt_fgcolor", IrType.I16)),
           this.RuntimeCell("rt_gcolor", IrType.I16));
         if (circle.Start is null && circle.End is null && circle.Aspect is null) {
           this._b.Call(IrType.Void, this.RuntimeFn("rt_circle", IrType.Void));
@@ -1875,11 +1878,13 @@ public sealed partial class IrLowering {
       // PAINT (x,y), colour [, border]. It floods from the graphics cursor, so it takes its point
       // through the same cells LINE does; an omitted border means the paint colour itself, which is
       // what the direct emitter expresses by leaving AX alone and storing it twice.
-      case CommandStmt { Keyword: "PAINT", Arguments: [{ } paintX, { } paintY, { } paintColour, ..] } paintCmd
+      case CommandStmt { Keyword: "PAINT", Arguments: [{ } paintX, { } paintY, ..] } paintCmd
           when paintCmd.Arguments.Count <= 4: {
         this._b.Store(this.GraphicsWord(paintX), this.RuntimeCell("rt_gx1", IrType.I16));
         this._b.Store(this.GraphicsWord(paintY), this.RuntimeCell("rt_gy1", IrType.I16));
-        var paintInk = this.GraphicsWord(paintColour);
+        var paintInk = paintCmd.Arguments.Count >= 3 && paintCmd.Arguments[2] is { } paintColour
+          ? this.GraphicsWord(paintColour)
+          : this._b.Load(IrType.I16, this.RuntimeCell("rt_fgcolor", IrType.I16));
         this._b.Store(paintInk, this.RuntimeCell("rt_gcolor", IrType.I16));
         this._b.Store(
           paintCmd.Arguments.Count == 4 && paintCmd.Arguments[3] is { } paintBorder
@@ -1977,12 +1982,27 @@ public sealed partial class IrLowering {
       // timer does it the way TIMER.SUB does, with an interrupt vector and inline assembly.
       case OnEventStmt or EventControlStmt:
         break;
+      // COLOR's first field is now real graphics state: in the VGA modes it is the default
+      // foreground used by PSET/LINE/CIRCLE/PAINT/DRAW and by graphics PRINT. Remaining fields are
+      // still evaluated for side effects but their mode-specific background/palette/border effects
+      // are deliberately left to later work (the binder reports that partial support).
+      case CommandStmt { Keyword: "COLOR" } color: {
+        for (var i = 0; i < color.Arguments.Count; ++i) {
+          if (color.Arguments[i] is not { } argument)
+            continue;
+          var value = this.GraphicsWord(argument);
+          if (i == 0)
+            this._b.Call(IrType.Void,
+              this.RuntimeFn("rt_color_foreground", IrType.Void, IrType.I16), value);
+        }
+        break;
+      }
       // The statements this runtime accepts and does nothing for. That is not a gap in the lowering:
       // the direct emitter reaches the same `break` for exactly this list, and a routed program that
       // declined over one would be refusing to compile something the other path compiles to nothing.
       // The binder has already warned where a warning is owed.
       case CommandStmt {
-        Keyword: "COLOR" or "WIDTH" or "KEY" or "VIEW" or "VIEW TEXT" or "VIEW PRINT" or "VIEW SCREEN"
+        Keyword: "WIDTH" or "KEY" or "VIEW" or "VIEW TEXT" or "VIEW PRINT" or "VIEW SCREEN"
           or "WINDOW" or "PALETTE" or "PALETTE USING" or "OPTION BASE",
       }:
         break;

@@ -230,7 +230,7 @@ public sealed class Binder {
   /// Strike a name from here when it gains a code generator - the test over this set insists on it.
   /// </summary>
   public static readonly IReadOnlySet<string> CommandsWithNoEffect = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-    "COLOR", "WIDTH", "KEY", "VIEW", "VIEW TEXT", "VIEW PRINT", "VIEW SCREEN",
+    "WIDTH", "KEY", "VIEW", "VIEW TEXT", "VIEW PRINT", "VIEW SCREEN",
     "WINDOW", "PALETTE", "PALETTE USING", "PLAY",
   };
 
@@ -317,6 +317,12 @@ public sealed class Binder {
     // the point of implementing it at all.
     if (cmd.Keyword == "OPTION BASE") {
       this.Error(cmd.Position, "OPTION BASE must appear at module level, before the arrays it affects");
+      return;
+    }
+
+    if (cmd.Keyword == "COLOR") {
+      this.Warn(cmd.Position,
+        "COLOR foreground is implemented where the active screen mode defines it; background/palette/border behavior remains partial");
       return;
     }
 
