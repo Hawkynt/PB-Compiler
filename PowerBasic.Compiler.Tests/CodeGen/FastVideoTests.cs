@@ -156,6 +156,28 @@ public sealed class FastVideoTests {
   }
 
   [Test]
+  public void Execute_GivenScreen12LastColumnScroll_WhenOptionVideo_ThenBiosFallbackRetainsPixels() {
+    const string subject = """
+      SCREEN 12
+      COLOR 10
+      LOCATE 30, 80
+      PRINT "XY";
+      OPEN "R.TXT" FOR OUTPUT AS #1
+      FOR y% = 0 TO 15
+        FOR x% = 0 TO 15
+          PRINT #1, POINT(x%, y%);
+        NEXT x%
+      NEXT y%
+      CLOSE #1
+      """;
+    var plain = DosBoxRunner.RunUnredirectedWithFiles(Compile(subject), ["R.TXT"]);
+    var direct = DosBoxRunner.RunUnredirectedWithFiles(Compile("$OPTION VIDEO\n" + subject), ["R.TXT"]);
+    Assert.That(DosBoxRunner.Normalize(direct["R.TXT"]),
+      Is.EqualTo(DosBoxRunner.Normalize(plain["R.TXT"])),
+      "a run that wraps and scrolls must use BIOS teletype, not a direct glyph blit");
+  }
+
+  [Test]
   public void Capture_GivenControlCharsAndLongLines_WhenOptionVideo_ThenDosFallbackKeepsScreenIdentical() {
     // TAB (control char) and a >80-column line take the DOS fallback inside the fast build;
     // the screens must still match the plain build exactly

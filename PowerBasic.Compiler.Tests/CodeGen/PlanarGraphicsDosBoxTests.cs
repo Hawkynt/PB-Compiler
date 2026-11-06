@@ -52,6 +52,14 @@ public sealed class PlanarGraphicsDosBoxTests {
     PUT (400,110),s%(0),OR
     LINE (400,140)-(463,155),5,BF
     PUT (400,140),s%(0),XOR
+
+    ' Force the odd-width/unaligned four-plane GET and PUT fallbacks through
+    ' multiple rows; the independent framebuffer sampler probes both regions.
+    LINE (321,160)-(331,168),9,BF
+    LINE (324,162)-(328,166),14,BF
+    GET (321,160)-(331,168),s%(0)
+    LINE (440,160)-(450,168),1,BF
+    PUT (440,160),s%(0),PSET
     END
     """;
 
@@ -60,6 +68,8 @@ public sealed class PlanarGraphicsDosBoxTests {
     PRINT #1, POINT(20,20); POINT(205,80); POINT(250,50); POINT(132,150);
     PRINT #1, POINT(336,28); POINT(416,28); POINT(416,58); POINT(416,88);
     PRINT #1, POINT(416,118); POINT(416,148)
+    PRINT #1, POINT(321,160); POINT(325,164); POINT(331,168);
+    PRINT #1, POINT(440,160); POINT(444,164); POINT(450,168)
     FOR y% = 0 TO 188 STEP 4
       FOR x% = 0 TO 500 STEP 4
         PRINT #1, POINT(x%,y%);
@@ -92,6 +102,8 @@ public sealed class PlanarGraphicsDosBoxTests {
       Assert.That(values.Length, Is.GreaterThan(5000), "the oracle must sample a broad framebuffer region");
       Assert.That(values.Take(10), Is.EqualTo(new[] { 3, 9, 6, 11, 2, 2, 13, 0, 7, 7 }),
         "anchor samples exercise fill, circle, PAINT, DRAW and every PUT verb");
+      Assert.That(values.Skip(10).Take(6), Is.EqualTo(new[] { 9, 14, 9, 9, 14, 9 }),
+        "independent probes cover odd-width, unaligned, multi-row GET/PUT");
       Assert.That(values.All(v => v is >= 0 and <= 15), Is.True);
     });
   }

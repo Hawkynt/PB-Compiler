@@ -138,6 +138,18 @@ public sealed class IrVgaRegionAnalysis {
        && a.ConfigurationEpoch == b.ConfigurationEpoch;
 
   /// <summary>
+  /// Latch reuse additionally requires unchanged controller configuration.
+  /// A framebuffer read or partial write can update the VGA latches even
+  /// when no sequencer or graphics-controller register is modified.
+  /// This is only a negative safety gate, not a proof of valid initial latches.
+  /// </summary>
+  public bool HasUnchangedLatchState(IrInstruction first, IrInstruction second)
+    => this.Before(first) is { } a && this.Before(second) is { } b
+       && ReferenceEquals(a.Block, b.Block)
+       && a.ConfigurationEpoch == b.ConfigurationEpoch
+       && a.LatchEpoch == b.LatchEpoch;
+
+  /// <summary>
   /// A stricter token equality check for an as-yet unimplemented batcher.
   /// Both operations must be in one basic block, with no VGA observation,
   /// latch update, or controller mutation between them.

@@ -388,15 +388,19 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.CX);
     asm.Push(Reg.DX);
     asm.Push(Reg.SI);
-    asm.Mov(Reg.BL, Mem.Byte(asm.Lbl("rt_fgcolor")));
-    asm.Mov(Reg.BH, Mem.Byte(asm.Lbl("rt_gprint_page")));
+    asm.Push(Reg.BP); // Some VGA BIOS scroll implementations destroy BP.
     var graphicsBiosLoop = asm.DefineLabel();
     asm.MarkLabel(graphicsBiosLoop);
     asm.Lodsb();
+    // Re-establish page and foreground for each call; BIOS register side effects
+    // are not a license to reuse the previous invocation's BX contents.
+    asm.Mov(Reg.BL, Mem.Byte(asm.Lbl("rt_fgcolor")));
+    asm.Mov(Reg.BH, Mem.Byte(asm.Lbl("rt_gprint_page")));
     asm.Mov(Reg.AH, (Imm)0x0E);
     asm.Int(0x10);
     asm.Dec(Mem.Word(asm.Lbl("rt_gprint_count")));
     asm.Jnz(graphicsBiosLoop);
+    asm.Pop(Reg.BP);
     asm.Pop(Reg.SI);
     asm.Pop(Reg.DX);
     asm.Pop(Reg.CX);

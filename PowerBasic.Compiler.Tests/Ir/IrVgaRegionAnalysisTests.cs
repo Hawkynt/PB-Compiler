@@ -88,6 +88,9 @@ public sealed class IrVgaRegionAnalysisTests {
     Assert.Multiple(() => {
       Assert.That(state.HasNoInterveningDeviceEffects(before, store), Is.True);
       Assert.That(state.HasUnchangedConfiguration(before, next), Is.True);
+      Assert.That(state.HasUnchangedLatchState(before, store), Is.True);
+      Assert.That(state.HasUnchangedLatchState(before, next), Is.False,
+        "pixel reads and writes change latches even if controller configuration is stable");
       Assert.That(state.HasNoInterveningDeviceEffects(store, scratch), Is.False);
       Assert.That(state.HasNoInterveningDeviceEffects(scratch, read), Is.True);
       Assert.That(state.HasNoInterveningDeviceEffects(read, next), Is.False);
@@ -112,6 +115,8 @@ public sealed class IrVgaRegionAnalysisTests {
     Assert.Multiple(() => {
       Assert.That(state.HasUnchangedConfiguration(prior, after), Is.False);
       Assert.That(state.HasUnchangedConfiguration(after, final), Is.False);
+      Assert.That(state.HasUnchangedLatchState(prior, after), Is.False);
+      Assert.That(state.HasUnchangedLatchState(after, final), Is.False);
       Assert.That(state.Before(final)!.Value.ConfigurationEpoch, Is.EqualTo(2));
       Assert.That(state.Before(final)!.Value.LatchEpoch, Is.EqualTo(2));
     });
@@ -125,5 +130,6 @@ public sealed class IrVgaRegionAnalysisTests {
     var state = new IrVgaRegionAnalysis(function);
     Assert.That(state.HasNoInterveningDeviceEffects(first, second), Is.False);
     Assert.That(state.HasUnchangedConfiguration(first, second), Is.False);
+    Assert.That(state.HasUnchangedLatchState(first, second), Is.False);
   }
 }
