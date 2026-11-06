@@ -166,6 +166,14 @@ public sealed partial class Cpu8086 {
   /// </summary>
   public long ExecutedInstructions { get; private set; }
 
+  /// <summary>
+  /// Bytes fetched from the instruction stream, including prefixes, ModRM,
+  /// displacements and immediates. This counts dynamic instruction bytes
+  /// (repeated executions count repeatedly), not unique emitted code size,
+  /// memory bus transfers or physical CPU cycles.
+  /// </summary>
+  public long FetchedInstructionBytes { get; private set; }
+
   public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000, bool exactFloatingPoint = false) {
     var cpu = new Cpu8086(exactFloatingPoint);
     cpu._executables["T.EXE"] = exe;                    // the test harness runs each image under this DOS name
@@ -336,6 +344,7 @@ public sealed partial class Cpu8086 {
   private byte Fetch() {
     var value = this.ReadByte(Linear(this._cs, this._ip));
     ++this._ip;
+    ++this.FetchedInstructionBytes;
     return value;
   }
 

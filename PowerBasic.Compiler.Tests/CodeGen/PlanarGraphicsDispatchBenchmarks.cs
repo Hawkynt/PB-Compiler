@@ -42,16 +42,23 @@ public sealed class PlanarGraphicsDispatchBenchmarks {
       string mode, string cpu, string body) {
     var optimized = Execute(mode, body, optimize: true, cpu);
     var baseline = Execute(mode, body, optimize: false, cpu);
-    Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
+      Assert.That(optimized.FetchedInstructionBytes, Is.GreaterThan(optimized.ExecutedInstructions),
+        "this sample exercises multi-byte instructions; dynamic fetch count must include operands");
+      Assert.That(baseline.FetchedInstructionBytes, Is.GreaterThan(baseline.ExecutedInstructions));
+    });
 
     static int VgaOut(Cpu8086 cpu) =>
       cpu.PortWrites.Count(p => p.Port is 0x3C4 or 0x3C5 or 0x3CE or 0x3CF);
 
     TestContext.Progress.WriteLine(
       $"{cpu} SCREEN {mode}: optimized: CPU={optimized.ExecutedInstructions}, " +
+      $"FETCHED CODE BYTES={optimized.FetchedInstructionBytes}, " +
       $"VGA OUT={VgaOut(optimized)}, A000 READ={optimized.PlanarHostReads}, " +
       $"A000 WRITE={optimized.PlanarHostWrites}; " +
-      $"baseline: CPU={baseline.ExecutedInstructions}, VGA OUT={VgaOut(baseline)}, " +
+      $"baseline: CPU={baseline.ExecutedInstructions}, " +
+      $"FETCHED CODE BYTES={baseline.FetchedInstructionBytes}, VGA OUT={VgaOut(baseline)}, " +
       $"A000 READ={baseline.PlanarHostReads}, A000 WRITE={baseline.PlanarHostWrites}");
   }
 
@@ -70,10 +77,14 @@ public sealed class PlanarGraphicsDispatchBenchmarks {
       Assert.That(fast.Output, Is.EqualTo(baseline.Output));
       Assert.That(fast.PlanarHostWrites, Is.GreaterThan(0));
       Assert.That(fast.PlanarHostReads, Is.GreaterThan(0));
+      Assert.That(fast.FetchedInstructionBytes, Is.GreaterThan(fast.ExecutedInstructions));
+      Assert.That(baseline.FetchedInstructionBytes, Is.GreaterThan(baseline.ExecutedInstructions));
     });
     TestContext.Progress.WriteLine(
       $"Aligned GET/PUT 64x2: fast VRAM reads={fast.PlanarHostReads}, " +
-      $"writes={fast.PlanarHostWrites}, instructions={fast.ExecutedInstructions}; " +
-      $"reference instructions={baseline.ExecutedInstructions}");
+      $"writes={fast.PlanarHostWrites}, instructions={fast.ExecutedInstructions}, " +
+      $"dynamic instruction bytes={fast.FetchedInstructionBytes}; " +
+      $"reference instructions={baseline.ExecutedInstructions}, " +
+      $"dynamic instruction bytes={baseline.FetchedInstructionBytes}");
   }
 }
