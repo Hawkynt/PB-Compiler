@@ -123,6 +123,24 @@ public sealed class IrVgaRegionAnalysisTests {
   }
 
   [Test]
+  public void Region_GivenReverseInstructionOrder_ThenNoForwardReuseProofIsGranted() {
+    var function = new IrFunction("f", IrType.Void);
+    var block = function.CreateBlock("entry");
+    var early = block.Append(new IrAlloca(IrType.U8));
+    var late = block.Append(new IrAlloca(IrType.U8));
+    var state = new IrVgaRegionAnalysis(function);
+
+    Assert.Multiple(() => {
+      Assert.That(state.HasUnchangedConfiguration(early, late), Is.True);
+      Assert.That(state.HasUnchangedLatchState(early, late), Is.True);
+      Assert.That(state.HasNoInterveningDeviceEffects(early, late), Is.True);
+      Assert.That(state.HasUnchangedConfiguration(late, early), Is.False);
+      Assert.That(state.HasUnchangedLatchState(late, early), Is.False);
+      Assert.That(state.HasNoInterveningDeviceEffects(late, early), Is.False);
+    });
+  }
+
+  [Test]
   public void Region_GivenSeparateControlFlowBlocks_ThenNeverAssumesCommonDeviceState() {
     var function = new IrFunction("f", IrType.Void);
     var first = function.CreateBlock("first").Append(new IrAlloca(IrType.I16));

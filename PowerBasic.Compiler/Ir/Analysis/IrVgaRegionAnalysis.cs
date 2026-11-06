@@ -91,7 +91,8 @@ public static class IrVgaEffects {
 /// writes. No token crosses a CFG edge or an unknown device effect.
 /// </summary>
 public readonly record struct IrVgaRegionToken(
-  IrBasicBlock Block, int ConfigurationEpoch, int LatchEpoch, int ObservationEpoch);
+  IrBasicBlock Block, int InstructionOrdinal,
+  int ConfigurationEpoch, int LatchEpoch, int ObservationEpoch);
 
 /// <summary>
 /// Native-only device-region candidate analysis. Tracking tokens does not
@@ -108,8 +109,10 @@ public sealed class IrVgaRegionAnalysis {
       var configurationEpoch = 0;
       var latchEpoch = 0;
       var observationEpoch = 0;
+      var ordinal = 0;
       foreach (var instruction in block.Instructions) {
-        this._before[instruction] = new(block, configurationEpoch, latchEpoch, observationEpoch);
+        this._before[instruction] = new(block, ordinal++,
+          configurationEpoch, latchEpoch, observationEpoch);
         var activity = IrVgaEffects.ForInstruction(instruction);
         if ((activity & (IrVgaActivity.ChangesRegisters | IrVgaActivity.ChangesModeOrPage
                          | IrVgaActivity.Unknown)) != 0)
@@ -135,6 +138,7 @@ public sealed class IrVgaRegionAnalysis {
   public bool HasUnchangedConfiguration(IrInstruction first, IrInstruction second)
     => this.Before(first) is { } a && this.Before(second) is { } b
        && ReferenceEquals(a.Block, b.Block)
+       && a.InstructionOrdinal <= b.InstructionOrdinal
        && a.ConfigurationEpoch == b.ConfigurationEpoch;
 
   /// <summary>
@@ -146,6 +150,7 @@ public sealed class IrVgaRegionAnalysis {
   public bool HasUnchangedLatchState(IrInstruction first, IrInstruction second)
     => this.Before(first) is { } a && this.Before(second) is { } b
        && ReferenceEquals(a.Block, b.Block)
+       && a.InstructionOrdinal <= b.InstructionOrdinal
        && a.ConfigurationEpoch == b.ConfigurationEpoch
        && a.LatchEpoch == b.LatchEpoch;
 
@@ -157,6 +162,7 @@ public sealed class IrVgaRegionAnalysis {
   public bool HasNoInterveningDeviceEffects(IrInstruction first, IrInstruction second)
     => this.Before(first) is { } a && this.Before(second) is { } b
        && ReferenceEquals(a.Block, b.Block)
+       && a.InstructionOrdinal <= b.InstructionOrdinal
        && a.ConfigurationEpoch == b.ConfigurationEpoch
        && a.LatchEpoch == b.LatchEpoch
        && a.ObservationEpoch == b.ObservationEpoch;
