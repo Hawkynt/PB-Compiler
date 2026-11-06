@@ -316,11 +316,9 @@ public sealed partial class DosRuntime {
 
       // One controller write changes Set/Reset from background 0 to the current foreground.
       asm.Mov(Reg.DX, 0x3CE);
+      asm.Mov(Reg.AH, Mem.Byte(asm.Lbl("rt_fgcolor")));
       asm.Mov(Reg.AL, (Imm)0);
-      asm.Out(Reg.DX, Reg.AL);
-      asm.Inc(Reg.DX);
-      asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_fgcolor")));
-      asm.Out(Reg.DX, Reg.AL);
+      asm.Out(Reg.DX, Reg.AX);
 
       asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gprint_src")));
       asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_gprint_count")));

@@ -125,10 +125,7 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.DX, 0x3CE);
     asm.Mov(Reg.AH, Reg.AL);
     asm.Mov(Reg.AL, (Imm)8);
-    asm.Out(Reg.DX, Reg.AL);
-    asm.Inc(Reg.DX);
-    asm.Mov(Reg.AL, Reg.AH);
-    asm.Out(Reg.DX, Reg.AL);
+    asm.Out(Reg.DX, Reg.AX);
     asm.Mov(Reg.AH, Mem.Byte(Reg.DI).Seg(Reg.ES));
     asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_gcolor")));
     asm.Mov(Mem.Byte(Reg.DI).Seg(Reg.ES), Reg.AL);
@@ -334,28 +331,23 @@ public sealed partial class DosRuntime {
   private static void Restore(Assembler asm, int port, int index) {
     asm.Pop(Reg.BX);
     asm.Mov(Reg.DX, port);
+    // VGA indexed registers occupy adjacent index/data ports. OUT DX,AX performs the same
+    // ordered byte writes with AL=index and AH=data in one 8086 I/O instruction.
+    asm.Mov(Reg.AH, Reg.BL);
     asm.Mov(Reg.AL, (Imm)index);
-    asm.Out(Reg.DX, Reg.AL);
-    asm.Inc(Reg.DX);
-    asm.Mov(Reg.AL, Reg.BL);
-    asm.Out(Reg.DX, Reg.AL);
+    asm.Out(Reg.DX, Reg.AX);
   }
 
   private static void SetBitMask(Assembler asm, Label mask) {
     asm.Mov(Reg.DX, 0x3CE);
+    asm.Mov(Reg.AH, Mem.Byte(mask));
     asm.Mov(Reg.AL, (Imm)8);
-    asm.Out(Reg.DX, Reg.AL);
-    asm.Inc(Reg.DX);
-    asm.Mov(Reg.AL, Mem.Byte(mask));
-    asm.Out(Reg.DX, Reg.AL);
+    asm.Out(Reg.DX, Reg.AX);
   }
 
   private static void SetBitMask(Assembler asm, byte mask) {
     asm.Mov(Reg.DX, 0x3CE);
-    asm.Mov(Reg.AL, (Imm)8);
-    asm.Out(Reg.DX, Reg.AL);
-    asm.Inc(Reg.DX);
-    asm.Mov(Reg.AL, (Imm)mask);
-    asm.Out(Reg.DX, Reg.AL);
+    asm.Mov(Reg.AX, (mask << 8) | 8);
+    asm.Out(Reg.DX, Reg.AX);
   }
 }
