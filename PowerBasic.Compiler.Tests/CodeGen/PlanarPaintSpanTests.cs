@@ -89,6 +89,46 @@ public sealed class PlanarPaintSpanTests {
   }
 
   [Test]
+  public void Execute_GivenUnalignedCavities_ThenReadModeOneCacheIsInvalidatedAfterSpans() {
+    const string body = """
+      LINE (7,9)-(72,27),4,B
+      LINE (15,12)-(21,18),7,B
+      LINE (35,10)-(41,22),7,B
+      LINE (49,14)-(57,24),7,B
+      PAINT (9,11),11,4
+      PRINT POINT(7,9);POINT(8,9);POINT(9,11);POINT(14,13);
+      PRINT POINT(15,12);POINT(20,15);POINT(21,18);POINT(22,15);
+      PRINT POINT(34,12);POINT(35,12);POINT(42,12);POINT(56,24);
+      PRINT POINT(58,24);POINT(71,26);POINT(72,27);POINT(73,27)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.That(optimized.Output, Is.EqualTo(reference.Output),
+      "cached eight-pixel comparisons must reflect earlier span writes in the same VGA byte");
+  }
+
+  [Test]
+  public void Execute_GivenCustomVgaCompareState_ThenRestoresRegistersAndPixels() {
+    const string body = """
+      LINE (7,10)-(34,17),4,B
+      OUT &H3CE,2:OUT &H3CF,9
+      OUT &H3CE,7:OUT &H3CF,5
+      OUT &H3CE,5:OUT &H3CF,0
+      PAINT (9,12),11,4
+      OUT &H3CE,2:PRINT INP(&H3CF);
+      OUT &H3CE,7:PRINT INP(&H3CF);
+      OUT &H3CE,5:PRINT INP(&H3CF);
+      PRINT POINT(7,10);POINT(8,11);POINT(33,16);POINT(34,17)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+      Assert.That(optimized.Output.Trim(), Does.Contain("9  5  0  4  11  11  4"));
+    });
+  }
+
+  [Test]
   [Category("Performance")]
   public void Measure_GivenPlanarScanlineFill_ThenCachesHardwareCertification() {
     const string body = """

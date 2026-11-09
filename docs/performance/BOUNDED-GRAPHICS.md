@@ -18,12 +18,20 @@ and does not silently discard seeds.
   directly. The old path would query BIOS video mode for *every* tested
   pixel before performing exactly the same packed read. Only one byte of
   state (`rt_paint_mode13`) is added; non-13 modes retain the old path.
-- **SCREEN 12:** a single positive VGA-map/controller certification per
-  PAINT call lets scanline probes use the existing four-plane pixel-read
-  routine without repeating three hardware register certifications and
-  the BIOS mode query per visited pixel. This adds one state byte and
-  retains the original routine for noncertified configurations. The
-  existing PSET/BF helpers preserve changed VGA controller registers.
+- **SCREEN 12:** one positive controller certification per PAINT call
+  enables VGA **Read Mode 1** for ordinary 4-bit paint and border colors.
+  Each VGA byte supplies two 8-bit equality masks (border and already
+  painted), shared by up to eight fillability probes. The cache consists
+  of two masks, a byte offset, one per-pixel bit mask and one validity
+  flag: **six bytes of scratch**, plus the existing certification flag.
+  The cache is invalidated after each filled span, including when the
+  following seed revisits the same VGA byte. Save/restore of GC registers
+  02h/05h/07h and index selector preserves external VGA state. Unknown
+  VGA configuration or exceptional colors use the original point path.
+  Prior optimized 64x12 PAINT test: 402,402 emulator dispatches;
+  cached Read Mode 1: 230,131, a 42.8% reduction. Compared with BIOS,
+  opaque video calls fell from 8,844 to 50. Neither metric is hardware
+  clock time.
 
 Correctness gates include optimized-vs-BIOS tests of borders, nested
 regions, equal border/paint colors, screen-edge seeds, and original image
@@ -34,7 +42,7 @@ and VGA port transactions; these are not hardware cycles.
 
 | Candidate | Extra RAM bound | Expected gain | Key legality checks |
 |---|---:|---|---|
-| Mode-12 color-compare row masks | 80 bytes for one 640-pixel scanline | Test 8 fillability pixels per two VRAM byte reads using VGA Read Mode 1 | Save/restore GC 02/05/07 and selectors, comparison semantics, stale data after painting |
+| Mode-12 full-row mask prefetch | 80 bytes per cached scanline | Reduce GC switching beyond the implemented one-byte Read Mode 1 cache | Cache invalidation after writes, controller restoration, measure 8086 port I/O |
 | Plane-row mask accumulator | 80 bytes | Batch multiple spans into already-certified one-row masks | Overlap, paint topology, last VGA latch address, sequential observability |
 | Byte-run skip over fully blocked spans | At most 80 bytes | Avoid repeated per-pixel plane reads | Must distinguish border, already-painted and unfilled colors |
 | Pending-span coalescing | A few stack entries (at most existing 512-byte budget) | Reduce stack pushes on comb/maze shapes | Original error-7 behavior and identical 4-connectivity |
