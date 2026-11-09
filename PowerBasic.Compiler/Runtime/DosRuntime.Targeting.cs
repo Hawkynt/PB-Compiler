@@ -24,6 +24,9 @@ public sealed partial class DosRuntime {
   /// </summary>
   public bool EnableTargetOptimizations { get; set; }
 
+  /// <summary>Permit the conditional 32/80-byte planar PAINT prefetch, independently of other optimizations.</summary>
+  public bool EnableAdaptivePaintPrefetch { get; set; } = true;
+
   /// <summary>True when a 32-bit-wide step is both encodable on the target and wanted here.</summary>
   private bool Use32BitFastPath => this.EnableTargetOptimizations && this.Target.Has32BitGeneralPurpose;
 

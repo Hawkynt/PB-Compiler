@@ -519,7 +519,8 @@ public sealed partial class DosRuntime {
     var inRun = asm.DefineLabel();
     var skipRun = asm.DefineLabel();
     var overflow = asm.DefineLabel();
-    var adaptivePrefetch = this.EnableTargetOptimizations ? asm.DefineLabel("rt_paint_prefetch") : null;
+    var adaptivePrefetch = this.EnableTargetOptimizations && this.EnableAdaptivePaintPrefetch
+      ? asm.DefineLabel("rt_paint_prefetch") : null;
 
     this.Paint = asm.MarkLabel("rt_paint");
     var status = asm.Lbl("rt_paint_status");
@@ -604,7 +605,7 @@ public sealed partial class DosRuntime {
     asm.Add(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
 
     asm.MarkLabel(popLoop);
-    if (this.EnableTargetOptimizations)
+    if (adaptivePrefetch is not null)
       asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)0);
     asm.Cmp(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
     asm.Je(done);
@@ -765,7 +766,7 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Word(asm.Lbl("rt_pside")), (Imm)0);
 
     asm.MarkLabel(neighbourRow);
-    if (this.EnableTargetOptimizations) {
+    if (adaptivePrefetch is not null) {
       var shortSpan = asm.DefineLabel();
       var spanReady = asm.DefineLabel();
       var wideSpan = asm.DefineLabel();
@@ -912,42 +913,44 @@ public sealed partial class DosRuntime {
       asm.Shr(Reg.AL, Reg.CL);
       asm.Mov(Mem.Byte(asm.Lbl("rt_paint_probe_mask")), Reg.AL);
 
-      // Adaptive scanline cache is used only while scanning neighbors of
-      // a proven >=128-pixel filled run. Narrow regions preserve the
-      // original six-byte one-VGA-byte cache.
-      var ordinaryMask = asm.DefineLabel();
-      asm.Cmp(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)0);
-      asm.Je(ordinaryMask);
-      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_probe")), Reg.DI);
-      asm.Mov(Reg.BX, Reg.SI);
-      asm.Shr(Reg.BX, 3);
-      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_xbyte")), Reg.BX);
-      var refill = asm.DefineLabel();
-      var cached = asm.DefineLabel();
-      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_prefetch_valid")), (Imm)0);
-      asm.Je(refill);
-      asm.Cmp(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
-      asm.Jl(refill);
-      asm.Mov(Reg.BX, Reg.DI);
-      asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
-      asm.Cmp(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_length")));
-      asm.Jl(cached);
-      asm.MarkLabel(refill);
-      asm.Call(adaptivePrefetch!);
-      asm.Mov(Reg.BX, Reg.DI);
-      asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
-      asm.MarkLabel(cached);
-      asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_paint_prefetch_buffer")));
-      asm.Add(Reg.SI, Reg.BX);
-      asm.Mov(Reg.AL, Mem.Byte(Reg.SI));
-      asm.And(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_probe_mask")));
-      asm.Pop(Reg.SI);
-      asm.Pop(Reg.DI);
-      asm.Pop(Reg.ES);
-      asm.Jz(colorCheck);
-      asm.Jmp(notFillable);
+      if (adaptivePrefetch is not null) {
+        // Adaptive scanline cache is used only while scanning neighbors of
+        // a proven >=128-pixel filled run. Narrow regions preserve the
+        // original six-byte one-VGA-byte cache.
+        var ordinaryMask = asm.DefineLabel();
+        asm.Cmp(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)0);
+        asm.Je(ordinaryMask);
+        asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_probe")), Reg.DI);
+        asm.Mov(Reg.BX, Reg.SI);
+        asm.Shr(Reg.BX, 3);
+        asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_xbyte")), Reg.BX);
+        var refill = asm.DefineLabel();
+        var cached = asm.DefineLabel();
+        asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_prefetch_valid")), (Imm)0);
+        asm.Je(refill);
+        asm.Cmp(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+        asm.Jb(refill);
+        asm.Mov(Reg.BX, Reg.DI);
+        asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+        asm.Cmp(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_length")));
+        asm.Jb(cached);
+        asm.MarkLabel(refill);
+        asm.Call(adaptivePrefetch!);
+        asm.Mov(Reg.BX, Reg.DI);
+        asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+        asm.MarkLabel(cached);
+        asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_paint_prefetch_buffer")));
+        asm.Add(Reg.SI, Reg.BX);
+        asm.Mov(Reg.AL, Mem.Byte(Reg.SI));
+        asm.And(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_probe_mask")));
+        asm.Pop(Reg.SI);
+        asm.Pop(Reg.DI);
+        asm.Pop(Reg.ES);
+        asm.Jz(colorCheck);
+        asm.Jmp(notFillable);
 
-      asm.MarkLabel(ordinaryMask);
+        asm.MarkLabel(ordinaryMask);
+      }
       asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)0);
       asm.Je(recompute);
       asm.Cmp(Reg.DI, Mem.Word(asm.Lbl("rt_paint_mask_offset")));
@@ -1057,7 +1060,7 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Ret();
 
-    if (this.EnableTargetOptimizations) {
+    if (adaptivePrefetch is not null) {
       // Refill exactly one adaptive block. GC02 is switched twice while
       // Read Mode 1 and GC07 stay configured. Every original indexed VGA
       // register and selector is restored before returning. An extra read
@@ -1169,6 +1172,7 @@ public sealed partial class DosRuntime {
       asm.Db(0);
       asm.MarkLabel("rt_paint_mask_offset");
       asm.Dw(0);
+      if (adaptivePrefetch is not null) {
       asm.MarkLabel("rt_paint_prefetch_size");
       asm.Dw(0);
       asm.MarkLabel("rt_paint_prefetch_probe");
@@ -1184,6 +1188,7 @@ public sealed partial class DosRuntime {
       asm.MarkLabel("rt_paint_prefetch_buffer");
       for (var slot = 0; slot < 80; ++slot)
         asm.Db(0);
+      }
     }
     foreach (var cell in new[] { "rt_gpbord", "rt_psp", "rt_px1", "rt_px2", "rt_py", "rt_pny", "rt_pside" }) {
       asm.MarkLabel(cell);

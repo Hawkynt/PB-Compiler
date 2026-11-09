@@ -53,6 +53,9 @@ public sealed partial class CodeGenerator(SemanticModel model) {
   /// <summary>$OPTIMIZE SPEED / -OZF: favor inline code over runtime calls.</summary>
   public bool OptimizeSpeed { get; set; }
 
+  /// <summary>Test/benchmark switch for the bounded, adaptive VGA PAINT mask prefetch.</summary>
+  public bool EnableAdaptivePaintPrefetch { get; set; } = true;
+
   /// <summary>S1 $OPTIMIZE SIZE: bias for image size - short-jump relaxation on, inlining off (unrolling/alignment/scheduler are SPEED-only anyway).</summary>
   public bool OptimizeSize { get; set; }
 
@@ -224,6 +227,7 @@ public sealed partial class CodeGenerator(SemanticModel model) {
     // Keeping the second out of the target is what lets $FLOAT NPX still reach native x87 with the
     // optimizer off, while a copy stays the copy the user wrote.
     this._rt.EnableTargetOptimizations = this.Optimize;
+    this._rt.EnableAdaptivePaintPrefetch = this.EnableAdaptivePaintPrefetch;
     // The immediate-count shift and rotate (C0/C1 ib) is 80186, and the runtime is where it leaked:
     // an array index scaled by SHL BX,2 is a C1 in an image whose declared target is an 8086. This
     // sits after the target is known because SelectionTarget reads it, and before the first byte is
