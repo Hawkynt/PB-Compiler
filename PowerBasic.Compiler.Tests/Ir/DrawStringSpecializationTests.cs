@@ -98,6 +98,36 @@ public sealed class DrawStringSpecializationTests {
     });
   }
 
+  [Test]
+  public void Run_GivenMultipleFoldedLiteralFragmentsBeforeDynamicTail_ThenSpecializesTheWholePrefix() {
+    var (module, main, draw, first) = Build("C9 ");
+    var literal = module.FindFunction("rt_str_const")!;
+    var concat = module.AddFunction(new IrFunction("rt_str_concat", IrType.Ptr,
+      [new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1)]));
+    var dynamicText = module.AddFunction(new IrFunction("dynamic_text", IrType.Ptr));
+    var block = draw.Parent!;
+    var secondBytes = "R5;"u8.ToArray();
+    var second = block.InsertBefore(new IrCall(IrType.Ptr, literal,
+      [module.AddStringConstant(secondBytes), new IrConstantInt(IrType.I32, secondBytes.Length)]), draw);
+    var joinedLiterals = block.InsertBefore(new IrCall(IrType.Ptr, concat, [first, second]), draw);
+    var tail = block.InsertBefore(new IrCall(IrType.Ptr, dynamicText, []), draw);
+    var full = block.InsertBefore(new IrCall(IrType.Ptr, concat, [joinedLiterals, tail]), draw);
+    draw.SetOperand(1, full);
+
+    Assert.That(IrVerifier.Verify(module), Is.Empty);
+    Assert.That(DrawStringSpecialization.Run(module), Is.EqualTo(1));
+    Assert.Multiple(() => {
+      Assert.That(draw.Parent, Is.Null);
+      Assert.That(main.AllInstructions.OfType<IrCall>().Count(call => call.Callee.Name == "rt_draw_move"),
+        Is.EqualTo(1));
+      var resume = main.AllInstructions.OfType<IrCall>()
+        .Single(call => call.Callee.Name == "rt_draw_resume");
+      Assert.That(resume.GetOperand(1), Is.SameAs(full));
+      Assert.That(((IrConstantInt)resume.GetOperand(2)).Value, Is.EqualTo(6));
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
   [TestCase("shared")]
   [TestCase("foreign")]
   [TestCase("length")]
