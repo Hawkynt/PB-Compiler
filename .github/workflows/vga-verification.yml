@@ -5,7 +5,8 @@ on:
     branches: [main, master]
     paths:
       - 'PowerBasic.Compiler/Runtime/**'
-      - 'PowerBasic.Compiler.Tests/CodeGen/Planar*'\n      - 'PowerBasic.Compiler.Tests/CodeGen/PackedPaintScanlineTests.cs'
+      - 'PowerBasic.Compiler.Tests/CodeGen/Planar*'
+      - 'PowerBasic.Compiler.Tests/CodeGen/PackedPaintScanlineTests.cs'
       - 'PowerBasic.Compiler.Tests/CodeGen/FastVideoTests.cs'
       - 'PowerBasic.Compiler.Tests/CodeGen/DosBoxRunner.cs'
       - 'tests/oracles/vga-qemu-boot.asm'
