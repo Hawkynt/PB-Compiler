@@ -588,6 +588,11 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(modeReady);
     }
 
+    // The cache stores only the two equality masks for the last eight
+    // pixels touched by the scanline walk. Never allocate a framebuffer.
+    if (this.EnableTargetOptimizations)
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)0);
+
     // seed the stack with the point PAINT was given
     asm.Mov(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
@@ -744,6 +749,11 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.DI);
     }
     asm.MarkLabel(fillDone);
+    if (this.EnableTargetOptimizations) {
+      // PAINT has just written a horizontal span. Even when we revisit
+      // the very same VGA byte, the old color-comparison mask is stale.
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)0);
+    }
 
     // the row above, then the row below
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_py")));
@@ -839,6 +849,96 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(inBounds);
     }
     if (this.EnableTargetOptimizations) {
+      var normalRead = asm.DefineLabel();
+      var recompute = asm.DefineLabel();
+      var haveMasks = asm.DefineLabel();
+      var colorCheck = asm.DefineLabel();
+
+      // Read Mode 1 compares all eight planar pixels with a palette
+      // color in a single VGA read. Two cached eight-bit equality masks
+      // answer both exclusion predicates: border and already painted.
+      // No extra image plane or per-pixel controller reconfiguration.
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)1);
+      asm.Jne(normalRead);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gpbord")), (Imm)15);
+      asm.Ja(normalRead);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(normalRead);
+
+      asm.Push(Reg.ES);
+      asm.Push(Reg.DI);
+      asm.Push(Reg.SI);
+      asm.Mov(Reg.SI, Reg.AX);
+      asm.Mov(Reg.AX, Reg.BX);
+      asm.Mov(Reg.DI, (Imm)80);
+      asm.Mul(Reg.DI);
+      asm.Mov(Reg.DI, Reg.SI);
+      asm.Mov(Reg.CL, (Imm)3);
+      asm.Shr(Reg.DI, Reg.CL);
+      asm.Add(Reg.DI, Reg.AX); // y*80 + floor(x/8), <= 38399.
+      asm.Mov(Reg.AX, Reg.SI);
+      asm.And(Reg.AX, (Imm)7);
+      asm.Mov(Reg.CX, Reg.AX);
+      asm.Mov(Reg.AL, (Imm)0x80);
+      asm.Shr(Reg.AL, Reg.CL);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_probe_mask")), Reg.AL);
+
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)0);
+      asm.Je(recompute);
+      asm.Cmp(Reg.DI, Mem.Word(asm.Lbl("rt_paint_mask_offset")));
+      asm.Je(haveMasks);
+      asm.MarkLabel(recompute);
+
+      // Save the GC selector and every controller register we touch;
+      // even non-default user VGA registers must be restored verbatim.
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.In(Reg.AL, Reg.DX);
+      asm.Push(Reg.AX);
+      SaveAndSet(asm, 0x3CE, 5, -8); // Compare read mode, write mode unchanged.
+      SaveAndSet(asm, 0x3CE, 7, 15); // All four planes participate.
+      SaveAndSet(asm, 0x3CE, 2, 0);  // Preserve original compare value.
+
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, (Imm)2);
+      asm.Mov(Reg.AH, Mem.Byte(asm.Lbl("rt_gpbord")));
+      asm.Out(Reg.DX, Reg.AX);
+      asm.Mov(Reg.AX, (Imm)0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_border_mask")), Reg.AL);
+
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, (Imm)2);
+      asm.Mov(Reg.AH, Mem.Byte(asm.Lbl("rt_gcolor")));
+      asm.Out(Reg.DX, Reg.AX);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_color_mask")), Reg.AL);
+
+      Restore(asm, 0x3CE, 2);
+      Restore(asm, 0x3CE, 7);
+      Restore(asm, 0x3CE, 5);
+      asm.Pop(Reg.BX);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, Reg.BL);
+      asm.Out(Reg.DX, Reg.AL);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_mask_offset")), Reg.DI);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)1);
+
+      asm.MarkLabel(haveMasks);
+      asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_border_mask")));
+      asm.Or(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_color_mask")));
+      asm.And(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_probe_mask")));
+      asm.Pop(Reg.SI);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.ES);
+      asm.Jz(colorCheck);
+      asm.Jmp(notFillable);
+      asm.MarkLabel(colorCheck);
+      asm.Mov(Reg.AL, (Imm)1);
+      asm.Jmp(okDone);
+      asm.MarkLabel(normalRead);
+    }
+    if (this.EnableTargetOptimizations) {
       var genericPoint = asm.DefineLabel();
       var pointRead = asm.DefineLabel();
       asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode13")), (Imm)1);
@@ -901,6 +1001,16 @@ public sealed partial class DosRuntime {
       asm.Db(0);
       asm.MarkLabel("rt_paint_mode12_certified");
       asm.Db(0);
+      asm.MarkLabel("rt_paint_mask_valid");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_border_mask");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_color_mask");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_probe_mask");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_mask_offset");
+      asm.Dw(0);
     }
     foreach (var cell in new[] { "rt_gpbord", "rt_psp", "rt_px1", "rt_px2", "rt_py", "rt_pny", "rt_pside" }) {
       asm.MarkLabel(cell);

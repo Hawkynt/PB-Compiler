@@ -323,6 +323,8 @@ public sealed partial class DosRuntime {
       asm.And(Reg.AL, (Imm)0xFC); // Force write mode 0, retain read mode and other bits.
     else if (value == -7)
       asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_pp_logic"))); // VGA logical operation: replace/AND/OR/XOR.
+    else if (value == -8)
+      asm.Or(Reg.AL, (Imm)0x08); // Read Mode 1, preserving the active write mode.
     else
       asm.Mov(Reg.AL, (Imm)value);
     asm.Out(Reg.DX, Reg.AL);
