@@ -100,13 +100,16 @@ public sealed class PlanarPaintSpanTests {
     var reference = Execute(body, false);
     Assert.Multiple(() => {
       Assert.That(optimized.Output, Is.EqualTo(reference.Output));
-      Assert.That(optimized.ExecutedInstructions, Is.LessThan(reference.ExecutedInstructions));
+      Assert.That(optimized.VideoBiosCalls, Is.LessThan(reference.VideoBiosCalls),
+        "direct VGA probing should avoid repeated opaque firmware video calls");
     });
     TestContext.Progress.WriteLine(
       $"SCREEN 12 PAINT: optimized {optimized.ExecutedInstructions} dispatches, "
       + $"{optimized.FetchedInstructionBytes} fetched bytes, "
       + $"{optimized.PortWrites.Count(p => p.Port is 0x3CE or 0x3CF)} GC writes; "
-      + $"reference {reference.ExecutedInstructions} dispatches");
+      + $"reference {reference.ExecutedInstructions} dispatches; "
+      + $"BIOS INT10h calls optimized/reference: "
+      + $"{optimized.VideoBiosCalls}/{reference.VideoBiosCalls}");
   }
 
   [Test]
@@ -121,7 +124,8 @@ public sealed class PlanarPaintSpanTests {
     var reference = Execute(body, false);
     Assert.Multiple(() => {
       Assert.That(optimized.Output, Is.EqualTo(reference.Output));
-      Assert.That(optimized.ExecutedInstructions, Is.LessThan(reference.ExecutedInstructions));
+      Assert.That(optimized.VideoBiosCalls, Is.LessThan(reference.VideoBiosCalls),
+        "direct VGA probing should avoid repeated opaque firmware video calls");
     });
   }
 }

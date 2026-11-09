@@ -167,6 +167,12 @@ public sealed partial class Cpu8086 {
   public long ExecutedInstructions { get; private set; }
 
   /// <summary>
+  /// Count software INT 10h calls separately. One emulator interrupt
+  /// dispatch does not include real BIOS firmware instructions.
+  /// </summary>
+  public long VideoBiosCalls { get; private set; }
+
+  /// <summary>
   /// Bytes fetched from the instruction stream, including prefixes, ModRM,
   /// displacements and immediates. This counts dynamic instruction bytes
   /// (repeated executions count repeatedly), not unique emitted code size,
@@ -1884,7 +1890,7 @@ public sealed partial class Cpu8086 {
     switch (number) {
       case 0x21: this.Dos(); return;
       case 0x67: this.Ems(); return;
-      case 0x10: this.Bios10(); return;
+      case 0x10: ++this.VideoBiosCalls; this.Bios10(); return;
       case 0x20: this._halted = true; return;
       // The BIOS tick counter. It ADVANCES by one tick per read rather than standing at zero, which
       // is what makes TIMER observable here at all: a clock that never moves cannot be told apart
