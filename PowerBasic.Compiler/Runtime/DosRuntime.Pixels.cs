@@ -189,7 +189,9 @@ public sealed partial class DosRuntime {
   private void EmitReadPixel(Assembler asm) {
     this.Point = asm.MarkLabel("rt_point"); // AX=x, BX=y -> DX:AX=color.
     var packed = asm.DefineLabel();
-    var planar = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    // This entry may also be called by PAINT after it has already certified
+    // the VGA addressing configuration for its entire bounded flood fill.
+    var planar = this.EnableTargetOptimizations ? asm.Lbl("rt_point_planar_certified") : null;
     var bios = asm.DefineLabel();
     EmitPackedModeBranch(asm, packed);
     if (planar is not null) {

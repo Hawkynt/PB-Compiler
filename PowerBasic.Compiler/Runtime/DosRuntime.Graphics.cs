@@ -556,6 +556,7 @@ public sealed partial class DosRuntime {
       // Cache packed-screen eligibility once: the fallback previously
       // performed BIOS INT 10h/0Fh for every tested seed and neighbor pixel.
       asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode13")), (Imm)0);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)0);
       var packed = asm.DefineLabel();
       var afterPacked = asm.DefineLabel();
       EmitPackedModeBranch(asm, packed);
@@ -571,6 +572,19 @@ public sealed partial class DosRuntime {
       asm.Jmp(modeReady);
       asm.MarkLabel(mode12);
       asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)1);
+      if (this.EnableTargetOptimizations) {
+        // PAINT only invokes runtime VGA helpers, which restore their
+        // controller registers. Since no BASIC callback or user OUT can
+        // occur during this call, one positive certification also covers
+        // subsequent read-only scanline neighbor probes.
+        var certified = asm.DefineLabel();
+        var certifiedDone = asm.DefineLabel();
+        EmitCertifiedPlanarBranch(asm, certified);
+        asm.Jmp(certifiedDone);
+        asm.MarkLabel(certified);
+        asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)1);
+        asm.MarkLabel(certifiedDone);
+      }
       asm.MarkLabel(modeReady);
     }
 
@@ -854,6 +868,12 @@ public sealed partial class DosRuntime {
       asm.Xor(Reg.DX, Reg.DX);
       asm.Jmp(pointRead);
       asm.MarkLabel(genericPoint);
+      var normalPoint = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)1);
+      asm.Jne(normalPoint);
+      asm.Call(asm.Lbl("rt_point_planar_certified"));
+      asm.Jmp(pointRead);
+      asm.MarkLabel(normalPoint);
       asm.Call(this.Point);
       asm.MarkLabel(pointRead);
     } else
@@ -878,6 +898,8 @@ public sealed partial class DosRuntime {
     asm.Db(0);
     if (this.EnableTargetOptimizations) {
       asm.MarkLabel("rt_paint_mode13");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_mode12_certified");
       asm.Db(0);
     }
     foreach (var cell in new[] { "rt_gpbord", "rt_psp", "rt_px1", "rt_px2", "rt_py", "rt_pny", "rt_pside" }) {
