@@ -23,6 +23,10 @@ public sealed class DrawDecompilationTests {
     return Cpu8086.Run(image);
   }
 
+  [TestCase("M112,100")]
+  [TestCase("S4 A0 R10 D4 L10")]
+  [TestCase("S4 TA0 N R10 B D4")]
+  [TestCase("S4 A0 M+10,+4")]
   [TestCase("S8 A0 C9 R7 D4 L7 U4")]
   [TestCase("C9 R7 B D2 P6,9")]
   [TestCase("C9 R7 D7 L7 U7 B R2 D2 P6,9")]
