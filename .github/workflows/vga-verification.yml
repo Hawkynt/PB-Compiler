@@ -10,6 +10,9 @@ on:
       - 'PowerBasic.Compiler.Tests/CodeGen/DosBoxRunner.cs'
       - 'tests/oracles/vga-qemu-boot.asm'
       - 'scripts/test-qemu-vga.sh'
+      - 'scripts/build-vga-hardware-bench.ps1'
+      - 'tests/benchmarks/SCREEN12.BAS'
+      - 'tests/diff/qb45/DIFF0*.BAS'
       - '.github/workflows/vga-verification.yml'
   workflow_dispatch: {}
 
