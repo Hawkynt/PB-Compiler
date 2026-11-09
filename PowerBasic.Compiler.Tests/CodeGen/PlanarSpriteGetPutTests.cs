@@ -289,7 +289,7 @@ public sealed class PlanarSpriteGetPutTests {
   public void Measure_GivenSixteenRowsOfAlignedGet_ThenHoistsReadMapSelection() {
     const string body = """
       GET (8,10)-(71,25),s%(0)
-      PRINT s%(0);s%(1);POINT(8,10);POINT(71,25)
+      PRINT s%(0);s%(1);s%(2);s%(3)
       """;
     var optimized = Execute(body, true, bufferWords: 300);
     var baseline = Execute(body, false, bufferWords: 300);

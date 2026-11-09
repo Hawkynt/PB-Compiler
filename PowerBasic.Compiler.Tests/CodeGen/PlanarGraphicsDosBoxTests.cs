@@ -111,7 +111,8 @@ public sealed class PlanarGraphicsDosBoxTests {
         "anchor samples exercise fill, circle, PAINT, DRAW and every PUT verb");
       Assert.That(values.Skip(11).Take(6), Is.EqualTo(new[] { 9, 14, 9, 9, 14, 9 }),
         "independent probes cover odd-width, unaligned, multi-row GET/PUT");
-      Assert.That(values.All(v => v is >= 0 and <= 15), Is.True);
+      Assert.That(values.Skip(1).All(v => v is >= 0 and <= 15), Is.True,
+        "the leading 18 is the BIOS mode 12h marker, not a pixel color");
     });
   }
 }
