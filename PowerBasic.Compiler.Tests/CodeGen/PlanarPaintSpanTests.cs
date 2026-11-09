@@ -74,6 +74,42 @@ public sealed class PlanarPaintSpanTests {
   }
 
   [Test]
+  public void Execute_GivenMode12BorderEqualToPaint_ThenTerminatesAndPreservesTopology() {
+    const string body = """
+      LINE (18,18)-(75,27),6,B
+      LINE (40,20)-(55,25),3,B
+      PAINT (20,20),6,6
+      PRINT POINT(18,18);POINT(20,20);POINT(40,20);
+      PRINT POINT(45,23);POINT(55,25);POINT(76,27)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.That(optimized.Output, Is.EqualTo(reference.Output),
+      "when paint and border have equal colors, the filled-pixel stop rule must still terminate");
+  }
+
+  [Test]
+  [Category("Performance")]
+  public void Measure_GivenPlanarScanlineFill_ThenCachesHardwareCertification() {
+    const string body = """
+      LINE (20,20)-(125,31),2,B
+      PAINT (21,21),9,2
+      PRINT POINT(21,21);POINT(124,30);POINT(20,20)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+      Assert.That(optimized.ExecutedInstructions, Is.LessThan(reference.ExecutedInstructions));
+    });
+    TestContext.Progress.WriteLine(
+      $"SCREEN 12 PAINT: optimized {optimized.ExecutedInstructions} dispatches, "
+      + $"{optimized.FetchedInstructionBytes} fetched bytes, "
+      + $"{optimized.PortWrites.Count(p => p.Port is 0x3CE or 0x3CF)} GC writes; "
+      + $"reference {reference.ExecutedInstructions} dispatches");
+  }
+
+  [Test]
   [Category("Performance")]
   public void Measure_GivenLongPlanarFillRun_ThenReducesPerPixelBiosDispatch() {
     const string body = """
