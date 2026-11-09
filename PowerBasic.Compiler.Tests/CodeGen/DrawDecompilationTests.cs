@@ -37,6 +37,7 @@ public sealed class DrawDecompilationTests {
   public void Execute_GivenConstantDrawCommands_ThenMatchesRuntimeInterpreter(string commands) {
     var source = $"""
       SCREEN 13
+      LINE (70,70)-(145,138),9,B
       PSET (100,100),0
       DRAW "{commands}"
       OPEN "RESULT.TXT" FOR OUTPUT AS #1
@@ -64,6 +65,7 @@ public sealed class DrawDecompilationTests {
   public void Execute_GivenKnownPrefixAndUnknownTail_ThenPreservesRuntimeStateAndCursor(string prefix) {
     var source = $"""
       SCREEN 13
+      LINE (70,70)-(145,138),9,B
       tail$="D3 R2"
       PSET (100,100),0
       DRAW "{prefix}"+tail$
