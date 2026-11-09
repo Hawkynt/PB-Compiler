@@ -25,34 +25,41 @@ public sealed class PlanarPaintRowCacheAnalysisTests {
   }
 
   /// <summary>
-  /// The proposed 80-byte row cache contains one union mask byte per eight
-  /// pixels. Computing it costs two Read Mode 1 VRAM reads per byte, or 160
-  /// reads for the whole 640-pixel row. A write to that row requires
-  /// invalidation. This estimator grants the proposed cache a generous
-  /// advantage: row fills are charged only when accessed, it ignores the
-  /// extra 80-byte writes to conventional memory, and it never charges
-  /// setup costs for new GC register values.
+  /// Model one physical mask-buffer slot of exactly <paramref name="chunkBytes"/>
+  /// bytes, not an impossible collection of cached rows. Any read outside
+  /// its single aligned window reloads the window. Any write into that
+  /// window invalidates it. Read Mode 1 needs two source VRAM reads per byte
+  /// (border and paint color); additional conventional-memory copies,
+  /// control-port transactions and host instruction costs are not included.
+  /// Thus this is a cache-read feasibility envelope, not a CPU timing result.
   /// </summary>
-  private static (int CurrentReads, int RowReads, int RowBuilds, int Invalidations, int DistinctByteReads)
-      Evaluate(IReadOnlyList<(ushort Offset, bool IsWrite)> access) {
-    var validRows = new HashSet<int>();
-    var visited = new HashSet<int>();
-    var reads = 0;
-    var builds = 0;
+  private static (int VramReads, int Refills, int Invalidations)
+      EstimateSingleBuffer(IReadOnlyList<(ushort Offset, bool IsWrite)> access, int chunkBytes) {
+    var cachedStart = -1;
+    var cachedEnd = -1;
+    var loads = 0;
     var invalidations = 0;
+    var reads = 0;
     foreach (var (offset, isWrite) in access) {
-      var row = offset / 80;
       if (isWrite) {
-        if (validRows.Remove(row))
+        if (offset >= cachedStart && offset < cachedEnd && cachedStart >= 0) {
+          cachedStart = -1;
+          cachedEnd = -1;
           ++invalidations;
+        }
         continue;
       }
-      ++reads;
-      visited.Add(offset);
-      if (validRows.Add(row))
-        ++builds;
+      if (offset >= cachedStart && offset < cachedEnd)
+        continue;
+      var rowStart = (offset / 80) * 80;
+      var start = rowStart + ((offset - rowStart) / chunkBytes) * chunkBytes;
+      var end = Math.Min(start + chunkBytes, rowStart + 80);
+      cachedStart = start;
+      cachedEnd = end;
+      ++loads;
+      reads += 2 * (end - start);
     }
-    return (reads, 160 * builds, builds, invalidations, visited.Count);
+    return (reads, loads, invalidations);
   }
 
   [TestCase("thin", """
@@ -81,19 +88,26 @@ public sealed class PlanarPaintRowCacheAnalysisTests {
   public void Analyze_GivenRealPaintMemoryTrace_ThenReportEightyByteRowCacheCosts(
       string scenario, string drawing) {
     var cpu = Trace(drawing);
-    var (actual, rowReads, builds, invalidations, unique) = Evaluate(cpu.PlanarAccessTrace);
+    var actual = cpu.PlanarAccessTrace.Count(x => !x.IsWrite);
+    var bytes = cpu.PlanarAccessTrace.Where(x => !x.IsWrite)
+      .Select(x => x.Offset).Distinct().Count();
     Assert.Multiple(() => {
       Assert.That(actual, Is.GreaterThan(0));
-      Assert.That(builds, Is.GreaterThan(0));
       Assert.That(actual % 2, Is.Zero,
         "each Read Mode 1 miss compares border and paint colors exactly once");
-      Assert.That(rowReads, Is.GreaterThanOrEqualTo(160));
     });
     TestContext.Progress.WriteLine(
-      $"PAINT row-cache trace [{scenario}]: current-mode1-VRAM-reads={actual}; "
-      + $"full-80-byte-row-VRAM-reads={rowReads}; row-builds={builds}; "
-      + $"row-invalidations={invalidations}; distinct-offsets={unique}; "
-      + $"observed-VGA-port-writes={cpu.PortWrites.Count(p => p.Port is 0x3CE or 0x3CF)}; "
-      + $"emulated-dispatches={cpu.ExecutedInstructions}");
+      $"PAINT row-cache trace [{scenario}]: existing-6-byte-cache reads={actual}, "
+      + $"VRAM unique byte addresses={bytes}, "
+      + $"observed VGA GC writes={cpu.PortWrites.Count(p => p.Port is 0x3CE or 0x3CF)}");
+    foreach (var chunkBytes in new[] { 8, 16, 32, 80 }) {
+      var estimate = EstimateSingleBuffer(cpu.PlanarAccessTrace, chunkBytes);
+      Assert.That(estimate.Refills, Is.GreaterThan(0));
+      TestContext.Progress.WriteLine(
+        $"PAINT row-cache trace [{scenario}]: single-slot {chunkBytes}-byte buffer: "
+        + $"{estimate.VramReads} prefetched VRAM reads, {estimate.Refills} refills, "
+        + $"{estimate.Invalidations} invalidations, "
+        + $"read ratio={(double)estimate.VramReads / actual:F2}x");
+    }
   }
 }
