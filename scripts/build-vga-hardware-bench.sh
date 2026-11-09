@@ -8,7 +8,7 @@ mkdir -p "$out"
 for cpu in 8086 80286 80386; do
   case "$cpu" in 8086) prefix=86;; 80286) prefix=286;; 80386) prefix=386;; esac
   file="$out/V${prefix}.BAS"
-  sed "s/^\$CPU 8086$/\$CPU $cpu/" "$repo/tests/benchmarks/SCREEN12.BAS" > "$file"
+  sed "s/^\$CPU 8086$/\$CPU $cpu/" "$repo/docs/performance/SCREEN12.BAS.template" > "$file"
   for variant in OPT REF; do
     args=(--dialect pb36)
     if [[ "$variant" == OPT ]]; then args+=(--optimize); else args+=(--no-optimize); fi

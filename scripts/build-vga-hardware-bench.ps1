@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$source = [IO.File]::ReadAllText((Join-Path $root 'tests/benchmarks/SCREEN12.BAS'))
+$source = [IO.File]::ReadAllText((Join-Path $root 'docs/performance/SCREEN12.BAS.template'))
 $output = Join-Path $root 'build/vga-hardware'
 [IO.Directory]::CreateDirectory($output) | Out-Null
 
