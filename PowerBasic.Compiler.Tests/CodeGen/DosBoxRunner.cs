@@ -311,14 +311,20 @@ public static class DosBoxRunner {
 
   /// <summary>
   /// Runs multiple DOS executables in one DOSBox session without redirecting stdout and returns files
-  /// left by the sequence. This lets a drawing subject exit while preserving VGA state, after which a
-  /// separately compiled capture executable can inspect that state through an independent BIOS path.
+  /// left by the sequence. When chainFromFirst is set, only T0.EXE is launched from the DOS shell;
+  /// the first image must CHAIN "T1.EXE" via DOS EXEC before returning to the shell. DOS shells
+  /// may restore their own video mode between separately launched commands, destroying the framebuffer
+  /// that the second image is supposed to inspect.
   /// </summary>
   public static Dictionary<string, string> RunUnredirectedSequenceWithFiles(
-      IReadOnlyList<byte[]> executables, IReadOnlyList<string> fetchFiles, int timeoutMs = 60000) {
+      IReadOnlyList<byte[]> executables, IReadOnlyList<string> fetchFiles,
+      int timeoutMs = 60000, bool chainFromFirst = false) {
     ArgumentNullException.ThrowIfNull(executables);
     if (executables.Count == 0)
       throw new ArgumentException("At least one DOS executable is required.", nameof(executables));
+    if (chainFromFirst && executables.Count < 2)
+      throw new ArgumentException("CHAIN capture needs both the drawing program and its target.",
+        nameof(executables));
 
     var dir = Path.Combine(Path.GetTempPath(), "pbc-seq-" + Guid.NewGuid().ToString("N")[..8]);
     Directory.CreateDirectory(dir);
@@ -326,7 +332,7 @@ public static class DosBoxRunner {
       for (var i = 0; i < executables.Count; ++i)
         File.WriteAllBytes(Path.Combine(dir, $"T{i}.EXE"), executables[i]);
 
-      var commands = string.Join(Environment.NewLine,
+      var commands = chainFromFirst ? "T0.EXE" : string.Join(Environment.NewLine,
         Enumerable.Range(0, executables.Count).Select(i => $"T{i}.EXE"));
       var conf = Path.Combine(dir, "dosbox.conf");
       File.WriteAllText(conf, $"""

@@ -5,9 +5,10 @@ using PowerBasic.Compiler.Syntax;
 namespace PowerBasic.Compiler.Tests.CodeGen;
 
 /// <summary>
-/// Independent SCREEN-12 framebuffer differential. The drawing executable exits first; a second,
-/// unoptimized executable then samples the still-active DOSBox VGA framebuffer. The capture program
-/// has no SCREEN statement, so it does not clear the subject's mode or pixels before BIOS POINT reads.
+/// Independent SCREEN-12 framebuffer differential. The drawing executable CHAINs directly to a
+/// second unoptimized executable via DOS EXEC, without returning to DOSBox's command shell (which
+/// may restore text mode and clear the graphics framebuffer). The capture has no SCREEN statement
+/// and checks BIOS mode before reading the subject's framebuffer.
 /// </summary>
 [TestFixture, Category("Slow")]
 [NonParallelizable]
@@ -60,11 +61,14 @@ public sealed class PlanarGraphicsDosBoxTests {
     GET (321,160)-(331,168),s%(0)
     LINE (440,160)-(450,168),1,BF
     PUT (440,160),s%(0),PSET
-    END
+    CHAIN "T1.EXE"
     """;
 
   private static readonly byte[] _capture = Compile("""
     OPEN "R.TXT" FOR OUTPUT AS #1
+    DEF SEG = &H40
+    PRINT #1, PEEK(&H49);
+    DEF SEG
     PRINT #1, POINT(20,20); POINT(205,80); POINT(250,50); POINT(132,150);
     PRINT #1, POINT(336,28); POINT(416,28); POINT(416,58); POINT(416,88);
     PRINT #1, POINT(416,118); POINT(416,148)
@@ -82,7 +86,8 @@ public sealed class PlanarGraphicsDosBoxTests {
 
   private static string Capture(bool optimize) {
     var subject = Compile(_scene, optimize);
-    var files = DosBoxRunner.RunUnredirectedSequenceWithFiles([subject, _capture], ["R.TXT"]);
+    var files = DosBoxRunner.RunUnredirectedSequenceWithFiles(
+      [subject, _capture], ["R.TXT"], chainFromFirst: true);
     Assert.That(files.TryGetValue("R.TXT", out var result), Is.True, "capture program did not create R.TXT");
     return DosBoxRunner.Normalize(result!);
   }
@@ -100,9 +105,11 @@ public sealed class PlanarGraphicsDosBoxTests {
       .ToArray();
     Assert.Multiple(() => {
       Assert.That(values.Length, Is.GreaterThan(5000), "the oracle must sample a broad framebuffer region");
-      Assert.That(values.Take(10), Is.EqualTo(new[] { 3, 9, 6, 11, 2, 2, 13, 0, 7, 7 }),
+      Assert.That(values[0], Is.EqualTo(0x12),
+        "DOS EXEC must preserve SCREEN 12; the DOS shell may reset it between separate commands");
+      Assert.That(values.Skip(1).Take(10), Is.EqualTo(new[] { 3, 9, 6, 11, 2, 2, 13, 0, 7, 7 }),
         "anchor samples exercise fill, circle, PAINT, DRAW and every PUT verb");
-      Assert.That(values.Skip(10).Take(6), Is.EqualTo(new[] { 9, 14, 9, 9, 14, 9 }),
+      Assert.That(values.Skip(11).Take(6), Is.EqualTo(new[] { 9, 14, 9, 9, 14, 9 }),
         "independent probes cover odd-width, unaligned, multi-row GET/PUT");
       Assert.That(values.All(v => v is >= 0 and <= 15), Is.True);
     });
