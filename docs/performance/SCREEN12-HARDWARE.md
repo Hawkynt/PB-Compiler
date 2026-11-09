@@ -6,14 +6,14 @@ lets users measure real performance independently of the correctness oracles.
 
 ## Build
 
-With .NET 10 and PowerShell:
+With .NET 10 and Bash (the variant verified in Linux CI):
 
 ```powershell
 dotnet build PB-Compiler.slnx -c Release
-./scripts/build-vga-hardware-bench.ps1
+bash scripts/build-vga-hardware-bench.sh
 ```
 
-Six DOS EXEs are generated in `build/vga-hardware/`:
+On Windows, `scripts/build-vga-hardware-bench.ps1` offers an optional PowerShell entry point; its generated binaries must be validated separately. Six DOS EXEs are generated in `build/vga-hardware/`:
 `V86OPT.EXE`, `V86REF.EXE`, `V286OPT.EXE`, `V286REF.EXE`,
 `V386OPT.EXE`, `V386REF.EXE`. Each uses an explicit CPU directive
 and the same measured workload.
