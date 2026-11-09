@@ -160,6 +160,7 @@ public sealed class DrawStringSpecializationTests {
   [TestCase("move-type")]
   [TestCase("begin-foreign")]
   [TestCase("cell-count")]
+  [TestCase("foreground-cell")]
   public void Run_GivenUnprovedOwnershipAbiOrState_ThenLeavesTheCallIntact(string boundary) {
     var (module, main, draw, text) = Build("C9 R5");
     switch (boundary) {
@@ -186,6 +187,7 @@ public sealed class DrawStringSpecializationTests {
           Convention = IrCallConvention.Cdecl,
         }); break;
       case "cell-count": module.AddGlobal(new IrGlobalVariable("rt_draw_color", IrType.I16) { Count = 2 }); break;
+      case "foreground-cell": module.AddGlobal(new IrGlobalVariable("rt_fgcolor", IrType.I32)); break;
     }
     Assert.That(IrVerifier.Verify(module), Is.Empty);
     Assert.That(DrawStringSpecialization.Run(module), Is.Zero);

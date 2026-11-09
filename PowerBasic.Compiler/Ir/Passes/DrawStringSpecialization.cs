@@ -6,7 +6,7 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <summary>Expands DRAW text proved constant by the middle end, after consuming string folds.</summary>
 public static class DrawStringSpecialization {
   private static readonly string[] _CELLS = ["rt_gx1", "rt_gy1", "rt_gx2", "rt_gy2", "rt_gstyle", "rt_gcolor",
-    "rt_draw_color", "rt_draw_scale", "rt_draw_angle", "rt_gpbord"];
+    "rt_draw_color", "rt_draw_scale", "rt_draw_angle", "rt_gpbord", "rt_fgcolor"];
 
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
