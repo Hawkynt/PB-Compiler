@@ -519,6 +519,7 @@ public sealed partial class DosRuntime {
     var inRun = asm.DefineLabel();
     var skipRun = asm.DefineLabel();
     var overflow = asm.DefineLabel();
+    var adaptivePrefetch = this.EnableTargetOptimizations ? asm.DefineLabel("rt_paint_prefetch") : null;
 
     this.Paint = asm.MarkLabel("rt_paint");
     var status = asm.Lbl("rt_paint_status");
@@ -603,6 +604,8 @@ public sealed partial class DosRuntime {
     asm.Add(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
 
     asm.MarkLabel(popLoop);
+    if (this.EnableTargetOptimizations)
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)0);
     asm.Cmp(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
     asm.Je(done);
     asm.Sub(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
@@ -762,6 +765,32 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Word(asm.Lbl("rt_pside")), (Imm)0);
 
     asm.MarkLabel(neighbourRow);
+    if (this.EnableTargetOptimizations) {
+      var shortSpan = asm.DefineLabel();
+      var spanReady = asm.DefineLabel();
+      var wideSpan = asm.DefineLabel();
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_prefetch_valid")), (Imm)0);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)0);
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)1);
+      asm.Jne(spanReady);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gpbord")), (Imm)15);
+      asm.Ja(spanReady);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(spanReady);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_px2")));
+      asm.Sub(Reg.AX, Mem.Word(asm.Lbl("rt_px1")));
+      asm.Inc(Reg.AX); // The proven, contiguous filled span width.
+      asm.Cmp(Reg.AX, (Imm)128);
+      asm.Jl(shortSpan);
+      asm.Cmp(Reg.AX, (Imm)512);
+      asm.Jge(wideSpan);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)32);
+      asm.Jmp(spanReady);
+      asm.MarkLabel(wideSpan);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)80);
+      asm.MarkLabel(shortSpan);
+      asm.MarkLabel(spanReady);
+    }
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_px1")));
     asm.MarkLabel(scanRow);
     asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_px2")));
@@ -883,6 +912,42 @@ public sealed partial class DosRuntime {
       asm.Shr(Reg.AL, Reg.CL);
       asm.Mov(Mem.Byte(asm.Lbl("rt_paint_probe_mask")), Reg.AL);
 
+      // Adaptive scanline cache is used only while scanning neighbors of
+      // a proven >=128-pixel filled run. Narrow regions preserve the
+      // original six-byte one-VGA-byte cache.
+      var ordinaryMask = asm.DefineLabel();
+      asm.Cmp(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)0);
+      asm.Je(ordinaryMask);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_probe")), Reg.DI);
+      asm.Mov(Reg.BX, Reg.SI);
+      asm.Shr(Reg.BX, 3);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_xbyte")), Reg.BX);
+      var refill = asm.DefineLabel();
+      var cached = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_prefetch_valid")), (Imm)0);
+      asm.Je(refill);
+      asm.Cmp(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+      asm.Jl(refill);
+      asm.Mov(Reg.BX, Reg.DI);
+      asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+      asm.Cmp(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_length")));
+      asm.Jl(cached);
+      asm.MarkLabel(refill);
+      asm.Call(adaptivePrefetch!);
+      asm.Mov(Reg.BX, Reg.DI);
+      asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+      asm.MarkLabel(cached);
+      asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_paint_prefetch_buffer")));
+      asm.Add(Reg.SI, Reg.BX);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.SI));
+      asm.And(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_probe_mask")));
+      asm.Pop(Reg.SI);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.ES);
+      asm.Jz(colorCheck);
+      asm.Jmp(notFillable);
+
+      asm.MarkLabel(ordinaryMask);
       asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)0);
       asm.Je(recompute);
       asm.Cmp(Reg.DI, Mem.Word(asm.Lbl("rt_paint_mask_offset")));
@@ -992,6 +1057,99 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Ret();
 
+    if (this.EnableTargetOptimizations) {
+      // Refill exactly one adaptive block. GC02 is switched twice while
+      // Read Mode 1 and GC07 stay configured. Every original indexed VGA
+      // register and selector is restored before returning. An extra read
+      // of the *requested* byte after restoring preserves the last latch
+      // address that the old six-byte cache would have left behind.
+      var rowKnown = asm.DefineLabel();
+      var baseReady = asm.DefineLabel();
+      var firstLoop = asm.DefineLabel();
+      var secondLoop = asm.DefineLabel();
+      asm.MarkLabel(adaptivePrefetch!);
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.DX);
+      asm.Push(Reg.SI);
+      asm.Push(Reg.DI);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_paint_prefetch_probe")));
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_xbyte")));
+      asm.Sub(Reg.AX, Reg.BX); // First VGA byte of this 80-byte row.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)80);
+      asm.Je(rowKnown);
+      asm.And(Reg.BX, (Imm)0xFFE0);
+      asm.Add(Reg.AX, Reg.BX);
+      asm.Mov(Reg.CX, (Imm)32);
+      asm.Cmp(Reg.BX, (Imm)64);
+      asm.Jne(baseReady);
+      asm.Mov(Reg.CX, (Imm)16); // Last partial 32-byte block in a row.
+      asm.Jmp(baseReady);
+      asm.MarkLabel(rowKnown);
+      asm.Mov(Reg.CX, (Imm)80);
+      asm.MarkLabel(baseReady);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_base")), Reg.AX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_length")), Reg.CX);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.In(Reg.AL, Reg.DX);
+      asm.Push(Reg.AX); // GC index
+      SaveAndSet(asm, 0x3CE, 5, -8);
+      SaveAndSet(asm, 0x3CE, 7, 15);
+      SaveAndSet(asm, 0x3CE, 2, 0);
+      asm.Mov(Reg.AX, (Imm)0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, (Imm)2);
+      asm.Mov(Reg.AH, Mem.Byte(asm.Lbl("rt_gpbord")));
+      asm.Out(Reg.DX, Reg.AX);
+      asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+      asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_paint_prefetch_buffer")));
+      asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_paint_prefetch_length")));
+      asm.MarkLabel(firstLoop);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
+      asm.Inc(Reg.SI);
+      asm.Inc(Reg.DI);
+      asm.Dec(Reg.CX);
+      asm.Jnz(firstLoop);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, (Imm)2);
+      asm.Mov(Reg.AH, Mem.Byte(asm.Lbl("rt_gcolor")));
+      asm.Out(Reg.DX, Reg.AX);
+      asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+      asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_paint_prefetch_buffer")));
+      asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_paint_prefetch_length")));
+      asm.MarkLabel(secondLoop);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Or(Mem.Byte(Reg.SI), Reg.AL);
+      asm.Inc(Reg.SI);
+      asm.Inc(Reg.DI);
+      asm.Dec(Reg.CX);
+      asm.Jnz(secondLoop);
+      Restore(asm, 0x3CE, 2);
+      Restore(asm, 0x3CE, 7);
+      Restore(asm, 0x3CE, 5);
+      asm.Pop(Reg.BX);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, Reg.BL);
+      asm.Out(Reg.DX, Reg.AL);
+      // The other cache loads the latches from its requested pixel byte.
+      // A read in the restored mode recreates that observable latch state.
+      asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_probe")));
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_prefetch_valid")), (Imm)1);
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.SI);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
     // The seed stack and the fill's scratch, placed here rather than in the common data block so the
     // runtime trimmer drops all of it with the graphics section when a program draws nothing.
     asm.MarkLabel("rt_paint_mode12");
@@ -1011,6 +1169,21 @@ public sealed partial class DosRuntime {
       asm.Db(0);
       asm.MarkLabel("rt_paint_mask_offset");
       asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_size");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_probe");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_xbyte");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_base");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_length");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_valid");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_prefetch_buffer");
+      for (var slot = 0; slot < 80; ++slot)
+        asm.Db(0);
     }
     foreach (var cell in new[] { "rt_gpbord", "rt_psp", "rt_px1", "rt_px2", "rt_py", "rt_pny", "rt_pside" }) {
       asm.MarkLabel(cell);
