@@ -34,8 +34,8 @@ if [[ "$status" -ne 1 ]]; then
   exit 1
 fi
 
-expected=
-actual="$(tr -d '\r' < "$tmp/result.txt")"
+expected="6565656555AAFF00AA55"
+actual="$(tr -d '\r\n' < "$tmp/result.txt")"
 if [[ "$actual" != "$expected" ]]; then
   printf 'Unexpected QEMU VGA planes / BIOS pixels:\n%s\nExpected:\n%s\n' "$actual" "$expected" >&2
   exit 1
