@@ -128,6 +128,23 @@ public sealed class DrawStringSpecializationTests {
     });
   }
 
+  [Test]
+  public void Run_GivenPaintInMixedPrefix_ThenKeepsOwnedDynamicStringAndErrorCleanup() {
+    var (module, _, draw, text) = Build("C9 P6,9 R5;");
+    var dynamicText = module.AddFunction(new IrFunction("dynamic_text", IrType.Ptr));
+    var concat = module.AddFunction(new IrFunction("rt_str_concat", IrType.Ptr,
+      [new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1)]));
+    var block = draw.Parent!;
+    var tail = block.InsertBefore(new IrCall(IrType.Ptr, dynamicText, []), draw);
+    var combined = block.InsertBefore(new IrCall(IrType.Ptr, concat, [text, tail]), draw);
+    draw.SetOperand(1, combined);
+    Assert.Multiple(() => {
+      Assert.That(DrawStringSpecialization.Run(module), Is.Zero);
+      Assert.That(draw.Parent, Is.Not.Null);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
   [TestCase("shared")]
   [TestCase("foreign")]
   [TestCase("length")]

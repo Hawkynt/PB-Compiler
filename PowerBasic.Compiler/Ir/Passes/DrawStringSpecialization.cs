@@ -86,6 +86,12 @@ public static class DrawStringSpecialization {
       // Unrepresentable commands remain runtime work, not a compiler-host exception.
       return false;
     }
+    // PAINT can fail with error 7. A partially constant DRAW still owns
+    // the joined dynamic string until rt_draw_resume; direct PAINT would
+    // raise before that parser could free the allocation. Fully constant
+    // DRAW already consumes its literal producer and is safe to expand.
+    if (!complete && steps.Any(step => step.Kind == DrawStepKind.Paint))
+      return false;
     // Wide literals have terminator-dependent numeric errors. Leave them to the shared parser rather
     // than erasing those checks; this restriction changes specialization, not source acceptance.
     return steps.All(step => step.Kind is DrawStepKind.Colour or DrawStepKind.Scale
