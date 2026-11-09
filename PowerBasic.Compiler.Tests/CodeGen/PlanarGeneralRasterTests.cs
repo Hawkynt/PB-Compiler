@@ -80,6 +80,24 @@ public sealed class PlanarGeneralRasterTests {
     });
   }
 
+  [TestCase("CIRCLE (300,230),25,7,,,1.5")]
+  [TestCase("CIRCLE (300,230),25,7,,,2.5")]
+  [TestCase("CIRCLE (627,467),20,7")]
+  [TestCase("CIRCLE (300,230),0,7,,,0.5")]
+  public void Execute_GivenUnprovedOrClippedEllipse_ThenMatchesBiosRaster(string statement) {
+    var body = $"""
+      LINE (270,200)-(330,260),2,BF
+      {statement}
+      PRINT POINT(300,230);POINT(300,205);POINT(300,255);
+      PRINT POINT(275,230);POINT(325,230);POINT(627,467);
+      PRINT POINT(639,479);POINT(600,450)
+      """;
+    var optimized = Execute(body, true);
+    var baseline = Execute(body, false);
+    Assert.That(optimized.Output, Is.EqualTo(baseline.Output),
+      "fallback ellipses and clipped circles must preserve BIOS geometry");
+  }
+
   [Test]
   public void Execute_GivenCirclePastTheMode13Viewport_ThenUsesTheFullMode12Dimensions() {
     const string body = """

@@ -48,6 +48,26 @@ public sealed class PlanarPrintFallbackTests {
   }
 
   [Test]
+  public void Execute_GivenExtendedAndControlCharacters_ThenGraphicsPrintRetainsHandleSemantics() {
+    const string body = """
+      SCREEN 12
+      COLOR 12
+      PRINT "prefix"; CHR$(9); CHR$(176); CHR$(7); "suffix"
+      PRINT STRING$(84,"x")
+      OPEN "RESULT.TXT" FOR OUTPUT AS #1
+      PRINT #1, "file-only"; CHR$(9); CHR$(176)
+      CLOSE #1
+      """;
+    var baseline = Execute(body, fastVideo: false, optimize: false);
+    var accelerated = Execute(body, fastVideo: true, optimize: true);
+    Assert.Multiple(() => {
+      Assert.That(accelerated.Output, Is.EqualTo(baseline.Output));
+      Assert.That(accelerated.FileBytes("RESULT.TXT"), Is.EqualTo(baseline.FileBytes("RESULT.TXT")));
+      Assert.That(accelerated.MemoryAt(0xB800, 0), Is.EqualTo(baseline.MemoryAt(0xB800, 0)));
+    });
+  }
+
+  [Test]
   public void Execute_GivenGraphicsPrintAndAnExplicitFileHandle_ThenBothOutputsArePreserved() {
     const string body = """
       SCREEN 12

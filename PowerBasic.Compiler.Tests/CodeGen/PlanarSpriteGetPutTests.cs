@@ -12,8 +12,8 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// </summary>
 [TestFixture]
 public sealed class PlanarSpriteGetPutTests {
-  private static Cpu8086 Execute(string body, bool optimize, string cpu = "") {
-    var source = cpu + "\nDIM s%(200)\nSCREEN 12\n" + body + "\nEND\n";
+  private static Cpu8086 Execute(string body, bool optimize, string cpu = "", int bufferWords = 200) {
+    var source = cpu + $"\nDIM s%({bufferWords})\nSCREEN 12\n" + body + "\nEND\n";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "SPRITE12.BAS", Dialect.Pb36),
       "SPRITE12.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
@@ -109,6 +109,22 @@ public sealed class PlanarSpriteGetPutTests {
   [TestCase("""
     s%(0)=8:s%(1)=1
     PUT (633,0),s%(0),PSET
+    """)]
+  [TestCase("""
+    s%(0)=0:s%(1)=1
+    PUT (0,0),s%(0),PSET
+    """)]
+  [TestCase("""
+    s%(0)=8:s%(1)=0
+    PUT (0,0),s%(0),PSET
+    """)]
+  [TestCase("""
+    s%(0)=-1:s%(1)=1
+    PUT (0,0),s%(0),PSET
+    """)]
+  [TestCase("""
+    s%(0)=640:s%(1)=481
+    PUT (0,0),s%(0),PSET
     """)]
   public void Execute_GivenOutOfRangeGetOrPut_ThenRaisesIllegalFunctionCall(string statement) {
     var body = $"""
@@ -266,6 +282,30 @@ public sealed class PlanarSpriteGetPutTests {
       Assert.That(optimized.PortWrites.Count(p => p.Port is 0x3C4 or 0x3C5),
         Is.LessThan(40), "select each of four map masks once per row, not per sprite pixel");
     });
+  }
+
+  [Test]
+  [Category("Performance")]
+  public void Measure_GivenSixteenRowsOfAlignedGet_ThenHoistsReadMapSelection() {
+    const string body = """
+      GET (8,10)-(71,25),s%(0)
+      PRINT s%(0);s%(1);POINT(8,10);POINT(71,25)
+      """;
+    var optimized = Execute(body, true, bufferWords: 300);
+    var baseline = Execute(body, false, bufferWords: 300);
+    var indexedPortWrites = optimized.PortWrites.Count(p => p.Port is 0x3CE or 0x3CF);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
+      Assert.That(optimized.Output.Trim(), Does.Contain("64  16  0  0"));
+      Assert.That(indexedPortWrites, Is.LessThan(40),
+        "four read-map selections should be shared by all sixteen scanlines");
+      Assert.That(optimized.ExecutedInstructions, Is.LessThan(baseline.ExecutedInstructions));
+    });
+    TestContext.Progress.WriteLine(
+      $"64x16 GET: optimized GC OUT={indexedPortWrites}, "
+      + $"instructions={optimized.ExecutedInstructions}, fetched bytes={optimized.FetchedInstructionBytes}; "
+      + $"BIOS reference instructions={baseline.ExecutedInstructions}, "
+      + $"fetched bytes={baseline.FetchedInstructionBytes}");
   }
 
   [Test]
