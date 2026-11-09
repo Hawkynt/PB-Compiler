@@ -12,16 +12,61 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// </summary>
 [TestFixture]
 public sealed class PlanarPaintRowCacheAnalysisTests {
-  private static Cpu8086 Trace(string drawing) {
+  private static Cpu8086 Trace(string drawing, bool adaptivePrefetch = false) {
     var source = "SCREEN 12\n" + drawing + "\nEND\n";
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "ROW-CACHE.BAS", Dialect.Pb36),
       "ROW-CACHE.BAS", Dialect.Pb36), Dialect.Pb36);
     Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
-    var generator = new CodeGenerator(model) { Optimize = true, Container = DosContainer.Exe };
+    var generator = new CodeGenerator(model) {
+      Optimize = true,
+      Container = DosContainer.Exe,
+      EnableAdaptivePaintPrefetch = adaptivePrefetch,
+    };
     var exe = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     Assert.That(generator.BackendDeclines, Is.Empty);
     return Cpu8086.Run(exe, tracePlanarAccess: true);
+  }
+
+  [TestCase("medium", 17207, """
+    LINE (10,20)-(245,32),2,B
+    PAINT (11,21),13,2
+    PRINT POINT(11,21);POINT(244,31)
+    """)]
+  [TestCase("wide", 37051, """
+    LINE (4,20)-(635,30),2,B
+    PAINT (5,21),13,2
+    PRINT POINT(5,21);POINT(634,29)
+    """)]
+  [TestCase("three chambers", 58075, """
+    LINE (4,15)-(400,38),2,B
+    LINE (35,17)-(45,36),2,B
+    LINE (100,17)-(108,36),2,B
+    LINE (200,17)-(210,36),2,B
+    PAINT (12,19),13,2
+    PRINT POINT(12,19);POINT(80,19);POINT(300,19)
+    """)]
+  public void Measure_GivenAdaptiveSpan_ThenComparePixelsPortsCodeShapeAndScratch(
+      string scenario, int previousGcWrites, string drawing) {
+    var baseline = Trace(drawing);
+    var adaptive = Trace(drawing, adaptivePrefetch: true);
+    var baselinePorts = baseline.PortWrites.Count(p => p.Port is 0x3CE or 0x3CF);
+    var adaptivePorts = adaptive.PortWrites.Count(p => p.Port is 0x3CE or 0x3CF);
+    Assert.Multiple(() => {
+      Assert.That(adaptive.Output, Is.EqualTo(baseline.Output),
+        "adaptive cache must preserve every observed pixel");
+      Assert.That(baselinePorts, Is.EqualTo(previousGcWrites),
+        "historical six-byte-cache baseline should be reproducible");
+      Assert.That(adaptivePorts, Is.LessThan(baselinePorts),
+        "prefetch must amortize VGA controller state transactions");
+    });
+    TestContext.Progress.WriteLine(
+      $"PAINT adaptive [{scenario}]: 6-byte GC writes={baselinePorts}, "
+      + $"adaptive GC writes={adaptivePorts}; "
+      + $"6-byte instructions={baseline.ExecutedInstructions}, "
+      + $"adaptive instructions={adaptive.ExecutedInstructions}; "
+      + $"6-byte VRAM host reads={baseline.PlanarHostReads}, "
+      + $"adaptive VRAM host reads={adaptive.PlanarHostReads}");
   }
 
   /// <summary>

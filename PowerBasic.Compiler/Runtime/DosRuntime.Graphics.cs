@@ -922,7 +922,8 @@ public sealed partial class DosRuntime {
         asm.Je(ordinaryMask);
         asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_probe")), Reg.DI);
         asm.Mov(Reg.BX, Reg.SI);
-        asm.Shr(Reg.BX, 3);
+        asm.Mov(Reg.CL, (Imm)3);
+        asm.Shr(Reg.BX, Reg.CL);
         asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_xbyte")), Reg.BX);
         var refill = asm.DefineLabel();
         var cached = asm.DefineLabel();
