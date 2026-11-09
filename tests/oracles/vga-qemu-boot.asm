@@ -87,6 +87,25 @@ pixel:
     mov al, 10
     out 0xe9, al
 
+    ; Independent VGA Read Mode 1 test: compare all eight pixels against
+    ; color 6 (10101010b) and color 5 (01010101b) in two memory reads.
+    ; The PAINT fastpath uses these bit masks to classify eight pixels.
+    mov dx, 0x3ce
+    mov ax, 0x0f07              ; GC07: all planes significant
+    out dx, ax
+    mov ax, 0x0805              ; GC05: read mode 1
+    out dx, ax
+    mov ax, 0x0602              ; GC02: compare color 6
+    out dx, ax
+    mov al, [es:bx]
+    call emit_hex
+    mov ax, 0x0502              ; GC02: compare color 5
+    out dx, ax
+    mov al, [es:bx]
+    call emit_hex
+    mov al, 10
+    out 0xe9, al
+
     mov dx, 0xf4                ; QEMU isa-debug-exit (exit status 1)
     xor al, al
     out dx, al
