@@ -520,6 +520,19 @@ public sealed partial class DosRuntime {
     // Flood-fill bounds must match the actual BIOS mode, even in unoptimized
     // builds; the original 320x200 limit incorrectly clipped SCREEN 12.
     asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)0);
+    if (this.EnableTargetOptimizations) {
+      // PAINT performs no user callbacks that could change the video mode.
+      // Cache packed-screen eligibility once: the fallback previously
+      // performed BIOS INT 10h/0Fh for every tested seed and neighbor pixel.
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode13")), (Imm)0);
+      var packed = asm.DefineLabel();
+      var afterPacked = asm.DefineLabel();
+      EmitPackedModeBranch(asm, packed);
+      asm.Jmp(afterPacked);
+      asm.MarkLabel(packed);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode13")), (Imm)1);
+      asm.MarkLabel(afterPacked);
+    }
     {
       var mode12 = asm.DefineLabel();
       var modeReady = asm.DefineLabel();
@@ -780,7 +793,40 @@ public sealed partial class DosRuntime {
       asm.Jge(notFillable);
       asm.MarkLabel(inBounds);
     }
-    asm.Call(this.Point);               // AL = colour, AH cleared
+    if (this.EnableTargetOptimizations) {
+      var genericPoint = asm.DefineLabel();
+      var pointRead = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode13")), (Imm)1);
+      asm.Jne(genericPoint);
+      // Bounds above prove x in [0,319] and y in [0,199].
+      // Read the packed framebuffer exactly as rt_point does, without
+      // per-pixel BIOS mode queries and without allocating an image copy.
+      asm.Push(Reg.ES);
+      asm.Push(Reg.DI);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.BX);
+      asm.Mov(Reg.DI, Reg.BX);
+      asm.Mov(Reg.CL, (Imm)8);
+      asm.Shl(Reg.DI, Reg.CL);
+      asm.Mov(Reg.CL, (Imm)6);
+      asm.Shl(Reg.BX, Reg.CL);
+      asm.Add(Reg.DI, Reg.BX);
+      asm.Add(Reg.DI, Reg.AX);
+      asm.Mov(Reg.BX, (Imm)0xA000);
+      asm.Mov(Reg.ES, Reg.BX);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.ES);
+      asm.Xor(Reg.AH, Reg.AH);
+      asm.Xor(Reg.DX, Reg.DX);
+      asm.Jmp(pointRead);
+      asm.MarkLabel(genericPoint);
+      asm.Call(this.Point);
+      asm.MarkLabel(pointRead);
+    } else
+      asm.Call(this.Point);
     asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gpbord")));
     asm.Je(notFillable);
     asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gcolor")));
@@ -799,6 +845,10 @@ public sealed partial class DosRuntime {
     // runtime trimmer drops all of it with the graphics section when a program draws nothing.
     asm.MarkLabel("rt_paint_mode12");
     asm.Db(0);
+    if (this.EnableTargetOptimizations) {
+      asm.MarkLabel("rt_paint_mode13");
+      asm.Db(0);
+    }
     foreach (var cell in new[] { "rt_gpbord", "rt_psp", "rt_px1", "rt_px2", "rt_py", "rt_pny", "rt_pside" }) {
       asm.MarkLabel(cell);
       asm.Dw(0);
