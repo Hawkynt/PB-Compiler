@@ -18,7 +18,7 @@ foreach ($tier in $Cpu) {
   foreach ($variant in @('OPT', 'REF')) {
     $exe = Join-Path $output "V$prefix$variant.EXE"
     $flags = if ($variant -eq 'OPT') { @('--optimize') } else { @('--no-optimize') }
-    & dotnet run --project (Join-Path $root 'pbc') --configuration Release --no-build -- --dialect pb36 @flags $temporary -O $exe
+    & dotnet (Join-Path $root 'pbc/bin/Release/net8.0/pbc.dll') --dialect pb36 @flags $temporary -O $exe
     if ($LASTEXITCODE -ne 0) { throw "Compiler failed for $tier / $variant" }
     Write-Output "$tier $variant : $exe"
   }
