@@ -109,6 +109,11 @@ public sealed partial class DosRuntime {
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gpw")));
       asm.And(Reg.AX, (Imm)7);
       asm.Jnz(slow);
+      // Reorder rows only when the BASIC buffer cannot physically alias
+      // the A0000h VGA aperture. Segment < 9000h cannot reach A0000h
+      // through any 16-bit offset. Other layouts retain the original path.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbufseg")), (Imm)0x9000);
+      asm.Jae(slow);
       EmitCertifiedPlanarBranch(asm, fastAligned);
       asm.MarkLabel(slow);
     }
@@ -178,19 +183,27 @@ public sealed partial class DosRuntime {
     asm.Ret();
 
     if (fastAligned is not null) {
-      var fastRow = asm.DefineLabel();
       var fastPlane = asm.DefineLabel();
+      var fastRow = asm.DefineLabel();
       var fastByte = asm.DefineLabel();
-      var fastPlaneDone = asm.DefineLabel();
+      var noPadding = asm.DefineLabel();
 
       asm.MarkLabel(fastAligned);
       asm.Push(Reg.BP);
       asm.Mov(Reg.BP, Reg.SP);
-      asm.Sub(Reg.SP, (Imm)6); // SS locals: row base, rows remaining, byte width.
+      // SS locals: VGA origin, height, raw width, current plane's buffer
+      // origin, full row stride, padded plane stride, remaining rows.
+      asm.Sub(Reg.SP, (Imm)14);
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gph")));
       asm.Mov(Mem.Word(Reg.BP, -4), Reg.AX);
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pg_data_bytes")));
       asm.Mov(Mem.Word(Reg.BP, -6), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_pg_stride")));
+      asm.Mov(Mem.Word(Reg.BP, -12), Reg.AX);
+      asm.Shl(Reg.AX, 1);
+      asm.Shl(Reg.AX, 1);
+      asm.Mov(Mem.Word(Reg.BP, -10), Reg.AX);
+      asm.Mov(Mem.Word(Reg.BP, -8), Reg.DI);
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gby1")));
       asm.Mov(Reg.BX, 80);
       asm.Mul(Reg.BX);
@@ -199,15 +212,15 @@ public sealed partial class DosRuntime {
       asm.Add(Reg.AX, Reg.BX);
       asm.Mov(Mem.Word(Reg.BP, -2), Reg.AX);
 
-      // In 8086 real mode, use DS=A000 for planar reads and ES=the BASIC
-      // array for STOSB. Every runtime global is consumed before changing
-      // DS; BP-based locals reside in SS and remain accessible throughout.
+      // No user callbacks, video writes or unknown VGA effects occur between
+      // the plane selects. The final latch address remains plane 3 / final
+      // row / final byte as with the original row-major traversal.
       asm.Push(Reg.DS);
       asm.Mov(Reg.DX, 0x3CE);
       asm.In(Reg.AL, Reg.DX);
       asm.Push(Reg.AX);
-      SaveAndSet(asm, 0x3CE, 5, -5); // Read mode 0, preserve write mode.
-      SaveAndSet(asm, 0x3CE, 4, 0);  // First read map.
+      SaveAndSet(asm, 0x3CE, 5, -5);
+      SaveAndSet(asm, 0x3CE, 4, 0);
       asm.Mov(Reg.AX, 0xA000);
       asm.Mov(Reg.DS, Reg.AX);
       asm.Mov(Reg.DX, 0x3CE);
@@ -215,30 +228,39 @@ public sealed partial class DosRuntime {
       asm.Out(Reg.DX, Reg.AL);
       asm.Inc(Reg.DX);
 
-      asm.MarkLabel(fastRow);
-      asm.Xor(Reg.BX, Reg.BX); // Plane index.
+      asm.Xor(Reg.BX, Reg.BX);
       asm.MarkLabel(fastPlane);
       asm.Mov(Reg.AL, Reg.BL);
-      asm.Out(Reg.DX, Reg.AL);
+      asm.Out(Reg.DX, Reg.AL); // Four plane selections for the entire image.
       asm.Mov(Reg.SI, Mem.Word(Reg.BP, -2));
+      asm.Mov(Reg.DI, Mem.Word(Reg.BP, -8));
+      asm.Mov(Reg.AX, Mem.Word(Reg.BP, -4));
+      asm.Mov(Mem.Word(Reg.BP, -14), Reg.AX);
+      asm.MarkLabel(fastRow);
       asm.Mov(Reg.CX, Mem.Word(Reg.BP, -6));
       asm.MarkLabel(fastByte);
       asm.Mov(Reg.AL, Mem.Byte(Reg.SI));
-      asm.Stosb();
+      asm.Mov(Mem.Byte(Reg.DI).Seg(Reg.ES), Reg.AL);
       asm.Inc(Reg.SI);
+      asm.Inc(Reg.DI);
       asm.Dec(Reg.CX);
       asm.Jnz(fastByte);
       asm.Test(Mem.Word(Reg.BP, -6), (Imm)1);
-      asm.Jz(fastPlaneDone);
-      asm.Xor(Reg.AX, Reg.AX);
-      asm.Stosb();
-      asm.MarkLabel(fastPlaneDone);
+      asm.Jz(noPadding);
+      asm.Mov(Mem.Byte(Reg.DI).Seg(Reg.ES), (Imm)0);
+      asm.Inc(Reg.DI);
+      asm.MarkLabel(noPadding);
+      asm.Add(Reg.SI, (Imm)80);
+      asm.Sub(Reg.SI, Mem.Word(Reg.BP, -6));
+      asm.Add(Reg.DI, Mem.Word(Reg.BP, -10));
+      asm.Sub(Reg.DI, Mem.Word(Reg.BP, -12));
+      asm.Dec(Mem.Word(Reg.BP, -14));
+      asm.Jnz(fastRow);
+      asm.Mov(Reg.AX, Mem.Word(Reg.BP, -12));
+      asm.Add(Mem.Word(Reg.BP, -8), Reg.AX);
       asm.Inc(Reg.BX);
       asm.Cmp(Reg.BX, (Imm)4);
       asm.Jl(fastPlane);
-      asm.Add(Mem.Word(Reg.BP, -2), (Imm)80);
-      asm.Dec(Mem.Word(Reg.BP, -4));
-      asm.Jnz(fastRow);
 
       Restore(asm, 0x3CE, 4);
       Restore(asm, 0x3CE, 5);
