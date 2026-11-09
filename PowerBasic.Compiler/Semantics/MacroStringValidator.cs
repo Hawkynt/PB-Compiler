@@ -110,6 +110,11 @@ public static class MacroStringValidator {
           var start = at;
           ReadNumber(picture, ref at);
           var n = int.Parse(picture[start..at]) * (negative ? -1 : 1);
+          // The runtime rejects TA outside [-360,360] before changing
+          // any drawing state. Do not normalize invalid numbers into
+          // seemingly valid angles and erase the observable error.
+          if (n is < -360 or > 360)
+            return false;
           steps.Add(new(DrawStepKind.Angle, (n % 360 + 360) % 360, 0, false, false));
           continue;
         }

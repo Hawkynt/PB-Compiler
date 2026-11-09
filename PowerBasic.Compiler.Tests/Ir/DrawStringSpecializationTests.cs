@@ -39,6 +39,9 @@ public sealed class DrawStringSpecializationTests {
     });
   }
 
+  [TestCase("TA361 R2")]
+  [TestCase("TA-361 R2")]
+  [TestCase("TA32768")]
   [TestCase("R5 Z")]
   [TestCase("R9999999999999999999999999")]
   [TestCase("R5\u00ff")]
