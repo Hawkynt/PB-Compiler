@@ -125,6 +125,22 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(begin);
     }
 
+    // QuickBASIC's CIRCLE aspect ratio specifies y-radius/x-radius:
+    // for aspect > 1 the supplied radius is the Y radius, not the X
+    // radius. Preserve the existing x=r, y=r*aspect interpretation for
+    // smaller ratios, but use x=r/aspect, y=r for larger ratios.
+    asm.Mov(Mem.Byte(asm.Lbl("rt_arc_tall")), (Imm)0);
+    {
+      var aspectReady = asm.DefineLabel();
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gaspect"), 6));
+      asm.Cmp(Reg.AX, (Imm)0x3FF0);
+      asm.Jl(aspectReady);
+      asm.Cmp(Reg.AX, (Imm)0x8000);
+      asm.Jae(aspectReady);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_arc_tall")), (Imm)1);
+      asm.MarkLabel(aspectReady);
+    }
+
     // step = 1/r, guarding a zero radius so a degenerate circle plots its centre and stops
     asm.Cmp(Mem.Word(asm.Lbl("rt_gr")), (Imm)0);
     asm.Jle(done);
@@ -140,15 +156,28 @@ public sealed partial class DosRuntime {
     asm.Sahf();
     asm.Ja(done);                                          // past the end angle
 
-    asm.Fld(St.St0);                                       // x = cx + r*cos t
+    asm.Fld(St.St0);                                       // x = cx + r*cos t (or r*cos(t)/aspect)
     asm.Fcos();
+    {
+      var xScaled = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_arc_tall")), (Imm)0);
+      asm.Je(xScaled);
+      asm.Fdiv(Mem.Qword(asm.Lbl("rt_gaspect")));
+      asm.MarkLabel(xScaled);
+    }
     asm.Fimul(Mem.Word(asm.Lbl("rt_gr")));
     asm.Fiadd(Mem.Word(asm.Lbl("rt_gcx")));
     asm.Fistp(Mem.Word(asm.Lbl("rt_gax")));
 
-    asm.Fld(St.St0);                                       // y = cy - r*aspect*sin t
+    asm.Fld(St.St0);                                       // y = cy - r*sin(t)*min(aspect,1)
     asm.Fsin();
-    asm.Fmul(Mem.Qword(asm.Lbl("rt_gaspect")));
+    {
+      var yScaled = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_arc_tall")), (Imm)0);
+      asm.Jne(yScaled);
+      asm.Fmul(Mem.Qword(asm.Lbl("rt_gaspect")));
+      asm.MarkLabel(yScaled);
+    }
     asm.Fimul(Mem.Word(asm.Lbl("rt_gr")));
     asm.Fchs();
     asm.Fiadd(Mem.Word(asm.Lbl("rt_gcy")));
@@ -202,6 +231,8 @@ public sealed partial class DosRuntime {
       asm.Db(0);
     }
 
+    asm.MarkLabel("rt_arc_tall");
+    asm.Db(0);
     foreach (var cell in new[] { "rt_gax", "rt_gay" }) {
       asm.MarkLabel(cell);
       asm.Dw(0);
