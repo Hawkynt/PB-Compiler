@@ -6,7 +6,7 @@ namespace PowerBasic.Compiler.Ir.Passes;
 /// <summary>Expands DRAW text proved constant by the middle end, after consuming string folds.</summary>
 public static class DrawStringSpecialization {
   private static readonly string[] _CELLS = ["rt_gx1", "rt_gy1", "rt_gx2", "rt_gy2", "rt_gstyle", "rt_gcolor",
-    "rt_draw_color", "rt_draw_scale", "rt_draw_angle"];
+    "rt_draw_color", "rt_draw_scale", "rt_draw_angle", "rt_gpbord"];
 
   public static int Run(IrModule module) {
     ArgumentNullException.ThrowIfNull(module);
@@ -22,7 +22,10 @@ public static class DrawStringSpecialization {
         || !HasCompatibleEntry(module, "rt_draw_resume", [IrType.Ptr, IrType.I16])
         || module.FindFunction("rt_line") is { } line
           && (!line.IsDeclaration || line.Convention != IrCallConvention.Basic
-            || !line.ReturnType.IsVoid || line.Parameters.Count != 0))
+            || !line.ReturnType.IsVoid || line.Parameters.Count != 0)
+        || module.FindFunction("rt_paint") is { } paint
+          && (!paint.IsDeclaration || paint.Convention != IrCallConvention.Basic
+            || !paint.ReturnType.IsVoid || paint.Parameters.Count != 0))
       return 0;
     var changed = 0;
     foreach (var function in module.Functions.Where(function => !function.IsDeclaration).ToArray()) {
@@ -85,7 +88,9 @@ public static class DrawStringSpecialization {
     }
     // Wide literals have terminator-dependent numeric errors. Leave them to the shared parser rather
     // than erasing those checks; this restriction changes specialization, not source acceptance.
-    return steps.All(step => step.X is >= -9999 and <= 9999 && step.Y is >= -9999 and <= 9999);
+    return steps.All(step => step.Kind is DrawStepKind.Colour or DrawStepKind.Scale
+      or DrawStepKind.Angle or DrawStepKind.Paint
+      || step.X is >= -9999 and <= 9999 && step.Y is >= -9999 and <= 9999);
   }
 
   private static bool HasCompatibleEntry(IrModule module, string name, IrType[] parameters)

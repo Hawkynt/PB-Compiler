@@ -39,8 +39,6 @@ public sealed class DrawStringSpecializationTests {
     });
   }
 
-  [TestCase("S4 R5")]
-  [TestCase("A1 R5")]
   [TestCase("R5 Z")]
   [TestCase("R9999999999999999999999999")]
   [TestCase("R5\u00ff")]
@@ -58,6 +56,26 @@ public sealed class DrawStringSpecializationTests {
     Assert.That(draw.Parent, Is.Not.Null);
     Assert.That(text.Parent, Is.Not.Null);
     Assert.That(module.FindGlobal("rt_gx1"), Is.Null);
+    Assert.That(IrVerifier.Verify(module), Is.Empty);
+  }
+
+  [TestCase("S8 A1 R5", 1)]
+  [TestCase("S4 TA-90 R5", 1)]
+  [TestCase("S3 A3 TA360 C9 R5", 1)]
+  [TestCase("C3 P2,3 R5", 1)]
+  [TestCase("P255,255", 0)]
+  public void Run_GivenStateAndPaintCommands_ThenExpandsToTypedIrWithoutStringParser(
+      string picture, int moves) {
+    var (module, main, draw, _) = Build(picture);
+    Assert.That(DrawStringSpecialization.Run(module), Is.EqualTo(1));
+    Assert.That(draw.Parent, Is.Null);
+    Assert.That(main.AllInstructions.OfType<IrCall>().Count(call => call.Callee.Name == "rt_draw_move"),
+      Is.EqualTo(moves));
+    Assert.That(main.AllInstructions.OfType<IrCall>().All(call => call.Callee.Name != "rt_draw_parse"),
+      Is.True);
+    if (picture.Contains('P'))
+      Assert.That(main.AllInstructions.OfType<IrCall>().Count(call => call.Callee.Name == "rt_paint"),
+        Is.EqualTo(1));
     Assert.That(IrVerifier.Verify(module), Is.Empty);
   }
 

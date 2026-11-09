@@ -4,7 +4,7 @@ namespace PowerBasic.Compiler.Semantics;
 public readonly record struct DrawStep(DrawStepKind Kind, int X, int Y, bool Blank, bool NoUpdate);
 
 /// <summary>What a <see cref="DrawStep"/> does: move by a delta, move to a point, or set the colour.</summary>
-public enum DrawStepKind { Relative, Absolute, Colour }
+public enum DrawStepKind { Relative, Absolute, Colour, Scale, Angle, Paint }
 
 /// <summary>
 /// Compile-time checking of the two macro languages BASIC embeds in string literals: the tune
@@ -27,10 +27,9 @@ public static class MacroStringValidator {
   ///
   /// Unlike <see cref="ValidateDraw"/>, this only recognizes a subset that can be specialized.
   ///
-  /// The commands that carry state across steps - A and TA rotate the axes, S scales every delta -
-  /// are declined rather than approximated, as is P (a flood fill mid-picture) and X (which runs a
-  /// string that is not this one). Returning false leaves the original runtime call intact; it
-  /// does not reject the source or erase commands completed before a runtime error.
+  /// Scale, rotation and paint commands are emitted as explicit IR state stores and the
+  /// existing PAINT runtime call. X remains dynamic because it dereferences another string.
+  /// Returning false keeps the original runtime parser and all error behavior unchanged.
   /// </summary>
   public static bool TryParseDraw(string picture, out List<DrawStep> steps, out string? declined) {
     steps = [];
@@ -92,11 +91,39 @@ public static class MacroStringValidator {
           break;
         }
 
-        case 'C': {
+        case 'C' or 'S' or 'A': {
           var start = at;
           ReadNumber(picture, ref at);
-          steps.Add(new(DrawStepKind.Colour, int.Parse(picture[start..at]), 0, false, false));
-          continue; // B/N attach to the next movement, not to a colour change.
+          var n = int.Parse(picture[start..at]);
+          steps.Add(new(c switch {
+            'C' => DrawStepKind.Colour,
+            'S' => DrawStepKind.Scale,
+            _ => DrawStepKind.Angle,
+          }, c == 'A' ? n * 90 : n, 0, false, false));
+          continue; // B/N attach to the next movement, not to a state change.
+        }
+
+        case 'T': {
+          ++at; // The validated command is TA followed by a signed angle.
+          var negative = at < picture.Length && picture[at] == '-';
+          SkipSign(picture, ref at);
+          var start = at;
+          ReadNumber(picture, ref at);
+          var n = int.Parse(picture[start..at]) * (negative ? -1 : 1);
+          steps.Add(new(DrawStepKind.Angle, (n % 360 + 360) % 360, 0, false, false));
+          continue;
+        }
+
+        case 'P': {
+          var start = at;
+          ReadNumber(picture, ref at);
+          var paint = int.Parse(picture[start..at]);
+          ++at; // Validated comma.
+          start = at;
+          ReadNumber(picture, ref at);
+          var border = int.Parse(picture[start..at]);
+          steps.Add(new(DrawStepKind.Paint, paint, border, false, false));
+          continue;
         }
 
         default:

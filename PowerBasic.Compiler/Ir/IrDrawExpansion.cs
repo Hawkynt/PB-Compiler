@@ -21,8 +21,24 @@ internal static class IrDrawExpansion {
 
   private static void EmitCommands(IrModule module, IrBuilder builder, IReadOnlyList<DrawStep> steps) {
     foreach (var step in steps) {
-      if (step.Kind == DrawStepKind.Colour) {
-        builder.Store(new IrConstantInt(IrType.I16, step.X + 1), GetCell(module, "rt_draw_color"));
+      if (step.Kind is DrawStepKind.Colour or DrawStepKind.Scale or DrawStepKind.Angle) {
+        var cell = step.Kind switch {
+          DrawStepKind.Colour => "rt_draw_color",
+          DrawStepKind.Scale => "rt_draw_scale",
+          _ => "rt_draw_angle",
+        };
+        builder.Store(new IrConstantInt(IrType.I16, step.Kind == DrawStepKind.Colour ? step.X + 1 : step.X),
+          GetCell(module, cell));
+        continue;
+      }
+      if (step.Kind == DrawStepKind.Paint) {
+        builder.Store(new IrConstantInt(IrType.I16, step.X), GetCell(module, "rt_gcolor"));
+        builder.Store(new IrConstantInt(IrType.I16, (step.X & 255) + 1),
+          GetCell(module, "rt_draw_color"));
+        builder.Store(new IrConstantInt(IrType.I16, step.Y), GetCell(module, "rt_gpbord"));
+        var paint = module.FindFunction("rt_paint") ?? module.AddFunction(
+          new IrFunction("rt_paint", IrType.Void));
+        builder.Call(IrType.Void, paint);
         continue;
       }
       var move = module.FindFunction("rt_draw_move") ?? module.AddFunction(new IrFunction("rt_draw_move", IrType.Void,
