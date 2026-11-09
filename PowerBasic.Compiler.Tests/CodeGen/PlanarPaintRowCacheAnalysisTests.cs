@@ -28,6 +28,11 @@ public sealed class PlanarPaintRowCacheAnalysisTests {
     return Cpu8086.Run(exe, tracePlanarAccess: true);
   }
 
+  [TestCase("thin", 1259, """
+    LINE (10,20)-(35,26),2,B
+    PAINT (11,21),13,2
+    PRINT POINT(11,21);POINT(34,25)
+    """)]
   [TestCase("medium", 17207, """
     LINE (10,20)-(245,32),2,B
     PAINT (11,21),13,2
@@ -57,8 +62,12 @@ public sealed class PlanarPaintRowCacheAnalysisTests {
         "adaptive cache must preserve every observed pixel");
       Assert.That(baselinePorts, Is.EqualTo(previousGcWrites),
         "historical six-byte-cache baseline should be reproducible");
-      Assert.That(adaptivePorts, Is.LessThan(baselinePorts),
-        "prefetch must amortize VGA controller state transactions");
+      if (scenario == "thin")
+        Assert.That(adaptivePorts, Is.EqualTo(baselinePorts),
+          "short spans must keep the six-byte cache without extra VGA setup");
+      else
+        Assert.That(adaptivePorts, Is.LessThan(baselinePorts),
+          "prefetch must amortize VGA controller state transactions");
     });
     TestContext.Progress.WriteLine(
       $"PAINT adaptive [{scenario}]: 6-byte GC writes={baselinePorts}, "
@@ -67,6 +76,32 @@ public sealed class PlanarPaintRowCacheAnalysisTests {
       + $"adaptive instructions={adaptive.ExecutedInstructions}; "
       + $"6-byte VRAM host reads={baseline.PlanarHostReads}, "
       + $"adaptive VRAM host reads={adaptive.PlanarHostReads}");
+  }
+
+  [TestCase(127, 36)]
+  [TestCase(128, 36)]
+  [TestCase(511, 36)]
+  [TestCase(512, 36)]
+  [TestCase(620, 471)]
+  public void Execute_GivenAdaptiveBoundaryAndClippedRow_ThenPreservesReferencePixels(int width, int y) {
+    const int x0 = 3;
+    var x1 = x0 + width - 1;
+    var y1 = y + 6;
+    var body = $"""
+      LINE ({x0},{y})-({x1},{y1}),5,B
+      LINE ({x0 + 2},{y + 2})-({Math.Min(x1 - 2, x0 + 20)},{y + 3}),4,B
+      PAINT ({x1 - 1},{y + 1}),12,5
+      PRINT POINT({x0},{y});POINT({x0 + 1},{y + 1});POINT({x1 - 1},{y + 1});
+      PRINT POINT({x1},{y});POINT({x0 + 5},{y + 2});POINT({x1 - 2},{y1 - 1});
+      PRINT POINT({x0 - 1},{y});POINT({x1 + 1},{y1})
+      """;
+    var baseline = Trace(body);
+    var adaptive = Trace(body, adaptivePrefetch: true);
+    Assert.Multiple(() => {
+      Assert.That(adaptive.Output, Is.EqualTo(baseline.Output),
+        "conditional 32/80-byte prefetch must preserve the original topology");
+      Assert.That(adaptive.VideoBiosCalls, Is.EqualTo(baseline.VideoBiosCalls));
+    });
   }
 
   /// <summary>
