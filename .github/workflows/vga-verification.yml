@@ -51,6 +51,13 @@ jobs:
           --filter "FullyQualifiedName~PlanarGeneralRasterTests|FullyQualifiedName~PlanarSpriteGetPutTests|FullyQualifiedName~PlanarPrintFallbackTests|FullyQualifiedName~PlanarGraphicsDosBoxTests|FullyQualifiedName~PlanarVgaRegisterVectorTests|FullyQualifiedName~PlanarGraphicsDispatchBenchmarks|FullyQualifiedName~FastVideoTests"
           --logger "trx;LogFileName=vga-tests.trx"
           --logger "console;verbosity=detailed"
+      - name: Publish physical VGA benchmark executables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vga-hardware-benchmarks
+          path: build/vga-hardware/*.EXE
+          if-no-files-found: ignore
       - name: Upload VGA test results
         if: always()
         uses: actions/upload-artifact@v4
