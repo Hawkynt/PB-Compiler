@@ -90,11 +90,68 @@ the existing fallback, error 7, register restoration and cache
 invalidations. Run side-by-side executable code and DOS/VGA timing
 before enabling it.
 
+## Implemented: adaptive 32-/80-byte Read-Mode-1 prefetch
+
+The optimized SCREEN-12 scanline fill now selects a mask-read strategy
+from the length of a **completed, contiguous painted span**, before scanning
+its neighbor rows. This is not an arbitrary screen-size heuristic.
+
+- **Under 128 pixels:** retain the existing six-byte, single-VGA-byte
+  equality-mask cache.
+- **128–511 pixels:** prefetch one aligned 32-byte VGA block on demand.
+  The last partial block in a scanline contains only 16 bytes.
+- **512–640 pixels:** prefetch one 80-byte VGA scanline on demand.
+
+Each buffer is one slot, overwritten as the neighbor scan advances. The
+fill's 512-byte seed stack remains unchanged. Adaptive cache storage is
+**80 bytes of buffer plus 11 bytes of indexing/validity metadata**, emitted
+only for optimized builds with `EnableAdaptivePaintPrefetch` enabled.
+The original six-byte cache remains available and is selectable as an
+independent optimized benchmark baseline with
+`CodeGenerator.EnableAdaptivePaintPrefetch = false`. It is not
+affected by an unoptimized build's settings.
+
+When refilling, the generated 8086 code enters Read Mode 1, selects all
+four planes and streams each VGA byte once for border color and once
+for fill color, ORing the two masks in ordinary memory. It restores
+GC02/05/07 and the GC selector **exactly**, then reads the originally
+requested VRAM byte to retain the original cache miss's visible VGA
+latch address. Every completed fill span invalidates previous mask data.
+The prefetch is only active during neighbor scans of already established
+runs and only under the existing certified VGA layout/color restrictions.
+
+### Actual A/B results on the software 8086
+
+The same optimized program is emitted twice, with only the adaptive
+prefetch switch changed. These are measured host VGA I/O instructions,
+emulator dispatches and host reads—not estimated from a trace and not
+physical cycles.
+
+| Shape | GC writes (6 B) | GC writes (adaptive) | Reduction | Instruction dispatches (6 B / adaptive) | Host VRAM reads (6 B / adaptive) |
+|---|---:|---:|---:|---:|---:|
+| Medium | 17,207 | 6,361 | **63.0%** | 553,670 / 592,852 | 2,096 / 2,206 |
+| Wide | 37,051 | 12,877 | **65.2%** | 1,211,360 / 1,293,686 | 4,528 / 4,546 |
+| Three chambers | 58,075 | 39,851 | **31.4%** | 1,760,879 / 1,877,744 | 6,990 / 10,390 |
+
+The adaptive cache decreases VGA register traffic but increases software
+instruction dispatches by roughly 6–7%. On real VGA, OUT instructions can
+have substantial I/O wait states while DOS CPU instructions also vary
+with bus and caching; **no universal wall-clock speedup is established**.
+The three-chamber shape particularly wastes prefetch reads. On machines
+where the extra CPU work dominates, disable just this prefetch while
+retaining the Read-Mode-1 six-byte cache. Further improvements should
+reduce per-probe cache bookkeeping or adapt after a low-hit-rate block.
+
+A focused NUnit test compares all sampled pixels between the two
+optimized variants, validates expected GC-port-write reduction, and
+measures code shape. The complete VGA verification also includes an
+independent QEMU VGA/BIOS truth-table oracle.
+
 ## Candidate optimizations (not enabled)
 
 | Candidate | Extra RAM bound | Expected gain | Key legality checks |
 |---|---:|---|---|
-| Mode-12 full-row mask prefetch | 80 bytes per cached scanline | Reduce GC switching beyond the implemented one-byte Read Mode 1 cache | Cache invalidation after writes, controller restoration, measure 8086 port I/O |
+| Improve adaptive mask-cache eviction | Already allocated 80-byte buffer | Reduce unnecessary prefetch on chambered/comb-shaped regions | Maintain exact scanline read order, latch address and seed-stack behavior |
 | Plane-row mask accumulator | 80 bytes | Batch multiple spans into already-certified one-row masks | Overlap, paint topology, last VGA latch address, sequential observability |
 | Byte-run skip over fully blocked spans | At most 80 bytes | Avoid repeated per-pixel plane reads | Must distinguish border, already-painted and unfilled colors |
 | Pending-span coalescing | A few stack entries (at most existing 512-byte budget) | Reduce stack pushes on comb/maze shapes | Original error-7 behavior and identical 4-connectivity |
@@ -103,10 +160,11 @@ before enabling it.
 A 640×480 4-bit plane image takes **153,600 bytes** of video storage;
 copying it into conventional DOS memory just to fill a region is
 unreasonable. Even a 1-bit visited bitmap costs 38,400 bytes and can
-change behavior if the source image is modified mid-fill. The proposed
-80-byte row mask saves controller reconfiguration on long scans but
-preloads more pixels than needed for many shapes; the access-trace
-study above does not justify enabling it universally.
+change behavior if the source image is modified mid-fill. The now-implemented adaptive 80-byte row mask saves controller I/O on
+long scans but preloads more pixels than needed for chambered regions.
+The six-byte fallback remains enabled for short spans; real-hardware
+timing must determine whether the adaptive heuristic is beneficial on
+a given 8086/286/386 VGA chipset.
 
 ## References and licensing
 
