@@ -38,6 +38,58 @@ regions, equal border/paint colors, screen-edge seeds, and original image
 readback. Performance fixtures count dynamic 8086 emulator instructions
 and VGA port transactions; these are not hardware cycles.
 
+## Measured feasibility of a single 80-byte scanline cache
+
+`PlanarPaintRowCacheAnalysisTests` records real optimized 8086 emulator
+Read-Mode-1 VGA reads and intervening framebuffer writes. The analysis
+then replays **the exact same access trace** through four idealized
+single-slot mask buffers. Each buffer covers one aligned 8-, 16-, 32- or
+80-byte interval, holding the OR of the border-color and already-filled
+equality masks. It fetches two VGA comparison bytes per pixel-byte on a
+miss, and invalidates immediately when a VGA write intersects its window.
+
+The model does **not** permit multiple simultaneously resident scanlines.
+It optimistically omits conventional-memory mask stores, cache checks and
+controller setup/restore overhead. It is an access-count feasibility
+analysis, **not** a second executable graphics kernel and **not**
+cycle-accurate timing.
+
+| Actual fill shape | Current 6-byte cache: VRAM reads | 8-byte buffer | 16-byte buffer | 32-byte buffer | Whole 80-byte row |
+|---|---:|---:|---:|---:|---:|
+| Thin 26-pixel interior | 120 | 176 | 352 | 704 | 1,760 |
+| Medium 236-pixel interior | 1,980 | 2,112 | 2,112 | 1,472 | 3,680 |
+| Wide 632-pixel interior | 4,320 | 4,320 | 4,320 | 4,320 | **3,040** |
+| Three partitioned chambers | 6,574 | 10,032 | 13,088 | 16,448 | 30,400 |
+
+The **whole row** reduces VGA memory reads by 29.6% only in the wide
+case, but increases them by 86% (medium), 362% (chambers) or 1,367%
+(thin). A **32-byte buffer** achieves a 25.7% reduction for the medium
+case without prefetching the entire screen row. The 8-byte buffer adds
+only 56 reads in the thin example.
+
+This is **not** evidence that a whole-row cache is slower in real time.
+The current cache reprograms GC02/05/07 for each mask miss. The emitted
+implementation performs roughly **17 VGA GC port writes per such miss**,
+whereas a streaming-row implementation could amortize those writes
+over a block; this is exactly what makes a larger block attractive
+despite surplus VRAM reads. For the wide trace, there are 2,160 current
+mask misses but only 19 theoretical 80-byte-buffer refills. Even for
+the chambered trace, these numbers are 3,287 versus 190. An actual
+benchmark must include **I/O wait states, VGA RAM read latency,
+conventional-RAM mask writes, branch costs, restore requirements and
+per-CPU characteristics** before deciding which buffer wins.
+
+**Decision:** do not replace the existing 6-byte cache with an
+unconditional 80-byte prefetch. A guarded, benchmarked 8-/16-/32-byte
+look-ahead or a whole-row variant used only for sufficiently long,
+uninterrupted scanline runs is a plausible next experiment. Its
+eligibility must be proven from the actual run extent *before* the
+prefetch, without reading or altering a pixel that the reference
+algorithm would not otherwise access in an observable way. Preserve
+the existing fallback, error 7, register restoration and cache
+invalidations. Run side-by-side executable code and DOS/VGA timing
+before enabling it.
+
 ## Candidate optimizations (not enabled)
 
 | Candidate | Extra RAM bound | Expected gain | Key legality checks |
@@ -52,9 +104,9 @@ A 640×480 4-bit plane image takes **153,600 bytes** of video storage;
 copying it into conventional DOS memory just to fill a region is
 unreasonable. Even a 1-bit visited bitmap costs 38,400 bytes and can
 change behavior if the source image is modified mid-fill. The proposed
-80-byte row mask is preferable, but must be proven worthwhile against
-the current per-pixel certified read and controller switching costs
-before it is enabled.
+80-byte row mask saves controller reconfiguration on long scans but
+preloads more pixels than needed for many shapes; the access-trace
+study above does not justify enabling it universally.
 
 ## References and licensing
 
