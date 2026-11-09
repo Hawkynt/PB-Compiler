@@ -79,6 +79,25 @@ public sealed class DrawStringSpecializationTests {
     Assert.That(IrVerifier.Verify(module), Is.Empty);
   }
 
+  [TestCase("M12,34", 1)]
+  [TestCase("S4 A0 R5 D3", 2)]
+  [TestCase("S4 TA0 BR5 NR4", 1)]
+  [TestCase("S4 A0 R8192", 0)]
+  [TestCase("A0 S8 R5", 0)]
+  public void Run_GivenProvablyDirectMoves_ThenEmitsLineIrWithoutDrawInterpreter(
+      string picture, int lines) {
+    var (module, main, draw, _) = Build(picture);
+    Assert.That(DrawStringSpecialization.Run(module), Is.EqualTo(1));
+    var calls = main.AllInstructions.OfType<IrCall>().ToArray();
+    Assert.Multiple(() => {
+      Assert.That(calls.Count(call => call.Callee.Name == "rt_line"), Is.EqualTo(lines));
+      Assert.That(calls.Count(call => call.Callee.Name == "rt_draw_move"),
+        Is.EqualTo(picture.Contains("R8192") || picture.Contains("S8") ? 1 : 0));
+      Assert.That(draw.Parent, Is.Null);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
   [TestCase("shared")]
   [TestCase("foreign")]
   [TestCase("length")]
