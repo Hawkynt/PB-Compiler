@@ -59,6 +59,31 @@ public sealed class DrawDecompilationTests {
     });
   }
 
+  [Test]
+  [Category("Performance")]
+  public void Measure_GivenRepeatedConstantDraw_ThenEliminatesRuntimeParsingInstructions() {
+    const string source = """
+      SCREEN 13
+      PSET (100,100),0
+      FOR i%=1 TO 80
+        DRAW "S4 A0 C9 R5 L5"
+      NEXT
+      PRINT POINT(100,100);POINT(105,100);POINT(106,100)
+      END
+      """;
+    var baseline = Execute(source, false);
+    var optimized = Execute(source, true);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
+      Assert.That(optimized.ExecutedInstructions, Is.LessThan(baseline.ExecutedInstructions));
+    });
+    TestContext.Progress.WriteLine(
+      $"80 constant DRAW strings: optimized {optimized.ExecutedInstructions} dispatches, "
+      + $"{optimized.FetchedInstructionBytes} fetched instruction bytes; "
+      + $"interpreter {baseline.ExecutedInstructions} dispatches, "
+      + $"{baseline.FetchedInstructionBytes} fetched instruction bytes");
+  }
+
   [TestCase("S8 A1 R5;")]
   [TestCase("TA-90 C9 R5;")]
   [TestCase("C9 P6,9 R5;")]
