@@ -12,7 +12,7 @@ namespace PowerBasic.Compiler.Tests.CodeGen;
 /// </summary>
 [TestFixture]
 public sealed class DrawDecompilationTests {
-  private static Cpu8086 Execute(string source, bool optimize) {
+  private static Cpu8086 Execute(string source, bool optimize, Action<int>? onImageSize = null) {
     var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(source, "DE-DRAW.BAS", Dialect.Qb45),
       "DE-DRAW.BAS", Dialect.Qb45), Dialect.Qb45);
     Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
@@ -20,6 +20,7 @@ public sealed class DrawDecompilationTests {
     var image = generator.EmitExecutable();
     Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
     Assert.That(generator.BackendDeclines, Is.Empty);
+    onImageSize?.Invoke(image.Length);
     return Cpu8086.Run(image);
   }
 
@@ -71,14 +72,20 @@ public sealed class DrawDecompilationTests {
       PRINT POINT(100,100);POINT(105,100);POINT(106,100)
       END
       """;
-    var baseline = Execute(source, false);
-    var optimized = Execute(source, true);
+    var baselineBytes = 0;
+    var optimizedBytes = 0;
+    var baseline = Execute(source, false, size => baselineBytes = size);
+    var optimized = Execute(source, true, size => optimizedBytes = size);
     Assert.Multiple(() => {
       Assert.That(optimized.Output, Is.EqualTo(baseline.Output));
       Assert.That(optimized.ExecutedInstructions, Is.LessThan(baseline.ExecutedInstructions));
+      Assert.That(optimizedBytes, Is.GreaterThan(0));
+      Assert.That(baselineBytes, Is.GreaterThan(0));
     });
     TestContext.Progress.WriteLine(
-      $"80 constant DRAW strings: optimized {optimized.ExecutedInstructions} dispatches, "
+      $"80 constant DRAW strings: DOS executable bytes optimized/interpreter "
+      + $"{optimizedBytes}/{baselineBytes}; "
+      + $"optimized {optimized.ExecutedInstructions} dispatches, "
       + $"{optimized.FetchedInstructionBytes} fetched instruction bytes; "
       + $"interpreter {baseline.ExecutedInstructions} dispatches, "
       + $"{baseline.FetchedInstructionBytes} fetched instruction bytes");
