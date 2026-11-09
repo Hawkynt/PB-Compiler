@@ -1,0 +1,48 @@
+name: DRAW specialization verification
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'PowerBasic.Compiler/Ir/IrDrawExpansion.cs'
+      - 'PowerBasic.Compiler/Ir/Passes/DrawStringSpecialization.cs'
+      - 'PowerBasic.Compiler/Semantics/MacroStringValidator.cs'
+      - 'PowerBasic.Compiler/Runtime/DrawRuntime*.cs'
+      - 'PowerBasic.Compiler.Tests/Ir/Draw*'
+      - 'PowerBasic.Compiler.Tests/CodeGen/Draw*'
+      - 'PowerBasic.Compiler.Tests/CodeGen/ProvenDrawTests.cs'
+      - '.github/workflows/draw-verification.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  decompile:
+    name: Constant/mixed DRAW IR, runtime and pixel differential
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PBC_TEST_REDUCED_FPU: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build compiler and NUnit graphics tests
+        run: |
+          dotnet restore PB-Compiler.slnx
+          dotnet build PB-Compiler.slnx -c Release --no-restore
+      - name: Verify compiler-time DRAW expansion and fallback behavior
+        run: >
+          dotnet test PowerBasic.Compiler.Tests -c Release --no-build
+          --filter "FullyQualifiedName~DrawStringSpecializationTests|FullyQualifiedName~DrawDecompilationTests|FullyQualifiedName~DrawRuntimeTests|FullyQualifiedName~DrawStatementTests|FullyQualifiedName~DrawMacroStateTests|FullyQualifiedName~DrawMacroNumericStateTests|FullyQualifiedName~DrawMixedStringTests|FullyQualifiedName~DrawRuntimeErrorTests|FullyQualifiedName~ProvenDrawTests"
+          --logger "trx;LogFileName=draw-specialization.trx"
+          --logger "console;verbosity=detailed"
+      - name: Upload DRAW test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: draw-specialization-tests
+          path: '**/TestResults/draw-specialization.trx'
+          if-no-files-found: ignore
