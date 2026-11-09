@@ -180,8 +180,11 @@ public sealed partial class Cpu8086 {
   /// </summary>
   public long FetchedInstructionBytes { get; private set; }
 
-  public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000, bool exactFloatingPoint = false) {
-    var cpu = new Cpu8086(exactFloatingPoint);
+  public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000, bool exactFloatingPoint = false,
+      bool tracePlanarAccess = false) {
+    var cpu = new Cpu8086(exactFloatingPoint) {
+      _planarAccessTrace = tracePlanarAccess ? [] : null,
+    };
     cpu._executables["T.EXE"] = exe;                    // the test harness runs each image under this DOS name
     cpu.Load(exe);
     cpu.Execute(maxSteps);
@@ -189,7 +192,7 @@ public sealed partial class Cpu8086 {
   }
 
   /// <summary>
-  /// As <see cref="Run(byte[],int,bool)"/>, but with files already on the (in-memory) disk, and reporting
+  /// As <see cref="Run(byte[],int,bool,bool)"/>, but with files already on the (in-memory) disk, and reporting
   /// rather than throwing what stopped the program - the machine comes back either way.
   ///
   /// <para>

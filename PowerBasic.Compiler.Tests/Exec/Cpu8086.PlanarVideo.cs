@@ -14,6 +14,14 @@ public sealed partial class Cpu8086 {
   private byte _vgaGcIndex;
   private byte _vgaSeqIndex;
 
+  // Recorded only when an explicitly requested performance experiment runs.
+  // A write invalidates the image data on its addressed scanline. Read Mode 1
+  // entries represent actual host VRAM reads, not inferred pixel visits.
+  private List<(ushort Offset, bool IsWrite)>? _planarAccessTrace;
+
+  public IReadOnlyList<(ushort Offset, bool IsWrite)> PlanarAccessTrace
+    => this._planarAccessTrace ?? [];
+
   /// <summary>Host CPU byte reads entering the planar VGA aperture in the current video mode.</summary>
   public long PlanarHostReads { get; private set; }
 
@@ -47,6 +55,7 @@ public sealed partial class Cpu8086 {
       this._vgaLatches[plane] = this._vgaPlanes[plane][offset];
     if ((this._vgaGc[5] & 8) == 0)
       return this._vgaLatches[this._vgaGc[4] & 3];
+    this._planarAccessTrace?.Add(((ushort)offset, false));
     byte result = 0;
     for (var bit = 0; bit < 8; ++bit) {
       var matches = true;
@@ -63,6 +72,7 @@ public sealed partial class Cpu8086 {
   private void PlanarWrite(int address, byte value) {
     ++this.PlanarHostWrites;
     var offset = (address & (_MEMORY - 1)) - 0xA0000;
+    this._planarAccessTrace?.Add(((ushort)offset, true));
     var mode = this._vgaGc[5] & 3;
     var rotate = this._vgaGc[3] & 7;
     var rotated = (byte)((value >> rotate) | (value << ((8 - rotate) & 7)));
