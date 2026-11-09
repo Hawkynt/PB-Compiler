@@ -43,8 +43,7 @@ jobs:
           dotnet restore PB-Compiler.slnx
           dotnet build PB-Compiler.slnx --configuration Release --no-restore
       - name: Compile real-DOS hardware benchmarks (8086 / 80286 / 80386)
-        shell: pwsh
-        run: ./scripts/build-vga-hardware-bench.ps1
+        run: bash scripts/build-vga-hardware-bench.sh
       - name: Run focused P2/P5/P6/P7/P8 regressions and dispatch benchmarks
         run: >
           dotnet test PowerBasic.Compiler.Tests
