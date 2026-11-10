@@ -99,8 +99,12 @@ public sealed class PixelRuntimeInliningTests {
     Assert.That(new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes).Before(witness), Is.Null);
   }
 
-  [TestCase("SCREEN 13:! NOP:PSET (3,2),7", 1)]
-  [TestCase("SCREEN 13:! MOV AX,BX:PSET (3,2),7", 1)]
+  // The analysis retains the proven mode for these harmless ASM statements,
+  // but the broader SSA/middle-end pipeline deliberately refuses entire
+  // functions containing unpromoted inline ASM (register/flag ordering).
+  // Do not confuse retained proof with permission to run every IR rewrite.
+  [TestCase("SCREEN 13:! NOP:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:! MOV AX,BX:PSET (3,2),7", 0)]
   [TestCase("SCREEN 13:! OUT DX,AL:PSET (3,2),7", 0)]
   [TestCase("SCREEN 13:! MOV ES,AX:PSET (3,2),7", 0)]
   [TestCase("SCREEN 13:PSET (3,2),7", 1)]
