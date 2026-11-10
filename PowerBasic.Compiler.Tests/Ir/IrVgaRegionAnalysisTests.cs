@@ -144,6 +144,49 @@ public sealed class IrVgaRegionAnalysisTests {
     });
   }
 
+  [TestCase("NOP")]
+  [TestCase("MOV AX, BX")]
+  [TestCase("XOR AX, AX")]
+  [TestCase("INC BX")]
+  [TestCase("ADD AX, CX")]
+  [TestCase("CMP AL, BH")]
+  public void Region_GivenProvenRegisterOnlyAsm_ThenKeepsVgaConfigurationFact(string source) {
+    var fn = new IrFunction("draws", IrType.Void);
+    var block = fn.CreateBlock("entry");
+    var before = block.Append(new IrAlloca(IrType.I16));
+    var asm = block.Append(new IrInlineAsm(source));
+    var after = block.Append(new IrAlloca(IrType.I16));
+    var analysis = new IrVgaRegionAnalysis(fn);
+    Assert.Multiple(() => {
+      Assert.That(IrVgaEffects.IsProvenRegisterOnlyAsm(asm), Is.True);
+      Assert.That(analysis.HasUnchangedConfiguration(before, after), Is.True);
+      Assert.That(analysis.HasUnchangedLatchState(before, after), Is.True);
+      Assert.That(analysis.HasNoInterveningDeviceEffects(before, after), Is.True);
+    });
+  }
+
+  [TestCase("MOV ES, AX")]
+  [TestCase("MOV AX, [BX]")]
+  [TestCase("OUT DX, AL")]
+  [TestCase("INT 10h")]
+  [TestCase("CALL BX")]
+  [TestCase("MOV AX, BX; OUT DX, AL")]
+  [TestCase("MOV AX, 1234h")]
+  [TestCase("PUSH AX")]
+  public void Region_GivenUnprovenAsm_ThenKeepsDeviceBarrier(string source) {
+    var fn = new IrFunction("draws", IrType.Void);
+    var block = fn.CreateBlock("entry");
+    var before = block.Append(new IrAlloca(IrType.I16));
+    var asm = block.Append(new IrInlineAsm(source));
+    var after = block.Append(new IrAlloca(IrType.I16));
+    var analysis = new IrVgaRegionAnalysis(fn);
+    Assert.Multiple(() => {
+      Assert.That(IrVgaEffects.IsProvenRegisterOnlyAsm(asm), Is.False);
+      Assert.That(analysis.HasUnchangedConfiguration(before, after), Is.False);
+      Assert.That(analysis.HasUnchangedLatchState(before, after), Is.False);
+    });
+  }
+
   [Test]
   public void Region_GivenInlineAssemblerBetweenDraws_ThenRevokesEveryVgaProof() {
     var fn = new IrFunction("draws", IrType.Void);

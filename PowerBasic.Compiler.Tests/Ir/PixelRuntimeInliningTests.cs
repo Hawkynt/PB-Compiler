@@ -32,6 +32,17 @@ public sealed class PixelRuntimeInliningTests {
     return model;
   }
 
+  [Test]
+  public void Analyze_GivenRegisterOnlyInlineAssembler_ThenRetainsModeFact() {
+    var function = new IrFunction("probe", IrType.Void);
+    var block = function.CreateBlock("entry");
+    var setMode = new IrFunction("rt_screen_mode", IrType.Void, [new IrArgument(IrType.I16, 0)]);
+    block.Append(new IrCall(IrType.Void, setMode, [new IrConstantInt(IrType.I16, 13)]));
+    block.Append(new IrInlineAsm("XOR AX, AX"));
+    var witness = block.Append(new IrAlloca(IrType.I16));
+    Assert.That(new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes).Before(witness), Is.EqualTo(13));
+  }
+
   [TestCase("rt_out")]
   [TestCase("rt_inp")]
   [TestCase("rt_poke")]
@@ -88,6 +99,10 @@ public sealed class PixelRuntimeInliningTests {
     Assert.That(new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes).Before(witness), Is.Null);
   }
 
+  [TestCase("SCREEN 13:! NOP:PSET (3,2),7", 1)]
+  [TestCase("SCREEN 13:! MOV AX,BX:PSET (3,2),7", 1)]
+  [TestCase("SCREEN 13:! OUT DX,AL:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:! MOV ES,AX:PSET (3,2),7", 0)]
   [TestCase("SCREEN 13:PSET (3,2),7", 1)]
   [TestCase("SCREEN 12:PSET (3,2),7", 0)]
   [TestCase("PSET (3,2),7", 0)]
