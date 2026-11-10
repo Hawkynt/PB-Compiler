@@ -32,6 +32,62 @@ public sealed class PixelRuntimeInliningTests {
     return model;
   }
 
+  [TestCase("rt_out")]
+  [TestCase("rt_inp")]
+  [TestCase("rt_poke")]
+  [TestCase("rt_peek")]
+  [TestCase("rt_call_absolute")]
+  [TestCase("rt_graphics_mode")]
+  [TestCase("opaque_external")]
+  public void Analyze_GivenOpaqueDeviceOrExternalCall_ThenRevokesPackedModeProof(string runtimeName) {
+    var function = new IrFunction("probe", IrType.Void);
+    var block = function.CreateBlock("entry");
+    var set = new IrFunction("rt_screen_mode", IrType.Void, [new IrArgument(IrType.I16, 0)]);
+    block.Append(new IrCall(IrType.Void, set, [new IrConstantInt(IrType.I16, 13)]));
+    var first = block.Append(new IrAlloca(IrType.I16));
+    block.Append(new IrCall(IrType.Void, new IrFunction(runtimeName, IrType.Void), []));
+    var second = block.Append(new IrAlloca(IrType.I16));
+    var analysis = new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes);
+    Assert.Multiple(() => {
+      Assert.That(analysis.Before(first), Is.EqualTo(13));
+      Assert.That(analysis.Before(second), Is.Null,
+        "opaque device or CALL barriers must invalidate the assumed video mode and hardware mapping");
+    });
+  }
+
+  [Test]
+  public void Analyze_GivenInlineAssemblerOrUncertifiedFarMemory_ThenRevokesScreenMode() {
+    var segment = new IrConstantInt(IrType.I16, unchecked((short)0xA000));
+    foreach (var operation in new Func<IrValue, IrInstruction>[] {
+      _ => new IrInlineAsm("out dx, al"),
+      pointer => new IrLoad(IrType.U8, pointer),
+      pointer => new IrStore(new IrConstantInt(IrType.U8, 42), pointer),
+    }) {
+      var function = new IrFunction("probe", IrType.Void);
+      var block = function.CreateBlock("entry");
+      block.Append(new IrCall(IrType.Void,
+        new IrFunction("rt_screen_mode", IrType.Void, [new IrArgument(IrType.I16, 0)]),
+        [new IrConstantInt(IrType.I16, 13)]));
+      var far = new IrFarPtr(segment, new IrConstantInt(IrType.I16, 1234));
+      block.Append(operation(far));
+      var witness = block.Append(new IrAlloca(IrType.I16));
+      Assert.That(new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes).Before(witness),
+        Is.Null, "raw memory/inline ASM must never be a reusable SCREEN-13 proof");
+    }
+  }
+
+  [Test]
+  public void Analyze_GivenForgedScreenRuntimeSignature_ThenDoesNotCertifyMode() {
+    var function = new IrFunction("probe", IrType.Void);
+    var block = function.CreateBlock("entry");
+    // Same name and constant argument, but not the compiler's own void(i16)
+    // BASIC ABI: treating this as SCREEN would invent a hardware-state fact.
+    var fake = new IrFunction("rt_screen_mode", IrType.Void, [new IrArgument(IrType.I32, 0)]);
+    block.Append(new IrCall(IrType.Void, fake, [new IrConstantInt(IrType.I32, 13)]));
+    var witness = block.Append(new IrAlloca(IrType.I16));
+    Assert.That(new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes).Before(witness), Is.Null);
+  }
+
   [TestCase("SCREEN 13:PSET (3,2),7", 1)]
   [TestCase("SCREEN 12:PSET (3,2),7", 0)]
   [TestCase("PSET (3,2),7", 0)]

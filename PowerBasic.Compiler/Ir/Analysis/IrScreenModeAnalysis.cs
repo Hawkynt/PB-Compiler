@@ -52,11 +52,19 @@ public sealed class IrScreenModeAnalysis {
     if (instruction is IrCall call) {
       if (call.Callee is not IrFunction { IsDeclaration: true } callee)
         return null;
+      // Trust only our exact BASIC runtime ABI, not any same-named external
+      // declaration. Unknown calling conventions/signatures may execute
+      // arbitrary code, including BIOS mode changes and indexed VGA OUTs.
       if (callee.Name == "rt_screen_mode")
-        return call.ArgCount == 1 && call.GetOperand(1) is IrConstantInt { Type: var type } value
+        return IsRuntimeCall(call, IrType.Void, IrType.I16)
+          && call.GetOperand(1) is IrConstantInt { Type: var type } value
           && type == IrType.I16 ? value.Value : null;
-      // These native pixel routines neither switch modes nor program VGA addressing registers.
-      if (callee.Name is "rt_pset" or "rt_point" or "rt_pset_mode13_offset")
+      // Known pixel APIs do not switch video modes or alter addressing.
+      // PEEK/POKE/OUT/INP/absolute CALL remain opaque barriers unless the
+      // existing tightly bounded packed-framebuffer POKE proof applies.
+      if (callee.Name == "rt_pset" && IsRuntimeCall(call, IrType.Void, IrType.I16, IrType.I16, IrType.I16)
+          || callee.Name == "rt_point" && IsRuntimeCall(call, IrType.I32, IrType.I16, IrType.I16)
+          || callee.Name == "rt_pset_mode13_offset" && IsRuntimeCall(call, IrType.Void, IrType.I16, IrType.I16))
         return mode;
       // A proven A000h packed framebuffer POKE cannot reprogram the VGA mode.
       if (IrDefaultSegmentAnalysis.IsPackedVgaPoke(call, segment))
@@ -71,6 +79,17 @@ public sealed class IrScreenModeAnalysis {
       return null;
     return mode;
   }
+
+  private static bool IsRuntimeCall(IrCall call, IrType result, params IrType[] parameters)
+    => call.Convention == IrCallConvention.Basic
+      && call.Type == result
+      && call.Callee is IrFunction { IsDeclaration: true } callee
+      && callee.ReturnType == result
+      && callee.Convention == IrCallConvention.Basic
+      && call.ArgCount == parameters.Length
+      && callee.Parameters.Select(parameter => parameter.Type).SequenceEqual(parameters)
+      && Enumerable.Range(0, parameters.Length)
+        .All(index => call.GetOperand(index + 1).Type == parameters[index]);
 
   private static bool IsProgramStorage(IrValue pointer) => pointer is IrAlloca
     || pointer is IrGlobalVariable global && (!global.Name.StartsWith("rt_", StringComparison.Ordinal)
