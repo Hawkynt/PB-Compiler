@@ -248,6 +248,43 @@ For entirely known text, the IR now contains the executable commands instead of 
   semantics. Other movement types still call the shared `rt_draw_move` IR helper, which
   eventually invokes `rt_line` under the current scale, rotation and mode.
 
+### Cross-statement video-state proof barriers
+
+The drawing cursor is a logical BASIC state; the hardware mode, selected VGA
+registers, plane latches and current page are separate observable states.
+Never use one as proof of another. Compiler optimizations spanning DRAW,
+LINE, PSET, POINT, PAINT or other source statements must revalidate the
+active mode/hardware configuration after any effect not explicitly known
+harmless.
+
+The forward `IrScreenModeAnalysis` proves a screen mode only after a
+correctly typed `rt_screen_mode` call with a constant argument. Runtime
+pixel calls are allowed to preserve this fact **only** when their full
+BASIC call ABI matches the compiler's expected signature. Other calls
+and indirect calls (including calls to arbitrary BASIC procedures),
+inline assembly, `INP`/`OUT`, `PEEK`, unproved `POKE`, and unknown far
+memory loads/stores invalidate this proof. A narrowly certified
+`DEF SEG = &HA000` packed framebuffer POKE is a documented exception:
+it cannot program the controller, but it is still an observable pixel
+write and is not generally movable or erasable.
+
+`IrVgaRegionAnalysis` separately records configuration, latch and
+observation epochs; its reuse queries are valid only in forward order
+within one basic block. All unknown device effects and branches fence
+reuse. In particular, `PEEK` can observe or modify VGA read latches even
+when it does not change the BIOS video mode number; an arbitrary `OUT`
+can change memory decoding while BIOS still reports `SCREEN 12`.
+Runtime low-level planar paths also independently certify controller
+addressing before using their byte-mask accelerators.
+
+The DRAW decompiler is restricted to one proven uninterrupted macro
+string/prefix. It never folds separate DRAW statements across a CALL or
+moves drawing across arbitrary BASIC operations. If inter-statement
+fusion, overdraw elimination or a persistent virtual drawing cursor is
+added later, require the same mode, register, latch, memory-alias and
+observer-effect proofs at every intervening instruction before allowing
+such a rewrite. Do not infer safety solely from a known screen number.
+
 The specialization is deliberately conservative around error handlers, inline assembly, unusual
 runtime ABI/cell definitions, dynamic numerical parameters, `X` substring execution, and
 unrepresentable numeric arguments. Differential tests compare optimized and interpreter
