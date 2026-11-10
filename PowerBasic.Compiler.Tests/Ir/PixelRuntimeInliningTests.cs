@@ -93,6 +93,11 @@ public sealed class PixelRuntimeInliningTests {
   [TestCase("PSET (3,2),7", 0)]
   [TestCase("SCREEN 13:SCREEN VAL(COMMAND$):PSET (3,2),7", 0)]
   [TestCase("SCREEN 13:OUT &H3C4,4:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:OUT &H3CE,6:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:PRINT PEEK(0):PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:DEF SEG=&HB800:POKE 0,7:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:PRINT INP(&H3CF):PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:DEF SEG=&HA000:POKE 100,1:PSET (3,2),7", 1)]
   [TestCase("SCREEN 13:FOR y%=0 TO 199:PSET (3,y%),7:NEXT", 1)]
   public void Optimize_GivenAProvenPackedMode_ThenInlinesItsAddressCalculation(string source, int writes) {
     var module = IrLowering.TryLowerModule(Bind(source + "\nEND"), out var reason);
