@@ -122,6 +122,43 @@ public sealed class IrVgaRegionAnalysisTests {
     });
   }
 
+  [TestCase("rt_out")]
+  [TestCase("rt_inp")]
+  [TestCase("rt_poke")]
+  [TestCase("rt_peek")]
+  [TestCase("rt_call_absolute")]
+  [TestCase("rt_screen_mode")]
+  [TestCase("user_procedure")]
+  public void Region_GivenPotentialVgaObserverBetweenDraws_ThenRefusesRegisterOrLatchReuse(
+      string operation) {
+    var fn = new IrFunction("draws", IrType.Void);
+    var block = fn.CreateBlock("entry");
+    var before = block.Append(new IrAlloca(IrType.I16));
+    block.Append(new IrCall(IrType.Void, new IrFunction(operation, IrType.Void), []));
+    var after = block.Append(new IrAlloca(IrType.I16));
+    var analysis = new IrVgaRegionAnalysis(fn);
+    Assert.Multiple(() => {
+      Assert.That(analysis.HasUnchangedConfiguration(before, after), Is.False);
+      Assert.That(analysis.HasUnchangedLatchState(before, after), Is.False);
+      Assert.That(analysis.HasNoInterveningDeviceEffects(before, after), Is.False);
+    });
+  }
+
+  [Test]
+  public void Region_GivenInlineAssemblerBetweenDraws_ThenRevokesEveryVgaProof() {
+    var fn = new IrFunction("draws", IrType.Void);
+    var block = fn.CreateBlock("entry");
+    var before = block.Append(new IrAlloca(IrType.I16));
+    block.Append(new IrInlineAsm("mov dx, 03c4h; out dx, al"));
+    var after = block.Append(new IrAlloca(IrType.I16));
+    var analysis = new IrVgaRegionAnalysis(fn);
+    Assert.Multiple(() => {
+      Assert.That(analysis.HasUnchangedConfiguration(before, after), Is.False);
+      Assert.That(analysis.HasUnchangedLatchState(before, after), Is.False);
+      Assert.That(analysis.HasNoInterveningDeviceEffects(before, after), Is.False);
+    });
+  }
+
   [Test]
   public void Region_GivenReverseInstructionOrder_ThenNoForwardReuseProofIsGranted() {
     var function = new IrFunction("f", IrType.Void);
