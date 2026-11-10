@@ -1,0 +1,83 @@
+name: VGA verification
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'PowerBasic.Compiler/Runtime/**'
+      - 'PowerBasic.Compiler.Tests/CodeGen/Planar*'
+      - 'PowerBasic.Compiler.Tests/CodeGen/PackedPaintScanlineTests.cs'
+      - 'PowerBasic.Compiler.Tests/CodeGen/PlanarPaintRowCacheAnalysisTests.cs'
+      - 'PowerBasic.Compiler.Tests/Exec/Cpu8086.PlanarVideo.cs'
+      - 'PowerBasic.Compiler.Tests/CodeGen/FastVideoTests.cs'
+      - 'PowerBasic.Compiler.Tests/CodeGen/DosBoxRunner.cs'
+      - 'tests/oracles/vga-qemu-boot.asm'
+      - 'scripts/test-qemu-vga.sh'
+      - 'scripts/build-vga-hardware-bench.ps1'
+      - 'docs/performance/SCREEN12.BAS.template'
+      - 'tests/diff/qb45/DIFF0*.BAS'
+      - '.github/workflows/vga-verification.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dosbox:
+    name: VGA DOSBox framebuffer and optimized-kernel tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SDL_AUDIODRIVER: dummy
+      SDL_VIDEODRIVER: dummy
+      PBC_TEST_REDUCED_FPU: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install DOSBox
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dosbox
+          echo "DOSBOX_EXE=$(command -v dosbox)" >> "$GITHUB_ENV"
+      - name: Restore and build
+        run: |
+          dotnet restore PB-Compiler.slnx
+          dotnet build PB-Compiler.slnx --configuration Release --no-restore
+      - name: Compile real-DOS hardware benchmarks (8086 / 80286 / 80386)
+        run: bash scripts/build-vga-hardware-bench.sh
+      - name: Run focused P2/P5/P6/P7/P8 regressions and dispatch benchmarks
+        run: >
+          dotnet test PowerBasic.Compiler.Tests
+          --configuration Release --no-build
+          --filter "FullyQualifiedName~PlanarPaintRowCacheAnalysisTests|FullyQualifiedName~PlanarPaintSpanTests|FullyQualifiedName~PlanarGeneralRasterTests|FullyQualifiedName~PlanarSpriteGetPutTests|FullyQualifiedName~PlanarPrintFallbackTests|FullyQualifiedName~PlanarGraphicsDosBoxTests|FullyQualifiedName~PlanarVgaRegisterVectorTests|FullyQualifiedName~PlanarGraphicsDispatchBenchmarks|FullyQualifiedName~PackedPaintScanlineTests|FullyQualifiedName~FastVideoTests"
+          --logger "trx;LogFileName=vga-tests.trx"
+          --logger "console;verbosity=detailed"
+      - name: Publish physical VGA benchmark executables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vga-hardware-benchmarks
+          path: build/vga-hardware/*.EXE
+          if-no-files-found: ignore
+      - name: Upload VGA test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vga-focused-tests
+          path: '**/TestResults/vga-tests.trx'
+          if-no-files-found: ignore
+
+  qemu:
+    name: Independent QEMU VGA / BIOS truth-table oracle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install independent VGA emulator and bootsector assembler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 nasm
+      - name: Verify VGA write modes, BIOS pixels and four hardware planes
+        run: bash scripts/test-qemu-vga.sh

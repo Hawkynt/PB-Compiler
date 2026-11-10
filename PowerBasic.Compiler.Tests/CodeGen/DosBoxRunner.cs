@@ -249,6 +249,142 @@ public static class DosBoxRunner {
   }
 
   /// <summary>
+  /// Runs a program without shell stdout redirection and returns files it creates. This is the
+  /// graphics-console oracle: handle 1 remains CON, while the BASIC program can record POINT()
+  /// samples through an explicit file handle for assertion after the emulator exits.
+  /// </summary>
+  public static Dictionary<string, string> RunUnredirectedWithFiles(
+      byte[] exeBytes, IReadOnlyList<string> fetchFiles, int timeoutMs = 60000) {
+    var dir = Path.Combine(Path.GetTempPath(), "pbc-con-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(dir);
+    try {
+      File.WriteAllBytes(Path.Combine(dir, "T.EXE"), exeBytes);
+      var conf = Path.Combine(dir, "dosbox.conf");
+      File.WriteAllText(conf, $"""
+        [sdl]
+        window_position = 9000,9000
+        [dosbox]
+        ems=true
+        [autoexec]
+        mount c "{dir}"
+        c:
+        T.EXE
+        echo ok > DONE.TXT
+        exit
+        """);
+      var psi = Launch($"-conf \"{conf}\"");
+      using var process = Process.Start(psi)!;
+      var sentinel = Path.Combine(dir, "DONE.TXT");
+      var deadline = Environment.TickCount64 + Deadline(timeoutMs);
+      var minimized = false;
+      while (!File.Exists(sentinel) && !process.HasExited && Environment.TickCount64 < deadline) {
+        if (!minimized)
+          minimized = TryHideWindow(process);
+        Thread.Sleep(50);
+      }
+      var completed = File.Exists(sentinel);
+      if (!process.HasExited) {
+        if (completed)
+          Thread.Sleep(200);
+        process.Kill(entireProcessTree: true);
+        process.WaitForExit(5000);
+      }
+      if (!completed)
+        Assert.Fail(process.HasExited
+          ? "DOSBox exited before the unredirected program reached DONE.TXT"
+          : "DOSBox unredirected run timed out");
+
+      var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+      foreach (var name in fetchFiles) {
+        var path = Path.Combine(dir, name);
+        if (File.Exists(path))
+          files[name] = File.ReadAllText(path);
+      }
+      return files;
+    } finally {
+      try {
+        Directory.Delete(dir, recursive: true);
+      } catch (IOException) {
+      }
+    }
+  }
+
+  /// <summary>
+  /// Runs multiple DOS executables in one DOSBox session without redirecting stdout and returns files
+  /// left by the sequence. When chainFromFirst is set, only T0.EXE is launched from the DOS shell;
+  /// the first image must CHAIN "T1.EXE" via DOS EXEC before returning to the shell. DOS shells
+  /// may restore their own video mode between separately launched commands, destroying the framebuffer
+  /// that the second image is supposed to inspect.
+  /// </summary>
+  public static Dictionary<string, string> RunUnredirectedSequenceWithFiles(
+      IReadOnlyList<byte[]> executables, IReadOnlyList<string> fetchFiles,
+      int timeoutMs = 60000, bool chainFromFirst = false) {
+    ArgumentNullException.ThrowIfNull(executables);
+    if (executables.Count == 0)
+      throw new ArgumentException("At least one DOS executable is required.", nameof(executables));
+    if (chainFromFirst && executables.Count < 2)
+      throw new ArgumentException("CHAIN capture needs both the drawing program and its target.",
+        nameof(executables));
+
+    var dir = Path.Combine(Path.GetTempPath(), "pbc-seq-" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(dir);
+    try {
+      for (var i = 0; i < executables.Count; ++i)
+        File.WriteAllBytes(Path.Combine(dir, $"T{i}.EXE"), executables[i]);
+
+      var commands = chainFromFirst ? "T0.EXE" : string.Join(Environment.NewLine,
+        Enumerable.Range(0, executables.Count).Select(i => $"T{i}.EXE"));
+      var conf = Path.Combine(dir, "dosbox.conf");
+      File.WriteAllText(conf, $"""
+        [sdl]
+        window_position = 9000,9000
+        [dosbox]
+        ems=true
+        [autoexec]
+        mount c "{dir}"
+        c:
+        {commands}
+        echo ok > DONE.TXT
+        exit
+        """);
+      var psi = Launch($"-conf \"{conf}\"");
+      using var process = Process.Start(psi)!;
+      var sentinel = Path.Combine(dir, "DONE.TXT");
+      var deadline = Environment.TickCount64 + Deadline(timeoutMs);
+      var minimized = false;
+      while (!File.Exists(sentinel) && !process.HasExited && Environment.TickCount64 < deadline) {
+        if (!minimized)
+          minimized = TryHideWindow(process);
+        Thread.Sleep(50);
+      }
+      var completed = File.Exists(sentinel);
+      if (!process.HasExited) {
+        if (completed)
+          Thread.Sleep(200);
+        process.Kill(entireProcessTree: true);
+        process.WaitForExit(5000);
+      }
+      if (!completed)
+        Assert.Fail(process.HasExited
+          ? "DOSBox exited before the executable sequence reached DONE.TXT"
+          : "DOSBox executable sequence timed out");
+
+      var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+      foreach (var name in fetchFiles) {
+        var path = Path.Combine(dir, name);
+        if (File.Exists(path))
+          files[name] = File.ReadAllText(path);
+      }
+      return files;
+    } finally {
+      try {
+        Directory.Delete(dir, recursive: true);
+      } catch (IOException) {
+      }
+    }
+  }
+
+  /// <summary>
   /// Runs <paramref name="exeBytes"/> in DOSBox and additionally retrieves the
   /// named files the program created in its working directory (e.g. UNITTEST.LOG).
   /// Optional <paramref name="stdinText"/> is redirected into the program;

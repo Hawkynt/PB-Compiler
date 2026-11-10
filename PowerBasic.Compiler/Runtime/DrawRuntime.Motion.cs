@@ -30,7 +30,7 @@ public static partial class DrawRuntime {
       this.Store(w, "rt_gstyle", w.Ix(-1));
       var encodedColor = this.Load(w, "rt_draw_color");
       this.Store(w, "rt_gcolor", w.B.Select(w.Cmp(IrCmpPred.Eq, encodedColor, w.Ix(0)),
-        w.Ix(15), w.B.Sub(encodedColor, w.Ix(1))));
+        this.Load(w, "rt_fgcolor"), w.B.Sub(encodedColor, w.Ix(1))));
       var flags = function.Parameters[3];
       var noUpdate = w.Cmp(IrCmpPred.Ne, w.B.And(flags, w.Ix(2)), w.Ix(0));
       w.If(w.Cmp(IrCmpPred.Eq, w.B.And(flags, w.Ix(1)), w.Ix(0)), () => {

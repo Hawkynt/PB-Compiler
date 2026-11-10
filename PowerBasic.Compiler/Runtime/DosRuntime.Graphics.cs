@@ -54,7 +54,92 @@ public sealed partial class DosRuntime {
     this.Arc = asm.MarkLabel("rt_arc");
     asm.Push(Reg.AX);
     asm.Push(Reg.BX);
+    asm.Push(Reg.CX);
     asm.Push(Reg.DX);
+    asm.Push(Reg.DI);
+
+    if (this.EnableTargetOptimizations) {
+      var begin = asm.DefineLabel();
+      var planar = asm.DefineLabel();
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_arc_active")), (Imm)0);
+
+      // Conservative, provably in-bounds ellipse/arc subset:
+      // 0 <= aspect < 1, radius 1..230, and all possible rounded
+      // coordinates at least two pixels inside the Mode 12 viewport.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gr")), (Imm)1);
+      asm.Jl(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gr")), (Imm)230);
+      asm.Jg(begin);
+      // Reject invalid centers before adding a radius, so signed 16-bit
+      // coordinate arithmetic cannot wrap into an apparently valid bound.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcx")), (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcx")), (Imm)639);
+      asm.Jg(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcy")), (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcy")), (Imm)479);
+      asm.Jg(begin);
+      // IEEE-754 DOUBLE high word: positive finite aspect < 1.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gaspect"), 6));
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Reg.AX, (Imm)0x3FF0);
+      asm.Jge(begin);
+      // For bounded trigonometric arguments, x87 FSIN/FCOS must return
+      // values in [-1,1]. Exclude negative/NaN/huge angle encodings:
+      // outside their range the x87 may leave the operand unchanged.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gastart"), 6));
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Reg.AX, (Imm)0x4020); // 8.0
+      asm.Jae(begin);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gaend"), 6));
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(begin);
+      asm.Cmp(Reg.AX, (Imm)0x4020);
+      asm.Jae(begin);
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gr")));
+      asm.Add(Reg.BX, 2);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcx")));
+      asm.Sub(Reg.AX, Reg.BX);
+      asm.Jl(begin);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcx")));
+      asm.Add(Reg.AX, Reg.BX);
+      asm.Cmp(Reg.AX, (Imm)639);
+      asm.Jg(begin);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
+      asm.Sub(Reg.AX, Reg.BX);
+      asm.Jl(begin);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
+      asm.Add(Reg.AX, Reg.BX);
+      asm.Cmp(Reg.AX, (Imm)479);
+      asm.Jg(begin);
+      EmitCertifiedPlanarBranch(asm, planar);
+      asm.Jmp(begin);
+      asm.MarkLabel(planar);
+      EmitPlanarRasterBegin(asm);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_arc_active")), (Imm)1);
+      asm.MarkLabel(begin);
+    }
+
+    // QuickBASIC's CIRCLE aspect ratio specifies y-radius/x-radius:
+    // for aspect > 1 the supplied radius is the Y radius, not the X
+    // radius. Preserve the existing x=r, y=r*aspect interpretation for
+    // smaller ratios, but use x=r/aspect, y=r for larger ratios.
+    asm.Mov(Mem.Byte(asm.Lbl("rt_arc_tall")), (Imm)0);
+    {
+      var aspectReady = asm.DefineLabel();
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gaspect"), 6));
+      asm.Cmp(Reg.AX, (Imm)0x3FF0);
+      asm.Jl(aspectReady);
+      asm.Cmp(Reg.AX, (Imm)0x8000);
+      asm.Jae(aspectReady);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_arc_tall")), (Imm)1);
+      asm.MarkLabel(aspectReady);
+    }
 
     // step = 1/r, guarding a zero radius so a degenerate circle plots its centre and stops
     asm.Cmp(Mem.Word(asm.Lbl("rt_gr")), (Imm)0);
@@ -71,15 +156,28 @@ public sealed partial class DosRuntime {
     asm.Sahf();
     asm.Ja(done);                                          // past the end angle
 
-    asm.Fld(St.St0);                                       // x = cx + r*cos t
+    asm.Fld(St.St0);                                       // x = cx + r*cos t (or r*cos(t)/aspect)
     asm.Fcos();
+    {
+      var xScaled = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_arc_tall")), (Imm)0);
+      asm.Je(xScaled);
+      asm.Fdiv(Mem.Qword(asm.Lbl("rt_gaspect")));
+      asm.MarkLabel(xScaled);
+    }
     asm.Fimul(Mem.Word(asm.Lbl("rt_gr")));
     asm.Fiadd(Mem.Word(asm.Lbl("rt_gcx")));
     asm.Fistp(Mem.Word(asm.Lbl("rt_gax")));
 
-    asm.Fld(St.St0);                                       // y = cy - r*aspect*sin t
+    asm.Fld(St.St0);                                       // y = cy - r*sin(t)*min(aspect,1)
     asm.Fsin();
-    asm.Fmul(Mem.Qword(asm.Lbl("rt_gaspect")));
+    {
+      var yScaled = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_arc_tall")), (Imm)0);
+      asm.Jne(yScaled);
+      asm.Fmul(Mem.Qword(asm.Lbl("rt_gaspect")));
+      asm.MarkLabel(yScaled);
+    }
     asm.Fimul(Mem.Word(asm.Lbl("rt_gr")));
     asm.Fchs();
     asm.Fiadd(Mem.Word(asm.Lbl("rt_gcy")));
@@ -88,7 +186,18 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gax")));
     asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gay")));
     asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
-    asm.Call(this.Pset);
+    if (this.EnableTargetOptimizations) {
+      var genericPixel = asm.DefineLabel();
+      var pixelDone = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_arc_active")), (Imm)0);
+      asm.Je(genericPixel);
+      asm.Call(asm.Lbl("rt_planar_raster_plot"));
+      asm.Jmp(pixelDone);
+      asm.MarkLabel(genericPixel);
+      asm.Call(this.Pset);
+      asm.MarkLabel(pixelDone);
+    } else
+      asm.Call(this.Pset);
 
     asm.Fadd(Mem.Qword(asm.Lbl("rt_gastep")));
     asm.Jmp(loop);
@@ -102,11 +211,28 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
     asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
 
+    if (this.EnableTargetOptimizations) {
+      var noPlanarEnd = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_arc_active")), (Imm)0);
+      asm.Je(noPlanarEnd);
+      EmitPlanarRasterEnd(asm);
+      asm.MarkLabel(noPlanarEnd);
+    }
+
+    asm.Pop(Reg.DI);
     asm.Pop(Reg.DX);
+    asm.Pop(Reg.CX);
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
 
+    if (this.EnableTargetOptimizations) {
+      asm.MarkLabel("rt_planar_arc_active");
+      asm.Db(0);
+    }
+
+    asm.MarkLabel("rt_arc_tall");
+    asm.Db(0);
     foreach (var cell in new[] { "rt_gax", "rt_gay" }) {
       asm.MarkLabel(cell);
       asm.Dw(0);
@@ -142,6 +268,8 @@ public sealed partial class DosRuntime {
     this.EmitLineFill(asm);
     this.EmitCircle(asm);
     this.EmitArc(asm);
+    if (this.EnableTargetOptimizations)
+      EmitPlanarRasterHelpers(asm);
   }
 
   /// <summary>GET: the rectangle between the two points captured into an array.</summary>
@@ -168,7 +296,10 @@ public sealed partial class DosRuntime {
   /// but only if it was not living in ES to begin with.
   /// </summary>
   private void EmitGetPutProcedures(Assembler asm) {
+    var planarGet = asm.DefineLabel();
+    var planarPut = asm.DefineLabel();
     this.GGet = asm.MarkLabel("rt_gget");
+    EmitPlanarModeBranch(asm, planarGet);
     {
       var rowLoop = asm.DefineLabel();
       var colLoop = asm.DefineLabel();
@@ -245,8 +376,10 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.AX);
       asm.Ret();
     }
+    this.EmitPlanarGet(asm, planarGet);
 
     this.GPut = asm.MarkLabel("rt_gput");
+    EmitPlanarModeBranch(asm, planarPut);
     {
       var rowLoop = asm.DefineLabel();
       var colLoop = asm.DefineLabel();
@@ -341,6 +474,7 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.AX);
       asm.Ret();
     }
+    this.EmitPlanarPut(asm, planarPut);
 
     foreach (var cell in new[] { "rt_gbufseg", "rt_gbufofs", "rt_gverb", "rt_gpw", "rt_gph" }) {
       asm.MarkLabel(cell);
@@ -377,12 +511,16 @@ public sealed partial class DosRuntime {
     var fillRun = asm.DefineLabel();
     var fillDone = asm.DefineLabel();
     var packedFill = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarFill = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarCheck = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var neighbourRow = asm.DefineLabel();
     var scanRow = asm.DefineLabel();
     var scanRowDone = asm.DefineLabel();
     var inRun = asm.DefineLabel();
     var skipRun = asm.DefineLabel();
     var overflow = asm.DefineLabel();
+    var adaptivePrefetch = this.EnableTargetOptimizations && this.EnableAdaptivePaintPrefetch
+      ? asm.DefineLabel("rt_paint_prefetch") : null;
 
     this.Paint = asm.MarkLabel("rt_paint");
     var status = asm.Lbl("rt_paint_status");
@@ -412,6 +550,50 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.BP, Reg.SP);
     asm.Sub(Reg.SP, (Imm)(_paintSpans * 4));
     asm.Mov(Mem.Word(Reg.BP, 12), (Imm)0); // Saved AX becomes the status result.
+    // Flood-fill bounds must match the actual BIOS mode, even in unoptimized
+    // builds; the original 320x200 limit incorrectly clipped SCREEN 12.
+    asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)0);
+    if (this.EnableTargetOptimizations) {
+      // PAINT performs no user callbacks that could change the video mode.
+      // Cache packed-screen eligibility once: the fallback previously
+      // performed BIOS INT 10h/0Fh for every tested seed and neighbor pixel.
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode13")), (Imm)0);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)0);
+      var packed = asm.DefineLabel();
+      var afterPacked = asm.DefineLabel();
+      EmitPackedModeBranch(asm, packed);
+      asm.Jmp(afterPacked);
+      asm.MarkLabel(packed);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode13")), (Imm)1);
+      asm.MarkLabel(afterPacked);
+    }
+    {
+      var mode12 = asm.DefineLabel();
+      var modeReady = asm.DefineLabel();
+      EmitPlanarModeBranch(asm, mode12);
+      asm.Jmp(modeReady);
+      asm.MarkLabel(mode12);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)1);
+      if (this.EnableTargetOptimizations) {
+        // PAINT only invokes runtime VGA helpers, which restore their
+        // controller registers. Since no BASIC callback or user OUT can
+        // occur during this call, one positive certification also covers
+        // subsequent read-only scanline neighbor probes.
+        var certified = asm.DefineLabel();
+        var certifiedDone = asm.DefineLabel();
+        EmitCertifiedPlanarBranch(asm, certified);
+        asm.Jmp(certifiedDone);
+        asm.MarkLabel(certified);
+        asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)1);
+        asm.MarkLabel(certifiedDone);
+      }
+      asm.MarkLabel(modeReady);
+    }
+
+    // The cache stores only the two equality masks for the last eight
+    // pixels touched by the scanline walk. Never allocate a framebuffer.
+    if (this.EnableTargetOptimizations)
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)0);
 
     // seed the stack with the point PAINT was given
     asm.Mov(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
@@ -423,6 +605,8 @@ public sealed partial class DosRuntime {
     asm.Add(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
 
     asm.MarkLabel(popLoop);
+    if (adaptivePrefetch is not null)
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)0);
     asm.Cmp(Mem.Word(asm.Lbl("rt_psp")), (Imm)0);
     asm.Je(done);
     asm.Sub(Mem.Word(asm.Lbl("rt_psp")), (Imm)4);
@@ -465,14 +649,31 @@ public sealed partial class DosRuntime {
       // The scanline search normally proves this region is on-screen. Check
       // again here because a batchable A000h store must never wrap 64 KiB.
       asm.Cmp(Mem.Word(asm.Lbl("rt_px1")), (Imm)0);
-      asm.Jl(fillRun);
+      asm.Jl(planarCheck!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_px2")), (Imm)319);
+      asm.Jg(planarCheck!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)0);
+      asm.Jl(planarCheck!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)199);
+      asm.Jg(planarCheck!);
+      EmitPackedModeBranch(asm, packedFill);
+    }
+    if (planarCheck is not null)
+      asm.MarkLabel(planarCheck);
+    if (planarFill is not null) {
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)1);
+      asm.Jne(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_px1")), (Imm)0);
+      asm.Jl(fillRun);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_px2")), (Imm)639);
       asm.Jg(fillRun);
       asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)0);
       asm.Jl(fillRun);
-      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)199);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_py")), (Imm)479);
       asm.Jg(fillRun);
-      EmitPackedModeBranch(asm, packedFill);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(fillRun);
+      asm.Jmp(planarFill);
     }
     asm.MarkLabel(fillRun);
     asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_px2")));
@@ -527,7 +728,36 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(noByteTail);
       asm.Pop(Reg.ES);
     }
+    if (planarFill is not null) {
+      asm.MarkLabel(planarFill);
+      // Reuse the already certified 640x480 Mode-12 rectangle kernel for a
+      // one-row run. Keep PAINT's seed/cursor state unchanged so following
+      // neighbour reads and any subsequent LINE use the exact same points.
+      asm.Push(Reg.DI);
+      foreach (var cell in new[] { "rt_gx1", "rt_gx2", "rt_gy1", "rt_gy2" }) {
+        asm.Mov(Reg.AX, Mem.Word(asm.Lbl(cell)));
+        asm.Push(Reg.AX);
+      }
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_px1")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gx1")), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_px2")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gx2")), Reg.AX);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_py")));
+      asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_gy2")), Reg.AX);
+      asm.Call(this.LineFill);
+      foreach (var cell in new[] { "rt_gy2", "rt_gy1", "rt_gx2", "rt_gx1" }) {
+        asm.Pop(Reg.AX);
+        asm.Mov(Mem.Word(asm.Lbl(cell)), Reg.AX);
+      }
+      asm.Pop(Reg.DI);
+    }
     asm.MarkLabel(fillDone);
+    if (this.EnableTargetOptimizations) {
+      // PAINT has just written a horizontal span. Even when we revisit
+      // the very same VGA byte, the old color-comparison mask is stale.
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)0);
+    }
 
     // the row above, then the row below
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_py")));
@@ -536,6 +766,32 @@ public sealed partial class DosRuntime {
     asm.Mov(Mem.Word(asm.Lbl("rt_pside")), (Imm)0);
 
     asm.MarkLabel(neighbourRow);
+    if (adaptivePrefetch is not null) {
+      var shortSpan = asm.DefineLabel();
+      var spanReady = asm.DefineLabel();
+      var wideSpan = asm.DefineLabel();
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_prefetch_valid")), (Imm)0);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)0);
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)1);
+      asm.Jne(spanReady);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gpbord")), (Imm)15);
+      asm.Ja(spanReady);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(spanReady);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_px2")));
+      asm.Sub(Reg.AX, Mem.Word(asm.Lbl("rt_px1")));
+      asm.Inc(Reg.AX); // The proven, contiguous filled span width.
+      asm.Cmp(Reg.AX, (Imm)128);
+      asm.Jl(shortSpan);
+      asm.Cmp(Reg.AX, (Imm)512);
+      asm.Jge(wideSpan);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)32);
+      asm.Jmp(spanReady);
+      asm.MarkLabel(wideSpan);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)80);
+      asm.MarkLabel(shortSpan);
+      asm.MarkLabel(spanReady);
+    }
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_px1")));
     asm.MarkLabel(scanRow);
     asm.Cmp(Reg.SI, Mem.Word(asm.Lbl("rt_px2")));
@@ -603,13 +859,194 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DX);
     asm.Cmp(Reg.AX, (Imm)0);
     asm.Jl(notFillable);
-    asm.Cmp(Reg.AX, (Imm)320);
-    asm.Jge(notFillable);
     asm.Cmp(Reg.BX, (Imm)0);
     asm.Jl(notFillable);
-    asm.Cmp(Reg.BX, (Imm)200);
-    asm.Jge(notFillable);
-    asm.Call(this.Point);               // AL = colour, AH cleared
+    {
+      var mode12 = asm.DefineLabel();
+      var inBounds = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12")), (Imm)1);
+      asm.Je(mode12);
+      asm.Cmp(Reg.AX, (Imm)320);
+      asm.Jge(notFillable);
+      asm.Cmp(Reg.BX, (Imm)200);
+      asm.Jge(notFillable);
+      asm.Jmp(inBounds);
+      asm.MarkLabel(mode12);
+      asm.Cmp(Reg.AX, (Imm)640);
+      asm.Jge(notFillable);
+      asm.Cmp(Reg.BX, (Imm)480);
+      asm.Jge(notFillable);
+      asm.MarkLabel(inBounds);
+    }
+    if (this.EnableTargetOptimizations) {
+      var normalRead = asm.DefineLabel();
+      var recompute = asm.DefineLabel();
+      var haveMasks = asm.DefineLabel();
+      var colorCheck = asm.DefineLabel();
+
+      // Read Mode 1 compares all eight planar pixels with a palette
+      // color in a single VGA read. Two cached eight-bit equality masks
+      // answer both exclusion predicates: border and already painted.
+      // No extra image plane or per-pixel controller reconfiguration.
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)1);
+      asm.Jne(normalRead);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gpbord")), (Imm)15);
+      asm.Ja(normalRead);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(normalRead);
+
+      asm.Push(Reg.ES);
+      asm.Push(Reg.DI);
+      asm.Push(Reg.SI);
+      asm.Mov(Reg.SI, Reg.AX);
+      asm.Mov(Reg.AX, Reg.BX);
+      asm.Mov(Reg.DI, (Imm)80);
+      asm.Mul(Reg.DI);
+      asm.Mov(Reg.DI, Reg.SI);
+      asm.Mov(Reg.CL, (Imm)3);
+      asm.Shr(Reg.DI, Reg.CL);
+      asm.Add(Reg.DI, Reg.AX); // y*80 + floor(x/8), <= 38399.
+      asm.Mov(Reg.AX, Reg.SI);
+      asm.And(Reg.AX, (Imm)7);
+      asm.Mov(Reg.CX, Reg.AX);
+      asm.Mov(Reg.AL, (Imm)0x80);
+      asm.Shr(Reg.AL, Reg.CL);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_probe_mask")), Reg.AL);
+
+      if (adaptivePrefetch is not null) {
+        // Adaptive scanline cache is used only while scanning neighbors of
+        // a proven >=128-pixel filled run. Narrow regions preserve the
+        // original six-byte one-VGA-byte cache.
+        var ordinaryMask = asm.DefineLabel();
+        asm.Cmp(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)0);
+        asm.Je(ordinaryMask);
+        asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_probe")), Reg.DI);
+        asm.Mov(Reg.BX, Reg.SI);
+        asm.Mov(Reg.CL, (Imm)3);
+        asm.Shr(Reg.BX, Reg.CL);
+        asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_xbyte")), Reg.BX);
+        var refill = asm.DefineLabel();
+        var cached = asm.DefineLabel();
+        asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_prefetch_valid")), (Imm)0);
+        asm.Je(refill);
+        asm.Cmp(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+        asm.Jb(refill);
+        asm.Mov(Reg.BX, Reg.DI);
+        asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+        asm.Cmp(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_length")));
+        asm.Jb(cached);
+        asm.MarkLabel(refill);
+        asm.Call(adaptivePrefetch!);
+        asm.Mov(Reg.BX, Reg.DI);
+        asm.Sub(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+        asm.MarkLabel(cached);
+        asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_paint_prefetch_buffer")));
+        asm.Add(Reg.SI, Reg.BX);
+        asm.Mov(Reg.AL, Mem.Byte(Reg.SI));
+        asm.And(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_probe_mask")));
+        asm.Pop(Reg.SI);
+        asm.Pop(Reg.DI);
+        asm.Pop(Reg.ES);
+        asm.Jz(colorCheck);
+        asm.Jmp(notFillable);
+
+        asm.MarkLabel(ordinaryMask);
+      }
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)0);
+      asm.Je(recompute);
+      asm.Cmp(Reg.DI, Mem.Word(asm.Lbl("rt_paint_mask_offset")));
+      asm.Je(haveMasks);
+      asm.MarkLabel(recompute);
+
+      // Save the GC selector and every controller register we touch;
+      // even non-default user VGA registers must be restored verbatim.
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.In(Reg.AL, Reg.DX);
+      asm.Push(Reg.AX);
+      SaveAndSet(asm, 0x3CE, 5, -8); // Compare read mode, write mode unchanged.
+      SaveAndSet(asm, 0x3CE, 7, 15); // All four planes participate.
+      SaveAndSet(asm, 0x3CE, 2, 0);  // Preserve original compare value.
+
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, (Imm)2);
+      asm.Mov(Reg.AH, Mem.Byte(asm.Lbl("rt_gpbord")));
+      asm.Out(Reg.DX, Reg.AX);
+      asm.Mov(Reg.AX, (Imm)0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_border_mask")), Reg.AL);
+
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, (Imm)2);
+      asm.Mov(Reg.AH, Mem.Byte(asm.Lbl("rt_gcolor")));
+      asm.Out(Reg.DX, Reg.AX);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_color_mask")), Reg.AL);
+
+      Restore(asm, 0x3CE, 2);
+      Restore(asm, 0x3CE, 7);
+      Restore(asm, 0x3CE, 5);
+      asm.Pop(Reg.BX);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, Reg.BL);
+      asm.Out(Reg.DX, Reg.AL);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_mask_offset")), Reg.DI);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_mask_valid")), (Imm)1);
+
+      asm.MarkLabel(haveMasks);
+      asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_border_mask")));
+      asm.Or(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_color_mask")));
+      asm.And(Reg.AL, Mem.Byte(asm.Lbl("rt_paint_probe_mask")));
+      asm.Pop(Reg.SI);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.ES);
+      asm.Jz(colorCheck);
+      asm.Jmp(notFillable);
+      asm.MarkLabel(colorCheck);
+      asm.Mov(Reg.AL, (Imm)1);
+      asm.Jmp(okDone);
+      asm.MarkLabel(normalRead);
+    }
+    if (this.EnableTargetOptimizations) {
+      var genericPoint = asm.DefineLabel();
+      var pointRead = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode13")), (Imm)1);
+      asm.Jne(genericPoint);
+      // Bounds above prove x in [0,319] and y in [0,199].
+      // Read the packed framebuffer exactly as rt_point does, without
+      // per-pixel BIOS mode queries and without allocating an image copy.
+      asm.Push(Reg.ES);
+      asm.Push(Reg.DI);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.BX);
+      asm.Mov(Reg.DI, Reg.BX);
+      asm.Mov(Reg.CL, (Imm)8);
+      asm.Shl(Reg.DI, Reg.CL);
+      asm.Mov(Reg.CL, (Imm)6);
+      asm.Shl(Reg.BX, Reg.CL);
+      asm.Add(Reg.DI, Reg.BX);
+      asm.Add(Reg.DI, Reg.AX);
+      asm.Mov(Reg.BX, (Imm)0xA000);
+      asm.Mov(Reg.ES, Reg.BX);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.ES);
+      asm.Xor(Reg.AH, Reg.AH);
+      asm.Xor(Reg.DX, Reg.DX);
+      asm.Jmp(pointRead);
+      asm.MarkLabel(genericPoint);
+      var normalPoint = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_paint_mode12_certified")), (Imm)1);
+      asm.Jne(normalPoint);
+      asm.Call(asm.Lbl("rt_point_planar_certified"));
+      asm.Jmp(pointRead);
+      asm.MarkLabel(normalPoint);
+      asm.Call(this.Point);
+      asm.MarkLabel(pointRead);
+    } else
+      asm.Call(this.Point);
     asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gpbord")));
     asm.Je(notFillable);
     asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gcolor")));
@@ -624,8 +1061,136 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Ret();
 
+    if (adaptivePrefetch is not null) {
+      // Refill exactly one adaptive block. GC02 is switched twice while
+      // Read Mode 1 and GC07 stay configured. Every original indexed VGA
+      // register and selector is restored before returning. An extra read
+      // of the *requested* byte after restoring preserves the last latch
+      // address that the old six-byte cache would have left behind.
+      var rowKnown = asm.DefineLabel();
+      var baseReady = asm.DefineLabel();
+      var firstLoop = asm.DefineLabel();
+      var secondLoop = asm.DefineLabel();
+      asm.MarkLabel(adaptivePrefetch!);
+      asm.Push(Reg.AX);
+      asm.Push(Reg.BX);
+      asm.Push(Reg.CX);
+      asm.Push(Reg.DX);
+      asm.Push(Reg.SI);
+      asm.Push(Reg.DI);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_paint_prefetch_probe")));
+      asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_paint_prefetch_xbyte")));
+      asm.Sub(Reg.AX, Reg.BX); // First VGA byte of this 80-byte row.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_paint_prefetch_size")), (Imm)80);
+      asm.Je(rowKnown);
+      asm.And(Reg.BX, (Imm)0xFFE0);
+      asm.Add(Reg.AX, Reg.BX);
+      asm.Mov(Reg.CX, (Imm)32);
+      asm.Cmp(Reg.BX, (Imm)64);
+      asm.Jne(baseReady);
+      asm.Mov(Reg.CX, (Imm)16); // Last partial 32-byte block in a row.
+      asm.Jmp(baseReady);
+      asm.MarkLabel(rowKnown);
+      asm.Mov(Reg.CX, (Imm)80);
+      asm.MarkLabel(baseReady);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_base")), Reg.AX);
+      asm.Mov(Mem.Word(asm.Lbl("rt_paint_prefetch_length")), Reg.CX);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.In(Reg.AL, Reg.DX);
+      asm.Push(Reg.AX); // GC index
+      SaveAndSet(asm, 0x3CE, 5, -8);
+      SaveAndSet(asm, 0x3CE, 7, 15);
+      SaveAndSet(asm, 0x3CE, 2, 0);
+      asm.Mov(Reg.AX, (Imm)0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, (Imm)2);
+      asm.Mov(Reg.AH, Mem.Byte(asm.Lbl("rt_gpbord")));
+      asm.Out(Reg.DX, Reg.AX);
+      asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+      asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_paint_prefetch_buffer")));
+      asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_paint_prefetch_length")));
+      asm.MarkLabel(firstLoop);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Mov(Mem.Byte(Reg.SI), Reg.AL);
+      asm.Inc(Reg.SI);
+      asm.Inc(Reg.DI);
+      asm.Dec(Reg.CX);
+      asm.Jnz(firstLoop);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, (Imm)2);
+      asm.Mov(Reg.AH, Mem.Byte(asm.Lbl("rt_gcolor")));
+      asm.Out(Reg.DX, Reg.AX);
+      asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_base")));
+      asm.Mov(Reg.SI, Imm.OffsetOf(asm.Lbl("rt_paint_prefetch_buffer")));
+      asm.Mov(Reg.CX, Mem.Word(asm.Lbl("rt_paint_prefetch_length")));
+      asm.MarkLabel(secondLoop);
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Or(Mem.Byte(Reg.SI), Reg.AL);
+      asm.Inc(Reg.SI);
+      asm.Inc(Reg.DI);
+      asm.Dec(Reg.CX);
+      asm.Jnz(secondLoop);
+      Restore(asm, 0x3CE, 2);
+      Restore(asm, 0x3CE, 7);
+      Restore(asm, 0x3CE, 5);
+      asm.Pop(Reg.BX);
+      asm.Mov(Reg.DX, (Imm)0x3CE);
+      asm.Mov(Reg.AL, Reg.BL);
+      asm.Out(Reg.DX, Reg.AL);
+      // The other cache loads the latches from its requested pixel byte.
+      // A read in the restored mode recreates that observable latch state.
+      asm.Mov(Reg.DI, Mem.Word(asm.Lbl("rt_paint_prefetch_probe")));
+      asm.Mov(Reg.AL, Mem.Byte(Reg.DI).Seg(Reg.ES));
+      asm.Mov(Mem.Byte(asm.Lbl("rt_paint_prefetch_valid")), (Imm)1);
+      asm.Pop(Reg.ES);
+      asm.Pop(Reg.DI);
+      asm.Pop(Reg.SI);
+      asm.Pop(Reg.DX);
+      asm.Pop(Reg.CX);
+      asm.Pop(Reg.BX);
+      asm.Pop(Reg.AX);
+      asm.Ret();
+    }
+
     // The seed stack and the fill's scratch, placed here rather than in the common data block so the
     // runtime trimmer drops all of it with the graphics section when a program draws nothing.
+    asm.MarkLabel("rt_paint_mode12");
+    asm.Db(0);
+    if (this.EnableTargetOptimizations) {
+      asm.MarkLabel("rt_paint_mode13");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_mode12_certified");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_mask_valid");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_border_mask");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_color_mask");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_probe_mask");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_mask_offset");
+      asm.Dw(0);
+      if (adaptivePrefetch is not null) {
+      asm.MarkLabel("rt_paint_prefetch_size");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_probe");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_xbyte");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_base");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_length");
+      asm.Dw(0);
+      asm.MarkLabel("rt_paint_prefetch_valid");
+      asm.Db(0);
+      asm.MarkLabel("rt_paint_prefetch_buffer");
+      for (var slot = 0; slot < 80; ++slot)
+        asm.Db(0);
+      }
+    }
     foreach (var cell in new[] { "rt_gpbord", "rt_psp", "rt_px1", "rt_px2", "rt_py", "rt_pny", "rt_pside" }) {
       asm.MarkLabel(cell);
       asm.Dw(0);
@@ -651,10 +1216,33 @@ public sealed partial class DosRuntime {
       asm.MarkLabel(plot);
       asm.Cmp(Reg.AX, (Imm)0);
       asm.Jl(clipped);
-      asm.Cmp(Reg.AX, 320);
-      asm.Jge(clipped);
       asm.Cmp(Reg.BX, (Imm)0);
       asm.Jl(clipped);
+      if (this.EnableTargetOptimizations) {
+        var biosPixel = asm.DefineLabel();
+        asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)0);
+        asm.Je(biosPixel);
+        asm.Cmp(Reg.AX, 640);
+        asm.Jge(clipped);
+        asm.Cmp(Reg.BX, 480);
+        asm.Jge(clipped);
+        asm.Call(asm.Lbl("rt_planar_raster_plot"));
+        asm.Ret();
+        asm.MarkLabel(biosPixel);
+      }
+      var nonPlanarClip = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_circle_mode12")), (Imm)0);
+      asm.Je(nonPlanarClip);
+      asm.Cmp(Reg.AX, 640);
+      asm.Jge(clipped);
+      asm.Cmp(Reg.BX, 480);
+      asm.Jge(clipped);
+      asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
+      asm.Call(this.Pset);
+      asm.Ret();
+      asm.MarkLabel(nonPlanarClip);
+      asm.Cmp(Reg.AX, 320);
+      asm.Jge(clipped);
       asm.Cmp(Reg.BX, 200);
       asm.Jge(clipped);
       asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
@@ -674,6 +1262,31 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DX);
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
+
+    {
+      var start = asm.DefineLabel();
+      var mode12 = asm.DefineLabel();
+      asm.Mov(Mem.Byte(asm.Lbl("rt_circle_mode12")), (Imm)0);
+      if (this.EnableTargetOptimizations)
+        asm.Mov(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)0);
+      EmitPlanarModeBranch(asm, mode12);
+      asm.Jmp(start);
+      asm.MarkLabel(mode12);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_circle_mode12")), (Imm)1);
+      if (this.EnableTargetOptimizations) {
+        var beginPlanar = asm.DefineLabel();
+        var skipPlanar = asm.DefineLabel();
+        asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+        asm.Ja(skipPlanar);
+        EmitCertifiedPlanarBranch(asm, beginPlanar);
+        asm.Jmp(skipPlanar);
+        asm.MarkLabel(beginPlanar);
+        EmitPlanarRasterBegin(asm);
+        asm.Mov(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)1);
+        asm.MarkLabel(skipPlanar);
+      }
+      asm.MarkLabel(start);
+    }
 
     asm.Mov(Reg.SI, Mem.Word(asm.Lbl("rt_gr")));     // SI = x, starts at the radius
     asm.Xor(Reg.DI, Reg.DI);                          // DI = y, starts at zero
@@ -731,6 +1344,14 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gcy")));
     asm.Mov(Mem.Word(asm.Lbl("rt_gy1")), Reg.AX);
 
+    if (this.EnableTargetOptimizations) {
+      var noPlanarEnd = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_circle_active")), (Imm)0);
+      asm.Je(noPlanarEnd);
+      EmitPlanarRasterEnd(asm);
+      asm.MarkLabel(noPlanarEnd);
+    }
+
     asm.Pop(Reg.DI);
     asm.Pop(Reg.SI);
     asm.Pop(Reg.DX);
@@ -738,6 +1359,13 @@ public sealed partial class DosRuntime {
     asm.Pop(Reg.BX);
     asm.Pop(Reg.AX);
     asm.Ret();
+
+    asm.MarkLabel("rt_circle_mode12");
+    asm.Db(0);
+    if (this.EnableTargetOptimizations) {
+      asm.MarkLabel("rt_planar_circle_active");
+      asm.Db(0);
+    }
   }
 
   /// <summary>
@@ -757,6 +1385,14 @@ public sealed partial class DosRuntime {
     var xPositive = asm.DefineLabel();
     var yPositive = asm.DefineLabel();
     var fastHorizontal = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var fastPackedPattern = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var fastPlanarPattern = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarPatternGuard = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarGeneral = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarGeneralGuard = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var packedGeneral = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var packedGeneralGuard = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var bresenhamStart = asm.DefineLabel();
     var slowHorizontal = asm.DefineLabel();
 
     asm.Push(Reg.AX);
@@ -765,19 +1401,92 @@ public sealed partial class DosRuntime {
     asm.Push(Reg.DX);
     asm.Push(Reg.SI);
     asm.Push(Reg.DI);
+    if (planarGeneral is not null) {
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_general_active")), (Imm)0);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_packed_general_active")), (Imm)0);
+    }
 
     if (fastHorizontal is not null) {
       // Solid-styled lines rotate FFFFh back to FFFFh at every pixel; a
       // patterned line must use Bresenham to preserve mask phase and skips.
-      asm.Cmp(Mem.Word(asm.Lbl("rt_gstyle")), (Imm)0xFFFF);
-      asm.Jne(slowHorizontal);
       asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
       asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
-      asm.Jne(slowHorizontal);
+      asm.Jne(planarPatternGuard!);
       asm.Cmp(Reg.AX, (Imm)0);
-      asm.Jl(slowHorizontal);
+      asm.Jl(planarPatternGuard!);
       asm.Cmp(Reg.AX, (Imm)199);
-      asm.Jg(slowHorizontal);
+      asm.Jg(planarPatternGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
+      asm.Jl(planarPatternGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)319);
+      asm.Jg(planarPatternGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)0);
+      asm.Jl(planarPatternGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)319);
+      asm.Jg(planarPatternGuard!);
+      var packedStyle = asm.DefineLabel();
+      var packedChecked = asm.DefineLabel();
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gstyle")), (Imm)0xFFFF);
+      asm.Jne(packedStyle);
+      EmitPackedModeBranch(asm, fastHorizontal);
+      asm.Jmp(packedChecked);
+      asm.MarkLabel(packedStyle);
+      EmitPackedModeBranch(asm, fastPackedPattern!);
+      asm.MarkLabel(packedChecked);
+    }
+    if (planarPatternGuard is not null)
+      asm.MarkLabel(planarPatternGuard);
+    if (fastPlanarPattern is not null) {
+      // Unlike the Mode 13h solid-word path, Mode 12h can batch patterned
+      // horizontal lines as one masked write per eight-pixel VGA byte.
+      // Retain the exact step order for style rotation and reverse strokes.
+      asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gy1")));
+      asm.Cmp(Reg.AX, Mem.Word(asm.Lbl("rt_gy2")));
+      asm.Jne(planarGeneralGuard!);
+      asm.Cmp(Reg.AX, (Imm)0);
+      asm.Jl(planarGeneralGuard!);
+      asm.Cmp(Reg.AX, (Imm)479);
+      asm.Jg(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
+      asm.Jl(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)639);
+      asm.Jg(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)0);
+      asm.Jl(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)639);
+      asm.Jg(planarGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(planarGeneralGuard!);
+      EmitCertifiedPlanarBranch(asm, fastPlanarPattern);
+    }
+    if (planarGeneralGuard is not null)
+      asm.MarkLabel(planarGeneralGuard);
+    if (planarGeneral is not null) {
+      // Every Bresenham step stays in-bounds when both endpoints do.
+      // Transparent/XOR-like legacy color encodings keep the BIOS path.
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
+      asm.Jl(packedGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)639);
+      asm.Jg(packedGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)0);
+      asm.Jl(packedGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)639);
+      asm.Jg(packedGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy1")), (Imm)0);
+      asm.Jl(packedGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy1")), (Imm)479);
+      asm.Jg(packedGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy2")), (Imm)0);
+      asm.Jl(packedGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy2")), (Imm)479);
+      asm.Jg(packedGeneralGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(packedGeneralGuard!);
+      EmitCertifiedPlanarBranch(asm, planarGeneral);
+    }
+    if (packedGeneralGuard is not null)
+      asm.MarkLabel(packedGeneralGuard);
+    if (packedGeneral is not null) {
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)0);
       asm.Jl(slowHorizontal);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx1")), (Imm)319);
@@ -786,9 +1495,32 @@ public sealed partial class DosRuntime {
       asm.Jl(slowHorizontal);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gx2")), (Imm)319);
       asm.Jg(slowHorizontal);
-      EmitPackedModeBranch(asm, fastHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy1")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy1")), (Imm)199);
+      asm.Jg(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy2")), (Imm)0);
+      asm.Jl(slowHorizontal);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gy2")), (Imm)199);
+      asm.Jg(slowHorizontal);
+      EmitPackedModeBranch(asm, packedGeneral);
     }
     asm.MarkLabel(slowHorizontal);
+    asm.Jmp(bresenhamStart);
+    if (planarGeneral is not null) {
+      asm.MarkLabel(planarGeneral);
+      EmitPlanarRasterBegin(asm);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_planar_general_active")), (Imm)1);
+      asm.Jmp(bresenhamStart);
+    }
+    if (packedGeneral is not null) {
+      asm.MarkLabel(packedGeneral);
+      asm.Push(Reg.ES);
+      asm.Mov(Reg.AX, 0xA000);
+      asm.Mov(Reg.ES, Reg.AX);
+      asm.Mov(Mem.Byte(asm.Lbl("rt_packed_general_active")), (Imm)1);
+    }
+    asm.MarkLabel(bresenhamStart);
 
     // dx = |x2-x1|, sx = sign; the same for y. SI and DI carry the two step directions.
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx2")));
@@ -830,7 +1562,37 @@ public sealed partial class DosRuntime {
     asm.Mov(Reg.AX, Mem.Word(asm.Lbl("rt_gx1")));
     asm.Mov(Reg.BX, Mem.Word(asm.Lbl("rt_gy1")));
     asm.Mov(Reg.DX, Mem.Word(asm.Lbl("rt_gcolor")));
-    asm.Call(this.Pset);
+    if (planarGeneral is not null) {
+      var pixelFallback = asm.DefineLabel();
+      var pixelDone = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_general_active")), (Imm)0);
+      asm.Je(pixelFallback);
+      asm.Call(asm.Lbl("rt_planar_raster_plot"));
+      asm.Jmp(pixelDone);
+      asm.MarkLabel(pixelFallback);
+      var packedFallback = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_packed_general_active")), (Imm)0);
+      asm.Je(packedFallback);
+
+      // Direct SCREEN 13 byte store. The loop has already applied the
+      // original Bresenham step and 16-bit style rotation; ES=A000
+      // was selected once at primitive entry.
+      asm.Mov(Reg.DI, Reg.BX);
+      asm.Mov(Reg.CL, (Imm)8);
+      asm.Shl(Reg.DI, Reg.CL);
+      asm.Mov(Reg.CL, (Imm)6);
+      asm.Shl(Reg.BX, Reg.CL);
+      asm.Add(Reg.DI, Reg.BX);
+      asm.Add(Reg.DI, Reg.AX);
+      asm.Mov(Reg.AL, Mem.Byte(asm.Lbl("rt_gcolor")));
+      asm.Mov(Mem.Byte(Reg.DI).Seg(Reg.ES), Reg.AL);
+      asm.Jmp(pixelDone);
+
+      asm.MarkLabel(packedFallback);
+      asm.Call(this.Pset);
+      asm.MarkLabel(pixelDone);
+    } else
+      asm.Call(this.Pset);
     asm.MarkLabel(skipPixel);
 
     // reached the far end?
@@ -868,6 +1630,18 @@ public sealed partial class DosRuntime {
     asm.Jmp(loop);
 
     asm.MarkLabel(done);
+    if (planarGeneral is not null) {
+      var noPlanarEnd = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_planar_general_active")), (Imm)0);
+      asm.Je(noPlanarEnd);
+      EmitPlanarRasterEnd(asm);
+      asm.MarkLabel(noPlanarEnd);
+      var noPackedEnd = asm.DefineLabel();
+      asm.Cmp(Mem.Byte(asm.Lbl("rt_packed_general_active")), (Imm)0);
+      asm.Je(noPackedEnd);
+      asm.Pop(Reg.ES);
+      asm.MarkLabel(noPackedEnd);
+    }
     asm.Pop(Reg.DI);
     asm.Pop(Reg.SI);
     asm.Pop(Reg.DX);
@@ -932,6 +1706,16 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.ES);
       asm.Jmp(done);
     }
+    if (fastPlanarPattern is not null)
+      this.EmitPlanarPatternedLine(asm, fastPlanarPattern, done);
+    if (fastPackedPattern is not null)
+      EmitMode13StyledHorizontalLine(asm, fastPackedPattern, done);
+    if (planarGeneral is not null) {
+      asm.MarkLabel("rt_planar_general_active");
+      asm.Db(0);
+      asm.MarkLabel("rt_packed_general_active");
+      asm.Db(0);
+    }
   }
 
   /// <summary>
@@ -987,6 +1771,8 @@ public sealed partial class DosRuntime {
     var colLoop = asm.DefineLabel();
     var rowDone = asm.DefineLabel();
     var packedRows = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarRows = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
+    var planarGuard = this.EnableTargetOptimizations ? asm.DefineLabel() : null;
     var slowRows = asm.DefineLabel();
     var yOrdered = asm.DefineLabel();
     var xOrdered = asm.DefineLabel();
@@ -1021,14 +1807,33 @@ public sealed partial class DosRuntime {
     // the existing runtime semantics (including out-of-range behavior) then remain unchanged.
     if (packedRows is not null) {
       asm.Cmp(Mem.Word(asm.Lbl("rt_gbx1")), (Imm)0);
-      asm.Jl(slowRows);
+      asm.Jl(planarGuard!);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gbx2")), (Imm)319);
+      asm.Jg(planarGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby1")), (Imm)0);
+      asm.Jl(planarGuard!);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)199);
+      asm.Jg(planarGuard!);
+      EmitPackedModeBranch(asm, packedRows);
+    }
+
+    if (planarGuard is not null)
+      asm.MarkLabel(planarGuard);
+
+    // Only in-bounds 640x480 solid-color rectangles have a certified planar
+    // byte-span layout; all other modes and shapes retain per-pixel fallback.
+    if (planarRows is not null) {
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx1")), (Imm)0);
+      asm.Jl(slowRows);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gbx2")), (Imm)639);
       asm.Jg(slowRows);
       asm.Cmp(Mem.Word(asm.Lbl("rt_gby1")), (Imm)0);
       asm.Jl(slowRows);
-      asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)199);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gby2")), (Imm)479);
       asm.Jg(slowRows);
-      EmitPackedModeBranch(asm, packedRows);
+      asm.Cmp(Mem.Word(asm.Lbl("rt_gcolor")), (Imm)15);
+      asm.Ja(slowRows);
+      EmitCertifiedPlanarBranch(asm, planarRows);
     }
 
     asm.MarkLabel(slowRows);
@@ -1122,5 +1927,7 @@ public sealed partial class DosRuntime {
       asm.Pop(Reg.ES);
       asm.Jmp(rowDone); // One shared final graphics-cursor update.
     }
+    if (planarRows is not null)
+      this.EmitPlanarLineFill(asm, planarRows, rowDone);
   }
 }

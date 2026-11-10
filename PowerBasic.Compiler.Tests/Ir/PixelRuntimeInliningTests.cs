@@ -32,11 +32,113 @@ public sealed class PixelRuntimeInliningTests {
     return model;
   }
 
+  [Test]
+  public void Analyze_GivenRegisterOnlyInlineAssembler_ThenRetainsModeFact() {
+    var function = new IrFunction("probe", IrType.Void);
+    var block = function.CreateBlock("entry");
+    var setMode = new IrFunction("rt_screen_mode", IrType.Void, [new IrArgument(IrType.I16, 0)]);
+    block.Append(new IrCall(IrType.Void, setMode, [new IrConstantInt(IrType.I16, 13)]));
+    block.Append(new IrInlineAsm("XOR AX, AX"));
+    var witness = block.Append(new IrAlloca(IrType.I16));
+    Assert.That(new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes).Before(witness), Is.EqualTo(13));
+  }
+
+  [TestCase("NOP", true)]
+  [TestCase("MOV AX, BX", true)]
+  [TestCase("INC CX", true)]
+  [TestCase("MOV ES, AX", false)]
+  [TestCase("MOV AX, [BX]", false)]
+  [TestCase("OUT DX, AL", false)]
+  public void Analyze_GivenInlineAsmWithKnownEffects_ThenPreservesOnlyProvenDefaultSegment(
+      string assembly, bool safe) {
+    var fn = new IrFunction("segment", IrType.Void);
+    var block = fn.CreateBlock("entry");
+    var segment = new IrGlobalVariable("rt_defseg", IrType.I16);
+    block.Append(new IrStore(new IrConstantInt(IrType.I16, unchecked((short)0xA000)), segment));
+    var first = block.Append(new IrAlloca(IrType.I16));
+    block.Append(new IrInlineAsm(assembly));
+    var second = block.Append(new IrAlloca(IrType.I16));
+    var analysis = new IrAnalysisManager(fn).Get(IrAnalyses.DefaultSegments);
+    Assert.Multiple(() => {
+      Assert.That(analysis.Before(first), Is.EqualTo(0xA000));
+      Assert.That(analysis.Before(second), Is.EqualTo(safe ? 0xA000 : null));
+    });
+  }
+
+  [TestCase("rt_out")]
+  [TestCase("rt_inp")]
+  [TestCase("rt_poke")]
+  [TestCase("rt_peek")]
+  [TestCase("rt_call_absolute")]
+  [TestCase("rt_graphics_mode")]
+  [TestCase("opaque_external")]
+  public void Analyze_GivenOpaqueDeviceOrExternalCall_ThenRevokesPackedModeProof(string runtimeName) {
+    var function = new IrFunction("probe", IrType.Void);
+    var block = function.CreateBlock("entry");
+    var set = new IrFunction("rt_screen_mode", IrType.Void, [new IrArgument(IrType.I16, 0)]);
+    block.Append(new IrCall(IrType.Void, set, [new IrConstantInt(IrType.I16, 13)]));
+    var first = block.Append(new IrAlloca(IrType.I16));
+    block.Append(new IrCall(IrType.Void, new IrFunction(runtimeName, IrType.Void), []));
+    var second = block.Append(new IrAlloca(IrType.I16));
+    var analysis = new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes);
+    Assert.Multiple(() => {
+      Assert.That(analysis.Before(first), Is.EqualTo(13));
+      Assert.That(analysis.Before(second), Is.Null,
+        "opaque device or CALL barriers must invalidate the assumed video mode and hardware mapping");
+    });
+  }
+
+  [Test]
+  public void Analyze_GivenInlineAssemblerOrUncertifiedFarMemory_ThenRevokesScreenMode() {
+    var segment = new IrConstantInt(IrType.I16, unchecked((short)0xA000));
+    foreach (var operation in new Func<IrValue, IrInstruction>[] {
+      _ => new IrInlineAsm("out dx, al"),
+      pointer => new IrLoad(IrType.U8, pointer),
+      pointer => new IrStore(new IrConstantInt(IrType.U8, 42), pointer),
+    }) {
+      var function = new IrFunction("probe", IrType.Void);
+      var block = function.CreateBlock("entry");
+      block.Append(new IrCall(IrType.Void,
+        new IrFunction("rt_screen_mode", IrType.Void, [new IrArgument(IrType.I16, 0)]),
+        [new IrConstantInt(IrType.I16, 13)]));
+      var far = new IrFarPtr(segment, new IrConstantInt(IrType.I16, 1234));
+      block.Append(operation(far));
+      var witness = block.Append(new IrAlloca(IrType.I16));
+      Assert.That(new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes).Before(witness),
+        Is.Null, "raw memory/inline ASM must never be a reusable SCREEN-13 proof");
+    }
+  }
+
+  [Test]
+  public void Analyze_GivenForgedScreenRuntimeSignature_ThenDoesNotCertifyMode() {
+    var function = new IrFunction("probe", IrType.Void);
+    var block = function.CreateBlock("entry");
+    // Same name and constant argument, but not the compiler's own void(i16)
+    // BASIC ABI: treating this as SCREEN would invent a hardware-state fact.
+    var fake = new IrFunction("rt_screen_mode", IrType.Void, [new IrArgument(IrType.I32, 0)]);
+    block.Append(new IrCall(IrType.Void, fake, [new IrConstantInt(IrType.I32, 13)]));
+    var witness = block.Append(new IrAlloca(IrType.I16));
+    Assert.That(new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes).Before(witness), Is.Null);
+  }
+
+  // The analysis retains the proven mode for these harmless ASM statements,
+  // but the broader SSA/middle-end pipeline deliberately refuses entire
+  // functions containing unpromoted inline ASM (register/flag ordering).
+  // Do not confuse retained proof with permission to run every IR rewrite.
+  [TestCase("SCREEN 13:! NOP:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:! MOV AX,BX:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:! OUT DX,AL:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:! MOV ES,AX:PSET (3,2),7", 0)]
   [TestCase("SCREEN 13:PSET (3,2),7", 1)]
   [TestCase("SCREEN 12:PSET (3,2),7", 0)]
   [TestCase("PSET (3,2),7", 0)]
   [TestCase("SCREEN 13:SCREEN VAL(COMMAND$):PSET (3,2),7", 0)]
   [TestCase("SCREEN 13:OUT &H3C4,4:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:OUT &H3CE,6:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:PRINT PEEK(0):PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:DEF SEG=&HB800:POKE 0,7:PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:PRINT INP(&H3CF):PSET (3,2),7", 0)]
+  [TestCase("SCREEN 13:DEF SEG=&HA000:POKE 100,1:PSET (3,2),7", 2)]
   [TestCase("SCREEN 13:FOR y%=0 TO 199:PSET (3,y%),7:NEXT", 1)]
   public void Optimize_GivenAProvenPackedMode_ThenInlinesItsAddressCalculation(string source, int writes) {
     var module = IrLowering.TryLowerModule(Bind(source + "\nEND"), out var reason);

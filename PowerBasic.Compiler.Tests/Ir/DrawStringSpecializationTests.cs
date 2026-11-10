@@ -39,8 +39,9 @@ public sealed class DrawStringSpecializationTests {
     });
   }
 
-  [TestCase("S4 R5")]
-  [TestCase("A1 R5")]
+  [TestCase("TA361 R2")]
+  [TestCase("TA-361 R2")]
+  [TestCase("TA32768")]
   [TestCase("R5 Z")]
   [TestCase("R9999999999999999999999999")]
   [TestCase("R5\u00ff")]
@@ -61,6 +62,92 @@ public sealed class DrawStringSpecializationTests {
     Assert.That(IrVerifier.Verify(module), Is.Empty);
   }
 
+  [TestCase("S8 A1 R5", 1)]
+  [TestCase("S4 TA-90 R5", 1)]
+  [TestCase("S3 A3 TA360 C9 R5", 1)]
+  [TestCase("C3 P2,3 R5", 1)]
+  [TestCase("P255,255", 0)]
+  public void Run_GivenStateAndPaintCommands_ThenExpandsToTypedIrWithoutStringParser(
+      string picture, int moves) {
+    var (module, main, draw, _) = Build(picture);
+    Assert.That(DrawStringSpecialization.Run(module), Is.EqualTo(1));
+    Assert.That(draw.Parent, Is.Null);
+    Assert.That(main.AllInstructions.OfType<IrCall>().Count(call => call.Callee.Name == "rt_draw_move"),
+      Is.EqualTo(moves));
+    Assert.That(main.AllInstructions.OfType<IrCall>().All(call => call.Callee.Name != "rt_draw_parse"),
+      Is.True);
+    if (picture.Contains('P'))
+      Assert.That(main.AllInstructions.OfType<IrCall>().Count(call => call.Callee.Name == "rt_paint"),
+        Is.EqualTo(1));
+    Assert.That(IrVerifier.Verify(module), Is.Empty);
+  }
+
+  [TestCase("M12,34", 1)]
+  [TestCase("S4 A0 R5 D3", 2)]
+  [TestCase("S4 TA0 BR5 NR4", 1)]
+  [TestCase("S4 A0 R8192", 0)]
+  [TestCase("A0 S8 R5", 0)]
+  public void Run_GivenProvablyDirectMoves_ThenEmitsLineIrWithoutDrawInterpreter(
+      string picture, int lines) {
+    var (module, main, draw, _) = Build(picture);
+    Assert.That(DrawStringSpecialization.Run(module), Is.EqualTo(1));
+    var calls = main.AllInstructions.OfType<IrCall>().ToArray();
+    Assert.Multiple(() => {
+      Assert.That(calls.Count(call => call.Callee.Name == "rt_line"), Is.EqualTo(lines));
+      Assert.That(calls.Count(call => call.Callee.Name == "rt_draw_move"),
+        Is.EqualTo(picture.Contains("R8192") || picture.Contains("S8") ? 1 : 0));
+      Assert.That(draw.Parent, Is.Null);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Run_GivenMultipleFoldedLiteralFragmentsBeforeDynamicTail_ThenSpecializesTheWholePrefix() {
+    var (module, main, draw, first) = Build("C9 ");
+    var literal = module.FindFunction("rt_str_const")!;
+    var concat = module.AddFunction(new IrFunction("rt_str_concat", IrType.Ptr,
+      [new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1)]));
+    var dynamicText = module.AddFunction(new IrFunction("dynamic_text", IrType.Ptr));
+    var block = draw.Parent!;
+    var secondBytes = "R5;"u8.ToArray();
+    var second = block.InsertBefore(new IrCall(IrType.Ptr, literal,
+      [module.AddStringConstant(secondBytes), new IrConstantInt(IrType.I32, secondBytes.Length)]), draw);
+    var joinedLiterals = block.InsertBefore(new IrCall(IrType.Ptr, concat, [first, second]), draw);
+    var tail = block.InsertBefore(new IrCall(IrType.Ptr, dynamicText, []), draw);
+    var full = block.InsertBefore(new IrCall(IrType.Ptr, concat, [joinedLiterals, tail]), draw);
+    draw.SetOperand(1, full);
+
+    Assert.That(IrVerifier.Verify(module), Is.Empty);
+    Assert.That(DrawStringSpecialization.Run(module), Is.EqualTo(1));
+    Assert.Multiple(() => {
+      Assert.That(draw.Parent, Is.Null);
+      Assert.That(main.AllInstructions.OfType<IrCall>().Count(call => call.Callee.Name == "rt_draw_move"),
+        Is.EqualTo(1));
+      var resume = main.AllInstructions.OfType<IrCall>()
+        .Single(call => call.Callee.Name == "rt_draw_resume");
+      Assert.That(resume.GetOperand(1), Is.SameAs(full));
+      Assert.That(((IrConstantInt)resume.GetOperand(2)).Value, Is.EqualTo(6));
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
+  [Test]
+  public void Run_GivenPaintInMixedPrefix_ThenKeepsOwnedDynamicStringAndErrorCleanup() {
+    var (module, _, draw, text) = Build("C9 P6,9 R5;");
+    var dynamicText = module.AddFunction(new IrFunction("dynamic_text", IrType.Ptr));
+    var concat = module.AddFunction(new IrFunction("rt_str_concat", IrType.Ptr,
+      [new IrArgument(IrType.Ptr, 0), new IrArgument(IrType.Ptr, 1)]));
+    var block = draw.Parent!;
+    var tail = block.InsertBefore(new IrCall(IrType.Ptr, dynamicText, []), draw);
+    var combined = block.InsertBefore(new IrCall(IrType.Ptr, concat, [text, tail]), draw);
+    draw.SetOperand(1, combined);
+    Assert.Multiple(() => {
+      Assert.That(DrawStringSpecialization.Run(module), Is.Zero);
+      Assert.That(draw.Parent, Is.Not.Null);
+      Assert.That(IrVerifier.Verify(module), Is.Empty);
+    });
+  }
+
   [TestCase("shared")]
   [TestCase("foreign")]
   [TestCase("length")]
@@ -73,6 +160,7 @@ public sealed class DrawStringSpecializationTests {
   [TestCase("move-type")]
   [TestCase("begin-foreign")]
   [TestCase("cell-count")]
+  [TestCase("foreground-cell")]
   public void Run_GivenUnprovedOwnershipAbiOrState_ThenLeavesTheCallIntact(string boundary) {
     var (module, main, draw, text) = Build("C9 R5");
     switch (boundary) {
@@ -99,6 +187,7 @@ public sealed class DrawStringSpecializationTests {
           Convention = IrCallConvention.Cdecl,
         }); break;
       case "cell-count": module.AddGlobal(new IrGlobalVariable("rt_draw_color", IrType.I16) { Count = 2 }); break;
+      case "foreground-cell": module.AddGlobal(new IrGlobalVariable("rt_fgcolor", IrType.I32)); break;
     }
     Assert.That(IrVerifier.Verify(module), Is.Empty);
     Assert.That(DrawStringSpecialization.Run(module), Is.Zero);

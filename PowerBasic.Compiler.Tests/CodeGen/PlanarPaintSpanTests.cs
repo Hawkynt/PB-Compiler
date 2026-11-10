@@ -1,0 +1,171 @@
+using PowerBasic.Compiler.CodeGen;
+using PowerBasic.Compiler.Semantics;
+using PowerBasic.Compiler.Syntax;
+using PowerBasic.Compiler.Tests.Exec;
+
+namespace PowerBasic.Compiler.Tests.CodeGen;
+
+/// <summary>Planar flood-fill runs must preserve the BIOS topology and the 128-entry span stack.</summary>
+[TestFixture]
+public sealed class PlanarPaintSpanTests {
+  private static Cpu8086 Execute(string body, bool optimize, string cpu = "") {
+    var text = cpu + "\nSCREEN 12\n" + body + "\nEND\n";
+    var model = Binder.Bind(Parser.Parse(Lexer.Tokenize(text, "PAINT12.BAS", Dialect.Pb36),
+      "PAINT12.BAS", Dialect.Pb36), Dialect.Pb36);
+    Assert.That(model.Errors, Is.Empty, string.Join("; ", model.Errors));
+    var generator = new CodeGenerator(model) { Optimize = optimize, Container = DosContainer.Exe };
+    var image = generator.EmitExecutable();
+    Assert.That(generator.Errors, Is.Empty, string.Join("; ", generator.Errors));
+    Assert.That(generator.BackendDeclines, Is.Empty);
+    return Cpu8086.Run(image);
+  }
+
+  [TestCase("$CPU 8086", 0, 15)]
+  [TestCase("$CPU 8086", 5, 14)]
+  [TestCase("$CPU 8086", 7, 9)]
+  [TestCase("$CPU 80386", 5, 14)]
+  public void Execute_GivenPlanarBorder_ThenScanlineFillMatchesReferenceAndPreservesBorder(
+      string cpu, int left, int right) {
+    var body = $"""
+      LINE ({left},8)-({right},12),4,B
+      PAINT ({left + 1},9),9,4
+      PRINT POINT({left},9);POINT({left + 1},9);POINT({right - 1},11);
+      PRINT POINT({right},11);POINT({left + 1},8)
+      """;
+    var optimized = Execute(body, true, cpu);
+    var reference = Execute(body, false, cpu);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+      Assert.That(optimized.Output.Trim(), Does.Contain("4  9  9  4  4"));
+      Assert.That(optimized.PortWrites.Count(p => p.Port is 0x3CF or 0x3C5),
+        Is.GreaterThan(reference.PortWrites.Count(p => p.Port is 0x3CF or 0x3C5)));
+    });
+  }
+
+  [Test]
+  public void Execute_GivenScreen12SeedBeyondThe320x200Viewport_ThenFillsThereToo() {
+    const string body = """
+      LINE (325,210)-(351,216),4,B
+      PAINT (330,212),11,4
+      PRINT POINT(325,210);POINT(326,211);POINT(350,215);
+      PRINT POINT(351,216);POINT(324,210);POINT(352,216)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+      Assert.That(optimized.Output.Trim(), Does.Contain("4  11  11  4  0  0"));
+    });
+  }
+
+  [Test]
+  public void Execute_GivenTwoDisjointRegions_ThenPreservesOtherRegionAndGraphicsCursor() {
+    const string body = """
+      LINE (4,4)-(23,14),6,B
+      LINE (8,7)-(19,11),7,B
+      PAINT (6,6),3,6
+      PRINT POINT(5,5);POINT(9,8);POINT(8,7);POINT(4,4);POINT(24,15)
+      LINE -(26,15),2
+      PRINT POINT(25,15);POINT(26,15)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+  }
+
+  [Test]
+  public void Execute_GivenMode12BorderEqualToPaint_ThenTerminatesAndPreservesTopology() {
+    const string body = """
+      LINE (18,18)-(75,27),6,B
+      LINE (40,20)-(55,25),3,B
+      PAINT (20,20),6,6
+      PRINT POINT(18,18);POINT(20,20);POINT(40,20);
+      PRINT POINT(45,23);POINT(55,25);POINT(76,27)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.That(optimized.Output, Is.EqualTo(reference.Output),
+      "when paint and border have equal colors, the filled-pixel stop rule must still terminate");
+  }
+
+  [Test]
+  public void Execute_GivenUnalignedCavities_ThenReadModeOneCacheIsInvalidatedAfterSpans() {
+    const string body = """
+      LINE (7,9)-(72,27),4,B
+      LINE (15,12)-(21,18),7,B
+      LINE (35,10)-(41,22),7,B
+      LINE (49,14)-(57,24),7,B
+      PAINT (9,11),11,4
+      PRINT POINT(7,9);POINT(8,9);POINT(9,11);POINT(14,13);
+      PRINT POINT(15,12);POINT(20,15);POINT(21,18);POINT(22,15);
+      PRINT POINT(34,12);POINT(35,12);POINT(42,12);POINT(56,24);
+      PRINT POINT(58,24);POINT(71,26);POINT(72,27);POINT(73,27)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.That(optimized.Output, Is.EqualTo(reference.Output),
+      "cached eight-pixel comparisons must reflect earlier span writes in the same VGA byte");
+  }
+
+  [Test]
+  public void Execute_GivenCustomVgaCompareState_ThenRestoresRegistersAndPixels() {
+    const string body = """
+      LINE (7,10)-(34,17),4,B
+      OUT &H3CE,2:OUT &H3CF,9
+      OUT &H3CE,7:OUT &H3CF,5
+      OUT &H3CE,5:OUT &H3CF,0
+      PAINT (9,12),11,4
+      OUT &H3CE,2:PRINT INP(&H3CF);
+      OUT &H3CE,7:PRINT INP(&H3CF);
+      OUT &H3CE,5:PRINT INP(&H3CF);
+      PRINT POINT(7,10);POINT(8,11);POINT(33,16);POINT(34,17)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+      Assert.That(optimized.Output.Trim(), Does.Contain("9  5  0  4  11  11  4"));
+    });
+  }
+
+  [Test]
+  [Category("Performance")]
+  public void Measure_GivenPlanarScanlineFill_ThenCachesHardwareCertification() {
+    const string body = """
+      LINE (20,20)-(125,31),2,B
+      PAINT (21,21),9,2
+      PRINT POINT(21,21);POINT(124,30);POINT(20,20)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+      Assert.That(optimized.VideoBiosCalls, Is.LessThan(reference.VideoBiosCalls),
+        "direct VGA probing should avoid repeated opaque firmware video calls");
+    });
+    TestContext.Progress.WriteLine(
+      $"SCREEN 12 PAINT: optimized {optimized.ExecutedInstructions} dispatches, "
+      + $"{optimized.FetchedInstructionBytes} fetched bytes, "
+      + $"{optimized.PortWrites.Count(p => p.Port is 0x3CE or 0x3CF)} GC writes; "
+      + $"reference {reference.ExecutedInstructions} dispatches; "
+      + $"BIOS INT10h calls optimized/reference: "
+      + $"{optimized.VideoBiosCalls}/{reference.VideoBiosCalls}");
+  }
+
+  [Test]
+  [Category("Performance")]
+  public void Measure_GivenLongPlanarFillRun_ThenReducesPerPixelBiosDispatch() {
+    const string body = """
+      LINE (10,20)-(255,24),2,B
+      PAINT (11,21),13,2
+      PRINT POINT(11,21);POINT(254,23);POINT(10,20);POINT(256,24)
+      """;
+    var optimized = Execute(body, true);
+    var reference = Execute(body, false);
+    Assert.Multiple(() => {
+      Assert.That(optimized.Output, Is.EqualTo(reference.Output));
+      Assert.That(optimized.VideoBiosCalls, Is.LessThan(reference.VideoBiosCalls),
+        "direct VGA probing should avoid repeated opaque firmware video calls");
+    });
+  }
+}

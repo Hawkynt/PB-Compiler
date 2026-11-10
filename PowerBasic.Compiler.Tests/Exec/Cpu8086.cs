@@ -103,10 +103,11 @@ public sealed partial class Cpu8086 {
   private void PortWrite(ushort port, byte value) {
     this._portWrites.Add((port, value));
     this._ports[port] = value;
+    this.HandleVgaPortWrite(port, value);
   }
 
   /// <summary>A port reads back what was last written to it, and 0 when nothing was.</summary>
-  private byte PortRead(ushort port) => this._ports.GetValueOrDefault(port);
+  private byte PortRead(ushort port) => this.ReadVgaPort(port) ?? this._ports.GetValueOrDefault(port);
 
   /// <summary>
   /// Everything the program wrote to DOS handle 4, PRN - what LPRINT prints.
@@ -165,8 +166,25 @@ public sealed partial class Cpu8086 {
   /// </summary>
   public long ExecutedInstructions { get; private set; }
 
-  public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000, bool exactFloatingPoint = false) {
-    var cpu = new Cpu8086(exactFloatingPoint);
+  /// <summary>
+  /// Count software INT 10h calls separately. One emulator interrupt
+  /// dispatch does not include real BIOS firmware instructions.
+  /// </summary>
+  public long VideoBiosCalls { get; private set; }
+
+  /// <summary>
+  /// Bytes fetched from the instruction stream, including prefixes, ModRM,
+  /// displacements and immediates. This counts dynamic instruction bytes
+  /// (repeated executions count repeatedly), not unique emitted code size,
+  /// memory bus transfers or physical CPU cycles.
+  /// </summary>
+  public long FetchedInstructionBytes { get; private set; }
+
+  public static Cpu8086 Run(byte[] exe, int maxSteps = 20_000_000, bool exactFloatingPoint = false,
+      bool tracePlanarAccess = false) {
+    var cpu = new Cpu8086(exactFloatingPoint) {
+      _planarAccessTrace = tracePlanarAccess ? [] : null,
+    };
     cpu._executables["T.EXE"] = exe;                    // the test harness runs each image under this DOS name
     cpu.Load(exe);
     cpu.Execute(maxSteps);
@@ -174,7 +192,7 @@ public sealed partial class Cpu8086 {
   }
 
   /// <summary>
-  /// As <see cref="Run(byte[],int,bool)"/>, but with files already on the (in-memory) disk, and reporting
+  /// As <see cref="Run(byte[],int,bool,bool)"/>, but with files already on the (in-memory) disk, and reporting
   /// rather than throwing what stopped the program - the machine comes back either way.
   ///
   /// <para>
@@ -316,8 +334,15 @@ public sealed partial class Cpu8086 {
   // ---- memory ---------------------------------------------------------------------------------
 
   private static int Linear(ushort segment, ushort offset) => (segment * 16 + offset) & (_MEMORY - 1);
-  private byte ReadByte(int at) => this._memory[at & (_MEMORY - 1)];
-  private void WriteByte(int at, byte value) => this._memory[at & (_MEMORY - 1)] = value;
+  private byte ReadByte(int at) => this.IsPlanarAddress(at)
+    ? this.PlanarRead(at)
+    : this._memory[at & (_MEMORY - 1)];
+  private void WriteByte(int at, byte value) {
+    if (this.IsPlanarAddress(at))
+      this.PlanarWrite(at, value);
+    else
+      this._memory[at & (_MEMORY - 1)] = value;
+  }
   private ushort ReadWord(int at) => (ushort)(this.ReadByte(at) | (this.ReadByte(at + 1) << 8));
 
   private void WriteWord(int at, ushort value) {
@@ -328,6 +353,7 @@ public sealed partial class Cpu8086 {
   private byte Fetch() {
     var value = this.ReadByte(Linear(this._cs, this._ip));
     ++this._ip;
+    ++this.FetchedInstructionBytes;
     return value;
   }
 
@@ -1867,7 +1893,7 @@ public sealed partial class Cpu8086 {
     switch (number) {
       case 0x21: this.Dos(); return;
       case 0x67: this.Ems(); return;
-      case 0x10: this.Bios10(); return;
+      case 0x10: ++this.VideoBiosCalls; this.Bios10(); return;
       case 0x20: this._halted = true; return;
       // The BIOS tick counter. It ADVANCES by one tick per read rather than standing at zero, which
       // is what makes TIMER observable here at all: a clock that never moves cannot be told apart
@@ -2318,7 +2344,8 @@ public sealed partial class Cpu8086 {
       case 0x00: {
         this._videoMode = this.Reg8(_AX);
         this._memory[0x449] = this._videoMode;
-        this._biosPixels?.Clear();
+        if (this._videoMode == 0x12)
+          this.ResetPlanarVideo();
         if (this._videoMode == 0x13)
           Array.Clear(this._memory, 0xA0000, 320 * 200);
         else

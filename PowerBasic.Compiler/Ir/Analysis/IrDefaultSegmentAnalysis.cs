@@ -8,7 +8,7 @@ public sealed class IrDefaultSegmentAnalysis {
   private readonly Dictionary<IrInstruction, ushort> _segments = [];
 
   internal IrDefaultSegmentAnalysis(IrFunction function) {
-    if (function.Entry is null || function.HasErrorHandler || function.HasInlineAsm)
+    if (function.Entry is null || function.HasErrorHandler)
       return;
     var outputs = new Dictionary<IrBasicBlock, ushort?>();
     var pending = new Queue<IrBasicBlock>();
@@ -66,14 +66,28 @@ public sealed class IrDefaultSegmentAnalysis {
     if (instruction is IrCall call) {
       if (call.Callee is not IrFunction { IsDeclaration: true } callee)
         return null;
-      if (callee.Name is "rt_screen_mode" or "rt_pset" or "rt_point" or "rt_pset_mode13_offset")
+      // Treat only exact, compiler-owned BASIC runtime signatures as
+      // harmless to DEF SEG; an ABI collision cannot carry VGA facts
+      // across an unknown call.
+      if (call.Convention == IrCallConvention.Basic
+          && callee.Convention == IrCallConvention.Basic
+          && callee.Parameters.Select(parameter => parameter.Type)
+            .SequenceEqual(Enumerable.Range(1, call.ArgCount).Select(call.GetOperand).Select(value => value.Type))
+          && ((callee.Name == "rt_screen_mode" && call.Type == IrType.Void
+                 && call.ArgCount == 1 && call.GetOperand(1).Type == IrType.I16)
+            || (callee.Name == "rt_pset" && call.Type == IrType.Void
+                 && call.ArgCount == 3 && Enumerable.Range(1, 3).All(i => call.GetOperand(i).Type == IrType.I16))
+            || (callee.Name == "rt_point" && call.Type == IrType.I32
+                 && call.ArgCount == 2 && Enumerable.Range(1, 2).All(i => call.GetOperand(i).Type == IrType.I16))
+            || (callee.Name == "rt_pset_mode13_offset" && call.Type == IrType.Void
+                 && call.ArgCount == 2 && Enumerable.Range(1, 2).All(i => call.GetOperand(i).Type == IrType.I16))))
         return segment;
       if (IsPackedVgaPoke(call, segment))
         return segment; // A000h video RAM cannot mutate rt_defseg in DS.
       return IrEffects.ForInstruction(call).IsEffectFree ? segment : null;
     }
-    if (instruction is IrInlineAsm)
-      return null;
+    if (instruction is IrInlineAsm asm)
+      return IrVgaEffects.IsProvenRegisterOnlyAsm(asm) ? segment : null;
     if (instruction is IrStore store && !IsProgramStorage(store.Pointer))
       return null;
     if (instruction is IrLoad load && !IsProgramStorage(load.Pointer))
