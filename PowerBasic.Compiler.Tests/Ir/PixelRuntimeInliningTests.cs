@@ -43,6 +43,28 @@ public sealed class PixelRuntimeInliningTests {
     Assert.That(new IrAnalysisManager(function).Get(IrAnalyses.ScreenModes).Before(witness), Is.EqualTo(13));
   }
 
+  [TestCase("NOP", true)]
+  [TestCase("MOV AX, BX", true)]
+  [TestCase("INC CX", true)]
+  [TestCase("MOV ES, AX", false)]
+  [TestCase("MOV AX, [BX]", false)]
+  [TestCase("OUT DX, AL", false)]
+  public void Analyze_GivenInlineAsmWithKnownEffects_ThenPreservesOnlyProvenDefaultSegment(
+      string assembly, bool safe) {
+    var fn = new IrFunction("segment", IrType.Void);
+    var block = fn.CreateBlock("entry");
+    var segment = new IrGlobalVariable("rt_defseg", IrType.I16);
+    block.Append(new IrStore(new IrConstantInt(IrType.I16, unchecked((short)0xA000)), segment));
+    var first = block.Append(new IrAlloca(IrType.I16));
+    block.Append(new IrInlineAsm(assembly));
+    var second = block.Append(new IrAlloca(IrType.I16));
+    var analysis = new IrAnalysisManager(fn).Get(IrAnalyses.DefaultSegments);
+    Assert.Multiple(() => {
+      Assert.That(analysis.Before(first), Is.EqualTo(0xA000));
+      Assert.That(analysis.Before(second), Is.EqualTo(safe ? 0xA000 : null));
+    });
+  }
+
   [TestCase("rt_out")]
   [TestCase("rt_inp")]
   [TestCase("rt_poke")]
