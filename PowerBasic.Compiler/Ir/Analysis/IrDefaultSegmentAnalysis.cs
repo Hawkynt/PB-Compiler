@@ -8,7 +8,7 @@ public sealed class IrDefaultSegmentAnalysis {
   private readonly Dictionary<IrInstruction, ushort> _segments = [];
 
   internal IrDefaultSegmentAnalysis(IrFunction function) {
-    if (function.Entry is null || function.HasErrorHandler || function.HasInlineAsm)
+    if (function.Entry is null || function.HasErrorHandler)
       return;
     var outputs = new Dictionary<IrBasicBlock, ushort?>();
     var pending = new Queue<IrBasicBlock>();
@@ -86,8 +86,8 @@ public sealed class IrDefaultSegmentAnalysis {
         return segment; // A000h video RAM cannot mutate rt_defseg in DS.
       return IrEffects.ForInstruction(call).IsEffectFree ? segment : null;
     }
-    if (instruction is IrInlineAsm)
-      return null;
+    if (instruction is IrInlineAsm asm)
+      return IrVgaEffects.IsProvenRegisterOnlyAsm(asm) ? segment : null;
     if (instruction is IrStore store && !IsProgramStorage(store.Pointer))
       return null;
     if (instruction is IrLoad load && !IsProgramStorage(load.Pointer))

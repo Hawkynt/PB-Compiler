@@ -5,7 +5,7 @@ public sealed class IrScreenModeAnalysis {
   private readonly Dictionary<IrInstruction, long> _modes = [];
 
   internal IrScreenModeAnalysis(IrFunction function, IrDefaultSegmentAnalysis segments) {
-    if (function.Entry is null || function.HasErrorHandler || function.HasInlineAsm)
+    if (function.Entry is null || function.HasErrorHandler)
       return;
     var outputs = new Dictionary<IrBasicBlock, long?>();
     var pending = new Queue<IrBasicBlock>();
@@ -71,8 +71,8 @@ public sealed class IrScreenModeAnalysis {
         return mode;
       return IrEffects.ForInstruction(call).IsEffectFree ? mode : null;
     }
-    if (instruction is IrInlineAsm)
-      return null;
+    if (instruction is IrInlineAsm asm)
+      return IrVgaEffects.IsProvenRegisterOnlyAsm(asm) ? mode : null;
     if (instruction is IrStore store && !IsProgramStorage(store.Pointer))
       return null;
     if (instruction is IrLoad load && !IsProgramStorage(load.Pointer))

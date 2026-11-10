@@ -48,13 +48,50 @@ public static class IrVgaEffects {
 
       IrCall { Callee: IrFunction { IsDeclaration: true } target } call
         => ForRuntimeCall(target.Name, call),
-      IrCall or IrInlineAsm => _unknown,
+      IrInlineAsm asm => IsProvenRegisterOnlyAsm(asm) ? IrVgaActivity.None : _unknown,
+      IrCall => _unknown,
 
       _ => IrEffects.ForInstruction(instruction).IsEffectFree
         ? IrVgaActivity.None
         : _unknown,
     };
   }
+
+  /// <summary>
+  /// Proof for a deliberately small subset of 8086 inline assembly: one
+  /// register-only ALU/data instruction or NOP. These cannot access memory,
+  /// program VGA ports, invoke BIOS, or change the screen mode. The test
+  /// is an allowlist over complete operands, never a substring search:
+  /// partial parses, symbols, segments, directives and multiple instructions
+  /// remain opaque. Register/flag effects are still honored separately by
+  /// the assembler and allocator; this proves *only* absence of VGA effects.
+  /// </summary>
+  public static bool IsProvenRegisterOnlyAsm(IrInlineAsm instruction) {
+    ArgumentNullException.ThrowIfNull(instruction);
+    if (instruction.Names.Count != 0)
+      return false;
+    var pieces = instruction.Text.Trim().Split([' ', '\t'], 2,
+      StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (pieces.Length == 1)
+      return pieces[0].Equals("NOP", StringComparison.OrdinalIgnoreCase);
+    if (pieces.Length != 2)
+      return false;
+    var arguments = pieces[1].Split(',', StringSplitOptions.TrimEntries);
+    if (!arguments.All(IsGeneralPurposeRegister))
+      return false;
+    var operation = pieces[0].ToUpperInvariant();
+    return arguments.Length switch {
+      1 => operation is "INC" or "DEC" or "NEG" or "NOT",
+      2 => operation is "MOV" or "XCHG" or "XOR" or "AND" or "OR"
+        or "ADD" or "SUB" or "CMP" or "TEST",
+      _ => false,
+    };
+  }
+
+  private static bool IsGeneralPurposeRegister(string name)
+    => name.ToUpperInvariant() is
+      "AX" or "BX" or "CX" or "DX" or "SI" or "DI"
+      or "AL" or "AH" or "BL" or "BH" or "CL" or "CH" or "DL" or "DH";
 
   private static IrVgaActivity ForRuntimeCall(string name, IrCall call) => name switch {
     // Reinitializing the display resets VGA mode, sequencer, GC and latches.
