@@ -262,11 +262,26 @@ correctly typed `rt_screen_mode` call with a constant argument. Runtime
 pixel calls are allowed to preserve this fact **only** when their full
 BASIC call ABI matches the compiler's expected signature. Other calls
 and indirect calls (including calls to arbitrary BASIC procedures),
-inline assembly, `INP`/`OUT`, `PEEK`, unproved `POKE`, and unknown far
-memory loads/stores invalidate this proof. A narrowly certified
-`DEF SEG = &HA000` packed framebuffer POKE is a documented exception:
-it cannot program the controller, but it is still an observable pixel
-write and is not generally movable or erasable.
+`INP`/`OUT`, `PEEK`, unproved `POKE`, and unknown far memory
+loads/stores invalidate this proof. Inline assembly is classified by
+**proved effects**, not its presence alone: single register-only
+`NOP`, `MOV AX,BX`, `XOR AX,AX` and a small allowlist of similar
+ALU/data instructions preserve video-state facts. Assembly with ports,
+memory, interrupts, arbitrary control transfer, segment changes or
+unrecognized operands remains an opaque barrier. This is only a
+video-state proof: the full SSA/IR optimization pipeline still fences
+unpromoted inline ASM because it may expose register/flag dependencies.
+
+A narrowly certified `DEF SEG = &HA000` packed framebuffer POKE
+cannot program the controller, but **is** an observable framebuffer
+write. Adjacent, proven in-bounds `POKE` and `PSET` writes can already
+be fused into a single 8086 word or 386 dword store by the existing
+IR pixel packer, when their byte addresses and source order are proved,
+there is no POINT/PEEK/ASM or other observer between them, and both
+share a certified packed video layout. The existing
+`PixelRuntimeInliningTests.Optimize_GivenAProvenDefSeg_ThenPokeAndPsetShareThePackedWordWriter`
+verifies this. Unmarked far-memory writes must not be widened merely
+because their segment equals A000h.
 
 `IrVgaRegionAnalysis` separately records configuration, latch and
 observation epochs; its reuse queries are valid only in forward order
