@@ -102,6 +102,9 @@ public static class Driver {
         case "--list":
           listing = true;
           break;
+        case "--version":
+          stdout.WriteLine($"pbc {Version}");
+          return 0;
         case ['-', ..] when args[i] is not "-": // unknown switches are tolerated like PBC.EXE's
           break;
         default:
@@ -779,6 +782,17 @@ public static class Driver {
       stdout.WriteLine($"  imports {i.Name}");
   }
 
+  /// <summary>
+  /// The build's informational version: the project version, then <c>+</c> and the commit the build
+  /// was made from - the SDK records it for a git checkout, and a build from a plain source tree
+  /// passes it as <c>-p:SourceRevisionId=&lt;commit&gt;</c>.
+  /// </summary>
+  // System.Reflection is not imported: its Binder would shadow the semantic one this file uses
+  private static string Version =>
+    System.Reflection.CustomAttributeExtensions
+      .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(Driver).Assembly)
+      ?.InformationalVersion ?? "unknown";
+
   private static void PrintUsage(TextWriter w) {
     w.WriteLine("PB-Compiler - PowerBASIC 3.5 compatible compiler for 16-bit real-mode DOS");
     w.WriteLine();
@@ -814,6 +828,7 @@ public static class Driver {
     w.WriteLine("  --emit-llvm    optimize through the IR middle end and emit textual LLVM");
     w.WriteLine("  --emit-c       optimize through the IR middle end and emit portable C99");
     w.WriteLine("  --list         write a human-readable .LST map of the compiled image");
+    w.WriteLine("  --version      print the version and the commit pbc was built from");
     w.WriteLine("  -h, --help     show this help");
   }
 }

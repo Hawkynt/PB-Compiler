@@ -362,7 +362,7 @@ cross-checking:
 |---|---|
 | `scripts/run-diff-tests.sh` | the x86-16 path still matches the genuine vintage compilers |
 | `CBackendTests` | the IR path's C output matches the DOS goldens |
-| `EmitLlvmTests` | the IR path's LLVM output is accepted by `llvm-as` and lowered by `llc` |
+| `LlvmEmitterTests` | the IR path's LLVM output is accepted by `llvm-as` - every corpus module it renders, unique and quoted local names included - and lowered by `llc` |
 | `IrVerifier` | every pass leaves structurally valid, well-typed SSA |
 | `BackendCoverageTests` | how much of the corpus the in-house x86-16 back end takes, and what blocks the rest |
 | `BackendRoutingGateTests` | one program per construct, so a construct that silently STOPS routing is a red test rather than a quiet fallback |

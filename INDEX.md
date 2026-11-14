@@ -1,13 +1,13 @@
 # Codebase Index
 
-Generated 2026-10-29 06:42 UTC by index_codebase.py.
+Generated 2026-11-14 19:01 UTC by index_codebase.py.
 
 Every symbol is one line ending in `path:line` — grep this file to
 locate anything: `grep -n "symbolName" INDEX.md`. Regenerate after
 adding, renaming, moving, or deleting symbols; line numbers drift
 with unrelated edits, so treat them as anchors, not gospel.
 
-1117 files, 9014 symbols.
+1118 files, 9016 symbols.
 
 ## PowerBasic.Compiler.Tests/
 
@@ -1214,6 +1214,10 @@ with unrelated edits, so treat them as anchors, not gospel.
 ### PlatformTests.cs  `C#, 162 lines`
 - namespace `PowerBasic.Compiler.Tests.Cli` — PowerBasic.Compiler.Tests/Cli/PlatformTests.cs:3
 - class `PlatformTests` — pbc --platform x86-32|x64: native Linux ELF executables, objects and archives, emitted by — PowerBasic.Compiler.Tests/Cli/PlatformTests.cs:15
+
+### VersionTests.cs  `C#, 70 lines`
+- namespace `PowerBasic.Compiler.Tests.Cli` — PowerBasic.Compiler.Tests/Cli/VersionTests.cs:4
+- class `VersionTests` — pbc --version: the one line a toolchain lock or a bug report reads to know WHICH pbc ran - — PowerBasic.Compiler.Tests/Cli/VersionTests.cs:11
 
 ### XBackendTests.cs  `C#, 37 lines`
 - namespace `PowerBasic.Compiler.Tests.Cli` — PowerBasic.Compiler.Tests/Cli/XBackendTests.cs:3
@@ -3228,7 +3232,7 @@ with unrelated edits, so treat them as anchors, not gospel.
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LiteralPoolingTests.cs:9
 - class `LiteralPoolingTests` — PowerBasic.Compiler.Tests/Ir/LiteralPoolingTests.cs:11
 
-### LlvmEmitterTests.cs  `C#, 130 lines`
+### LlvmEmitterTests.cs  `C#, 379 lines`
 - namespace `PowerBasic.Compiler.Tests.Ir` — PowerBasic.Compiler.Tests/Ir/LlvmEmitterTests.cs:6
 - class `LlvmEmitterTests` — The strict LLVM text emitter. The snapshot tests pin the spelling; the toolchain — PowerBasic.Compiler.Tests/Ir/LlvmEmitterTests.cs:14
 
@@ -7332,16 +7336,16 @@ with unrelated edits, so treat them as anchors, not gospel.
 - method `if(!call.Callee.Type.IsPointer)` — PowerBasic.Compiler/Ir/IrVerifier.cs:250
 - method `if(call.Callee is IrFunction { HasConvention: true } callee && call.Con…` — PowerBasic.Compiler/Ir/IrVerifier.cs:252
 
-### LlvmEmitter.cs  `C#, 332 lines`
+### LlvmEmitter.cs  `C#, 387 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:3
 - class `LlvmEmitter` — Emits strictly-valid textual LLVM IR (a .ll module) that the real LLVM — PowerBasic.Compiler/Ir/LlvmEmitter.cs:14
-- method `Emit(module, targetTriple)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:35
-- method `if(g.FloatingValues is { } values)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:58
-- method `EmitFloatingGlobal(sb, g, values)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:59
-- method `if(!inst.Type.IsVoid)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:125
-- method `IsFloatPred(c.Pred)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:148
-- field `required` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:200
-- method `Ty(call.Type)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:230
+- method `Emit(module, targetTriple)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:37
+- method `if(g.FloatingValues is { } values)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:60
+- method `EmitFloatingGlobal(sb, g, values)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:61
+- method `if(!inst.Type.IsVoid)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:135
+- method `IsFloatPred(c.Pred)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:203
+- field `required` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:255
+- method `Ty(call.Type)` — PowerBasic.Compiler/Ir/LlvmEmitter.cs:285
 
 ### MirVerifier.cs  `C#, 13 lines`
 - namespace `PowerBasic.Compiler.Ir` — PowerBasic.Compiler/Ir/MirVerifier.cs:1
@@ -11001,59 +11005,59 @@ with unrelated edits, so treat them as anchors, not gospel.
 
 ## pbc/
 
-### Driver.cs  `C#, 820 lines`
+### Driver.cs  `C#, 835 lines`
 - namespace `PowerBasic.Compiler.Cli` — pbc/Driver.cs:12
 - class `Driver` — Command-line front end for the PowerBASIC 3.5 compiler. — pbc/Driver.cs:16
 - method `RunLib(args[1..], stdout, stderr)` — pbc/Driver.cs:25
 - method `if(!TryParsePlatform(name, out platform))` — pbc/Driver.cs:56
 - method `if(!DialectFacts.TryParse(name, out dialect))` — pbc/Driver.cs:64
-- method `if(source != null)` — pbc/Driver.cs:108
-- method `if` — pbc/Driver.cs:134
-- method `foreach(var error in model.Errors)` — pbc/Driver.cs:151
-- method `if` — pbc/Driver.cs:159
-- method `if(optimize ?? (dialect == Dialect.Pb36))` — pbc/Driver.cs:168
-- method `if(output != null)` — pbc/Driver.cs:173
-- method `if` — pbc/Driver.cs:181
-- method `if(!TryEmitHostedSource(model, emittedC, optimize, optimizeSpeed, paral…` — pbc/Driver.cs:184
-- method `if(output != null)` — pbc/Driver.cs:186
-- method `switch` — pbc/Driver.cs:194
-- method `BuildNative(model, source, X86Machine.I386, dumpStage, output, optimize, optimiz…` — pbc/Driver.cs:197
-- method `BuildNative(model, source, X86Machine.Amd64, dumpStage, output, optimize, optimi…` — pbc/Driver.cs:199
-- method `BuildC64(model, source, dumpStage, output, optimize, optimizeSpeed, [.. linkP…` — pbc/Driver.cs:201
-- method `if` — pbc/Driver.cs:203
-- method `if` — pbc/Driver.cs:218
-- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:225
-- method `if` — pbc/Driver.cs:235
-- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:239
-- method `if` — pbc/Driver.cs:250
-- method `if(IsUnitCompile(model))` — pbc/Driver.cs:253
-- method `if(model.MetaStatements.Any(m => m.Command == "LINK"))` — pbc/Driver.cs:257
-- method `if(image.Length == 0 && generator.Errors.Count == 0)` — pbc/Driver.cs:262
-- method `if(!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out va…` — pbc/Driver.cs:265
-- method `if(image.Length == 0 && generator.Errors.Count == 0)` — pbc/Driver.cs:268
-- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:271
-- method `if(model.MetaStatements.Any(m => m.Command == "LINK"))` — pbc/Driver.cs:292
-- method `if(!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out va…` — pbc/Driver.cs:299
-- method `if` — pbc/Driver.cs:309
-- method `CompileIrUnit(model, source, output, name, library: false, stdout, stderr)` — pbc/Driver.cs:413
-- enum `Platform` — The machines --platform selects. — pbc/Driver.cs:458
-- method `CompileIrUnit(model, source, output, "6502", library: false, stdout, stderr)` — pbc/Driver.cs:485
-- method `CompileIrUnit(model, source, output, "6502", library: true, stdout, stderr)` — pbc/Driver.cs:487
-- method `Overflowed(image, out declined)` — pbc/Driver.cs:529
-- method `if(IrUnitFile.IsIrUnit(bytes))` — pbc/Driver.cs:624
-- method `if(IrUnitFile.IsIrLibrary(bytes))` — pbc/Driver.cs:626
-- method `if(path.EndsWith(".OBJ", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:670
-- method `if(path.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:674
-- method `foreach(var module in Emit.Omf.OmfReader.ReadLibrary(File.ReadAllBytes(path)…` — pbc/Driver.cs:676
-- method `if(path.EndsWith(".PBL", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:682
-- method `foreach(var file in unitFiles)` — pbc/Driver.cs:703
-- method `if(!IrUnitFile.IsIrUnit(bytes))` — pbc/Driver.cs:705
-- method `foreach(var file in unitFiles)` — pbc/Driver.cs:718
-- method `if(output.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:726
-- method `foreach(var (name, unit) in members)` — pbc/Driver.cs:743
-- method `if(file.EndsWith(".PBU", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:750
-- method `foreach(var unit in PblFile.Read(stream).Units)` — pbc/Driver.cs:754
-- method `DescribeUnit(unit, stdout)` — pbc/Driver.cs:755
+- method `if(source != null)` — pbc/Driver.cs:111
+- method `if` — pbc/Driver.cs:137
+- method `foreach(var error in model.Errors)` — pbc/Driver.cs:154
+- method `if` — pbc/Driver.cs:162
+- method `if(optimize ?? (dialect == Dialect.Pb36))` — pbc/Driver.cs:171
+- method `if(output != null)` — pbc/Driver.cs:176
+- method `if` — pbc/Driver.cs:184
+- method `if(!TryEmitHostedSource(model, emittedC, optimize, optimizeSpeed, paral…` — pbc/Driver.cs:187
+- method `if(output != null)` — pbc/Driver.cs:189
+- method `switch` — pbc/Driver.cs:197
+- method `BuildNative(model, source, X86Machine.I386, dumpStage, output, optimize, optimiz…` — pbc/Driver.cs:200
+- method `BuildNative(model, source, X86Machine.Amd64, dumpStage, output, optimize, optimi…` — pbc/Driver.cs:202
+- method `BuildC64(model, source, dumpStage, output, optimize, optimizeSpeed, [.. linkP…` — pbc/Driver.cs:204
+- method `if` — pbc/Driver.cs:206
+- method `if` — pbc/Driver.cs:221
+- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:228
+- method `if` — pbc/Driver.cs:238
+- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:242
+- method `if` — pbc/Driver.cs:253
+- method `if(IsUnitCompile(model))` — pbc/Driver.cs:256
+- method `if(model.MetaStatements.Any(m => m.Command == "LINK"))` — pbc/Driver.cs:260
+- method `if(image.Length == 0 && generator.Errors.Count == 0)` — pbc/Driver.cs:265
+- method `if(!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out va…` — pbc/Driver.cs:268
+- method `if(image.Length == 0 && generator.Errors.Count == 0)` — pbc/Driver.cs:271
+- method `if(generator.Errors.Count > 0)` — pbc/Driver.cs:274
+- method `if(model.MetaStatements.Any(m => m.Command == "LINK"))` — pbc/Driver.cs:295
+- method `if(!TryLoadLinkTargets(model, [.. linkPaths, sourceDir], stderr, out va…` — pbc/Driver.cs:302
+- method `if` — pbc/Driver.cs:312
+- method `CompileIrUnit(model, source, output, name, library: false, stdout, stderr)` — pbc/Driver.cs:416
+- enum `Platform` — The machines --platform selects. — pbc/Driver.cs:461
+- method `CompileIrUnit(model, source, output, "6502", library: false, stdout, stderr)` — pbc/Driver.cs:488
+- method `CompileIrUnit(model, source, output, "6502", library: true, stdout, stderr)` — pbc/Driver.cs:490
+- method `Overflowed(image, out declined)` — pbc/Driver.cs:532
+- method `if(IrUnitFile.IsIrUnit(bytes))` — pbc/Driver.cs:627
+- method `if(IrUnitFile.IsIrLibrary(bytes))` — pbc/Driver.cs:629
+- method `if(path.EndsWith(".OBJ", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:673
+- method `if(path.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:677
+- method `foreach(var module in Emit.Omf.OmfReader.ReadLibrary(File.ReadAllBytes(path)…` — pbc/Driver.cs:679
+- method `if(path.EndsWith(".PBL", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:685
+- method `foreach(var file in unitFiles)` — pbc/Driver.cs:706
+- method `if(!IrUnitFile.IsIrUnit(bytes))` — pbc/Driver.cs:708
+- method `foreach(var file in unitFiles)` — pbc/Driver.cs:721
+- method `if(output.EndsWith(".LIB", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:729
+- method `foreach(var (name, unit) in members)` — pbc/Driver.cs:746
+- method `if(file.EndsWith(".PBU", StringComparison.OrdinalIgnoreCase))` — pbc/Driver.cs:753
+- method `foreach(var unit in PblFile.Read(stream).Units)` — pbc/Driver.cs:757
+- method `DescribeUnit(unit, stdout)` — pbc/Driver.cs:758
 
 ### Program.cs  `C#, 4 lines`
 - (no top-level symbols found)
