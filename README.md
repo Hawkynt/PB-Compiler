@@ -192,6 +192,7 @@ pbc --platform x64 PROG.BAS   # a native x64 executable (also x86-32; --emit-obj
 pbc --platform 6502 PROG.BAS  # a Commodore 64 PROG.PRG
 pbc lib build MY.PBL *.PBU    # bundle units into a library
 pbc lib list MY.PBL           # show exports/imports of a library or unit
+pbc --version                 # the version and the commit pbc was built from
 ```
 
 Useful options: `-O <file>` (output name), `-I <dir>` (`$INCLUDE` search path),
