@@ -14,6 +14,8 @@ namespace PowerBasic.Compiler.Ir;
 public sealed class LlvmEmitter {
 
   private readonly Dictionary<IrValue, string> _names = new(ReferenceEqualityComparer.Instance);
+  private readonly HashSet<string> _taken = new(StringComparer.Ordinal);
+  private Dictionary<IrBasicBlock, string> _labels = new(ReferenceEqualityComparer.Instance);
   private int _slot;
 
   /// <summary>
@@ -109,7 +111,7 @@ public sealed class LlvmEmitter {
       sb.Append(" \"reciprocal-estimates\"=\"").Append(reciprocalEstimates).Append('"');
     sb.Append(" {\n");
     foreach (var block in fn.Blocks) {
-      sb.Append(block.Label).Append(":\n");
+      sb.Append(this._labels[block]).Append(":\n");
       foreach (var inst in block.Instructions)
         sb.Append("  ").Append(this.EmitInstruction(inst)).Append('\n');
     }
@@ -117,14 +119,67 @@ public sealed class LlvmEmitter {
     return sb.ToString();
   }
 
+  /// <summary>
+  /// Names every block, parameter and non-void instruction before a line is emitted. LLVM keeps the
+  /// labels and the values of a function in ONE symbol table and rejects a name defined twice, while
+  /// an IR name is only a hint - two <c>FOR i%</c> loops both call their counter <c>i</c> - so a
+  /// repeated name takes the first free <c>.1</c>, <c>.2</c>, ... suffix. Labels are named first, from
+  /// the blocks alone, so a label is the same whichever function's emission spells it.
+  /// </summary>
   private void AssignNames(IrFunction fn) {
+    this._labels = LabelNames(fn, this._taken);
     foreach (var arg in fn.Parameters)
-      this._names[arg] = "%" + (arg.Name ?? (this._slot++).ToString(CultureInfo.InvariantCulture));
+      this._names[arg] = this.LocalName(arg.Name);
     foreach (var block in fn.Blocks)
       foreach (var inst in block.Instructions)
         if (!inst.Type.IsVoid)
-          this._names[inst] = "%" + (inst.Name ?? (this._slot++).ToString(CultureInfo.InvariantCulture));
+          this._names[inst] = this.LocalName(inst.Name);
   }
+
+  private static Dictionary<IrBasicBlock, string> LabelNames(IrFunction fn, HashSet<string> taken) {
+    var labels = new Dictionary<IrBasicBlock, string>(ReferenceEqualityComparer.Instance);
+    foreach (var block in fn.Blocks)
+      labels[block] = Quote(Unique(block.Label, taken));
+    return labels;
+  }
+
+  /// <summary>An unnamed (or empty-named) value takes the next slot number, as LLVM numbers it.</summary>
+  private string LocalName(string? hint) =>
+    "%" + (string.IsNullOrEmpty(hint)
+      ? (this._slot++).ToString(CultureInfo.InvariantCulture)
+      : Quote(Unique(hint, this._taken)));
+
+  private static string Unique(string name, HashSet<string> taken) {
+    if (taken.Add(name))
+      return name;
+    for (var suffix = 1; ; ++suffix) {
+      var candidate = name + "." + suffix.ToString(CultureInfo.InvariantCulture);
+      if (taken.Add(candidate))
+        return candidate;
+    }
+  }
+
+  /// <summary>
+  /// A local name as LLVM reads it: bare when it matches <c>[-a-zA-Z$._][-a-zA-Z$._0-9]*</c>, else in
+  /// quotes with <c>"</c>, <c>\</c> and every non-printable byte escaped as <c>\XX</c> (LLVM LangRef,
+  /// "Identifiers"). A name starting with a digit is quoted too: bare, LLVM would read it as a number.
+  /// </summary>
+  private static string Quote(string name) =>
+    name.Length > 0 && !char.IsAsciiDigit(name[0]) && name.All(IsBareNameChar)
+      ? name
+      : "\"" + EscapeBytes(Encoding.UTF8.GetBytes(name)) + "\"";
+
+  private static bool IsBareNameChar(char c) => char.IsAsciiLetterOrDigit(c) || c is '-' or '$' or '.' or '_';
+
+  /// <summary>
+  /// A block as an operand. Branches only name blocks of their own function; a block address may
+  /// name one of another function, whose labels depend on its blocks alone and so are recomputed.
+  /// </summary>
+  private string BlockRef(IrBasicBlock block) =>
+    "%" + (this._labels.TryGetValue(block, out var label) ? label
+      : block.Parent is { } owner ? LabelNames(owner, new(StringComparer.Ordinal))[block]
+      : throw new Backend.BackendInvariantException("LLVM back end", "LlvmEmitter.BlockRef",
+          "a branch target or block address belongs to a function (IrFunction.AddBlock sets Parent)"));
 
   private string EmitInstruction(IrInstruction inst) {
     // BASIC's assignment conversion ROUNDS a real into an integer, and `fptosi`/`fptoui` truncate -
@@ -135,7 +190,7 @@ public sealed class LlvmEmitter {
     // `i% = 3.5` is, oracle-verified against genuine PBC 3.5 for BYTE, WORD and DWORD.
     if (inst is IrCast { Op: IrCastOp.FPToSIRound or IrCastOp.FPToUIRound } round) {
       var floatType = Ty(round.Value.Type);
-      var rounded = "%rint." + this._slot++.ToString(CultureInfo.InvariantCulture);
+      var rounded = "%" + Unique("rint." + this._slot++.ToString(CultureInfo.InvariantCulture), this._taken);
       var convert = round.Op == IrCastOp.FPToSIRound ? "fptosi" : "fptoui";
       return $"{rounded} = call {floatType} @llvm.rint.{Suffix(round.Value.Type)}({floatType} {this.Ref(round.Value)})"
         + "\n  " + $"{this.Ref(round)} = {convert} {floatType} {rounded} to {Ty(round.Type)}";
@@ -161,10 +216,10 @@ public sealed class LlvmEmitter {
       // wherever the argument list cannot be read off the declaration
       IrCall call => $"call{FastMath(call)} {CalleeType(call)} {this.Ref(call.Callee)}({this.Args(call)})",
       IrRet r => r.HasValue ? $"ret {Ty(r.Value!.Type)} {this.Ref(r.Value)}" : "ret void",
-      IrBr br => $"br label %{br.Target.Label}",
-      IrCondBr cb => $"br i1 {this.Ref(cb.Condition)}, label %{cb.IfTrue.Label}, label %{cb.IfFalse.Label}",
+      IrBr br => $"br label {this.BlockRef(br.Target)}",
+      IrCondBr cb => $"br i1 {this.Ref(cb.Condition)}, label {this.BlockRef(cb.IfTrue)}, label {this.BlockRef(cb.IfFalse)}",
       IrSwitch sw => this.EmitSwitch(sw),
-      IrIndirectBr ib => $"indirectbr ptr {this.Ref(ib.Address)}, [ {string.Join(", ", ib.Targets.Select(t => "label %" + t.Label))} ]",
+      IrIndirectBr ib => $"indirectbr ptr {this.Ref(ib.Address)}, [ {string.Join(", ", ib.Targets.Select(t => "label " + this.BlockRef(t)))} ]",
       IrUnreachable => "unreachable",
       _ => throw EmitDeclinedException.For("LLVM emission", inst),
     };
@@ -215,7 +270,7 @@ public sealed class LlvmEmitter {
   }
 
   private string PhiInputs(IrPhi phi) =>
-    string.Join(", ", phi.IncomingBlocks.Select((blk, i) => $"[ {this.Ref(phi.GetOperand(i))}, %{blk.Label} ]"));
+    string.Join(", ", phi.IncomingBlocks.Select((blk, i) => $"[ {this.Ref(phi.GetOperand(i))}, {this.BlockRef(blk)} ]"));
 
   private string Args(IrCall call) =>
     string.Join(", ", call.Args.Select(a => $"{Ty(a.Type)} {this.Ref(a)}"));
@@ -233,8 +288,8 @@ public sealed class LlvmEmitter {
   }
 
   private string EmitSwitch(IrSwitch sw) {
-    var cases = string.Join(" ", sw.Cases.Select(c => $"{Ty(sw.Condition.Type)} {c.Value}, label %{c.Target.Label}"));
-    return $"switch {Ty(sw.Condition.Type)} {this.Ref(sw.Condition)}, label %{sw.DefaultTarget.Label} [ {cases} ]";
+    var cases = string.Join(" ", sw.Cases.Select(c => $"{Ty(sw.Condition.Type)} {c.Value}, label {this.BlockRef(c.Target)}"));
+    return $"switch {Ty(sw.Condition.Type)} {this.Ref(sw.Condition)}, label {this.BlockRef(sw.DefaultTarget)} [ {cases} ]";
   }
 
   private string Ref(IrValue value) => value switch {
@@ -247,7 +302,7 @@ public sealed class LlvmEmitter {
     // requirement that a blockaddress-taken block stay intact is met by construction
     IrBlockAddress ba => $"blockaddress(@{ba.Block.Parent?.Name ?? throw new Backend.BackendInvariantException(
       "LLVM back end", "LlvmEmitter.Ref",
-      "a block whose address is taken belongs to a function (IrFunction.AddBlock sets Parent)")}, %{ba.Block.Label})",
+      "a block whose address is taken belongs to a function (IrFunction.AddBlock sets Parent)")}, {this.BlockRef(ba.Block)})",
     // A far entry thunk is one word of 16-bit stack discipline, not a function LLVM can name: the
     // adapter has no IR body to emit and its whole content is the difference between a far call and a
     // near return. Declining keeps the module honest rather than pointing a delegate at the callee
@@ -286,7 +341,7 @@ public sealed class LlvmEmitter {
     _ => "void",
   };
 
-  /// <summary>Escapes bytes for an LLVM c"..." string constant (\XX hex for non-printables).</summary>
+  /// <summary>Escapes bytes for an LLVM c"..." string constant or quoted name (\XX hex for non-printables).</summary>
   private static string EscapeBytes(byte[] bytes) {
     var sb = new StringBuilder(bytes.Length);
     foreach (var b in bytes)
